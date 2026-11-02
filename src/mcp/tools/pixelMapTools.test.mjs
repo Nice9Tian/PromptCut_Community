@@ -1,5 +1,6 @@
-// 像素映射工具的主动分流:整帧调色(A)拒绝并回等价 ops、逐像素(B)接单、翻译不了(C)拒绝。
-// 跑法:node --test src/mcp/tools/pixelMapTools.test.mjs
+// Active triage for pixel map tools: reject whole-frame color grading (A) and return equivalent ops,
+// accept per-pixel (B), reject untranslatable (C).
+// Run: node --test src/mcp/tools/pixelMapTools.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "vite";
@@ -34,7 +35,7 @@ test("Pixel map tools: A is rejected with equivalent ops returned, B is accepted
     const { createPixelMapTools } = await server.ssrLoadModule("/src/mcp/tools/pixelMapTools.ts");
     const toolsOf = () => { const s = fakeStore(); return { s, tools: createPixelMapTools(s) }; };
 
-    /* --- A 整帧调色:拒绝,错误里那份 ops 能直接喂给 create_filter 而且逐像素等价 --- */
+    /* --- A Whole-frame color grading: reject; ops in error can feed directly into create_filter and is per-pixel equivalent --- */
     {
       const { s, tools } = toolsOf();
       const raw = { name: "Brighten", where: "1", to: { kind: "expr", r: "r^0.8", g: "g^0.8", b: "b^0.8", a: "a" } };
@@ -58,7 +59,7 @@ test("Pixel map tools: A is rejected with equivalent ops returned, B is accepted
       assert.ok(worst <= 1, `ops in the response differ from the original definition by ${worst} levels`);
     }
 
-    /* --- B 逐像素:接单,回包带 backend --- */
+    /* --- B Per-pixel: accepted, response includes backend --- */
     {
       const { s, tools } = toolsOf();
       const r = tools.createPixelMap({ name: "Key out green", where: green, to: "transparent", clipId: "c1" });
@@ -69,14 +70,14 @@ test("Pixel map tools: A is rejected with equivalent ops returned, B is accepted
       assert.equal(tools.createPixelMap({ name: "Swap background", where: "1-step(0.5,luma)", to: { kind: "media", mediaId: "B", stage: "origin" } }).backend, "webgl");
     }
 
-    /* --- C 翻译不了 --- */
+    /* --- C Cannot translate --- */
     {
       const { s, tools } = toolsOf();
       assert.throws(() => tools.createPixelMap({ name: "Bad", where: "(r-g)^0.5", to: "transparent" }), /cannot be translated into a shader[\s\S]*pow is undefined for a negative base/);
       assert.equal(s.project.pixelMaps.length, 0);
     }
 
-    /* --- update 也过同一道闸,拒了库里那条不变 --- */
+    /* --- update also passes through the same gate; if rejected, entry in library remains unchanged --- */
     {
       const { s, tools } = toolsOf();
       const r = tools.createPixelMap({ name: "Key out green", where: green, to: "transparent" });

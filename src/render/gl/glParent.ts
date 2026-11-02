@@ -1,22 +1,26 @@
 /**
- * 路线 2(`shared`)的父页一侧(R9 M2):编辑器文档 `new Worker` **一次**、持唯一的上下文和图集,
- * 给每个舞台 iframe 开一条 `MessageChannel`,`port2` 交给 Worker、`port1` 转进舞台
- * (`MessagePort` 可跨源转移,两个舞台 iframe 是跨源的)。
+ * Parent page side of Route 2 (`shared`) (R9 M2): editor document calls `new Worker` **once**,
+ * holding the sole context and atlas, opens a `MessageChannel` for each stage iframe, handing
+ * `port2` to the Worker and forwarding `port1` into the stage (`MessagePort` can be transferred
+ * across origins; the two stage iframes are cross-origin).
  *
- * **端口转交协议**:父页在收到该舞台 `pc-stage-ready` 之后、发任何 RPC 之前,先
- * `postMessage({ type: 'gl-port', stageId, port }, [port])`;舞台的 `glHost` 收到之前把 `beat` 排队、
- * 不呈现 canvas 卡。路线 1 下这条消息不发。父页这边开不了共享 Worker 时发 `port: null`,舞台自己开。
+ * **Port transfer protocol**: after receiving `pc-stage-ready` from that stage and before sending
+ * any RPC, parent page first sends `postMessage({ type: 'gl-port', stageId, port }, [port])`;
+ * before receiving it, stage's `glHost` queues `beat` and does not present canvas cards. Under
+ * Route 1, this message is not sent. When parent page side cannot start a shared Worker, it sends
+ * `port: null`, and stage starts one itself.
  *
- * 代价(语义里写明的):GL 线程落在编辑器进程里(独立线程,不碰主线程),舞台的进程隔离对它不成立。
- * 导出页在预渲染进程里没有父页,永远走路线 1,和这里无关。
+ * Cost (as stated in semantics): GL thread resides in the editor process (independent thread,
+ * not touching main thread); stage process isolation does not hold for it. Export page has no
+ * parent page in the prerender process, always uses Route 1, and is irrelevant here.
  */
 import type { GlFromWorker, GlWorkerDiag } from "./CanvasCardProgram";
 import { spawnGlWorker } from "./spawnWorker";
 
 export interface SharedGl {
-  /** 给这个舞台开一条通道并把端口交过去(同一个 stageId 再来一次 = 那个 iframe 重载了,旧通道作废) */
+  /** Open a channel for this stage and pass the port over (same stageId again = that iframe reloaded, old channel invalidated) */
   connect(win: Window, targetOrigin: string, stageId: string): void;
-  /** 探针用:共享 Worker 那一侧的诊断 */
+  /** For probe: diagnostics on the shared Worker side */
   diag(): Promise<GlWorkerDiag | null>;
   dispose(): void;
 }

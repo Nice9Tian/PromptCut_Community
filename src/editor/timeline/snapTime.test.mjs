@@ -1,11 +1,14 @@
 /**
- * 时间轴吸附的单测。跑:node --test src/editor/timeline/snapTime.test.mjs
+ * Unit tests for timeline snapping. Run: node --test src/editor/timeline/snapTime.test.mjs
  *
- * 只钉一条,但这条是三个视图对齐的地基:**吸附的结果必须落在帧格上**。
- * 落不上会怎样:成片是逐帧渲的,一条 4.041s 开始的片段其实从第 122 帧(4.0667s)开始;
- * 而三维视图的预渲染时刻是按**片段起点**排格子的,导出渲的是**全局帧格** —— 两套格子对不齐。
- * 实测起点 4.041 时,播放头第 121 / 122 / 123 帧拿到的预渲染帧是 121 / 121 / 122,
- * 三维比二维整整慢一帧,而且不报错。
+ * Nails down only one rule, but it is the foundation for aligning all three views:
+ * **snapping results must land on the frame grid**.
+ * What happens if it doesn't: the final video is rendered frame by frame; a clip starting at 4.041s
+ * actually starts at frame 122 (4.0667s); while prerender timestamps in the 3D view are gridded by
+ * **clip start**, export renders on the **global frame grid**: the two grid systems do not align.
+ * In actual testing with a start of 4.041, the prerendered frames obtained by the playhead at
+ * frames 121 / 122 / 123 were 121 / 121 / 122, making 3D a full frame slower than 2D, without
+ * throwing any error.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -34,7 +37,7 @@ test("Snap results always land on the frame grid, including when alt is held to 
 
 test("Still snaps to a nearby snap point; quantization must not swallow the snapping itself", () => {
   const p = proj(30);
-  // 片段边缘在 2 和 6,整秒也是吸附点;10px 阈值 / 100pxPerSec = 0.1s
+  // Clip edges are at 2 and 6, whole seconds are also snap points; 10px threshold / 100pxPerSec = 0.1s
   assert.equal(snapTime(2.05, false, p, -1, undefined, 100), 2, "Should snap to clip start 2");
   assert.equal(snapTime(5.95, false, p, -1, undefined, 100), 6, "Should snap to clip end 6");
   assert.equal(snapTime(3.02, false, p, -1, undefined, 100), 3, "Should snap to whole second 3");
@@ -42,7 +45,7 @@ test("Still snaps to a nearby snap point; quantization must not swallow the snap
 
 test("Far from a snap point, quantize the raw value; it does not get pulled away", () => {
   const p = proj(30);
-  // 4.5 离 4、5、片段边缘都超过 0.1s
+  // 4.5 is more than 0.1s away from 4, 5, and clip edges
   assert.ok(Math.abs(snapTime(4.51, false, p, -1, undefined, 100) - 4.5) < 1e-9, "4.51 should land on frame 135 = 4.5");
   assert.ok(Math.abs(snapTime(4.56, false, p, -1, undefined, 100) - 4.5333333333333) < 1e-9, "4.56 lands on frame 136");
 });

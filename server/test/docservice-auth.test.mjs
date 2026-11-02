@@ -1,17 +1,23 @@
 /**
- * 文档服务的集群令牌鉴权（契约 `docs/plan/render-queue-contract.md` G.5，用例 A1～A6）。
+ * Cluster token authentication for the document service (contract
+ * `docs/plan/render-queue-contract.md` G.5, test cases A1-A6).
  *
- * M6a（`docs/plan/auth-contract.md` 第 5、10 节）改过：集群令牌从数据面退出，带对令牌的连接是管理身份
- * `{ userId: 'admin', tenantId: null, scope: 'admin' }`，只能用管理接口（服务地址登记），发数据面消息回 `forbidden`；
- * 独立模式的失败即关条件由「非回环没设令牌」改为「非回环而凭证存储不可用」。改动逐条列在
- * `docs/archive/agent-reports/AGENT-m6-auth.md`「改过的旧测试」。
- * 跑：node --test server/test/docservice-auth.test.mjs
+ * Modified in M6a (`docs/plan/auth-contract.md` Sections 5 and 10): cluster tokens are removed
+ * from the data plane; connections with valid tokens have admin identity
+ * `{ userId: 'admin', tenantId: null, scope: 'admin' }` and can only use management interfaces
+ * (service address registration), returning `forbidden` when sending data plane messages;
+ * standalone mode fail-closed condition changed from "non-loopback with no token set" to
+ * "non-loopback with unavailable credential store". Changes are listed item by item in
+ * `docs/archive/agent-reports/AGENT-m6-auth.md` "Modified old tests".
+ * Run: node --test server/test/docservice-auth.test.mjs
  *
- * 只照契约写，不看实现。令牌在测试里现生成（32 字节 base64url），不写死。
+ * Written strictly against the contract, ignoring implementation details. Tokens are generated
+ * on the fly in the test (32-byte base64url), not hardcoded.
  *
- * 接法照契约 G.12：`createDocService({ authenticate: auth.authenticate, log })`，
- * `auth = createClusterAuth({ token, allowAnonymous, log })`，同一个 `log` 两边都传（A5 收 `auth.reject`）；
- * 子协议回显由组装层自己做（`protocol` 选项缺省 `promptcut.v1`），不另外配置。
+ * Wiring follows contract G.12: `createDocService({ authenticate: auth.authenticate, log })`,
+ * `auth = createClusterAuth({ token, allowAnonymous, log })`, passing the same `log` to both sides
+ * (A5 collects `auth.reject`); subprotocol echo is handled by the assembly layer itself
+ * (`protocol` option defaults to `promptcut.v1`), with no extra configuration needed.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -34,7 +40,8 @@ async function loadAuth() {
 }
 
 /**
- * 起服务：token 给了就是令牌模式，否则匿名模式。日志收进 logs（组装层的和鉴权模块的都收）。
+ * Starts the service: token mode if token is provided, otherwise anonymous mode.
+ * Collects logs into logs (both from the assembly layer and the authentication module).
  */
 async function startService({ token, allowAnonymous = token === undefined, mount = true } = {}) {
   const { createClusterAuth } = await loadAuth();
@@ -46,7 +53,7 @@ async function startService({ token, allowAnonymous = token === undefined, mount
   if (mount) {
     queue = createRenderQueue({ now: Date.now, send: service.send });
     service.mountRenderQueue(queue);
-    // M6a：挂上服务地址登记（管理接口），测管理身份能用它（A2、A6）
+    // M6a: mount service address registration (management interface), test that admin identity can use it (A2, A6)
     service.mount(endpointsModule());
   }
   const { port } = await service.listen(0, '127.0.0.1');
@@ -55,7 +62,7 @@ async function startService({ token, allowAnonymous = token === undefined, mount
 
 const tokenProtocols = (token) => ['promptcut.v1', `promptcut.token.${token}`];
 
-/** 造一个只有 headers / socket 的假请求，测 auth 模块本身 */
+/** Creates a fake request with only headers / socket to test the auth module itself */
 function fakeReq(protocolHeader, remote = '10.0.0.5') {
   const headers = {};
   if (protocolHeader !== undefined) headers['sec-websocket-protocol'] = protocolHeader;
@@ -92,7 +99,7 @@ test('A1 the auth module itself: in token mode a missing protocol, a missing tok
   assert.equal(auth.authenticate(fakeReq(undefined)), null);
   assert.equal(auth.authenticate(fakeReq('promptcut.v1')), null);
   assert.equal(auth.authenticate(fakeReq(`promptcut.v1, promptcut.token.${randomToken()}`)), null);
-  // M6a：令牌对得到的是管理身份（原来是 { userId: 'cluster', tenantId: 'cluster' }）
+  // M6a: matching token yields admin identity (originally was { userId: 'cluster', tenantId: 'cluster' })
   assert.deepEqual(auth.authenticate(fakeReq(`promptcut.v1, promptcut.token.${token}`)), ADMIN);
   assert.equal(auth.protocolFor(fakeReq(`promptcut.v1, promptcut.token.${token}`)), 'promptcut.v1');
   assert.equal(auth.protocolFor(fakeReq(undefined)), null);
@@ -125,7 +132,7 @@ test('A2 correct token → 101, and the Sec-WebSocket-Protocol response header i
   assert.equal(r.headers['sec-websocket-protocol'], 'promptcut.v1', 'Only echoes promptcut.v1, never echoes the token entry');
   assert.ok(!r.rawHead.includes(token), 'The token does not appear in the response headers');
 
-  // 客户端给的顺序反过来也一样
+  // Same even if the order provided by the client is reversed
   const r2 = await rawHandshake(port, { protocols: [`promptcut.token.${token}`, 'promptcut.v1'] });
   r2.sock.destroy();
   assert.equal(r2.status, 101);
@@ -135,7 +142,8 @@ test('A2 correct token → 101, and the Sec-WebSocket-Protocol response header i
   t.after(() => c.close());
   await c.opened;
   assert.equal(c.ws.protocol, 'promptcut.v1');
-  // M6a：原来这里发 publisher.hello 等 publisher.welcome；管理身份发数据面消息回 forbidden，管理接口照常
+  // M6a: Originally sent publisher.hello waiting for publisher.welcome here; admin identity sending
+  // data plane messages returns forbidden, management interface works as usual
   c.send({ type: 'publisher.hello', reqId: 1, publisherId: 'pg' });
   const denied = await c.next(byReq(1));
   assert.equal(denied.type, 'error');
@@ -168,8 +176,9 @@ test('A3 the principal of a token connection is the admin identity, and any data
   for (const conn of service.describe().conns) assert.deepEqual(conn.principal, ADMIN);
 });
 
-// 原 A3 的另一半「消息里自报的 userId 不改变 principal、任务的 userId 取连接的 principal」改由共享项目的成员身份来测：
-// 集群令牌不再能进数据面（auth-contract 第 5 节）
+// The other half of original A3 ("userId self-reported in message does not change principal,
+// task userId uses the connection's principal") is now tested via shared project member identity:
+// cluster tokens can no longer enter the data plane (auth-contract Section 5)
 test('A3 member identity: the userId / tenantId self-reported in a message does not change it, and the task\'s source comes from the connection\'s principal', async (t) => {
   const shared = await startSharedService({ mode: 'hosted' });
   t.after(() => shared.close());
@@ -185,7 +194,8 @@ test('A3 member identity: the userId / tenantId self-reported in a message does 
 
   node.send({ type: 'node.hello', reqId: 'n', nodeId: 'nd', profile: 'host', userId: 'mallory', tenantId: 'evil' });
   await node.next(byReq('n'));
-  // M6c X3：host 的 watch 'all' 只收摘要、不收单任务增量，这里要看 task.opened，改 watch 任务所在的项目（原为 'all'）
+  // M6c X3: host watch 'all' only receives summaries, not single-task deltas; to check task.opened
+  // here, changed to watch the project where the task resides (originally 'all')
   node.send({ type: 'queue.watch', reqId: 'w', projects: ['proj'] });
   await node.next(byReq('w'));
 
@@ -230,7 +240,7 @@ test('A4 anonymous mode: an old client with no subprotocol can connect; one that
   assert.equal(r1.status, 101);
   assert.equal(r1.headers['sec-websocket-protocol'], 'promptcut.v1');
 
-  // 匿名模式不看令牌项：带了（哪怕是随便的）也照样通过，回显仍只有 promptcut.v1
+  // Anonymous mode ignores the token field: passes even if provided (even arbitrary), echoing only promptcut.v1
   const r2 = await rawHandshake(port, { protocols: tokenProtocols(randomToken()) });
   r2.sock.destroy();
   assert.equal(r2.status, 101);
@@ -242,7 +252,8 @@ test('A4 anonymous mode: an old client with no subprotocol can connect; one that
   await Promise.all([old.opened, modern.opened]);
   assert.equal(old.ws.protocol, '');
   assert.equal(modern.ws.protocol, 'promptcut.v1');
-  // 前面三次原始握手的连接只断了 TCP、没发关闭帧，服务端未必马上清掉（见报告「风险」），这里只数到至少 2 条
+  // Previous three raw handshake connections only closed TCP without sending close frames;
+  // the server might not clean them up immediately (see report "Risks"), here only check for at least 2
   await waitFor(() => service.describe().connections >= 2, 2000, 'Two connections registered');
   for (const conn of service.describe().conns) assert.deepEqual(conn.principal, { userId: 'anonymous', tenantId: null });
 });
@@ -262,7 +273,7 @@ test('A4 the auth module itself: anonymous mode returns anonymous, and protocolF
 test('A5 after several rejected and several accepted attempts: the raw token cannot be found in any log, describe, or healthz; a rejection logs auth.reject', async (t) => {
   const token = randomToken();
   const wrong = randomToken();
-  // 连同 stdout / stderr 一起收：实现若绕过注入的 log 直接写标准输出，也要查到
+  // Collect together with stdout / stderr: if implementation bypasses injected log to write to stdout, catch it too
   const captured = [];
   const origOut = process.stdout.write.bind(process.stdout);
   const origErr = process.stderr.write.bind(process.stderr);
@@ -290,7 +301,7 @@ test('A5 after several rejected and several accepted attempts: the raw token can
   const describeText = JSON.stringify(service.describe());
   c.close();
   await c.closed;
-  await new Promise((resolve) => setTimeout(resolve, 50)); // 让关闭日志落定
+  await new Promise((resolve) => setTimeout(resolve, 50)); // Let close logs settle
   restore();
 
   const logText = JSON.stringify(logs);
@@ -302,7 +313,7 @@ test('A5 after several rejected and several accepted attempts: the raw token can
   }
   const rejects = logs.filter((l) => l.event === 'auth.reject');
   const reasons = new Set(rejects.map((l) => l.reason));
-  // M6a：原因改用 auth-contract 第 5 节的词表（原来是 bad-token / no-protocol / no-token）
+  // M6a: reason now uses vocabulary from auth-contract Section 5 (originally bad-token / no-protocol / no-token)
   assert.deepEqual([...reasons].sort(), ['bad-format', 'bad-proof', 'no-credential'], `auth.reject: ${JSON.stringify(rejects)}`);
   assert.ok(rejects.every((l) => 'remote' in l), 'auth.reject carries remote');
   assert.equal(rejects.length, 9, 'Each rejection logs one entry');
@@ -310,7 +321,7 @@ test('A5 after several rejected and several accepted attempts: the raw token can
 
 // ------------------------------------------------------------------ A6
 
-/** 起 main.mjs 子进程，收输出；返回 { child, output(), exited } */
+/** Starts main.mjs child process and collects output; returns { child, output(), exited } */
 function runMain(env) {
   const base = { ...process.env };
   for (const k of ['PROMPTCUT_CLUSTER_TOKEN', 'PROMPTCUT_DOCSERVICE_HOST', 'PROMPTCUT_DOCSERVICE_PORT', 'PROMPTCUT_DOCSERVICE_URL']) delete base[k];
@@ -322,7 +333,7 @@ function runMain(env) {
   return { child, output: () => out, exited };
 }
 
-/** 等子进程退出，最多 ms；超时就杀掉并回 { timedOut: true } */
+/** Waits for child process to exit, at most ms; kills on timeout and returns { timedOut: true } */
 async function exitWithin(run, ms) {
   let timer;
   const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve({ timedOut: true }), ms); });
@@ -332,9 +343,11 @@ async function exitWithin(run, ms) {
   return r;
 }
 
-// M6a：失败即关的条件由「非回环没设令牌」（token-required）改为「非回环而凭证存储加载不了」（auth-store，auth-contract 第 10 节）。
-// 「非回环」用 127.0.0.2：main.mjs 按字面只把 127.0.0.1 / ::1 / localhost 当回环，而 127.0.0.2 实际仍在本机回环网卡上，
-// 测试不用真绑 0.0.0.0（Windows 上会弹防火墙）
+// M6a: Fail-closed condition changed from "non-loopback with no token set" (token-required)
+// to "non-loopback unable to load credential store" (auth-store, auth-contract Section 10).
+// "non-loopback" uses 127.0.0.2: main.mjs literally only treats 127.0.0.1 / ::1 / localhost as loopback,
+// while 127.0.0.2 is actually still on local loopback adapter, so test does not need to bind
+// to 0.0.0.0 (which triggers firewall popups on Windows)
 test('A6 main.mjs: non-loopback address with the credential store unavailable → exit code 1, output contains auth-store', { timeout: 20_000 }, async () => {
   const dir = tempDir('pc-a6-');
   const notADir = path.join(dir, 'data-is-a-file');
@@ -367,14 +380,14 @@ test('A6 main.mjs: malformed token → exit code 1, output contains bad-token-fo
   assert.ok(!run.output().includes(bad), 'The raw token appeared in the output');
 });
 
-/** 等子进程打出 listen 行，取端口 */
+/** Waits for child process to print the listen line, extracts port */
 async function listenPort(run, ms = 8000) {
   return waitFor(() => {
     for (const line of run.output().split('\n')) {
       try {
         const j = JSON.parse(line);
         if (j.event === 'listen' && Number.isInteger(j.port)) return j.port;
-      } catch { /* 不是 JSON 行 */ }
+      } catch { /* Not a JSON line */ }
     }
     return null;
   }, ms, `main.mjs prints the listen line (output so far: ${run.output().slice(0, 400)})`);
@@ -399,7 +412,8 @@ test('A6 main.mjs: a valid token set → wrong token 401, correct token 101 and 
   const run = runMain({ PROMPTCUT_DOCSERVICE_HOST: '127.0.0.1', PROMPTCUT_DOCSERVICE_PORT: '0', PROMPTCUT_CLUSTER_TOKEN: token, PROMPTCUT_DOCSERVICE_DATA: tempDir('pc-a6-') });
   t.after(async () => { if (run.child.exitCode === null) { run.child.kill(); await run.exited; } });
   const port = await listenPort(run);
-  // M6a：回环来源不带令牌是本机身份（原来这里断言只带 promptcut.v1 → 401）；改成令牌错 → 401
+  // M6a: Loopback origin without token is local identity (originally asserted only promptcut.v1 → 401);
+  // changed to invalid token → 401
   const r0 = await rawHandshake(port, { protocols: tokenProtocols(randomToken()) });
   r0.sock.destroy();
   assert.equal(r0.status, 401);

@@ -1,12 +1,12 @@
 /**
- * 手机版「凭邀请链接加入项目」(语义 `workflow/editing.md`「局域网里的第二块屏」)。
+ * Mobile app "join a project via invite link" (semantics `workflow/editing.md` "The second screen on the LAN").
  *
- * 扫码进来的页面是主机发的,链接里带着邀请码和文档服务的路径(`src/online/invite.ts` 的 `#invite=…&doc=…`),
- * 所以这一屏**不问服务器地址、不要账号**:查一下这张码对应哪个项目,填个用户名(限定进入的再填密码),就进去了。
+ * The page reached by scanning the code was issued by the host, and the link carries the invite code and the document service path (`#invite=…&doc=…` in `src/online/invite.ts`),
+ * so this screen **does not ask for a server address and needs no account**: it looks up which project this code belongs to, you enter a username (and a password if entry is restricted), and you are in.
  *
- * 业务和桌面的 `editor/sync/JoinForm.tsx` 凭邀请链接那一路是同一套(`resolveInvite` → `redeemInvite` → `enterShared`),
- * 共用它的文案与候选拼法,不另造一份;只是画法换成手机的一屏。手填项目名加口令那条路手机上暂不放
- * (扫码是主场景,手填留给电脑)。
+ * The logic is the same as the invite-link path of the desktop `editor/sync/JoinForm.tsx` (`resolveInvite` → `redeemInvite` → `enterShared`),
+ * sharing its wording and candidate assembly instead of creating a second copy; only the rendering is changed to a single phone screen. The path of typing the project name plus a passphrase by hand is not offered on the phone for now
+ * (scanning the code is the main scenario; typing by hand is left to the computer).
  */
 import { useEffect, useRef, useState } from "react";
 import { docBaseOf } from "../online/invite";
@@ -23,7 +23,7 @@ type Phase =
   | { kind: "ok"; projectId: string; name: string; mode: SharedMode }
   | { kind: "dead"; text: string };
 
-/** 用户名的形状和桌面同一条(1～64 个字符、无控制字符、首尾非空格) */
+/** The username shape is the same rule as on desktop (1~64 characters, no control characters, no leading or trailing spaces) */
 const usernameOk = (v: string) => v.length >= 1 && v.length <= 64 && v === v.trim() && !/[\u0000-\u001f\u007f]/.test(v);
 
 export function MobileJoin({ invite, onJoined }: { invite: { code: string; doc: string }; onJoined: () => void }) {
@@ -35,7 +35,7 @@ export function MobileJoin({ invite, onJoined }: { invite: { code: string; doc: 
   const [msg, setMsg] = useState("");
   const started = useRef(false);
 
-  // 查这张码对应哪个项目(不扣次数)。只查一次
+  // Look up which project this code belongs to (does not use up a redemption). Look up only once
   useEffect(() => {
     if (started.current) return;
     started.current = true;
@@ -72,7 +72,7 @@ export function MobileJoin({ invite, onJoined }: { invite: { code: string; doc: 
         setMsg(status === 401 ? JOIN_TEXT.kicked : JOIN_TEXT.unreachable);
         return;
       }
-      // 进去之前先换一份空项目当起点:内容以文档服务为准(同桌面)
+      // Before entering, swap in an empty project as the starting point: the content is whatever the document service has (same as desktop)
       newProject(tr("Untitled"));
       const candidate = hostedCandidate(base, red);
       const cred = red.mode === "free" && red.key

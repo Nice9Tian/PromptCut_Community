@@ -1,24 +1,27 @@
 /**
- * 界面那一端(ui)怎么够到预渲染进程。
+ * How the UI side (ui) reaches the prerender process.
  *
- * 状态由 vite-plugin-prerender 写入(它负责拉起、看护预渲染进程),其余插件只读:
- *   - vite-plugin-ai 的服务端工具(see_frames / get_gif / bake_card / inspect_card_dom)用 prerenderPost
- *     直接问预渲染 —— 不经过编辑器页面,也就不占编辑器那个源的浏览器连接;
- *   - 老地址(/api/vision/*、/api/ai/visual、/api/cards/dom)用 proxyToPrerender 原样转过去,
- *     给还没改成直连的调用方兜底。编辑器页面里挂得久的请求都已经改成直连预渲染的源了,
- *     转发只是兜底,别把它当成主路。
+ * State is written by vite-plugin-prerender (responsible for launching and supervising the prerender
+ * process); other plugins are read-only:
+ *   - Server-side tools in vite-plugin-ai (see_frames / get_gif / bake_card / inspect_card_dom) use
+ *     prerenderPost to query prerender directly: bypassing the editor page, thus avoiding occupying
+ *     browser connections to the editor origin;
+ *   - Legacy endpoints (/api/vision/*, /api/ai/visual, /api/cards/dom) use proxyToPrerender to forward
+ *     as-is, serving as a fallback for callers not yet switched to direct connections. Long-hanging
+ *     requests in the editor page have already switched to connect directly to the prerender origin;
+ *     forwarding is only a fallback, do not treat it as the main path.
  */
 import http from "node:http";
 import { tr } from "./i18n.mjs";
 
 const state = { url: null, ready: false, error: null, restarts: 0 };
 
-/** vite-plugin-prerender 用:更新状态 */
+/** Used by vite-plugin-prerender: updates state */
 export function setPrerender(patch) {
   Object.assign(state, patch);
 }
 
-/** 此刻的状态快照 */
+/** State snapshot at the current moment */
 export function prerenderState() {
   return { ...state };
 }
@@ -38,7 +41,7 @@ function fetchFailure(pathname, error) {
   });
 }
 
-/** 等预渲染就绪。起进程 + Vite 就绪一般一两秒;首次要预构建依赖,给到 60 秒 */
+/** Waits for prerender ready. Starting process + Vite ready takes 1-2s; allows up to 60s for initial prebuild */
 export async function whenPrerenderReady(timeoutMs = 60000) {
   const t0 = Date.now();
   while (!state.ready) {
@@ -51,8 +54,9 @@ export async function whenPrerenderReady(timeoutMs = 60000) {
 }
 
 /**
- * 向预渲染 POST 一个 JSON,拿回 JSON。
- * `signal`:调用方不要了(MCP 桥超时、Agent 取消)就拨它 —— 连接一断,预渲染那边会把还在排队的活摘掉。
+ * POSTs a JSON to prerender and gets JSON back.
+ * `signal`: trigger when caller aborts (MCP bridge timeout, Agent cancellation): once connection
+ * breaks, prerender removes queued work.
  */
 export async function prerenderPost(pathname, body, { timeoutMs = 180000, signal } = {}) {
   const base = await whenPrerenderReady();
@@ -81,13 +85,13 @@ export async function prerenderPost(pathname, body, { timeoutMs = 180000, signal
 }
 
 /**
- * 把这个请求原样转给预渲染(方法、路径、头、body、回应都照搬)。
- * 用 originalUrl:connect 按前缀挂中间件时会把 req.url 的前缀剥掉。
+ * Forwards this request to prerender as-is (mirroring method, path, headers, body, and response).
+ * Uses originalUrl: connect strips the req.url prefix when mounting middleware by prefix.
  *
- * `unavailable`:够不着预渲染进程(没就绪、连不上)时回什么。缺省是通用的 503 / 502
- * `PRERENDER_UNAVAILABLE`;只服务 Agent 的路由(`/api/cards/layout`)传
- * `{ status: 503, code: "NO_AGENT_LANE" }` —— 编辑器进程没有 Agent lane,转不过去就如实说,
- * 不在编辑器这一侧自己渲(T1a 审查 #14)。
+ * `unavailable`: what to return when unreachable (not ready, connection failed). Default is generic
+ * 503 / 502 `PRERENDER_UNAVAILABLE`; routes serving only Agents (`/api/cards/layout`) pass
+ * `{ status: 503, code: "NO_AGENT_LANE" }`: the editor process has no Agent lane; if forwarding
+ * fails, report so truthfully without rendering on the editor side (T1a review #14).
  */
 export function proxyToPrerender(req, res, { unavailable = null, waitMs = 30000 } = {}) {
   const fail = (status, error) => {
@@ -100,13 +104,13 @@ export function proxyToPrerender(req, res, { unavailable = null, waitMs = 30000 
   whenPrerenderReady(waitMs).then((base) => {
     const target = new URL(req.originalUrl || req.url, base);
     const headers = { ...req.headers, host: target.host };
-    // 同源请求本来就不带 Origin;带了也是编辑器那一端的,预渲染按放行名单认它
+    // Same-origin requests omit Origin; if present, it is from editor side, and prerender accepts via allowlist
     const up = http.request(target, { method: req.method, headers }, (r) => {
       res.writeHead(r.statusCode || 502, r.headers);
       r.pipe(res);
     });
     up.on("error", (e) => fail(502, tr("Failed to connect to the prerender service: the connection was closed while forwarding {0} ({1}). Please retry later.", target.pathname, e.code || e.message)));
-    // 用户那边断了就别让预渲染接着干:断开会传过去,预渲染按断开摘掉排队的活
+    // If user disconnects, stop prerender: disconnect is forwarded and prerender removes queued work
     res.on("close", () => { if (!res.writableEnded) up.destroy(); });
     req.pipe(up);
   }, (e) => fail(503, tr("Failed to connect to the prerender service: {0}", e.message || e)));

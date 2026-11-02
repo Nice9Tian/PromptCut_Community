@@ -1,19 +1,28 @@
 /**
- * 这一版产品带什么：协作面板能选哪些位置、有没有托管端、账号云端在哪。
+ * What this product edition includes: which locations the collaboration panel can select, whether
+ * there is a hosted side, and where the account cloud is located.
  *
- * 声明是一份配置文件，公开版和闭源版各一份，内容不同：仓库根的 `product.config.json` 是公开版的；
- * `<云端目录>/product.config.json` 在的话用它（云端目录与 `server/docservice/extensions.mjs` 同一约定）。
- * 公开树里不写任何托管地址（`server/test/community-boundary.test.mjs` 的 G6），地址只在闭源那一份里。
+ * The declaration is a configuration file, one each for public edition and commercial edition, with
+ * different content: `product.config.json` at repo root is for the public edition; if
+ * `<cloud directory>/product.config.json` exists, use it (cloud directory follows the same
+ * convention as `server/docservice/extensions.mjs`). No hosted addresses are written in the public
+ * tree (G6 of `server/test/community-boundary.test.mjs`); addresses reside only in the commercial
+ * edition copy.
  *
- * 两条路取到同一份：
- * - 浏览器：`server/vite-plugin-cloud-seams.ts` 在构建时把声明写进 `__PROMPTCUT_PRODUCT__`；
- * - Node：这里同步读文件。本模块要让浏览器也能引（`hosted-default.mjs` 不许静态引 node: 内置模块），
- *   所以内置模块经 `process.getBuiltinModule` 取，浏览器里没有 `process`，这条路自然跳过。
+ * Two ways to obtain the same file:
+ * - Browser: `server/vite-plugin-cloud-seams.ts` writes declaration into `__PROMPTCUT_PRODUCT__` at
+ *   build time;
+ * - Node: reads file synchronously here. This module must also be importable by browsers
+ *   (`hosted-default.mjs` must not statically import node: built-in modules), so built-in modules are
+ *   fetched via `process.getBuiltinModule`; without `process` in browsers, this path is skipped
+ *   naturally.
  *
- * 两份都读不到（只带了部分文件的部署）就按「什么都没有」算，和公开版的声明一样。
+ * If neither can be read (deployments carrying only partial files), it is treated as "nothing present",
+ * identical to the public edition declaration.
  *
- * 守门例外声明：本文件登记在 `server/test/community-ownership.mjs` 的 `LOADER_WHITELIST` 里，
- * 它只读云端目录下这一份声明，不加载代码。
+ * Gatekeeper exception declaration: this file is registered in `LOADER_WHITELIST` of
+ * `server/test/community-ownership.mjs`; it only reads this declaration under the cloud directory
+ * without loading code.
  */
 /* global __PROMPTCUT_PRODUCT__ */
 

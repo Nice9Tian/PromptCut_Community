@@ -1,14 +1,21 @@
 /**
- * C10a 能力闸：只有一个舞台时不经后台舞台追活渲、不起后台舞台的活（`docs/plan/c10a-contract.md` 第 8 节「不追活渲」「不开后台舞台」，
- * 第 12 节「能力闸」；2026-10-22 起闸门从撤销的旧档位改成「只有一个舞台」——舞台闸门第一级、最低一档、握手失败退回）。
- * 跑：node --experimental-test-module-mocks --test src/editor/c10a-swap-gate.test.mjs
+ * C10a capability gate: when there is only one stage, do not catch up live render via background
+ * stage and do not start background stage tasks (`docs/plan/c10a-contract.md` section 8 "Do not
+ * catch up live render", "Do not open background stage", section 12 "Capability gate"; starting
+ * 2026-10-22, gate is changed from revoked old tiers to "only one stage": stage gate level 1, lowest
+ * tier, fallback on handshake failure).
+ * Run: node --experimental-test-module-mocks --test src/editor/c10a-swap-gate.test.mjs
  *
- * 做法照 `stageSwap.test.mjs`：store、舞台桥、后台任务队列、分派表、身份表、快照投递都换成假的，
- * 造一个在双舞台下一定会走「后台补跑再互换」的场面（判重、`vtOk = false`），再把「只有一个舞台」打开：
- * `runSettleSwap` / `runPlayingSwap` 必须什么都不做 —— 不排后台任务（`runBackJob`）、不对后台舞台灌项目或 `render`、不互换。
+ * Follows `stageSwap.test.mjs`: store, stage bridge, background task queue, dispatch table, identity
+ * table, and snapshot delivery are all mocked to create a scenario that is guaranteed to take
+ * "background catch-up run then swap" under dual stage (classify as heavy, `vtOk = false`), then
+ * enable "only one stage":
+ * `runSettleSwap` / `runPlayingSwap` must do nothing: do not schedule background tasks (`runBackJob`),
+ * do not feed project or `render` to background stage, do not swap.
  *
- * 闸从哪来：假设 K3（集成对账后），`stageSwap.ts` 问宿主 `SwapHost.singleStage()`（`singleStageSwapHost` 补上）。
- * `src/online/onlineTier.ts` 不在时整组 skip。
+ * Where the gate comes from: hypothesis K3 (after integration reconciliation), `stageSwap.ts` asks
+ * host `SwapHost.singleStage()` (filled by `singleStageSwapHost`).
+ * Skip entire suite when `src/online/onlineTier.ts` is absent.
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import { test, mock, beforeEach } from "node:test";
@@ -99,7 +106,7 @@ beforeEach(() => {
   identityKeys = {};
   front = fakeStage("A");
   back = fakeStage("B");
-  // 集成对账（K3）：单舞台闸在 SwapHost.singleStage() 上
+  // Integration reconciliation (K3): single-stage gate is on SwapHost.singleStage()
   swap.setSwapHost(singleStageSwapHost({
     swapRoles() { log.push(["swapRoles"]); [front, back] = [back, front]; return { front, back }; },
     proxy: () => true,
@@ -107,7 +114,7 @@ beforeEach(() => {
   }));
 });
 
-/** 双舞台下这两个场面一定会走补跑（与 stageSwap.test.mjs 的「暂停态互换」「播放态互换」同一组数据） */
+/** Under dual stage, these two scenarios will definitely trigger catch-up run (same dataset as "paused-state swap" and "playing-state swap" in stageSwap.test.mjs) */
 const TOUCHES_BACK = (e) => e[0] === "runBackJob" || e[0] === "swapRoles" || (e[0] === "pushProject" && e[1] === "back") || (e[0] === "B" && (e[1] === "render" || e[1] === "setMediaT"));
 
 it("C10A-GT-05 After a pause, no catch-up to live render: when heavy cards and cards with vtOk = false are present and there is only one stage, runSettleSwap does nothing", async () => {

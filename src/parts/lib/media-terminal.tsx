@@ -3,9 +3,11 @@ import "../../cards/native/hud.css";
 import { fitOr } from "../fit";
 
 /**
- * 3D打字机终端:展示一段代码或命令逐字敲出的过程。
- * 从 terminal-3d 拆出,基于时间的 t 参数直接计算字符数,而不是内部 rAF。
- * 进场:按给定的 cps 逐字打字。
+ * 3D typewriter terminal: displays the process of typing out a piece of code or command character
+ * by character.
+ * Extracted from terminal-3d, directly calculates character count based on time parameter t rather
+ * than internal rAF.
+ * Entrance: types character by character according to the given cps.
  */
 interface Params {
   file: string;

@@ -1,8 +1,10 @@
 /**
- * 账号模式节点工具集的公开侧转接入口。
+ * Public forwarding entrypoint for the account mode node toolset.
  *
- * 云端实现已迁至 `cloud/agent/account-tools.mjs`，通过 `./extensions.mjs` 在调用时惰性挂载；
- * 模块求值阶段不触发任何云端扩展加载，避免循环依赖。社区版（无 `cloud/` 目录）不加载任何 `server/account/` 或 `cloud/` 模块。
+ * Cloud implementation has moved to `cloud/agent/account-tools.mjs`, lazily mounted on call via
+ * `./extensions.mjs`; module evaluation phase does not trigger any cloud extension loading,
+ * avoiding circular dependencies. Community edition (without `cloud/` directory) does not load any
+ * `server/account/` or `cloud/` modules.
  */
 import { findAgentExtension } from './extensions.mjs';
 

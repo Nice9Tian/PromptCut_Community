@@ -1,25 +1,39 @@
 /**
- * 预渲染产物推拉（契约 `docs/plan/artifact-transfer-contract.md` 第 3～6 节，第 7 节用例 T1～T8）。
- * 跑：node --experimental-test-module-mocks --test server/test/artifact-transfer.test.mjs
+ * Prerender output push and pull (contract `docs/plan/artifact-transfer-contract.md` Sections 3-6,
+ * Section 7 test cases T1-T8).
+ * Run: node --experimental-test-module-mocks --test server/test/artifact-transfer.test.mjs
  *
- * 只照契约写，不看实现。
+ * Written strictly against the contract, without looking at the implementation.
  *
- * 约定：
- *   - 两个临时帧库 A、B，各一个真的 `FramePipeline`：注入 `environment`（不探测）、`dataRoot` 指向临时目录；
- *     `server/bakery/index.mjs` 整个换成假的（和 `card-lock-pipeline.test.mjs` 一样用 `mock.module`），不起 Chrome。
- *     只用它的帧库（`snapshots()`）、快照写入（`commitSnapshots`）、就绪索引（`ready`）和流存储（`streamProducer()`）。
- *     快照用例 `interactive: false`；流用例 `interactive: true`（生产者只在这种实例里有），并手动 `attachRoute()`、
- *     把 `encoderName` 定成一个名字（不探测编码器、不开 worker）。
- *   - 一个共享的素材服务（`fake-asset-service.mjs`，端口 0，memory 实现），客户端用 `server/asset-store/client.mjs`。
- *   - A 的产物直接用写入函数造：快照走 `commitSnapshots`；流按 `frame-stream.mjs` 的格式手工写
- *     `streams/<streamKey>/stream.json` + `init-<sha16>.mp4` + `<n>-<sha16>.m4s`（字节是造的，不是真 fMP4）。
- *   - 任务（`TaskView`）按 `render-queue-contract.md` B.4 / E.5 / F.1 的形状造：结果键 = `resultKeyOf(input.contentKey, requires.envFingerprint)`；
- *     任务的锁指纹（`requires.envFingerprint`）故意与两个 `FramePipeline` 自己的环境指纹不同，确认落盘键取的是任务的指纹。
- *   - `result` 经 JSON 往返之后再交给 `applyResult`（模拟随 `task.done` 过线）。
- *   - 契约第 4 节说 `collect*`「同时返回一个 `readBlob`」，没定形状：这里两种都认 ——
- *     回 `{ result, readBlob }`，或回清单本身、`readBlob` 挂在它上面（见 `unpack`）。
+ * Conventions:
+ *   - Two temporary frame stores A and B, each with a real `FramePipeline`: injects `environment`
+ *     (without probing), `dataRoot` points to temporary directory; `server/bakery/index.mjs`
+ *     replaced entirely with a mock (using `mock.module` just like
+ *     `card-lock-pipeline.test.mjs`), does not launch Chrome. Only uses its frame store
+ *     (`snapshots()`), snapshot writing (`commitSnapshots`), ready index (`ready`), and stream
+ *     storage (`streamProducer()`). Snapshot test cases use `interactive: false`; stream test cases
+ *     use `interactive: true` (producers exist only in this kind of instance), manually call
+ *     `attachRoute()`, and set `encoderName` to a fixed name (does not probe encoders, does not
+ *     spawn workers).
+ *   - A shared asset service (`fake-asset-service.mjs`, port 0, memory implementation), client uses
+ *     `server/asset-store/client.mjs`.
+ *   - A's outputs are created directly using write functions: snapshots go through
+ *     `commitSnapshots`; streams are handwritten in `frame-stream.mjs` format as
+ *     `streams/<streamKey>/stream.json` + `init-<sha16>.mp4` + `<n>-<sha16>.m4s` (bytes are
+ *     fabricated, not real fMP4).
+ *   - Tasks (`TaskView`) are created in the shape of `render-queue-contract.md` B.4 / E.5 / F.1:
+ *     result key = `resultKeyOf(input.contentKey, requires.envFingerprint)`; the task's lock
+ *     fingerprint (`requires.envFingerprint`) is intentionally different from the two
+ *     `FramePipeline` instances' own environment fingerprints, verifying that the on-disk key uses
+ *     the task's fingerprint.
+ *   - `result` is passed to `applyResult` after a JSON round-trip (simulating crossing the wire
+ *     with `task.done`).
+ *   - Section 4 of the contract states that `collect*` "also returns a `readBlob`" without defining
+ *     the shape: both forms are accepted here: returning `{ result, readBlob }`, or returning the
+ *     manifest itself with `readBlob` attached to it (see `unpack`).
  *
- * 实现模块（`server/artifact-transfer.mjs`、`server/asset-store/client.mjs`）还不存在时每条用例各自失败、报原因。
+ * When implementation modules (`server/artifact-transfer.mjs`, `server/asset-store/client.mjs`) do
+ * not exist yet, each test case fails individually and reports the reason.
  */
 import { test, mock, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -59,7 +73,7 @@ function newClient(base) {
 const harness = createAssetHarness();
 after(() => harness.cleanup());
 
-/* ------------------------------------------------------------------ 常量与小工具 */
+/* ------------------------------------------------------------------ Constants and helpers */
 
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 const sha16 = (buf) => sha256(buf).slice(0, 16);
@@ -71,7 +85,10 @@ const OWN_ENV = describeEnvironment({
   renderer: 'ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)',
   vendor: 'Google Inc. (Google)', chromeVersion: 'HeadlessChrome/138.0.7204.49',
 });
-/** 任务的锁指纹：一台装 NVIDIA 的机器（和两个 FramePipeline 自己的指纹都不同） */
+/**
+ * Task lock fingerprint: a machine with NVIDIA installed (different from both FramePipeline
+ * instances' own fingerprints)
+ */
 const TASK_FP = describeEnvironment({
   platform: 'Win32', renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 (0x00002504) Direct3D11 vs_5_0 ps_5_0, D3D11)', vendor: 'Google Inc. (NVIDIA)',
   chromeVersion: 'HeadlessChrome/138.0.7204.49',
@@ -96,7 +113,7 @@ async function withRoots(n, fn) {
   }
 }
 
-/** 快照任务（B.4 / E.5 / E.9 / F.1 的形状） */
+/** Snapshot task (shape of B.4 / E.5 / E.9 / F.1) */
 function snapshotTask({ tier = 'shared', contentKey, entryKey = null, from, to, clipId = 'clip-x', fp = TASK_FP }) {
   const inputKey = tier === 'local' ? `${entryKey}/${contentKey}` : contentKey;
   const resultKey = resultKeyOf(inputKey, fp);
@@ -110,7 +127,10 @@ function snapshotTask({ tier = 'shared', contentKey, entryKey = null, from, to, 
     priority: 10, state: 'claimed', version: 1, attempts: 1,
   };
 }
-/** 共享档的落盘键 = 结果键；本地档 = resultKeyOf(去掉 entryKey 前缀的内容键, 任务的锁指纹)（E.9） */
+/**
+ * On-disk key for shared tier = result key; local tier = resultKeyOf(content key stripped of
+ * entryKey prefix, task lock fingerprint) (E.9)
+ */
 const dirKeyOf = (task) => (task.tier === 'local' ? resultKeyOf(task.input.contentKey.slice(task.input.entryKey.length + 1), task.requires.envFingerprint) : task.resultKey);
 
 function streamTask({ streamKey, contentKey, from, to, clipId = 'clip-s', fp = TASK_FP }) {
@@ -129,7 +149,7 @@ const htmlOf = (n, tag = 'A') => `<div data-pc-scene="" data-f="${n}">${tag} fra
 const BIG = 17;
 const bigHtml = () => `<div data-pc-scene="">${'x'.repeat(310 * 1024)}</div>`;
 
-/** A 的共享档 / 本地档写 `frames` 这些帧（其中 BIG 那一帧超 300 KB） */
+/** Writes the `frames` frames into A's shared tier / local tier (where the BIG frame exceeds 300 KB) */
 async function seedSnapshots(pipeline, task, frames, { tag = 'A', big = true, capabilities } = {}) {
   const caps = capabilities ?? (task.tier === 'local' ? LOCAL_CAPS : SHARED_CAPS);
   const items = frames.map((n) => ({ localFrame: n, html: big && n === BIG ? bigHtml() : htmlOf(n, tag) }));
@@ -138,7 +158,10 @@ async function seedSnapshots(pipeline, task, frames, { tag = 'A', big = true, ca
   });
 }
 
-/** `collect*` 的回值拆成 { result, readBlob }；result 做一次 JSON 往返（函数属性丢掉），就是过线的样子 */
+/**
+ * Unpacks the return value of `collect*` into { result, readBlob }; result undergoes a JSON
+ * round-trip (dropping function properties) to reflect what crosses the wire
+ */
 function unpack(out) {
   assert.ok(out && typeof out === 'object', 'collect* must return an object');
   const direct = out.v !== undefined || out.kind !== undefined;
@@ -163,7 +186,7 @@ const expectedFrameList = async (dir, frames) => Promise.all(frames.map(async (n
 }));
 const range = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
 
-/** 记 get 次数的客户端包装 */
+/** Client wrapper that counts get calls */
 function countingClient(client) {
   const gets = [];
   const puts = [];
@@ -175,7 +198,10 @@ function countingClient(client) {
   };
 }
 
-/** B 上挂一个假的 entry 和一个页面会话：用来看 adoptResult 之后 claimSessions 发没发 layer */
+/**
+ * Attaches a mock entry and a page session to B: used to check whether claimSessions emitted a layer
+ * after adoptResult
+ */
 function watchEntry(pipeline, { entryKey, controls }) {
   const entry = { key: entryKey, project: { fps: 30 }, cardPlan: controls };
   pipeline.entries.set(entryKey, entry);
@@ -230,7 +256,7 @@ test('T1 A\'s shared tier writes 60 frames (including 1 frame over 300 KB): the 
       assert.equal(await srv.stores.px.stat(h), null, `The chunk of frame ${n} is not in px`);
       assert.equal(await srv.stores.media.stat(h), null, `The chunk of frame ${n} is not in media`);
     }
-    // 再推一次：全部跳过
+    // Push again: skip all
     const again = await T().pushResult(client, raw, readBlob);
     assert.deepEqual([again.uploaded, again.skipped], [0, distinct], 'Chunks that already exist are not uploaded again');
   });
@@ -272,7 +298,7 @@ test('T2 B applyResult: controls-html/<dirKey>/ is byte-for-byte identical to A\
     const layer = watch.layers().find((m) => m.clipId === 'clip-x');
     assert.ok(layer, `The session that uses this key received layer: ${JSON.stringify(watch.seen)}`);
     assert.deepEqual({ kind: layer.kind, key: layer.key, ranges: layer.ranges }, { kind: 'html', key: result.dirKey, ranges: ib.frames });
-    // A 没被动过
+    // A was not touched
     assert.equal(staged(A, 'html', result.dirKey), null, 'A\'s index is unaffected by B\'s fetch');
   });
 });
@@ -333,7 +359,7 @@ test('T4 B already has some frames: download only the missing ones (count get ca
     const client = newClient(srv.base);
     const task = snapshotTask({ contentKey: sha256('card-T4'), from: 0, to: 59 });
     await seedSnapshots(A, task, range(0, 59));
-    // B 先有 0～29（内容和 A 的不同：能看出有没有被覆盖）
+    // B initially has 0-29 (contents differ from A: shows whether they were overwritten)
     await seedSnapshots(B, task, range(0, 29), { tag: 'B', big: false });
     const dirB = snapshotDir(rootB, { tier: 'shared', key: task.resultKey });
     const before = await filesOf(dirB);
@@ -358,7 +384,7 @@ test('T4 B already has some frames: download only the missing ones (count get ca
     assert.deepEqual(idx.frames, [[0, 59]], 'B\'s own frame 17 is within the limit; all pulled frames made it into the index');
     assert.deepEqual(staged(B, 'html', task.resultKey)?.ranges, [[0, 59]]);
 
-    // 再 apply 一次：一个都不下载
+    // Apply again: none are downloaded
     const again = countingClient(client);
     const out2 = await T().applyResult(B, again, wire(result));
     assert.equal(again.gets.length, 0, 'everything is already present: no download');
@@ -372,8 +398,9 @@ const A_ENCODER = 'h264_nvenc';
 const B_ENCODER = 'libx264';
 
 /**
- * 在 root 下按 `frame-stream.mjs` 的格式手工造一条流：`segments` 这些分段用 init1，`extra` 这些分段用 init2
- * （给「只列本段用到的 init」用）。回 { manifest, files: { name: Buffer } }。
+ * Manually constructs a stream under root following the `frame-stream.mjs` format: segments in
+ * `segments` use init1, segments in `extra` use init2 (for "only list init used by this segment").
+ * Returns { manifest, files: { name: Buffer } }.
  */
 async function writeStreamFixture(root, { streamKey, segments, extra = [], encoder = A_ENCODER, seed = 1 }) {
   const dir = path.join(root, 'streams', streamKey);
@@ -385,7 +412,8 @@ async function writeStreamFixture(root, { streamKey, segments, extra = [], encod
   const id1 = sha16(init1), id2 = sha16(init2);
   const files = { [`init-${id1}.mp4`]: init1 };
   const manifest = {
-    // `originFrame`:这条流自己的第一帧(分段从它起数);清单不带它的结果别处不收(`streamAdoption`)
+    // `originFrame`: this stream's own first frame (segment counting starts from it); results without
+    // it in the manifest are not accepted elsewhere (`streamAdoption`)
     version: 1, streamKey, kind: 'card', plane: 'local', clipIds: ['clip-s'], fps: 30, originFrame: 45, bound, offset: { x: 32, y: 32 }, tight,
     inits: { [id1]: { codec: 'avc1.64001f', width: 48, height: 96, timescale: 15360, rect: tight, encoder, bytes: init1.length } },
     segments: {},
@@ -415,7 +443,7 @@ function producerOf(pipeline) {
   const p = typeof pipeline.streams === 'function' ? pipeline.streams() : pipeline.streamProducer();
   assert.ok(p, 'cannot get the stream producer (streams() / streamProducer())');
   p.attachRoute();
-  p.encoderName = B_ENCODER; // 本机编码器名与 A 不同（勘察结论第 2 条的情形）；不探测
+  p.encoderName = B_ENCODER; // Local encoder name differs from A (scenario in survey conclusion Item 2); does not probe
   return p;
 }
 
@@ -455,7 +483,7 @@ test('T5 stream: collectStreamResult, pushResult, B adoptSegments: segment files
       assert.equal(await srv.stores.snap.stat(h), null, 'stream chunks do not go into snap');
     }
 
-    // B：这条流在 B 上没有状态
+    // B: this stream has no state on B
     const B = make(rootB, { interactive: true });
     const prodB = producerOf(B);
     assert.equal(prodB.streams.get(streamKey), undefined, 'fixture: B has no state for this stream');
@@ -492,7 +520,8 @@ test('T5 stream: collectStreamResult, pushResult, B adoptSegments: segment files
     assert.ok(hit, `ready has kind: 'stream' attached: ${JSON.stringify(B.ready.stagedKeys())}`);
     assert.deepEqual(hit.ranges, [[0, 3]], 'the unit is the segment number');
 
-    // C：这条流在 C 上已经有状态，第 0 段是 C 自己编的、不 stale：跳过、不覆盖；其余拉来；合进同一个 state
+    // C: this stream already has state on C; segment 0 was encoded by C itself and is not stale: skip,
+    // do not overwrite; pull the rest; merge into the same state
     const C = make(rootC, { interactive: true });
     const prodC = producerOf(C);
     const own = await writeStreamFixture(rootC, { streamKey, segments: [0], encoder: B_ENCODER, seed: 99 });
@@ -532,7 +561,7 @@ test('T6 createAssetSink: has is true when the local frame store covers the full
     const client = newClient(srv.base);
     const task = snapshotTask({ contentKey: sha256('card-T6'), from: 0, to: 59 });
     await seedSnapshots(A, task, range(0, 59));
-    // A2 缺第 30 帧
+    // A2 is missing frame 30
     await seedSnapshots(A2, task, [...range(0, 29), ...range(31, 59)]);
     const ref = (t) => ({ resultKey: t.resultKey, kind: t.kind, tier: t.tier, range: t.range, input: t.input, requires: t.requires });
     const meta = (t) => ({ taskId: t.id, nodeId: 'node-1', token: 'lease-token' });
@@ -553,13 +582,15 @@ test('T6 createAssetSink: has is true when the local frame store covers the full
     const r2 = await sink2.put({ ...ref(task), artifacts: null, meta: meta(task) });
     assert.equal(r2.complete, false, 'one frame missing: put returns complete: false');
 
-    // 块推失败：complete: false
+    // Chunk push failed: complete: false
     const broken = { ...client, put: async () => { throw Object.assign(new Error('push failed'), { status: 503 }); }, has: client.has, get: client.get };
     const other = snapshotTask({ contentKey: sha256('card-T6'), from: 0, to: 59, fp: OWN_ENV.fingerprint });
     await seedSnapshots(A, other, range(0, 59), { tag: 'A-own' });
     const r3 = await T().createAssetSink({ pipeline: A, client: broken }).put({ ...ref(other), artifacts: null, meta: meta(other) });
     assert.equal(r3.complete, false, 'push failed: put returns complete: false');
-    // HR26（`docs/plan/hosted-render-contract.md` 第 6 节）：素材服务回 507 service-quota（渲染服务的产物到了容量上限）——不回 incomplete（那是可重试的），抛不可重试的错
+    // HR26 (`docs/plan/hosted-render-contract.md` Section 6): asset service returns 507 service-quota
+    // (render service artifacts reached capacity limit): does not return incomplete (which is
+    // retryable), throws a non-retryable error
     const overQuota = { ...client, put: async () => { throw Object.assign(new Error('asset 507'), { status: 507, body: { error: 'service-quota' } }); }, has: client.has, get: client.get };
     await assert.rejects(
       () => T().createAssetSink({ pipeline: A, client: overQuota }).put({ ...ref(other), artifacts: null, meta: meta(other) }),
@@ -567,7 +598,7 @@ test('T6 createAssetSink: has is true when the local frame store covers the full
       'capacity limit reached: throws service-quota, not retryable',
     );
 
-    // 流：has / put
+    // Stream: has / put
     const contentKey = sha256('stream-T6');
     const streamKey = resultKeyOf(contentKey, TASK_FP);
     await writeStreamFixture(rootS, { streamKey, segments: [0, 1, 2] });
@@ -592,7 +623,8 @@ test('T7 result exceeds 256 KiB (artificially enlarged): error, no truncation', 
     const A = make(rootA);
     const srv = await harness.serve();
     const client = newClient(srv.base);
-    // 每帧一项约 80 字节：3600 帧的清单约 290 KB。帧内容相同（推送时只有一个块，省时间）
+    // Each frame entry is about 80 bytes: a manifest for 3600 frames is about 290 KB. Frame contents are
+    // identical (only one chunk during push, saving time)
     const N = 3600;
     const task = snapshotTask({ contentKey: sha256('card-T7'), from: 0, to: N - 1 });
     await A.snapshots().commitSnapshots({ tier: 'shared', key: task.resultKey, clipId: 'clip-x', capabilities: SHARED_CAPS,
@@ -607,7 +639,7 @@ test('T7 result exceeds 256 KiB (artificially enlarged): error, no truncation', 
       assert.ok(collectError instanceof Error, 'collectSnapshotResult errors');
       assert.doesNotMatch(String(collectError.message), /^cannot load/, collectError.message);
     }
-    // sink 不能把它当成收全了
+    // The sink must not treat it as fully received
     const r = await T().createAssetSink({ pipeline: A, client }).put({ resultKey: task.resultKey, kind: 'snapshot', tier: 'shared', range: task.range, input: task.input, requires: task.requires, artifacts: null, meta: { taskId: task.id, nodeId: 'n', token: 't' } })
       .then((v) => v, (e) => ({ error: e }));
     assert.ok(r.error instanceof Error || r.complete === false, `sink.put must error or return complete: false, never complete: true: ${JSON.stringify(r).slice(0, 200)}`);
@@ -625,7 +657,7 @@ test('T8 applyResult hits a chunk missing from the asset service (404): fails as
     const task = snapshotTask({ contentKey: sha256('card-T8'), from: 0, to: 59 });
     await seedSnapshots(A, task, range(0, 59));
     const { result, readBlob } = unpack(await T().collectSnapshotResult(A, task));
-    // 推的时候漏掉第 40 帧
+    // Omit frame 40 while pushing
     const MISSING = 40;
     await T().pushResult(client, { ...result, frames: result.frames.filter(([n]) => n !== MISSING) }, readBlob);
     const lost = result.frames.find(([n]) => n === MISSING)[1];

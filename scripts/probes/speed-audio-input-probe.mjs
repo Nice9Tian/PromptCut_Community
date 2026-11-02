@@ -1,23 +1,32 @@
 /**
- * 变速的素材段当音频素材效果卡的声音输入(2026-10-23 用户定「放开。」)的导出端到端探针:成片里那几段的主频按倍率变。
+ * End-to-end export probe for speed-changed media clips as audio input to audio media effect cards
+ * (user decision, 2026-10-23: "Allow."): dominant frequency of segments in final video changes with
+ * the speed multiplier.
  *
- *   node scripts/probes/speed-audio-input-probe.mjs --port 6480 [--tree <检出根>] [--out <目录>]
+ *   node scripts/probes/speed-audio-input-probe.mjs --port 6480 [--tree <checkout-root>] [--out <dir>]
  *
- * 素材:20 秒的视频,带一条 440 Hz 正弦声(画面无所谓)。卡:临时写进改动层的音频素材效果卡 `probe-audio-pass`
- * (`kind: "audio"`,把输入 `source` 的采样原样交出去)。项目 8 秒,两种接法各来几段:
+ * Asset: 20-second video with a 440 Hz sine tone (visual does not matter). Card: audio media effect
+ * card `probe-audio-pass` temporarily written into overlay layer (`kind: "audio"`, passing samples
+ * from input `source` through as-is). 8-second project, several segments for each of the two
+ * connection approaches:
  *
- *   主序列(卡挂在片段自己身上,和 apply_card 之后一样:片段带 cardId / mediaId / nodeId,节点输入是这段自己的素材)
- *     A 0～2 秒 1×    从素材第 1 秒起      期望 440 Hz
- *     B 2～4 秒 2×    从第 0.5 秒起         期望 880 Hz
- *     C 4～6 秒 0.5×  从第 3 秒起           期望 220 Hz
- *   主序列 V 6～8 秒 2× 的普通视频段(原声不出);另一条序列上 6～8 秒一段卡片段,节点输入接 `@clip/V/source`
- *     D                                      期望 880 Hz
+ *   Main track (card attached directly to the clip itself, same as after apply_card: clip carries
+ *   cardId / mediaId / nodeId, node input is this clip's own media)
+ *     A 0-2 s 1×    from asset second 1      expected 440 Hz
+ *     B 2-4 s 2×    from second 0.5          expected 880 Hz
+ *     C 4-6 s 0.5×  from second 3            expected 220 Hz
+ *   Main track V 6-8 s 2× standard video clip (original audio muted); a card clip at 6-8 s on another
+ *   track, node input connected to `@clip/V/source`
+ *     D                                      expected 880 Hz
  *
- * 只导缺省的 Chrome 离线混音一路:`--audio ffmpeg` 那条老路明确拒绝音频素材效果卡(`mux-audio.mjs` 的 buildAudioPlan 注释),
- * 1 倍时也一样,与变速无关。核对:各段中间 1.4 秒有声(高于 −30 dBFS)、主频(过零点与 DFT 峰)在期望值 ±2% 内。
- * 输出 JSON;任何一条不过以非零退出。素材、数据、改动层都建在 `--out` 下;开发服务器用完收掉,不写端口文件。
+ * Only exports the default Chrome offline mix lane: the legacy `--audio ffmpeg` path explicitly
+ * rejects audio media effect cards (`buildAudioPlan` comment in `mux-audio.mjs`), same at 1×,
+ * unrelated to speed changes. Verification: middle 1.4 s of each segment has audio (above -30 dBFS),
+ * dominant frequency (zero crossings and DFT peak) within ±2% of expected value. Outputs JSON; exits
+ * with non-zero if any item fails. Assets, data, and overlay layer are all created under `--out`; dev
+ * server is torn down after use, without writing port files.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
@@ -144,14 +153,14 @@ function loudness(pcm, a, b) {
   for (const v of x) sum += v * v;
   return 10 * Math.log10(sum / x.length + 1e-20);
 }
-/** 过零点数 / 2 / 时长(clip-speed-export-probe.mjs 同一个做法) */
+/** Zero-crossing count / 2 / duration (same approach as clip-speed-export-probe.mjs) */
 function pitch(pcm, a, b) {
   const x = win(pcm, a, b);
   let n = 0;
   for (let i = 1; i < x.length; i++) if ((x[i - 1] < 0) !== (x[i] < 0)) n++;
   return n / 2 / ((b - a) || 1);
 }
-/** 单频 DFT 找峰(100～2000 Hz,1 Hz 一档),和过零点互相印证 */
+/** Single-frequency DFT peak finding (100~2000 Hz, 1 Hz per step), cross-validated with zero-crossings */
 function peakHz(pcm, a, b) {
   const x = win(pcm, a, b);
   let best = 0, bestHz = 0;

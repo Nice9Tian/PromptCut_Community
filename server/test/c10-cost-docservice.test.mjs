@@ -1,10 +1,13 @@
 /**
- * 成本记录模块（`server/docservice/modules/costs.mjs`；语义 `mechanism/document-service.md`「成本记录」；
- * 契约 `docs/plan/c10-contract.md` 第 3 节）。用例 CC-01～CC-10。
- * 跑：node --test server/test/c10-cost-docservice.test.mjs
+ * Cost record module (`server/docservice/modules/costs.mjs`; semantics
+ * `mechanism/document-service.md` "Cost record"; contract `docs/plan/c10-contract.md` section 3).
+ * Test cases CC-01~CC-10.
+ * Run: node --test server/test/c10-cost-docservice.test.mjs
  *
- * 前半经真的共享项目组装（`auth-kit.mjs` 的托管端、真的证明握手）：写、覆盖、读全部、跨项目隔离、非成员被拒、坏形状被拒；
- * 后半直接驱动模块（假的核心上下文）：「最新」按测量时刻、日志回放、上限。
+ * First half assembled through real shared projects (`auth-kit.mjs` hosted side, real proof
+ * handshake): write, overwrite, read all, cross-project isolation, non-members rejected, bad
+ * shapes rejected; second half directly drives the module (fake core context): "latest" by
+ * measurement time, log replay, cap.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -39,7 +42,7 @@ test('CC-01 read all after a member writes: the key is the card identity + a fin
   assert.equal(put.type, 'cost.stored', JSON.stringify(put));
   assert.equal(put.envFingerprint, fpOf(WIN_NV));
   assert.deepEqual([put.added, put.updated, put.ignored, put.count], [2, 0, 0, 2]);
-  // 同项目的另一位成员读得到全部；带环境时顺带回它的指纹
+  // Another member of the same project can read all; returns its fingerprint along with environment
   const list = await ask(p2, { type: 'cost.list', projectId: P.projectId, environment: MAC }, 'cost.listing');
   assert.equal(list.type, 'cost.listing', JSON.stringify(list));
   assert.equal(list.envFingerprint, fpOf(MAC));
@@ -55,10 +58,10 @@ test('CC-02 only the latest record is kept per key; other environments each take
   await ask(p1, { type: 'cost.put', projectId: P.projectId, environment: WIN_NV, records: [rec('cardA', 4.5)] }, 'cost.stored');
   const over = await ask(p1, { type: 'cost.put', projectId: P.projectId, environment: WIN_NV, records: [rec('cardA', 6, { measuredAt: T0 + 1000 })] }, 'cost.stored');
   assert.deepEqual([over.added, over.updated, over.count], [0, 1, 1]);
-  // 别的机器（mac）测同一张卡：另一条
+  // Another machine (mac) tests the same card: a separate entry
   const mac = await ask(p2, { type: 'cost.put', projectId: P.projectId, environment: MAC, records: [rec('cardA', 12)] }, 'cost.stored');
   assert.deepEqual([mac.added, mac.count], [1, 2]);
-  // 更旧的一条补传过来：不替换
+  // An older entry backfilled: not replaced
   const stale = await ask(p1, { type: 'cost.put', projectId: P.projectId, envFingerprint: fpOf(WIN_NV), records: [rec('cardA', 99, { measuredAt: T0 - 5 })] }, 'cost.stored');
   assert.deepEqual([stale.added, stale.updated, stale.ignored], [0, 0, 1]);
   const list = await ask(p1, { type: 'cost.list', projectId: P.projectId }, 'cost.listing');
@@ -75,7 +78,7 @@ test('CC-03 cross-project isolation: same-named keys are independent; a member r
   const lq = await ask(q1, { type: 'cost.list', projectId: Q.projectId }, 'cost.listing');
   assert.deepEqual(lp.records.map((r) => r.stepMs), [1]);
   assert.deepEqual(lq.records.map((r) => r.stepMs), [2]);
-  // Q 的成员拿 P 的项目号：读、写都拒
+  // Member of Q uses project id of P: both read and write are rejected
   const readOther = await ask(q1, { type: 'cost.list', projectId: P.projectId }, 'cost.listing');
   assert.equal(readOther.type, 'error');
   assert.equal(readOther.reason, 'forbidden');
@@ -121,7 +124,7 @@ test('CC-05 a malformed record is rejected as a whole and nothing is stored', as
   assert.deepEqual(l.records, [], 'None of the malformed attempts stored a single record');
 });
 
-/* ---------------------------------------------------------------- 模块本体 */
+/* ---------------------------------------------------------------- Module body */
 
 function fakeCtx(t0 = T0) {
   const sent = [];

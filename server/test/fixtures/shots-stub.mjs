@@ -1,6 +1,8 @@
-// 替身:按 `python -m promptcut_shots`、`ffprobe`、`ffmpeg`(scdet)的命令行约定回话,行为由「素材文件的内容」(一段 JSON 剧本)
-// 和权重目录里的 ready.txt 决定。第一个参数说明扮演谁:python / ffprobe / ffmpeg。
-// 只给单测(cloud-tools-p1-shots.test.mjs)用:让取消、超时、失败、孤儿进程这些路径不依赖真模型就能反复跑。
+// Stub: replies per CLI conventions of `python -m promptcut_shots`, `ffprobe`, and `ffmpeg`(scdet);
+// behavior is determined by "asset file contents" (a JSON script) and ready.txt in the weights
+// directory. The first argument specifies who to act as: python / ffprobe / ffmpeg.
+// For unit tests (cloud-tools-p1-shots.test.mjs) only: allows paths like cancellation, timeout,
+// failure, and orphan processes to run repeatedly without depending on the real model.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -66,7 +68,7 @@ if (who === 'python') {
     }
   }
 } else {
-  // ffprobe / ffmpeg:最后一个输入文件的内容是剧本
+  // ffprobe / ffmpeg: the contents of the last input file is the script
   const iIdx = argv.indexOf('-i');
   const file = who === 'ffmpeg' ? (iIdx >= 0 ? argv[iIdx + 1] : null) : argv[argv.length - 1];
   record({ file: file ? path.basename(file) : null });

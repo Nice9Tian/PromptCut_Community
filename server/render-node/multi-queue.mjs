@@ -1,48 +1,63 @@
 /**
- * 多项目模式的队列次序（语义 `docs/semantics/product/rendering.md`「渲染服务的两种模式」：多项目模式；
- * 机制 `docs/semantics/mechanism/rendering.md`「多项目模式的做法」）。
+ * Queue ordering in multi-project mode (semantics `docs/semantics/product/rendering.md` "Two Modes
+ * of Render Service": multi-project mode; mechanism `docs/semantics/mechanism/rendering.md`
+ * "Implementation of Multi-Project Mode").
  *
- * 每个请求只记「哪个项目、哪一类、什么时候来的」，排进同一条队列，出队次序三条规矩：
+ * Each request only records "which project, which class, when it arrived", queued into the same
+ * queue, with three rules for dequeuing order:
  *
- *   1. **看画面先于产流**：`look` 类的请求全部排在 `stream` 类前面（类的先后由 `classes` 定，缺省 `['look', 'stream']`）；
- *   2. **同一类里各项目轮流**：同一类里按项目轮流出队——这一类里最久没轮到的项目先出（从没轮到过的按它排头那个请求来的先后），
- *      一个项目出了一个请求就排到这一类的最后；
- *   3. **同一项目内先来先做**：同一类、同一个项目的请求按来的先后（`seq`）。
+ *   1. **Viewing frames precedes stream production**: All requests in `look` class are ordered
+ *      ahead of `stream` class (class priority is defined by `classes`, default `['look', 'stream']`);
+ *   2. **Projects rotate within the same class**: Dequeued by rotating across projects within the
+ *      same class: the project in this class that has gone the longest without a turn goes first
+ *      (those never served go by arrival order of their head request), and once a project serves a
+ *      request it moves to the end of this class;
+ *   3. **First-come first-served within the same project**: Requests within the same class and project
+ *      follow arrival order (`seq`).
  *
- * 不让哪个项目占着：轮流按「一个请求」算，不按「一段时间」或「一轮对话」算，所以只要别的项目有请求排着，下一个就轮到它。
+ * No project is allowed to monopolize: rotation is counted by "one request", not by "a period of
+ * time" or "a round of chat", so as long as other projects have requests queued, the next goes to them.
  *
- * 本文件只管次序，不认识工作进程、不发请求。三处用它：
- *   - 托管方渲染服务的看画面请求（`server/hosted-render/look.mjs`，`look` 类）；
- *   - 托管方渲染服务的隔离工作进程该装哪个项目（`server/hosted-render/isolation.mjs`：`look` 类的需求先，其次 `stream` 类的项目）；
- *   - 独立渲染主机各项目认领任务的先后（`server/render-node/host.mjs`，`stream` 类）。
+ * This file only governs ordering; it does not know worker processes or send requests. Used in
+ * three places:
+ *   - Viewing frame requests in host render service (`server/hosted-render/look.mjs`, `look` class);
+ *   - Which project an isolated worker process in host render service should mount
+ *     (`server/hosted-render/isolation.mjs`: `look` class demands first, followed by `stream`
+ *     class projects);
+ *   - Order of task claims across projects on standalone render hosts
+ *     (`server/render-node/host.mjs`, `stream` class).
  *
- * 纯 JS，只用内置对象；`seq` 由调用方给（登记的先后），没有就按加进来的先后自动编。
+ * Pure JS, only uses built-in objects; `seq` is provided by caller (registration order); if
+ * omitted, assigned automatically by insertion order.
  */
 
-/** 缺省的类先后：看画面先于产流 */
+/** Default class priority: viewing frames precedes stream production */
 export const MULTI_QUEUE_CLASSES = Object.freeze(['look', 'stream']);
 
 /**
- * 轮流的记账：每一类里每个项目上一次出队是第几次。数字越小越久没轮到；没轮到过的没有记录（排在所有轮到过的前面）。
- * 只记数，不记时刻：次序与时钟无关，单测里不用拨时间。
+ * Rotation bookkeeping: which turn each project in each class was last dequeued. Smaller numbers
+ * mean longer without a turn; those never served have no record (ranked ahead of all previously
+ * served).
+ * Only counts turns, not timestamps: ordering is independent of clocks, no need to adjust time
+ * in unit tests.
  */
 export function createRotation() {
-  /** kind → Map(projectId → 第几次) */
+  /** kind → Map(projectId → turn count) */
   const served = new Map();
   let tick = 0;
   return {
-    /** 这一类里这个项目刚出了一个请求：排到这一类的最后 */
+    /** This project just served a request in this class: move to the end of this class */
     served(kind, projectId) {
       if (!served.has(kind)) served.set(kind, new Map());
       tick += 1;
       served.get(kind).set(projectId, tick);
       return tick;
     },
-    /** 这一类里这个项目上一次出队是第几次；没有回 null */
+    /** Which turn this project was last dequeued in this class; returns null if none */
     lastServed(kind, projectId) { return served.get(kind)?.get(projectId) ?? null; },
-    /** 项目不在了（摘掉、删掉）：清掉它的记账 */
+    /** Project is gone (detached, deleted): clear its bookkeeping */
     forget(projectId) { for (const m of served.values()) m.delete(projectId); },
-    /** 诊断用：`{ kind: { projectId: n } }` */
+    /** For diagnostics: `{ kind: { projectId: n } }` */
     snapshot() {
       const out = {};
       for (const [kind, m] of served) out[kind] = Object.fromEntries(m);
@@ -52,16 +67,16 @@ export function createRotation() {
 }
 
 /**
- * 按三条规矩排出出队次序（不改入参）。
+ * Determines dequeuing order according to the three rules (does not mutate arguments).
  * @template {{ projectId: string, kind?: string, seq: number }} T
- * @param {T[]} items 排着的请求；`kind` 不在 `classes` 里的排在所有类之后
+ * @param {T[]} items Queued requests; `kind` not in `classes` are ordered after all classes
  * @param {{ lastServed(kind: string, projectId: string): number | null }} rotation
  * @param {readonly string[]} [classes]
  * @returns {T[]}
  */
 export function orderByPolicy(items, rotation, classes = MULTI_QUEUE_CLASSES) {
   const classIndex = (kind) => { const i = classes.indexOf(kind); return i < 0 ? classes.length : i; };
-  /** 类号 → (项目 → 这个项目在这一类里的请求，先来的在前) */
+  /** Class id → (project → requests of this project in this class, earlier arrivals first) */
   const byClass = new Map();
   for (const item of items ?? []) {
     if (!item || typeof item.projectId !== 'string') continue;
@@ -76,7 +91,8 @@ export function orderByPolicy(items, rotation, classes = MULTI_QUEUE_CLASSES) {
     const kind = c < classes.length ? classes[c] : null;
     const projects = byClass.get(c);
     for (const list of projects.values()) list.sort((a, b) => a.seq - b.seq);
-    // 这一类里的轮流次序：最久没轮到的先（没轮到过的最先，它们之间按排头请求来的先后）
+    // Rotation order in this class: longest without a turn goes first (never served goes earliest,
+    // ordered among themselves by head request arrival)
     const turn = [...projects.entries()].map(([projectId, list]) => ({ projectId, list, last: kind === null ? null : rotation.lastServed(kind, projectId), head: list[0].seq }));
     turn.sort((a, b) => {
       if (a.last !== b.last) {
@@ -87,7 +103,8 @@ export function orderByPolicy(items, rotation, classes = MULTI_QUEUE_CLASSES) {
       if (a.head !== b.head) return a.head - b.head;
       return a.projectId < b.projectId ? -1 : a.projectId > b.projectId ? 1 : 0;
     });
-    // 一轮一个：每个项目出一个就排到最后，所以整条次序就是按轮交错
+    // One per round: each project moves to the end after serving one, so the overall order interleaves
+    // by round
     const depth = Math.max(...turn.map((t) => t.list.length));
     for (let r = 0; r < depth; r += 1) for (const t of turn) if (r < t.list.length) out.push(t.list[r]);
   }
@@ -95,7 +112,7 @@ export function orderByPolicy(items, rotation, classes = MULTI_QUEUE_CLASSES) {
 }
 
 /**
- * 带记账的一条队列：登记、撤掉、看次序、取下一个。
+ * A queue with bookkeeping: register, remove, view order, take next.
  * @param {object} [o]
  * @param {readonly string[]} [o.classes]
  */
@@ -107,7 +124,8 @@ export function createMultiQueue({ classes = MULTI_QUEUE_CLASSES } = {}) {
   return {
     rotation,
     /**
-     * 登记一个请求。同一个 `id` 再登记回原来那一条。`seq` 不给就按登记的先后编。
+     * Registers a request. Re-registering the same `id` returns the original item. If `seq` is
+     * omitted, it is assigned by registration order.
      * @param {{ id: string, projectId: string, kind: string, seq?: number }} item
      */
     add(item) {
@@ -121,11 +139,13 @@ export function createMultiQueue({ classes = MULTI_QUEUE_CLASSES } = {}) {
     remove(id) { return items.delete(id); },
     has(id) { return items.has(id); },
     get size() { return items.size; },
-    /** 此刻的出队次序（不取走） */
+    /** Current dequeuing order (without taking items) */
     order() { return orderByPolicy([...items.values()], rotation, classes); },
     /**
-     * 按次序找第一个此刻做得了的（`canRun` 回 true）；找到就取走并记账（这个项目排到这一类的最后），回它；都做不了回 null。
-     * 排在前面的此刻做不了时不挡后面做得了的。
+     * Finds the first runnable item in order (`canRun` returns true); if found, takes it, records
+     * bookkeeping (moving this project to the end of this class), and returns it; returns null if
+     * none are runnable.
+     * Earlier items that cannot run right now do not block later runnable items.
      */
     take(canRun = () => true) {
       for (const item of this.order()) {

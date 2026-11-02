@@ -1,19 +1,31 @@
 /**
- * 跨节点去重:文档服务重启后,别的节点做完、两档都已在素材服务里的一段,被另一个节点领到时走去重完成
- * (`docs/archive/agent-reports/AGENT-xnode-dedup.md`;语义 `mechanism/document-service.md`「渲染任务队列」:「已经在素材服务里的结果不用重做」;
- * `product/rendering.md`「两档」:渲染节点产出原尺寸后一并生成小尺寸,两档都推送到素材服务)。
- * 跑:node --experimental-test-module-mocks --test server/test/xnode-dedup.test.mjs
+ * Cross-node deduplication: after document service restarts, when a segment completed by another
+ * node with both tiers already in asset service is claimed by another node, it completes via
+ * deduplication (`docs/archive/agent-reports/AGENT-xnode-dedup.md`; semantics in
+ * `mechanism/document-service.md` "Render queue": "Results already in the asset service do not need
+ * to be redone"; `product/rendering.md` "Two tiers": render nodes produce small size alongside
+ * original size, and push both tiers to asset service).
+ * Run: node --experimental-test-module-mocks --test server/test/xnode-dedup.test.mjs
  *
- * 场景(M8 E3 放本机,run `m8e3lanM` / `xdA1`):host-a 做完一段,PC 收 `task.done` 按清单把原尺寸拉进本机帧库
- * (`applyResult` 只拉原尺寸与 PNG,不拉小尺寸);局域网主机重启后 PC 领到这一段 —— 本机帧库「覆盖」了整段,却没有小尺寸。
+ * Scenario (M8 E3 on local, run `m8e3lanM` / `xdA1`): host-a finishes a segment, PC receives
+ * `task.done` and pulls original size into the local frame store by manifest (`applyResult` only
+ * pulls original size and PNG, not small size); after LAN host restarts, PC claims this segment:
+ * local frame store "covers" the whole segment, but lacks small size.
  *
- *   X1  本机覆盖、缺小尺寸,内容库里别的节点写的清单两档齐、块都在:has 回 true(去重),resultFor 回那份清单,一块都不推
- *   X2  同上,但清单里没有小尺寸(产出方没做小尺寸):has 回 false,记 sink.has-miss { reason: 'local-small-missing' }
- *       —— 交给执行器从本机原尺寸补画小尺寸(不重渲原尺寸)
- *   X3  同上,清单两档齐,但素材服务上缺一张小位图:has 回 false,记 sink.has-miss { reason: 'blocks-missing', missing: 1 }
- *   X4  sink.has-miss 的其它原因:清单不在、对不上、不全、取清单出错(诊断;不改行为)
- *   X5  独立渲染主机的管线(没有推送队列)打开小尺寸(`enableSmallTier`):commitSnapshots 之后照样记下这一批的小尺寸,
- *       不进推送队列、不开 Chrome;`PROMPTCUT_SMALL_TIER=0` 仍能关
+ *   X1  Local coverage, missing small size; manifest written by another node in content store has
+ *       both tiers ready and chunks present: has returns true (deduplication), resultFor returns
+ *       that manifest, pushing no chunks at all
+ *   X2  Same as above, but manifest lacks small size (producer did not generate small size): has
+ *       returns false, records sink.has-miss { reason: 'local-small-missing' }
+ *       : handed over to executor to draw missing small size from local original size (no re-render
+ *       of original size)
+ *   X3  Same as above, manifest has both tiers ready, but asset service is missing one small
+ *       bitmap: has returns false, records sink.has-miss { reason: 'blocks-missing', missing: 1 }
+ *   X4  Other reasons for sink.has-miss: manifest missing, mismatch, incomplete, error fetching
+ *       manifest (diagnostics; no behavior change)
+ *   X5  Standalone render host pipeline (without push queue) enables small size (`enableSmallTier`):
+ *       records small size for this batch as usual after commitSnapshots, without entering push
+ *       queue and without opening Chrome; `PROMPTCUT_SMALL_TIER=0` can still disable it
  */
 import { test, mock, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -46,11 +58,12 @@ const htmlOf = (f) => Buffer.from(`<div>frame ${f}</div>`);
 const smallOf = (f) => Buffer.from(`RIFF-small-${f}`);
 
 const cleanups = [];
-after(async () => { for (const c of cleanups.reverse()) { try { await c(); } catch { /* 收拾失败不影响结论 */ } } });
+after(async () => { for (const c of cleanups.reverse()) { try { await c(); } catch { /* Cleanup failure does not affect outcome */ } } });
 
 /**
- * PC 的帧库替身:原尺寸按 `write` 写,小尺寸按 `writeSmall` 写(拉来的帧没有小尺寸);`smallTier` 决定管线开没开小尺寸
- * (PC 配了推送队列 = 开)。
+ * PC frame store mock: original size written via `write`, small size written via `writeSmall`
+ * (pulled frames lack small size); `smallTier` determines whether the pipeline enabled small size
+ * (PC configured with push queue = enabled).
  */
 function frameLibrary({ smallTier = true } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-xnode-'));
@@ -71,7 +84,7 @@ function frameLibrary({ smallTier = true } = {}) {
   };
 }
 
-/** 素材服务替身(按内容寻址) */
+/** Asset service mock (content-addressed) */
 function assetStore() {
   const blocks = new Map();
   const calls = { put: 0, uploaded: 0, has: 0 };
@@ -103,7 +116,7 @@ function contentStore({ failGet = false } = {}) {
   };
 }
 
-/** 别的节点(host-a)产出、推送后写进内容库的清单:原尺寸 + (可选)小尺寸 */
+/** Manifest written to content store after output and push by another node (host-a): original size + (optional) small size */
 function otherNodeManifest(from, to, { small = true } = {}) {
   const frames = [], smalls = [];
   for (let f = from; f <= to; f++) {
@@ -124,7 +137,7 @@ const missLines = (logs) => logs.filter((l) => l.event === 'sink.has-miss').map(
 
 test('X1 Locally covered but missing the small size, while another node\'s manifest in the content store has both tiers and all chunks present: has returns true (dedup), resultFor returns that manifest, and not a single chunk is pushed', async () => {
   const lib = frameLibrary();
-  lib.write(0, 7); // 按清单拉来的原尺寸,没有小尺寸
+  lib.write(0, 7); // Original size pulled by manifest, without small size
   const store = assetStore();
   store.preload(blocksOf(0, 7));
   const content = contentStore();
@@ -193,7 +206,7 @@ test('X4 Other reasons for sink.has-miss: manifest absent, mismatched, incomplet
     assert.equal(line.covered, false);
     if (k.field) assert.match(line.field, k.field);
   }
-  // 不给内容库
+  // Not given to content store
   const lib = frameLibrary();
   const logs = [];
   const sink = createAssetSink({ pipeline: lib.pipeline, client: assetStore(), log: (event, fields) => logs.push({ event, fields }) });
@@ -201,7 +214,7 @@ test('X4 Other reasons for sink.has-miss: manifest absent, mismatched, incomplet
   assert.equal(missLines(logs)[0]?.reason, 'no-content');
 });
 
-/* ------------------------------------------------------------------ X5 独立渲染主机的管线打开小尺寸 */
+/* ------------------------------------------------------------------ X5 Standalone render host pipeline enables small size */
 
 const OWN_ENV = describeEnvironment({
   platform: 'win32', renderer: 'ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)',
@@ -228,7 +241,7 @@ test('X5 A pipeline without a push queue (standalone render host) enables the sm
   p.smallPending = [];
 });
 
-/* ------------------------------------------------------------------ X6 整条链:host 做完 → PC 拉原尺寸 → 重启 → PC 领到 */
+/* ------------------------------------------------------------------ X6 Full chain: host finishes → PC pulls original size → restart → PC claims */
 
 test('X6 The whole chain: host finishes both tiers and pushes them up; PC pulls the original size per the manifest; after the queue is rebuilt (document service restart) only PC is present, claims this segment and completes it by dedup, and the executor is not called', async (t) => {
   const F = await import('./fake-artifact-fixtures.mjs');
@@ -242,7 +255,7 @@ test('X6 The whole chain: host finishes both tiers and pushes them up; PC pulls 
   const svc = await F.startServices(harness, (base) => createAssetClient({ base }));
   t.after(() => svc.cleanup());
 
-  // host-a:没有推送队列、打开小尺寸(修前没有这个开关,小尺寸文件由夹具直接写,模拟它已生成)
+  // host-a: no push queue, enables small size (before fix this switch did not exist; fixture wrote small size files directly to simulate generation)
   const A = roots.make(await roots.root());
   A.enableSmallTier?.();
   const task = F.snapshotTask({ contentKey: sha256('card-xnode'), from: 0, to: 29 });
@@ -253,7 +266,7 @@ test('X6 The whole chain: host finishes both tiers and pushes them up; PC pulls 
   assert.equal(putA.complete, true, JSON.stringify(putA).slice(0, 300));
   assert.equal(T.smallFramesOf(putA.result).length, 30, 'The host\'s manifest has both tiers');
 
-  // PC:配着推送队列(小尺寸开);收 task.done 按清单拉 —— 只拉原尺寸
+  // PC: configured with push queue (small size enabled); receives task.done and pulls by manifest: pulls only original size
   const B = roots.make(await roots.root());
   assert.equal(B.smallTierEnabled(), false, 'Retired: small size discontinued');
   await T.applyResult(B, svc.client, putA.result);
@@ -261,7 +274,7 @@ test('X6 The whole chain: host finishes both tiers and pushes them up; PC pulls 
   assert.ok(fs.existsSync(path.join(dirB, '0.html')), 'PC has the original size locally');
   assert.ok(!fs.existsSync(path.join(dirB, `0${SMALL_SUFFIX}`)), 'PC has no small size locally (applyResult does not pull it)');
 
-  // 文档服务重启:队列只在内存里,重建为空;发布方重新发布同一段;重启后只有 PC 的节点在
+  // Document service restart: queue exists in memory only and rebuilds empty; publisher republishes the same segment; after restart only PC node remains
   const { createRenderQueue } = await import('../render-queue/index.mjs');
   const { createLocalNode } = await import('../render-node/local-node.mjs');
   const { createLoopback } = await import('./fake-loopback-transport.mjs');
@@ -297,7 +310,7 @@ test('X6 The whole chain: host finishes both tiers and pushes them up; PC pulls 
   const t0 = Date.now();
   while (!done() && Date.now() - t0 < 15_000) {
     lb.flush(); node.tick(); lb.flush(); queue.tick(); lb.flush();
-    await new Promise((resolve) => setTimeout(resolve, 5)); // sink.has 走真网络
+    await new Promise((resolve) => setTimeout(resolve, 5)); // sink.has uses real network
     clock.advance(200);
   }
   node.stop();
@@ -305,6 +318,6 @@ test('X6 The whole chain: host finishes both tiers and pushes them up; PC pulls 
   assert.ok(done(), `Received task.done: ${JSON.stringify(inbox.map((m) => m.type))}; node events: ${JSON.stringify(events).slice(0, 400)}`);
   assert.ok(events.some((e) => e.type === 'dedup' && e.id === task.id),
     `Completed via dedup: ${JSON.stringify(events.map((e) => e.type))}; ${JSON.stringify(logs.filter((l) => l.event === 'sink.has-miss'))}`);
-  // 己二：小尺寸已停产；PC 本机原尺寸已齐走去重完成
+  // Ji-2: small size discontinued; PC local original size is complete, completes via deduplication
   assert.equal((done().result?.frames ?? []).length, 30, 'task.done carries a manifest of 30 frames at the original size');
 });

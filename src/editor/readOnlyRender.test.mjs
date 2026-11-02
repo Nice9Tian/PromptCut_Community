@@ -1,10 +1,15 @@
 /**
- * 只读界面里几个组件画出来的样子：只读项目（游客）里改项目的控件禁用、悬停是 viewOnlyText() 那一句；
- * 读写（没进共享项目 / 有写权限）里一切照旧；`?observe=1` 那条老路不受新增的锁影响。
- * 每个组件把自己的重依赖换成桩（同 `right/CloudModelBar.test.mjs` 的做法），`useReadOnly` 换成按测试里的权限出状态。
- * 整页的真实表现（时间轴拖动、参数面板、右键菜单、项目设置对话框、手机版）见 `scripts/probes/guest-readonly-ui-probe.mjs`。
+ * Rendered appearance of several components in read-only UI: controls that modify the project in
+ * read-only projects (guests) are disabled, hovering displays the viewOnlyText() message;
+ * read-write (not in a shared project / has write permission) remains unchanged; the legacy
+ * `?observe=1` path is unaffected by newly added locks.
+ * Each component replaces its heavy dependencies with stubs (same approach as
+ * `right/CloudModelBar.test.mjs`), and `useReadOnly` is stubbed to return state based on test
+ * permissions.
+ * Real behavior of the full page (timeline scrubbing, parameters panel, context menu, project
+ * settings dialog, mobile app) see `scripts/probes/guest-readonly-ui-probe.mjs`.
  *
- * 跑：node --test src/editor/readOnlyRender.test.mjs
+ * Run: node --test src/editor/readOnlyRender.test.mjs
  */
 import "../testing/registerTs.mjs";
 import test from "node:test";
@@ -21,7 +26,10 @@ const i18n = await import("../i18n/index.ts");
 const i18nNames = await import("../i18n/names.ts");
 const WHY_MEMBER = "You can only view this project, you cannot change its content.";
 
-/** 在这个权限下跑 fn：'r' = 只读项目（游客），'rw' / null = 照旧，'observe' = ?observe=1 */
+/**
+ * Run fn under this permission: 'r' = read-only project (guest), 'rw' / null = as usual,
+ * 'observe' = ?observe=1
+ */
 async function under(access, fn) {
   const hadLoc = Object.hasOwn(globalThis, "location");
   const prevLoc = globalThis.location;
@@ -33,7 +41,10 @@ async function under(access, fn) {
   }
 }
 
-/** 编译一个 .tsx 组件、换掉依赖、返回导出。`useReadOnly` 一律按当下的权限出状态 */
+/**
+ * Compile a .tsx component, replace dependencies, and return exports. `useReadOnly` always emits
+ * state based on current permissions
+ */
 async function load(rel, mocks) {
   const source = await fs.readFile(new URL(rel, import.meta.url), "utf8");
   const compiled = ts.transpileModule(source, { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS,
@@ -51,7 +62,7 @@ async function load(rel, mocks) {
   return mod.exports;
 }
 const html = (Comp, props) => renderToStaticMarkup(React.createElement(Comp, props));
-/** 从标记里取带某个属性的那个标签 */
+/** Extract the tag with a specific attribute from markup */
 const tag = (markup, attr) => markup.match(new RegExp(`<[a-z]+[^>]*${attr}[^>]*>`))?.[0] ?? null;
 const has = (t, re) => !!t && re.test(t);
 
@@ -213,7 +224,8 @@ test("RR8 Agent input area: when read-only, the edit box, send and attachment co
   assert.match(rw, /data-pc-guide="input"/);
   const ob = await under("observe", () => html(Composer, base));
   assert.doesNotMatch(tag(ob, 'data-pc="ai-input"'), /disabled/, "?observe is not merged in");
-  // 已有的「这个对话没有读取权限」那一条原因仍然优先，不被只读这句盖掉
+  // Existing reason "No read permission for this chat" still takes precedence, not overwritten by
+  // read-only
   const revoked = await under("r", () => html(Composer, { ...base, ...roProps, disabled: true, disabledReason: "The current account can no longer read this chat" }));
   assert.ok(tag(revoked, 'data-pc="ai-input"').includes('placeholder="The current account can no longer read this chat"'));
 });

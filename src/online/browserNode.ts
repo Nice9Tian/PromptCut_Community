@@ -1,92 +1,146 @@
 /**
- * 在线页面的纯浏览器渲染节点(M7 契约 `docs/plan/m7-contract.md` 第 2、4、5、7 节;第 13 节裁定 D6、D8、D10、D14、D16)。
+ * Pure-browser render node for online pages (M7 contract `docs/plan/m7-contract.md`
+ * Sections 2, 4, 5, 7; Section 13 rulings D6, D8, D10, D14, D16).
  *
- * 本模块只有编排与判据,不碰舞台、网络、存储、界面:它们由宿主(`src/editor/browserNodeHost.ts`)经 `deps` 注入。
- * 节点会话(认领、续约、放回、丢认领)用渲染节点同一份状态机 `server/render-node/session.mjs`;细任务的执行规矩(先报 0、去重、
- * 推完才完成、丢认领丢结果)用桌面同一份 `server/render-node/task-runner.mjs`(D11 (a));本页只在它的 `render` 里管帧与让路。
+ * This module contains only arrangement and criteria, touching no stage, network, storage, or UI:
+ * these are injected via `deps` by the host (`src/editor/browserNodeHost.ts`).
+ * Node sessions (claim, renew, release, drop claim) use the same render node state machine
+ * `server/render-node/session.mjs`; execution rules for fine-grained tasks (report 0 first,
+ * deduplicate, complete only after pushing, drop results on lost claims) use the same desktop
+ * `server/render-node/task-runner.mjs` (D11 (a)); this page manages frames and yielding only
+ * inside its `render`.
  *
- * # 当节点的条件(`browserNodeEligibility`,第 2 节)
+ * # Node eligibility conditions (`browserNodeEligibility`, Section 2)
  *
- * 在线构建、嵌了代码版本(D16:开发构建不当)、身份是电脑(手机不当)、不是最低一档、两个跨源舞台都握上手、Chromium 内核(D14)、以成员身份连着云端项目、
- * 打开项目的测量已落定 —— 全部成立才当。纯函数,不读编译期常量(Node 单测直接载它)。
+ * Online build, embedded code version (D16: development builds are ineligible), identity is
+ * computer (mobile is ineligible), not the lowest tier, handshakes completed with both cross-origin
+ * stages, Chromium engine (D14), connected to a cloud project as a member, and measurement for
+ * opening the project has settled: eligible only when all hold. Pure function, reads no
+ * compile-time constants (Node unit tests load it directly).
  *
- * # 报到(D10 页面侧)
+ * # Check-in (D10, page side)
  *
- * `node.hello { profile: 'browser', maxConcurrent: 1, environment }`:只报原始值(`pageEnvironment()`),不报指纹;
- * 指纹由文档服务按原始值算、在 `node.welcome.envFingerprint` 回来,节点记下它(节点侧过滤按它比任务的指纹),
- * 并交给宿主(清单计划的 `input.browser` 要它,第 3.3 节)。`queue.watch` 只列本项目(队列不许纯浏览器 watch `'all'`)。
+ * `node.hello { profile: 'browser', maxConcurrent: 1, environment }`: reports only raw values
+ * (`pageEnvironment()`), not fingerprints; the document service calculates the fingerprint from
+ * raw values and returns it in `node.welcome.envFingerprint`. The node records it (node-side
+ * filtering compares task fingerprints against it) and passes it to the host (required by
+ * `input.browser` in the manifest plan, Section 3.3). `queue.watch` lists only this project
+ * (the queue forbids pure browsers from watching `'all'`).
  *
- * # 用户卡与素材效果卡(块 N,`docs/plan/online-card-exec-contract.md` 第 7 节)
+ * # User cards and media effect cards (Chunk N, `docs/plan/online-card-exec-contract.md` Section 7)
  *
- * 本页能执行同步来的用户卡与素材效果卡时(`deps.cardInfo()` 回登记处的内容,`nodeCardInfo.ts`):
- *   - `node.hello` 多报一项 `cardRuntime`(在线卡片运行时版本,原始值;指纹仍由文档服务算);
- *   - 文档服务在 `node.welcome` 多回 `cardEnvFingerprint`(环境三项再加运行时版本),节点记下:用户卡、素材效果卡的任务用它比指纹
- *     (`filter.mjs` 规则 1),内置卡的任务照旧比 `envFingerprint`;
- *   - 能力位 `capabilities.userCards` / `graphCards` 与 `cardSourceVersions`(每张本页已载入成功的卡的代码身份)随登记处实时更新,
- *     节点侧过滤(规则 1、3)据此认领;换代后一小段时间不报(登记处的 `NODE_CARD_SETTLE_MS`)。
- * 运行时版本在报到之后才变得可报(闸门晚于报到才立起来)时,重发一次 `node.hello`(带手里的认领接续)。不能执行时与原来完全相同。
+ * When this page can execute synced user cards and media effect cards (`deps.cardInfo()` returns
+ * registry contents, `nodeCardInfo.ts`):
+ *   - `node.hello` reports an extra `cardRuntime` (online card runtime version, raw value;
+ *     fingerprint is still computed by the document service);
+ *   - The document service returns an extra `cardEnvFingerprint` in `node.welcome` (the three
+ *     environment items plus runtime version). The node records it: tasks for user cards and media
+ *     effect cards compare fingerprints against it (`filter.mjs` Rule 1), while tasks for built-in
+ *     cards compare against `envFingerprint` as before;
+ *   - Capability flags `capabilities.userCards` / `graphCards` and `cardSourceVersions` (code
+ *     identity of each card successfully loaded by this page) update in real time with the
+ *     registry, and node-side filtering (Rules 1, 3) claims tasks accordingly; they are not
+ *     reported for a brief period after a generation switch (`NODE_CARD_SETTLE_MS` in the registry).
+ * If the runtime version becomes reportable only after check-in (the gate is raised later than
+ * check-in), re-send `node.hello` once (resuming with held claims). When execution is not supported,
+ * behavior is identical to before.
  *
- * # 一段细任务(第 4 节)
+ * # A fine-grained task (Section 4)
  *
- *   认领到 → `progress(0)`(停滞规则要覆盖卡死的执行器)→ 去重(给了 `lookupResult`:内容库清单在、块都在就直接 complete)
- *   → 取项目:任务的 `projectRev` 那一版,先用发布时留存的(`keptProject`),没有再 `fetchSnapshot`,都没有就放回
- *     (`reason: 'no-snapshot'`),不拿别的版本渲(D6)
- *   → 逐帧 `bakeFrame`(后台舞台生成快照、推素材服务、进页面内快照库都在宿主那一侧),每帧 `progress(已做帧数)`
- *   → 全段齐后 `finishTask`(组清单、写内容库)→ `task.complete { ranges, ...清单 }`。
+ *   Claimed → `progress(0)` (stall rule must cover hung executors) → deduplicate (if
+ *   `lookupResult` is provided: complete immediately if the content store manifest and all chunks
+ *   are present)
+ *   → Fetch project: the `projectRev` revision of the task, using the one kept from publication
+ *     (`keptProject`) first, then falling back to `fetchSnapshot`; if neither is available, release
+ *     (`reason: 'no-snapshot'`), never rendering with a different revision (D6)
+ *   → Frame-by-frame `bakeFrame` (background stage generating snapshots, pushing to asset service,
+ *     and storing into in-page snapshot store are all on the host side), with
+ *     `progress(completedFrames)` for each frame
+ *   → Once the full segment is complete, `finishTask` (assemble manifest, write to content store)
+ *     → `task.complete { ranges, ...manifest }`.
  *
- * 已做的帧按任务 id 留在本页:让路放回后重新认领到同一段只补缺的帧(第 2 节「让路」)。
+ * Completed frames remain on this page keyed by task id: after yielding and releasing, re-claiming
+ * the same segment fills only missing frames (Section 2 "Yielding").
  *
- * # 一段流任务(`docs/plan/browser-stream-task.md` 第四处)
+ * # A stream task (`docs/plan/browser-stream-task.md` Part 4)
  *
- * 宿主报了能压流(`deps.streams()`,按 `probeStreamEncoder` 探的结果)才把能力位 `capabilities.streams` 报成真;切分方给浏览器出的
- * 单卡流那一份(`kind: 'stream'`,`input.stream`、`input.bake`)照快照任务同一套规矩走:先报 0、去重、取任务那一版的项目,
- * 然后整段交给宿主的 `bakeStream`(按 `input.bake` 建隔离单卡工程、逐帧向舞台要像素、送编码器、分段推素材服务),
- * 全部分段齐了由 `finishStream` 写内容库的流清单,`task.complete { ranges, ...清单 }`。
- * 帧号怎么换算(`streamTaskFrames`)、清单长什么样(`streamManifest`,与桌面 `collectStreamResult` 逐字段同形)是这里的纯函数。
- * 让路:宿主每帧前问 `yielding()`,当前这一帧做完就停手、回 `{ yielded: true }`,节点放回(已推完的分段留在宿主那一侧,
- * 重新认领同一段只补缺的分段);页面隐藏、丢认领照旧中止(`signal`)。
+ * Only when the host reports stream encoding support (`deps.streams()`, probed via
+ * `probeStreamEncoder`) is the capability flag `capabilities.streams` reported as true; the
+ * single-card stream slice dispatched by the splitter to the browser (`kind: 'stream'`,
+ * `input.stream`, `input.bake`) follows the same rules as snapshot tasks: report 0 first,
+ * deduplicate, fetch the project revision for the task, then hand the entire segment over to the
+ * host's `bakeStream` (create an isolated single-card project per `input.bake`, request pixels from
+ * the stage frame-by-frame, feed the encoder, push segments to the asset service). Once all
+ * segments are ready, `finishStream` writes the stream manifest to the content store, followed by
+ * `task.complete { ranges, ...manifest }`.
+ * How frame numbers are converted (`streamTaskFrames`) and what the manifest looks like
+ * (`streamManifest`, field-for-field isomorphic with desktop `collectStreamResult`) are pure
+ * functions here.
+ * Yielding: the host checks `yielding()` before each frame; once the current frame finishes, it
+ * stops and returns `{ yielded: true }`, and the node releases (already pushed segments remain on
+ * the host side; re-claiming the same segment fills only missing segments); page hiding or lost
+ * claims abort as usual (`signal`).
  *
- * # 让路(D8,`yieldFor`)
+ * # Yielding (D8, `yieldFor`)
  *
- * - `play` / `drag` / `urgent`(播放、拖动开始,更急的后台活来了):不再认领;当前这一帧做完就 `task.release`(不计失败,C2),
- *   不再生成下一帧。手里没有在做的帧(还在取项目、查去重)就立即放回。
- * - `hidden`(页面隐藏、父页 rAF 断档):不等当前帧,中止它(`signal`)并立即放回;迟到的结果丢掉。
- * 让路之后认不认领由宿主的 `isIdle()` 定(不在播放、不在拖动、离上一次交互过了安静期……)。
+ * - `play` / `drag` / `urgent` (playback or scrub begins, more urgent background work arrives):
+ *   stop claiming; once the current frame completes, call `task.release` (not counted as failure,
+ *   C2) and do not generate the next frame. If no frame is currently being processed (still
+ *   fetching project or checking deduplication), release immediately.
+ * - `hidden` (page hidden, parent page rAF gap): do not wait for the current frame; abort it
+ *   (`signal`) and release immediately; late results are discarded.
+ * Whether to resume claiming after yielding is determined by the host's `isIdle()` (not playing,
+ * not scrubbing, quiet period elapsed since the last interaction...).
  *
- * # 报忙(M7 D2 补充〔裁〕,`claude/queue-maint`)
+ * # Reporting busy (M7 D2 supplementary [ruling], `claude/queue-maint`)
  *
- * 队列锁闲置超 30 s 会被切分方接手(D2)。页面锁着一张卡、手里却在做别的(生成别的卡的快照,或后台舞台在测量、补跑)时,
- * 那张卡没有产出,但页面没走。`node.welcome` 带 `activeIntervalMs`(新队列)时,节点在这种时候按这个间隔发
- * `node.active { busy }`(`busy`:手里有认领为 `'bake'`,否则问宿主的 `busy()`,如 `'stage'`);队列据此不把它锁着的卡判闲置。
- * 闲着、页面隐藏、只是在播放或拖动而后台没活时不发:这些时候锁照旧按产出算闲置。旧队列不带 `activeIntervalMs`,一条也不发。
+ * A queue lock idle for more than 30 s will be taken over by the splitter (D2). When a page locks a
+ * card but is busy doing something else (generating snapshots for other cards, or the background
+ * stage is measuring or doing catch-up runs), that card has no output, but the page is still active.
+ * When `node.welcome` includes `activeIntervalMs` (new queue), the node sends `node.active { busy }`
+ * at this interval during such times (`busy`: `'bake'` if holding a claim, otherwise query the
+ * host's `busy()`, such as `'stage'`); based on this, the queue does not mark the locked card as
+ * idle.
+ * Do not send when idle, page hidden, or simply playing or scrubbing with no background work: during
+ * these times, locks are considered idle based on output as usual. Old queues do not include
+ * `activeIntervalMs` and nothing is sent.
  *
- * # 丢认领
+ * # Lost claims
  *
- * `task.lease-lost`、`node.welcome.lost`:中止这次生成快照、丢弃结果;已推的块不回收(按内容寻址,下一个认领者去重用得上)。
+ * `task.lease-lost`, `node.welcome.lost`: abort this snapshot generation and discard results;
+ * already pushed chunks are not reclaimed (content-addressed, reusable for deduplication by the
+ * next claimer).
  *
- * # 诊断(第 7 节)
+ * # Diagnostics (Section 7)
  *
- * `debug()`:状态(`off` / `idle` / `busy` / `baking`)与原因、`nodeId`、`envFingerprint`、`codeVersion`、持有的任务;
- * 计数(认领、完成、去重、放回按原因、失败、丢认领、生成快照帧数与每帧耗时 p50 / p95、被节点侧过滤挡掉的任务按原因);最近一次错误。
+ * `debug()`: state (`off` / `idle` / `busy` / `baking`) and reason, `nodeId`, `envFingerprint`,
+ * `codeVersion`, held tasks;
+ * counts (claimed, completed, deduplicated, released by reason, failed, lost claims, snapshot
+ * frames generated with per-frame duration p50 / p95, tasks blocked by node-side filtering by
+ * reason); latest error.
  *
- * 本模块属于 render 这一层(`src/online/`):不引 editor,不引 `mode.ts`。
+ * This module belongs to the render layer (`src/online/`): does not import editor, does not import
+ * `mode.ts`.
  */
 import { isStreamOrigin, STREAM_SEGMENT_FRAMES as SEGMENT_FRAMES_SHARED, streamSegmentFirstFrame, streamSegmentLastFrame } from "../render/streamSegments.mjs";
 import { streamBucketManifest, streamBucketRanges, streamLastSegmentOf } from "../render/streamBuckets.mjs";
-// @ts-expect-error 无类型声明的 .mjs(浏览器与 Node 通用,纯逻辑)
+// @ts-expect-error Untyped .mjs (universal to browser and Node, pure logic)
 import { createNodeSession as createNodeSessionUntyped } from "../../server/render-node/session.mjs";
-// @ts-expect-error 无类型声明的 .mjs(纯函数)
+// @ts-expect-error Untyped .mjs (pure functions)
 import { checkClaimable as checkClaimableUntyped } from "../../server/render-node/filter.mjs";
-// @ts-expect-error 无类型声明的 .mjs(同构:细任务的执行规矩,桌面与页面共用,D11)
+// @ts-expect-error Untyped .mjs (isomorphic: execution rules for fine-grained tasks, shared between desktop and page, D11)
 import { createTaskRunner as createTaskRunnerUntyped, ABORTED as ABORTED_UNTYPED } from "../../server/render-node/task-runner.mjs";
 import { tr } from "../i18n/index.ts";
 
-/* ------------------------------------------------------------------ 当节点的条件 */
+/* ------------------------------------------------------------------ Node eligibility conditions */
 
 /**
- * UA 是不是 Chromium 内核(D14)。认 `Chrome/<数>`、`Chromium/<数>`、`HeadlessChrome/<数>`(Edge、Opera 等 Chromium 系都带);
- * iOS 上的 Chrome / Firefox / Edge(`CriOS`、`FxiOS`、`EdgiOS`)是 WebKit,Firefox 带 `Firefox/`,都不算。
- * 与文档服务一侧的判法相同(那边挡住不诚实的页面,这边让诚实的页面干脆不开连接)。
+ * Whether the UA is Chromium-based (D14). Recognizes `Chrome/<number>`, `Chromium/<number>`,
+ * and `HeadlessChrome/<number>` (included by Chromium-based browsers such as Edge and Opera);
+ * Chrome / Firefox / Edge on iOS (`CriOS`, `FxiOS`, `EdgiOS`) are WebKit, and Firefox has
+ * `Firefox/`, neither of which counts.
+ * Matches the check logic on the document service side (that side blocks dishonest pages,
+ * while this side prevents honest pages from opening connections altogether).
  */
 export function isChromiumUserAgent(userAgent: unknown): boolean {
   const ua = String(userAgent ?? "");
@@ -95,27 +149,27 @@ export function isChromiumUserAgent(userAgent: unknown): boolean {
 }
 
 export interface EligibilityInput {
-  /** 在线构建(`src/online/mode.ts` 的 `ONLINE`,由调用方传) */
+  /** Online build (`ONLINE` in `src/online/mode.ts`, passed by caller) */
   online: boolean;
-  /** 在线构建嵌的代码版本(`buildInfo.ts` 的 `CODE_VERSION`);开发构建为空 */
+  /** Embedded code version in online builds (`CODE_VERSION` in `buildInfo.ts`); empty in development builds */
   codeVersion: string | null | undefined;
-  /** 身份为手机(`onlineTier.ts`;语义 `product/platforms.md`「身份」:手机不当渲染节点) */
+  /** Identity is mobile (`onlineTier.ts`; semantics in `product/platforms.md` "Identity": mobile does not act as a render node) */
   phone: boolean;
-  /** 最低一档(基准卡都跑不动或一个舞台都撑不住):不当节点,也不为本页产流 */
+  /** Lowest tier (cannot run even a baseline card or sustain a single stage): does not act as a node or produce streams for this page */
   lowest: boolean;
-  /** 两个跨源舞台都握上手为 `'dual'`;只有一个舞台(舞台闸门第一级、握手失败退回)为 `'single'` */
-  /** `pending`:按两个舞台开、还没都握上手(舞台闸门在试后台舞台);不当节点,也不按只有一个舞台算 */
+  /** `'dual'` when handshakes complete with both cross-origin stages; `'single'` when there is only one stage (stage gate level 1, fell back after handshake failure) */
+  /** `pending`: opened with two stages, but handshakes not yet completed with both (stage gate is probing the background stage); does not act as a node, nor counted as a single stage */
   stageLayout: "dual" | "single" | "pending";
   userAgent: string;
-  /** 以成员身份连着放云端的共享项目(页面连接在线) */
+  /** Connected as a member to a shared project moved to the cloud (page connection is online) */
   member: boolean;
-  /** 打开项目的测量已落定(加载遮罩撤下) */
+  /** Measurement for opening the project has settled (loading overlay dismissed) */
   measured: boolean;
 }
 
 export type EligibilityReason = "not-online" | "dev-build" | "lowest" | "phone" | "single-stage" | "not-chromium" | "not-member" | "measuring";
 
-/** 当节点的条件(第 2 节):全部成立回 `{ ok: true }`,否则回第一条不成立的原因 */
+/** Node eligibility conditions (Section 2): returns `{ ok: true }` if all hold, otherwise returns the reason for the first unmet condition */
 export function browserNodeEligibility(input: EligibilityInput): { ok: boolean; reason: EligibilityReason | null } {
   const no = (reason: EligibilityReason) => ({ ok: false, reason });
   if (input.online !== true) return no("not-online");
@@ -129,43 +183,43 @@ export function browserNodeEligibility(input: EligibilityInput): { ok: boolean; 
   return { ok: true, reason: null };
 }
 
-/* ------------------------------------------------------------------ 流任务的纯函数 */
+/* ------------------------------------------------------------------ Pure functions for stream tasks */
 
-/** 轨道流每段的帧数:数和换算都在 `render/streamSegments.mjs`(产流、读流共用),这里照旧的名字再导出一次 */
+/** Frame count per segment in a track stream: count and conversion are in `render/streamSegments.mjs` (shared by stream production and reading); re-exported here under legacy name */
 export const STREAM_SEGMENT_FRAMES = SEGMENT_FRAMES_SHARED;
-/** 浏览器压的流在清单里写的编码器名(桌面那边是 ffmpeg 的编码器名,如 `libx264`):看得出是浏览器用自带的编码器压的 */
+/** Encoder name written in the manifest for browser-encoded streams (desktop uses ffmpeg encoder names such as `libx264`): indicates it was encoded by the browser using its built-in encoder */
 export const BROWSER_STREAM_ENCODER = "webcodecs-avc";
-/** 清单的版本与体积上限(同 `server/artifact-transfer.mjs` 的 `RESULT_VERSION`、`RESULT_MAX_BYTES`) */
+/** Manifest version and size limit (same as `RESULT_VERSION` and `RESULT_MAX_BYTES` in `server/artifact-transfer.mjs`) */
 const STREAM_RESULT_VERSION = 1;
 const STREAM_RESULT_MAX_BYTES = 256 * 1024;
 
 export interface StreamRectLike { x: number; y: number; w: number; h: number }
-/** 切分方写在浏览器那一份流任务里的 `input.stream`(`server/render-node/split.mjs`):页面不自己算这些 */
+/** `input.stream` written by the splitter in the browser's stream task slice (`server/render-node/split.mjs`): the page does not compute these itself */
 export interface StreamTaskInput {
   kind: "card";
   plane: "local";
   clipIds: string[];
   fps: number;
-  /** 流的矩形:包裹层自己的坐标(框的左上角是原点) */
+  /** Stream rectangle: wrapper layer's own coordinates (origin at top-left corner of the box) */
   bound: StreamRectLike;
-  /** 桌面隔离工程里把框摆到哪儿;浏览器这条路用不上,只原样写进清单 */
+  /** Where the box is placed in the desktop isolated project; unused on the browser path, written into the manifest as-is */
   offset: { x: number; y: number };
-  /** 卡的本地帧 0 对应的全局帧号 */
+  /** Global frame number corresponding to local frame 0 of the card */
   firstFrame: number;
-  /** 卡的帧数:本地帧 0 .. count-1 之外是全透明 */
+  /** Frame count of the card: fully transparent outside local frames 0 .. count-1 */
   count: number;
-  /** 项目的总帧数(原来用它截最后一个分段;现在分段截到 `lastFrame`,这一项只照旧带着) */
+  /** Total frame count of the project (originally used to truncate the final segment; now segments truncate at `lastFrame`, so this item is kept as before) */
   total: number;
-  /** 这条流自己的第一帧(项目帧号):分段从它起每 15 帧一段。单卡流的它就是 `firstFrame` */
+  /** First frame of this stream itself (project frame number): segments are 15 frames each starting from it. For a single-card stream, this is `firstFrame` */
   originFrame: number;
-  /** 这条流自己的最后一帧(项目帧号):最后一个分段到它为止,可以不满 15 帧 */
+  /** Last frame of this stream itself (project frame number): the final segment ends at it and may have fewer than 15 frames */
   lastFrame: number;
 }
 
 const isInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v);
 const HEX64 = /^[a-f0-9]{64}$/;
 
-/** 任务 → `input.stream`;形状不对回 null(不猜) */
+/** Task → `input.stream`; returns null if shape is invalid (no guessing) */
 export function streamInputOf(task: { input?: Record<string, unknown> } | null | undefined): StreamTaskInput | null {
   const s = task?.input?.stream as Partial<StreamTaskInput> | undefined;
   if (!s || typeof s !== "object" || s.kind !== "card" || s.plane !== "local") return null;
@@ -174,7 +228,7 @@ export function streamInputOf(task: { input?: Record<string, unknown> } | null |
   const b = s.bound, o = s.offset;
   const fps = Number(s.fps);
   if (!(fps > 0) || !Number.isFinite(fps) || !isInt(s.firstFrame) || !isInt(s.count) || s.count < 1 || !isInt(s.total) || s.total < 1) return null;
-  // 分段从这条流自己的第一帧起数:任务没带这一帧的(改分段规则之前的切分方出的)不做,不拿项目的第 0 帧去猜
+  // Segments count from this stream's own first frame: skip tasks missing this frame (produced by splitters before segment rules changed), rather than guessing from project frame 0
   if (!isStreamOrigin(s.originFrame) || !isInt(s.lastFrame) || s.lastFrame < s.originFrame) return null;
   if (!b || !isInt(b.x) || !isInt(b.y) || !isInt(b.w) || !isInt(b.h) || b.w < 2 || b.h < 2 || b.w % 2 || b.h % 2) return null;
   if (!o || !Number.isFinite(o.x) || !Number.isFinite(o.y)) return null;
@@ -183,17 +237,20 @@ export function streamInputOf(task: { input?: Record<string, unknown> } | null |
 }
 
 export interface StreamSegmentPlan {
-  /** 分段号:这一段的第一帧是项目的第 `originFrame + index × 15` 帧 */
+  /** Segment index: the first frame of this segment is project frame `originFrame + index × 15` */
   index: number;
-  /** 这一段每一帧要的本地帧号;`null` = 这一帧不在卡的范围里,送全透明 */
+  /** Requested local frame number for each frame in this segment; `null` = frame outside card bounds, send fully transparent */
   frames: (number | null)[];
 }
 
 /**
- * 一段流任务要做哪些帧(第四处「帧号怎么换算」):任务范围里每个分段 15 帧(从这条流的第一帧 `originFrame` 起数,最后一段到这条流的
- * 最后一帧 `lastFrame` 为止;换算用 `render/streamSegments.mjs`,与切分方、播放器同一份),
- * 项目帧号减去 `firstFrame` 得卡的本地帧;落在 0 .. count-1 之外的帧不在卡的范围里,送全透明。
- * 任务不是浏览器形状的流任务回 null。`frames` 是这一段任务的总帧数。
+ * Which frames a stream task segment needs to produce (Part 4 "Frame number conversion"): each
+ * segment in the task range is 15 frames (counting from the stream's first frame `originFrame`,
+ * ending at the stream's last frame `lastFrame`; conversion uses `render/streamSegments.mjs`, the
+ * same copy as the splitter and player). Project frame number minus `firstFrame` gives the card's
+ * local frame; frames outside 0 .. count-1 fall outside the card's range and receive full
+ * transparency. Returns null if the task is not a browser-shaped stream task. `frames` is the
+ * total frame count for this task segment.
  */
 export function streamTaskFrames(task: { range?: { from: number; to: number } | null; input?: Record<string, unknown> } | null | undefined): { input: StreamTaskInput; segments: StreamSegmentPlan[]; frames: number } | null {
   const input = streamInputOf(task);
@@ -209,7 +266,7 @@ export function streamTaskFrames(task: { range?: { from: number; to: number } | 
       const local = g - input.firstFrame;
       list.push(local >= 0 && local < input.count ? local : null);
     }
-    // 整段都在这条流的最后一帧之后:这样的分段不该出现在任务里(切分按流的末段切),出现了就是任务对不上,不做
+    // Entire segment is after the stream's last frame: such segments should not appear in tasks (splitting ends at the stream's final segment); if encountered, it is a task mismatch, so skip it
     if (!list.length) return null;
     segments.push({ index: n, frames: list });
     frames += list.length;
@@ -217,26 +274,31 @@ export function streamTaskFrames(task: { range?: { from: number; to: number } | 
   return { input, segments, frames };
 }
 
-/** 清单里一个开头文件(`ftyp + moov`)的登记;键是哈希的前 16 位 */
+/** Registration of a head file (`ftyp + moov`) in the manifest; key is the first 16 characters of the hash */
 export interface StreamInitMeta { hash: string; bytes: number; codec: string | null; width: number | null; height: number | null; timescale: number | null; rect: StreamRectLike | null; encoder: string | null }
 /**
- * 清单里一个分段(`moof + mdat`)的登记;键是分段号。`stride`:1 是满密度,大于 1 是稀疏版(只截分段的第一帧、其余帧重复它)。
- * `box`:这个分段的位置矩形——截的那一张里不透明像素的外接框,平面坐标(与 `inits[].rect`、`header.bound` 同一个坐标系),
- * 全透明是 null;产稀疏版时量,没量过的不带这一项(与桌面 `stream.json` 的 `segments[n].box` 同一个约定)。
+ * Registration of a segment (`moof + mdat`) in the manifest; key is the segment number. `stride`: 1
+ * is full density, > 1 is sparse version (captures only the segment's first frame, repeated for
+ * remaining frames). `box`: position rectangle for this segment: bounding box of opaque pixels in
+ * the captured frame, in plane coordinates (same coordinate system as `inits[].rect` and
+ * `header.bound`), null if fully transparent; measured when producing sparse versions, omitted if
+ * unmeasured (same convention as `segments[n].box` in desktop `stream.json`).
  */
 export interface StreamSegmentMeta { hash: string; bytes: number; init: string; stride: number; samples: number; sig: string | null; encoder: string | null; box?: StreamRectLike | null }
 
-/** 流任务的密度:`input.density: 'sparse'` 是稀疏流任务(id 末尾多 `:sparse`,`server/render-queue/messages.mjs` 的 `taskIdOf`);不带是满密度任务 */
+/** Stream task density: `input.density: 'sparse'` is a sparse stream task (id ends with `:sparse`, `taskIdOf` in `server/render-queue/messages.mjs`); omitted means full-density task */
 export const STREAM_DENSITY_SPARSE = "sparse";
 export const isSparseStreamTask = (task: { kind?: unknown; input?: Record<string, unknown> | null } | null | undefined): boolean =>
   task?.kind === "stream" && task.input?.density === STREAM_DENSITY_SPARSE;
-/** 这个流任务每几帧截一张:稀疏流任务是一个分段的帧数(每段只截第一帧),满密度任务是 1 */
+/** Capture interval in frames for this stream task: frame count of a segment for sparse stream tasks (capturing only the first frame per segment), 1 for full-density tasks */
 export const streamTaskStride = (task: { kind?: unknown; input?: Record<string, unknown> | null } | null | undefined): number =>
   (isSparseStreamTask(task) ? SEGMENT_FRAMES_SHARED : 1);
 
 /**
- * 一张 RGBA 画面里不透明像素(alpha > 0)的外接框 `{ x, y, w, h }`(像素,左上角为原点);全透明回 null。
- * 稀疏版每个分段量一次(位置矩形 `box`),量法与桌面 `server/bakery/capture-canvas.mjs` 的 `rgbaAlphaBox` 相同。
+ * Bounding box `{ x, y, w, h }` of opaque pixels (alpha > 0) in an RGBA frame (pixels, origin at
+ * top-left corner); returns null if fully transparent. Measured once per segment in sparse versions
+ * (position rectangle `box`), using the same method as `rgbaAlphaBox` in desktop
+ * `server/bakery/capture-canvas.mjs`.
  */
 export function alphaBoxOf(data: ArrayLike<number>, width: number, height: number): StreamRectLike | null {
   let x0 = width, y0 = height, x1 = -1, y1 = -1;
@@ -259,17 +321,21 @@ export interface StreamManifestOut {
   kind: "stream";
   resultKey: string;
   range: { from: number; to: number };
-  /** `lastFrame`:这条流自己的最后一帧(项目帧号);写内容库时按它截 8 段一桶的终点(`render/streamBuckets.mjs`)。旧清单没有这一项 */
+  /** `lastFrame`: last frame of this stream itself (project frame number); used to truncate the end of 8-segment buckets when writing to content store (`render/streamBuckets.mjs`). Omitted in older manifests */
   header: { kind: "card"; plane: "local"; clipIds: string[]; fps: number; originFrame: number; lastFrame?: number; bound: StreamRectLike; offset: { x: number; y: number }; tight: null };
   inits: Record<string, StreamInitMeta>;
   segments: Record<string, StreamSegmentMeta>;
 }
 
 /**
- * 一段流任务的清单:形状与桌面 `server/artifact-transfer.mjs` 的 `collectStreamResult` 逐字段相同(单测对拍、过 `manifestMatches`
- * 与 `streamAdoption`),桌面才能把浏览器产的流拉回去用。只列任务范围里的分段和它们用到的开头文件;分段照它产出时的密度记 `stride`
- * (稀疏流任务的是一个分段的帧数,带 `box`;满密度的是 1)、矩形固定用 `bound`(`header.tight: null`)、不算分段签名(`sig: null`,桌面按 `adopted` 认,不按本机编码器重算)。
- * 超过 256 KiB 抛 `code: 'result-too-large'`(不可重试)。
+ * Manifest for a stream task segment: field-for-field identical in shape to `collectStreamResult` in
+ * desktop `server/artifact-transfer.mjs` (cross-checked by unit tests, passing `manifestMatches` and
+ * `streamAdoption`), so desktop can pull and consume streams produced by the browser. Lists only
+ * segments within the task range and head files they use; segments record `stride` according to their
+ * output density (segment frame count for sparse stream tasks, with `box`; 1 for full density),
+ * rectangle is fixed to `bound` (`header.tight: null`), and segment signatures are omitted
+ * (`sig: null`, desktop recognizes as `adopted` without recomputing via local encoder).
+ * Throws `code: 'result-too-large'` if exceeding 256 KiB (non-retryable).
  */
 export function streamManifest(
   task: { resultKey: string; range: { from: number; to: number } | null; input?: Record<string, unknown> },
@@ -300,10 +366,14 @@ export function streamManifest(
 }
 
 /**
- * 一段流任务的清单要写进内容库(`render-manifest`)的几份:任务自己的键 `<结果键>:<起>-<止>`,另加「8 段一桶」里与它不同的每个桶
- * (`render/streamBuckets.mjs`,与桌面 `server/artifact-transfer.mjs` 的 `writeManifest` 同一个规矩)。桶的终点截到**整条流的最后一段**,
- * 由任务的 `input.stream`(`originFrame` / `lastFrame`)换算,不拿任务的 `range.to` 顶:任务 `[0, 59]` 不是流的末尾时最后一个桶是 `56-63`,
- * 与任务 `[60, 124]` 写的同一个键。每一份写之前由调用方各自和内容库里已有的那一份合并(`mergeStreamManifest`),两边的分段合在一起。
+ * Copies of a stream task segment manifest to write into the content store (`render-manifest`): the
+ * task's own key `<resultKey>:<start>-<end>`, plus each differing bucket in "8 segments per bucket"
+ * (`render/streamBuckets.mjs`, following the same rule as `writeManifest` in desktop
+ * `server/artifact-transfer.mjs`). Bucket ends are truncated to **the last segment of the entire stream**,
+ * converted from the task's `input.stream` (`originFrame` / `lastFrame`), without capping at task
+ * `range.to`: when task `[0, 59]` is not the end of the stream, the final bucket is `56-63`, writing to
+ * the same key as task `[60, 124]`. Before writing each copy, callers merge it with any existing copy
+ * in the content store (`mergeStreamManifest`), combining segments from both sides.
  */
 export function streamManifestPuts(
   task: { resultKey: string; range: { from: number; to: number } | null; input?: Record<string, unknown> },
@@ -322,10 +392,14 @@ export function streamManifestPuts(
 }
 
 /**
- * 写流清单前和内容库里已有的那一份合并(同一个键),不降级:新清单里某一段是稀疏的而已有的是满密度的,留已有的;新清单里没有、
- * 已有的清单里有的分段留着;其余用新的。留下的分段连它的开头文件一起带过来。新的分段没带位置矩形(`box`,只在稀疏的一趟量)而已有的
- * 那一段带着,把它带过来 —— 补成满密度以后位置矩形还在。与桌面 `server/artifact-transfer.mjs` 的 `mergeStreamResult` 同一个规矩。
- * 已有的对不上(键、范围、形状)就原样回新的。
+ * Merges with the existing copy in the content store (same key) before writing a stream manifest,
+ * without downgrading: if a segment in the new manifest is sparse while the existing one is full
+ * density, keep the existing one; retain segments present in the existing manifest but absent from the
+ * new one; use the new ones for the rest. Retained segments bring along their head files. If a new
+ * segment lacks a position rectangle (`box`, measured only in the sparse pass) while the existing
+ * segment has one, carry it over: the position rectangle persists after upgrading to full density.
+ * Follows the same rule as `mergeStreamResult` in desktop `server/artifact-transfer.mjs`. If the
+ * existing copy does not match (key, range, shape), returns the new copy as-is.
  */
 export function mergeStreamManifest(existing: unknown, next: StreamManifestOut): StreamManifestOut {
   const old = existing as StreamManifestOut | null;
@@ -349,8 +423,10 @@ export function mergeStreamManifest(existing: unknown, next: StreamManifestOut):
 }
 
 /**
- * 内容库里取回的流清单能不能直接当这一段的结果用(去重):形状对、任务范围里每个分段和它的开头文件都列着。
- * `dense`(满密度任务)时另要每个分段都是满密度;稀疏流任务每段有一版就算数。
+ * Whether a stream manifest retrieved from the content store can be used directly as this segment's
+ * result (deduplication): shape is valid, and every segment in the task range along with its head
+ * file is listed. For `dense` (full-density tasks), additionally requires every segment to be full
+ * density; for sparse stream tasks, any version for each segment qualifies.
  */
 export function streamManifestCovers(body: unknown, task: { resultKey: string; range: { from: number; to: number } | null }, opts: { dense?: boolean } = {}): body is StreamManifestOut {
   const b = body as StreamManifestOut | null;
@@ -367,7 +443,7 @@ export function streamManifestCovers(body: unknown, task: { resultKey: string; r
   return true;
 }
 
-/** 流清单里要在素材服务上的块(都在像素那一类 `px`):开头文件与分段,按哈希去重 */
+/** Chunks in the stream manifest required to exist on the asset service (all under pixel category `px`): head files and segments, deduplicated by hash */
 export function streamManifestBlocks(m: StreamManifestOut): { ns: "px"; hash: string }[] {
   const out = new Map<string, { ns: "px"; hash: string }>();
   for (const init of Object.values(m.inits ?? {})) out.set(init.hash, { ns: "px", hash: init.hash });
@@ -375,9 +451,9 @@ export function streamManifestBlocks(m: StreamManifestOut): { ns: "px"; hash: st
   return [...out.values()];
 }
 
-/* ------------------------------------------------------------------ 编排 */
+/* ------------------------------------------------------------------ Arrangement */
 
-/** 队列里的一个任务(契约 A.4 的 TaskView;这里只用到这些字段) */
+/** A task in the queue (TaskView from Contract A.4; only these fields are used here) */
 export interface NodeTask {
   id: string;
   kind: string;
@@ -391,13 +467,13 @@ export interface NodeTask {
   [k: string]: unknown;
 }
 
-/** 一帧的产出(宿主的 `bakeFrame` 回的) */
+/** Output for a single frame (returned by the host's `bakeFrame`) */
 export interface BakedFrame {
-  /** 原尺寸 HTML 快照(原始字节)的 sha256 */
+  /** sha256 of original-size HTML snapshot (raw bytes) */
   hash: string;
   bytes: number;
   htmlGz?: ArrayBuffer;
-  /** 预渲染小尺寸(WebP)的 sha256 与字节数 */
+  /** sha256 and byte length of small-size prerender (WebP) */
   small?: { hash: string; bytes: number } | null;
   [k: string]: unknown;
 }
@@ -408,55 +484,85 @@ export type YieldCause = "play" | "drag" | "urgent" | "hidden";
 export interface BrowserNodeDeps {
   nodeId: string;
   projectId: string;
-  /** 「用户名@设备」(与文档服务按凭证填的 `source.userId` 同形) */
+  /** "username@device" (isomorphic with `source.userId` populated by document service from credentials) */
   userId: string;
   codeVersion: string | null;
-  /** `pageEnvironment()` 的原始值 */
+  /** Raw value of `pageEnvironment()` */
   environment: { platform: string; userAgent: string; renderer: string; vendor: string };
   now: () => number;
-  /** 闲的判据(父页判,第 2 节) */
+  /** Idle criterion (decided by the parent page, section 2) */
   isIdle: () => boolean;
-  /** 往 render 连接发一条 */
+  /** Send one message on the render connection */
   send: (message: Record<string, unknown>) => boolean | void;
-  /** 发布清单计划时留存的已确认版本(D6);没有回 null */
+  /** Confirmed version kept when the manifest plan was published (D6); null if none */
   keptProject: (rev: number) => unknown | null;
-  /** `project.snapshot.get` 那一版;没有回 null */
+  /** The version returned by `project.snapshot.get`; null if none */
   fetchSnapshot: (rev: number) => Promise<unknown | null>;
-  /** 生成这一帧(后台舞台)并推送;`signal` 中止时尽早停手 */
+  /** Generate this frame (background stage) and push it; stop as early as possible when `signal` aborts */
   bakeFrame: (job: { task: NodeTask; project: unknown; localFrame: number; signal: AbortSignal }) => Promise<BakedFrame>;
-  /** 全段齐后组清单、写内容库;回的对象展开进 `task.complete` 的结果 */
+  /**
+   * Once all segments are in, assemble the manifest and write the content store; the returned object
+   * is spread into the `task.complete` result
+   */
   finishTask: (arg: { task: NodeTask; frames: FrameRecord[] }) => Promise<Record<string, unknown>>;
-  /** 去重(第 4.1 节):内容库清单在、覆盖整段、块都在素材服务上就回清单,否则 null */
+  /**
+   * Dedup (section 4.1): returns the manifest if the content store has it, it covers the whole segment,
+   * and all its chunks are on the asset service; otherwise null
+   */
   lookupResult?: (task: NodeTask) => Promise<Record<string, unknown> | null>;
   /**
-   * 本页此刻压不压得了轨道流(宿主按 `probeStreamEncoder` 探的结果)。每个节拍读一次,不缓存;回真且给了 `bakeStream`,
-   * 能力位 `capabilities.streams` 才报真(节点侧过滤规则 2 据此认领流任务)。不给就是不产流的节点,与原来相同。
+   * Whether this page can currently encode a track stream (the result the host probed with
+   * `probeStreamEncoder`). Read once per tick, not cached. Only when it returns true and `bakeStream` is
+   * provided does the capability flag `capabilities.streams` report true (node-side filter rule 2 claims
+   * stream tasks based on it). If not provided, the node does not produce streams, same as before.
    */
   streams?: () => boolean;
   /**
-   * 执行一段流任务(`kind: 'stream'`):按 `input.bake` 建隔离单卡工程,任务范围里逐段逐帧要像素、送编码器、把开头文件与分段推素材服务。
-   * `progress(n)` 报已经做了几帧(开工先报一次起点:上一次认领里已经推完的分段的帧数,没有就是 0);每帧前问 `yielding()`,为真就在当前帧做完后停手、回 `{ yielded: true }`;`signal` 中止时尽早停手。
-   * 全部分段都推完回 `{ manifest }`(清单,`streamManifest` 的形状)。
+   * Runs one stream task (`kind: 'stream'`): builds an isolated single-card project from `input.bake`,
+   * then, for each segment and frame in the task range, requests pixels, feeds the encoder, and pushes
+   * the head file and segments to the asset service.
+   * `progress(n)` reports how many frames are done (report the starting point once at the start: the frame
+   * count of segments already pushed in the previous claim, or 0 if none); ask `yielding()` before each
+   * frame, and if it is true, stop once the current frame is done and return `{ yielded: true }`; stop as
+   * early as possible when `signal` aborts.
+   * When all segments are pushed, returns `{ manifest }` (the manifest, in the shape of `streamManifest`).
    */
   bakeStream?: (job: { task: NodeTask; project: unknown; signal: AbortSignal; progress: (frames: number) => void; yielding: () => boolean }) => Promise<{ manifest: Record<string, unknown> } | { yielded: true }>;
-  /** 流任务全部分段齐后写内容库(`render-manifest`);回的对象展开进 `task.complete` 的结果。不给就直接用 `bakeStream` 回的清单 */
+  /**
+   * Writes the content store (`render-manifest`) once all segments of a stream task are in; the returned
+   * object is spread into the `task.complete` result. If not provided, the manifest returned by
+   * `bakeStream` is used directly
+   */
   finishStream?: (arg: { task: NodeTask; manifest: Record<string, unknown> }) => Promise<Record<string, unknown>>;
-  /** 一段任务收尾(完成、失败、放回、丢认领)之后调:宿主据此交还后台舞台 */
+  /**
+   * Called after a segment task ends (completed, failed, released, claim lost); the host hands the
+   * background stage back on this signal
+   */
   onTaskEnd?: (task: NodeTask, outcome: string) => void;
-  /** `node.welcome` 回了指纹 */
+  /** `node.welcome` returned a fingerprint */
   onFingerprint?: (envFingerprint: string) => void;
   /**
-   * 本页能执行同步来的用户卡与素材效果卡时回登记处的内容(`nodeCardInfo.ts` 的 `getNodeCardInfo`);不能或不给就是原来的纯浏览器节点。
-   * 每个节拍读一次,不缓存。
+   * Returns the registry contents (`getNodeCardInfo` in `nodeCardInfo.ts`) when this page can run synced
+   * user cards and media effect cards; if it cannot, or this is not provided, the node stays the plain
+   * browser node as before.
+   * Read once per tick, not cached.
    */
   cardInfo?: () => { cardRuntime: string | null; userCards: boolean; graphCards: boolean; cardSources: Readonly<Record<string, string>> } | null;
-  /** `node.welcome` 回了(或没回)用户卡、素材效果卡用的指纹(没有时传 null) */
+  /**
+   * `node.welcome` returned (or did not return) the fingerprint used for user cards and media effect
+   * cards (null is passed when absent)
+   */
   onCardEnvFingerprint?: (cardEnvFingerprint: string | null) => void;
-  /** 报到被文档服务拒了(`forbidden`、`not-chromium`、`bad-message`……):宿主结束会话,不重连 */
+  /**
+   * Check-in was rejected by the document service (`forbidden`, `not-chromium`, `bad-message`, ...): the
+   * host ends the session and does not reconnect
+   */
   onRefused?: (reason: string) => void;
   /**
-   * 手里没有认领时,页面此刻在忙什么(报忙用,M7 D2 补充):后台舞台在测量、补跑回 `'stage'` 之类的短串;闲着、页面隐藏、
-   * 只是在播放或拖动而后台没活回 null。不给就只在手里有认领时报忙
+   * What the page is busy with when it holds no claim (used for reporting busy, M7 D2 addendum): a short
+   * string such as `'stage'` when the background stage is measuring or running a catch-up run; null when
+   * idle, the page is hidden, or it is only playing or scrubbing and the background has no work. If not
+   * provided, busy is reported only while holding a claim
    */
   busy?: () => string | null;
   random?: () => number;
@@ -468,22 +574,31 @@ export interface BrowserNodeDebug {
   reason: string | null;
   nodeId: string;
   envFingerprint: string | null;
-  /** 用户卡、素材效果卡的任务用的指纹(块 N);没报运行时版本或旧队列为 null */
+  /**
+   * Fingerprint used for user card and media effect card tasks (block N); null if no runtime version
+   * was reported or the queue is old
+   */
   cardEnvFingerprint: string | null;
-  /** 此刻报给节点侧过滤的用户卡、素材效果卡能力与卡片代码身份(块 N):卡片 id → 身份 */
+  /**
+   * User card and media effect card capabilities and card code identities currently reported to the
+   * node-side filter (block N): card id → identity
+   */
   cards: { runtime: string | null; userCards: boolean; graphCards: boolean; sources: Record<string, string> };
-  /** 此刻报给节点侧过滤的「能产轨道流」(宿主探到了编码器、给了执行流任务的方法) */
+  /**
+   * The "can produce track streams" flag currently reported to the node-side filter (the host found an
+   * encoder and provided a method to run stream tasks)
+   */
   streams: boolean;
   codeVersion: string | null;
   holding: { id: string; token: number; done: number; of: number; projectRev: number | null }[];
   counters: {
     claims: number; completed: number; dedup: number; failed: number; lost: number; bakedFrames: number;
-    /** 流任务:送进编码器的帧数(含全透明的)与做完的流任务数 */
+    /** Stream tasks: frames fed to the encoder (including fully transparent ones) and stream tasks completed */
     streamFrames: number; streamTasks: number;
-    /** 发了几条 `node.active`(报忙,M7 D2 补充) */
+    /** Number of `node.active` messages sent (busy reports, M7 D2 addendum) */
     active: number;
     released: Record<string, number>;
-    /** 被节点侧过滤挡掉的任务,按「规则号:原因」(每个任务 id 只记一次) */
+    /** Tasks blocked by the node-side filter, keyed by "rule number: reason" (each task id is recorded once) */
     blocked: Record<string, number>;
     frameMs: { n: number; p50: number | null; p95: number | null };
   };
@@ -491,18 +606,25 @@ export interface BrowserNodeDebug {
 }
 
 export interface BrowserNode {
-  /** 报到并 watch 本项目(新会话建成时调;带手里的认领去接续) */
+  /**
+   * Check in and watch this project (called when a new session is established; resumes with the claims
+   * in hand)
+   */
   start(): void;
-  /** render 连接上收到的消息 */
+  /** Messages received on the render connection */
   receive(message: Record<string, unknown>): void;
-  /** 认领与续约的节拍(宿主按间隔调) */
+  /** Tick for claiming and lease renewal (the host calls it at an interval) */
   tick(): void;
-  /** 让路(D8) */
+  /** Yield (D8) */
   yieldFor(cause: YieldCause): void;
-  /** 下线:放回全部,不再认领 */
+  /** Go offline: release everything and stop claiming */
   stop(): void;
   debug(): BrowserNodeDebug;
-  /** 手里有没有认领(在做、在查去重、在取项目都算)。本页产流(`pageStreams.ts`)据此不与认领来的任务同时用后台舞台 */
+  /**
+   * Whether a claim is in hand (running, checking dedup, or fetching the project all count). Page-side
+   * stream production (`pageStreams.ts`) uses this to avoid using the background stage at the same time
+   * as a claimed task
+   */
   working(): boolean;
   readonly envFingerprint: string | null;
   readonly cardEnvFingerprint: string | null;
@@ -529,7 +651,10 @@ type TaskRunner = {
   tokenOf(id: string): number | null;
 };
 const createTaskRunner = createTaskRunnerUntyped as (options: Record<string, unknown>) => TaskRunner;
-/** 中止标记(与 task-runner 同一个:赛跑输给中止信号,不是执行器的错) */
+/**
+ * Abort marker (the same one as in task-runner: losing the race to the abort signal is not the
+ * executor's fault)
+ */
 const ABORTED = ABORTED_UNTYPED as symbol;
 
 function untilAborted<T>(work: () => Promise<T> | T, signal: AbortSignal): Promise<T> {
@@ -546,34 +671,52 @@ function untilAborted<T>(work: () => Promise<T> | T, signal: AbortSignal): Promi
 const quantile = (sorted: number[], p: number): number | null =>
   sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))] : null;
 
-/** 每帧耗时留最近这么多个样本算 p50 / p95 */
+/** Keep this many of the most recent per-frame timing samples to compute p50 / p95 */
 const FRAME_SAMPLES = 200;
 /**
- * 让路(play / drag / urgent)之后等当前这一帧做完最多这么久;过了就像页面隐藏那样中止它、立即放回(三级数字)。
- * 播放、拖动时后台活的门会关,正在做的那一帧在舞台里被挡住,不设上限就既不出帧也不放回(M7 验收探针 A5 / A6)。
+ * After yielding (play / drag / urgent), wait at most this long for the current frame to finish; after
+ * that, abort it and release immediately, as when the page is hidden (level-3 number).
+ * While playing or scrubbing, the gate for background work closes and the frame in progress is blocked
+ * in the stage; without an upper limit it would neither produce a frame nor release (M7 acceptance
+ * probes A5 / A6).
  */
 export const YIELD_FRAME_MAX_MS = 1000;
-/** 已做的帧留几段(让路后重新认领同一段只补缺的帧) */
+/**
+ * How many segments of finished frames to keep (after yielding, re-claiming the same segment only
+ * fills in the missing frames)
+ */
 const RETAINED_TASKS = 8;
 
-/** 本页这一侧对一次认领的记账(执行的规矩在 task-runner 里;这里只管帧、让路与诊断) */
+/**
+ * This page's bookkeeping for one claim (the execution rules live in task-runner; this only handles
+ * frames, yielding and diagnostics)
+ */
 interface Run {
   task: NodeTask;
   token: number;
-  /** 中止舞台这次生成快照:跟着 runner 的中止信号,另在隐藏时由本页中止 */
+  /**
+   * Aborts the stage's current snapshot generation: follows the runner's abort signal, and is also
+   * aborted by this page when it is hidden
+   */
   controller: AbortController;
-  /** 在哪一步:查去重与取项目(`prep`)、等 `bakeFrame` 回来(`baking`)、帧间(`between`)、全段齐后组清单(`finishing`) */
+  /**
+   * Which step: checking dedup and fetching the project (`prep`), waiting for `bakeFrame` to return
+   * (`baking`), between frames (`between`), assembling the manifest once all segments are in (`finishing`)
+   */
   phase: "prep" | "baking" | "between" | "finishing";
-  /** 要求让路的原因(做完当前帧就放回) */
+  /** Reason yielding was requested (release once the current frame is done) */
   yieldCause: YieldCause | null;
-  /** 要求让路的时刻(`deps.now()`):当前帧 `YIELD_FRAME_MAX_MS` 之内做不完就立即放回 */
+  /**
+   * When yielding was requested (`deps.now()`): if the current frame is not done within
+   * `YIELD_FRAME_MAX_MS`, release immediately
+   */
   yieldAt: number | null;
   frames: Map<number, FrameRecord>;
-  /** 流任务:这一次认领里做到了第几帧(宿主报的) */
+  /** Stream task: which frame this claim has reached (reported by the host) */
   streamDone: number;
-  /** 流任务:宿主开工报的起点帧数(还没报过为 null) */
+  /** Stream task: starting frame count reported by the host at the start (null if not reported yet) */
   streamBase: number | null;
-  /** 去重查到的清单(`sink.resultFor` 回它) */
+  /** Manifest found by the dedup check (`sink.resultFor` returns it) */
   found: Record<string, unknown> | null;
   ended: boolean;
 }
@@ -584,16 +727,22 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
     nodeId: deps.nodeId,
     userId: deps.userId,
     envFingerprint: null as string | null,
-    /** 用户卡、素材效果卡的任务用的指纹(块 N,`node.welcome.cardEnvFingerprint`);filter.mjs 规则 1 对这类任务拿它比 */
+    /**
+     * Fingerprint used for user card and media effect card tasks (block N,
+     * `node.welcome.cardEnvFingerprint`); rule 1 of filter.mjs compares against it for such tasks
+     */
     cardEnvFingerprint: null as string | null,
     codeVersions: deps.codeVersion ? [deps.codeVersion] : [],
     capabilities: { transcode: false, streams: false, userCards: false, graphCards: false },
     cardSourceVersions: {} as Record<string, string[]>,
   };
-  /** 最近一次报给节点侧过滤的卡片登记(诊断)与最近一次 `node.hello` 里报的运行时版本(判要不要重新报到) */
+  /**
+   * The card registry last reported to the node-side filter (diagnostics) and the runtime version last
+   * reported in `node.hello` (used to decide whether to check in again)
+   */
   let cardsNow: { runtime: string | null; userCards: boolean; graphCards: boolean; sources: Record<string, string> } = { runtime: null, userCards: false, graphCards: false, sources: {} };
   let helloRuntime: string | null = null;
-  /** 此刻本页的卡片登记(宿主给);读不到、抛错都当没有 */
+  /** This page's current card registry (from the host); unreadable or throwing counts as absent */
   const readCardInfo = () => {
     try {
       const info = deps.cardInfo?.() ?? null;
@@ -601,15 +750,23 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
       return { runtime: info.cardRuntime, userCards: info.userCards === true, graphCards: info.graphCards === true, sources: { ...info.cardSources } };
     } catch { return { runtime: null, userCards: false, graphCards: false, sources: {} as Record<string, string> }; }
   };
-  /** 本页此刻能不能产流:宿主探到了编码器、也给了执行流任务的方法(读不到、抛错都当不能) */
+  /**
+   * Whether this page can produce streams right now: the host found an encoder and also provided a method
+   * to run stream tasks (unreadable or throwing counts as unable)
+   */
   const canStream = (): boolean => {
     if (typeof deps.bakeStream !== "function") return false;
     try { return deps.streams?.() === true; } catch { return false; }
   };
-  /** 把登记同步进节点描述(能力位与卡片代码身份):节点侧过滤与认领据此判 */
+  /**
+   * Sync the registry into the node description (capability flags and card code identities); node-side
+   * filtering and claiming decide based on it
+   */
   const refreshCards = () => {
     cardsNow = readCardInfo();
-    // 文档服务没有回 cardEnvFingerprint(旧队列、运行时版本不合格)时不报能力:认领了也会因为指纹对不上被拒,不必白发请求
+    // When the document service did not return cardEnvFingerprint (old queue, runtime version not
+    // acceptable), do not report the capability: a claim would be rejected anyway because the fingerprint
+    // does not match, so there is no point in sending the request
     const usable = cardsNow.runtime !== null && nodeDesc.cardEnvFingerprint !== null;
     nodeDesc.capabilities = { ...nodeDesc.capabilities, streams: canStream(), userCards: usable && cardsNow.userCards, graphCards: usable && cardsNow.graphCards };
     const versions: Record<string, string[]> = {};
@@ -621,10 +778,13 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
   let refused: string | null = null;
   let run: Run | null = null;
   let lastError: string | null = null;
-  /** 报忙的间隔(`node.welcome.activeIntervalMs`);旧队列不带,为 null,一条也不发 */
+  /**
+   * Busy-report interval (`node.welcome.activeIntervalMs`); an old queue does not send it, so it is null
+   * and no report is sent
+   */
   let activeEvery: number | null = null;
   let lastActiveAt = -Infinity;
-  /** 已做的帧:任务 id → 帧;按插入顺序淘汰 */
+  /** Finished frames: task id → frames; evicted in insertion order */
   const retained = new Map<string, Map<number, FrameRecord>>();
   const blockedSeen = new Set<string>();
   const frameMs: number[] = [];
@@ -635,13 +795,18 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
   };
   const bump = (bag: Record<string, number>, key: string) => { bag[key] = (bag[key] ?? 0) + 1; };
 
-  /** 发往 render 连接:`node.hello` 只报原始值(D10),自报的指纹去掉 */
+  /**
+   * Send on the render connection: `node.hello` reports only raw values (D10); the self-reported
+   * fingerprint is dropped
+   */
   const send = (message: Record<string, unknown>) => {
     let m = message;
     if (m.type === "node.hello") {
       const { envFingerprint: _own, ...rest } = m;
       m = { ...rest, profile: "browser", maxConcurrent: 1, environment: { ...deps.environment } };
-      // 块 N:能执行用户卡与素材效果卡就多报运行时版本(原始值,文档服务算 cardEnvFingerprint);不能执行时与原来一字不差
+      // Block N: if user cards and media effect cards can run, also report the runtime version (raw value;
+      // the document service computes cardEnvFingerprint); when they cannot, it is identical to before,
+      // character for character
       const runtime = readCardInfo().runtime;
       helloRuntime = runtime;
       if (runtime) m = { ...m, cardRuntime: runtime };
@@ -657,7 +822,7 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
     if (r.ended) return;
     r.ended = true;
     if (run === r) run = null;
-    try { deps.onTaskEnd?.(r.task, outcome); } catch { /* 宿主坏了不影响协议 */ }
+    try { deps.onTaskEnd?.(r.task, outcome); } catch { /* A broken host does not affect the protocol */ }
   };
 
   const keepFrames = (id: string, frames: Map<number, FrameRecord>) => {
@@ -667,7 +832,10 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
     while (retained.size > RETAINED_TASKS) retained.delete(retained.keys().next().value as string);
   };
 
-  /** 不等当前帧:中止它并立即放回(页面隐藏;让路之后当前帧超时做不完) */
+  /**
+   * Do not wait for the current frame: abort it and release immediately (page hidden; or, after yielding,
+   * the current frame times out without finishing)
+   */
   const abortAndRelease = (r: Run, reason: string) => {
     if (!holding(r)) return;
     keepFrames(r.task.id, r.frames);
@@ -677,7 +845,10 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
     endRun(r, `released:${reason}`);
   };
 
-  /** 放回手里这一段(让路、取不到项目):不计失败(C2)。放回之后 runner 判「不再持有」,丢掉这次执行 */
+  /**
+   * Release the segment in hand (yielding, project unavailable): not counted as a failure (C2). After the
+   * release the runner decides "no longer held" and discards this execution
+   */
   const release = (r: Run, reason: string) => {
     if (!holding(r)) { endRun(r, "discarded"); return; }
     keepFrames(r.task.id, r.frames);
@@ -691,7 +862,10 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
     return r && r.task.resultKey === ref?.resultKey && r.task.range?.from === ref?.range?.from && r.task.range?.to === ref?.range?.to ? r : null;
   };
 
-  /** 执行一段(task-runner 的 executor.render):取项目、逐帧生成快照、处理让路。回这一段的帧 */
+  /**
+   * Run one segment (executor.render of task-runner): fetch the project, generate snapshots frame by
+   * frame, handle yielding. Returns this segment's frames
+   */
   async function render(task: NodeTask, { signal, progress }: { signal: AbortSignal; progress: (done: number) => void }): Promise<FrameRecord[] | { stream: Record<string, unknown> } | null> {
     const r = run && run.task.id === task.id ? run : null;
     if (!r) throw ABORTED;
@@ -699,12 +873,14 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
     const mine = r.controller.signal;
     const isStream = task.kind === "stream";
     if ((task.kind !== "snapshot" && !isStream) || !task.range || (isStream && (typeof deps.bakeStream !== "function" || !streamTaskFrames(task)))) {
-      // 节点侧过滤只让快照任务与浏览器形状的单卡流进来;万一来了别的(或宿主不产流),放回、不做
+      // The node-side filter lets in only snapshot tasks and browser-shaped single-card streams; if anything
+      // else arrives (or the host produces no streams), release it and do not run it
       release(r, "unsupported");
       return null;
     }
     if (r.yieldCause) { release(r, `yield-${r.yieldCause}`); return null; }
-    // D6:任务的 projectRev 那一版;先用发布时留存的,没有再取快照,都没有就放回,不拿别的版本渲
+    // D6: the version matching the task's projectRev; use the one kept at publish time first, otherwise
+    // fetch the snapshot, and if neither exists release the task rather than render another version
     const rev = Number(task.source?.projectRev);
     let project: unknown = Number.isSafeInteger(rev) ? deps.keptProject(rev) : null;
     if (!project && Number.isSafeInteger(rev)) {
@@ -717,7 +893,9 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
       return null;
     }
     if (isStream) {
-      // 流任务整段交给宿主:它逐帧要像素、送编码器、推分段;每帧前问让不让路,当前帧做完才停
+      // The whole stream task is handed to the host: it requests pixels frame by frame, feeds the encoder
+      // and pushes segments; it asks before each frame whether to yield, and stops only after the current
+      // frame is done
       r.phase = "baking";
       let out: { manifest: Record<string, unknown> } | { yielded: true };
       try {
@@ -725,7 +903,9 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
           task, project, signal: mine,
           progress: (n) => {
             const done = Math.max(0, Math.floor(Number(n) || 0));
-            // 宿主开工先报一次起点(上一次认领里已经推完的分段的帧数,让路放回后回来时不为 0):起点不算这一次送进编码器的
+            // The host first reports a starting point once (the frame count of segments already pushed in the
+            // previous claim; nonzero when returning after a yield and release): the starting point is not counted
+            // as frames fed to the encoder this time
             if (r.streamBase !== null && done > r.streamDone) counters.streamFrames += done - r.streamDone;
             if (r.streamBase === null) r.streamBase = done;
             r.streamDone = Math.max(r.streamDone, done);
@@ -738,7 +918,7 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
       }
       if (!holding(r)) return null;
       if (!("manifest" in out)) { release(r, `yield-${r.yieldCause ?? "urgent"}`); return null; }
-      // 全部分段齐:此后即使被要求让路也收尾(同快照任务)
+      // All segments are in: from here on, finish up even if asked to yield (same as snapshot tasks)
       r.phase = "finishing";
       counters.streamTasks++;
       return { stream: out.manifest };
@@ -763,13 +943,17 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
       if (frameMs.length > FRAME_SAMPLES) frameMs.splice(0, frameMs.length - FRAME_SAMPLES);
       progress(r.frames.size);
     }
-    // 全段齐:此后即使被要求让路也收尾(这一批已做完,放回只会让下一个认领者重做)
+    // All segments in: from here on, finish up even if asked to yield (this batch is done, and releasing
+    // would only make the next claimer redo it)
     r.phase = "finishing";
     return [...r.frames.values()].sort((a, b) => a.localFrame - b.localFrame);
   }
 
   const sink = {
-    /** 去重(第 4.1 节):内容库清单在、覆盖整段、块都在就直接完成 */
+    /**
+     * Dedup (section 4.1): if the content store manifest exists, covers the whole segment, and all chunks
+     * are present, complete directly
+     */
     async has(ref: { resultKey: string; range: NodeTask["range"] }) {
       const r = runOf(ref);
       if (!r || !deps.lookupResult) return false;
@@ -780,11 +964,16 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
     async resultFor(ref: { resultKey: string; range: NodeTask["range"] }) {
       return runOf(ref)?.found ?? null;
     },
-    /** 全段齐后组清单、写内容库(宿主的 finishTask);回的清单展开进 `task.complete` */
+    /**
+     * Once all segments are in, assemble the manifest and write the content store (the host's finishTask);
+     * the returned manifest is spread into `task.complete`
+     */
     async put(entry: { resultKey: string; range: NodeTask["range"]; artifacts: FrameRecord[] | { stream: Record<string, unknown> } | null }) {
       const r = runOf(entry);
       if (r && entry.artifacts && !Array.isArray(entry.artifacts) && entry.artifacts.stream && typeof entry.artifacts.stream === "object") {
-        // 流任务:分段都已推到素材服务,这里只差把清单写进内容库(写失败只记诊断,清单照样随 task.complete 交给订阅方)
+        // Stream task: all segments are already pushed to the asset service, so only writing the manifest to
+        // the content store remains (a failed write is only recorded as a diagnostic; the manifest is still
+        // delivered to subscribers with task.complete)
         const manifest = entry.artifacts.stream;
         const result = deps.finishStream ? await deps.finishStream({ task: r.task, manifest }) : manifest;
         return { complete: true, result };
@@ -795,7 +984,7 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
     },
   };
 
-  /** task-runner 的诊断事件:收尾与计数 */
+  /** Diagnostic events from task-runner: wrap-up and counts */
   const onRunnerEvent = (e: { type: string; id: string; error?: string; retryable?: boolean }) => {
     const r = run && run.task.id === e.id ? run : null;
     switch (e.type) {
@@ -827,7 +1016,7 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
     session: () => session,
     executor: { render },
     sink,
-    emit: (e: { type: string; id: string; error?: string; retryable?: boolean }) => { try { onRunnerEvent(e); } catch { /* 诊断出错不打断协议 */ } },
+    emit: (e: { type: string; id: string; error?: string; retryable?: boolean }) => { try { onRunnerEvent(e); } catch { /* A diagnostics failure does not interrupt the protocol */ } },
   });
 
   const session = createNodeSession({
@@ -847,7 +1036,8 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
         task, token: ctx.token, controller: new AbortController(), phase: "prep", yieldCause: null, yieldAt: null,
         frames: new Map(retained.get(task.id) ?? []), streamDone: 0, streamBase: null, found: null, ended: false,
       };
-      // 开工先报 0、去重、执行、推送、完成的规矩在 task-runner(桌面与页面同一份,D11)
+      // The rules for reporting 0 at the start, dedup, execution, pushing and completion live in task-runner
+      // (one copy shared by the desktop and the page, D11)
       runner.onTask(task, ctx);
     },
     onLost: (id: string, reason: string) => {
@@ -858,7 +1048,11 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
     },
   });
 
-  /** 此刻忙什么(报忙用):手里有认领就是在生成快照/压流;拖动/穿梭报 scrub，播放报 play；否则问宿主(后台舞台的更急的活) */
+  /**
+   * What is busy right now (for busy reports): holding a claim means generating snapshots / encoding a
+   * stream; dragging / scrubbing reports scrub, playing reports play; otherwise ask the host (more urgent
+   * work on the background stage)
+   */
   const busyNow = (): string | null => {
     const r = run;
     if (r && !r.ended) {
@@ -876,7 +1070,10 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
     } catch { return null; }
   };
 
-  /** 报忙(M7 D2 补充):新队列、报到过、忙着、离上一次过了间隔才发 */
+  /**
+   * Report busy (M7 D2 addendum): sent only if the queue is new, the node has checked in, it is busy, and
+   * the interval since the last report has passed
+   */
   const reportActive = () => {
     if (activeEvery === null || !welcomed || stopped || refused) return;
     const now = deps.now();
@@ -888,7 +1085,10 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
     counters.active++;
   };
 
-  /** 被节点侧过滤挡掉的任务按原因记一次(诊断;服务端与节点侧都挡,页面不另判) */
+  /**
+   * Record a task blocked by the node-side filter once per reason (diagnostics; both the server and the
+   * node side block it, so the page makes no separate decision)
+   */
   const noteBlocked = () => {
     for (const task of session.known()) {
       if (blockedSeen.has(task.id)) continue;
@@ -904,36 +1104,40 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
     start() {
       if (stopped || refused) return;
       welcomed = false;
-      // 报到带的能力位取此刻的(宿主探到编码器了没有);之后每个节拍照常同步
+      // The capability flags sent with the check-in are the current ones (whether the host has found an
+      // encoder); after that they sync every tick as usual
       refreshCards();
-      // 新会话:带手里、真在跑的认领去接续(HT-a 第 4.4 节;队列按令牌接续,对不上的回 lost)
+      // New session: resume with the claims in hand that are genuinely running (HT-a section 4.4; the queue
+      // resumes by token, and any that do not match come back as lost)
       session.start(session.held().filter((h) => runner.tokenOf(h.id) === h.token).map(({ id, token }) => ({ id, token })));
     },
     receive(message) {
       if (stopped || !message || typeof message !== "object") return;
       if (message.type === "node.welcome") {
         welcomed = true;
-        // 新队列认 node.active(M7 D2 补充):记下间隔;每次报到从头算,忙着就在下一拍报
+        // A new queue recognizes node.active (M7 D2 addendum): record the interval; it is counted from scratch
+        // at every check-in, and if busy, report on the next tick
         const every = Number(message.activeIntervalMs);
         activeEvery = Number.isFinite(every) && every > 0 ? every : null;
         lastActiveAt = -Infinity;
         const fp = typeof message.envFingerprint === "string" && message.envFingerprint ? message.envFingerprint : null;
         if (fp && fp !== nodeDesc.envFingerprint) {
           nodeDesc.envFingerprint = fp;
-          try { deps.onFingerprint?.(fp); } catch { /* 宿主坏了 */ }
+          try { deps.onFingerprint?.(fp); } catch { /* The host is broken */ }
         }
-        // 块 N:用户卡、素材效果卡用的指纹(没有就清掉:重新报到、旧队列)
+        // Block N: fingerprint used for user cards and media effect cards (clear it if absent: checking in
+        // again, old queue)
         const cardFp = typeof message.cardEnvFingerprint === "string" && message.cardEnvFingerprint ? message.cardEnvFingerprint : null;
         if (cardFp !== nodeDesc.cardEnvFingerprint) {
           nodeDesc.cardEnvFingerprint = cardFp;
-          try { deps.onCardEnvFingerprint?.(cardFp); } catch { /* 宿主坏了 */ }
+          try { deps.onCardEnvFingerprint?.(cardFp); } catch { /* The host is broken */ }
         }
         refreshCards();
       } else if (message.type === "error" && !welcomed && message.reqId === undefined) {
-        // 报到被拒(D9 forbidden、D14 not-chromium、D10 bad-message):不当节点、不重连
+        // Check-in rejected (D9 forbidden, D14 not-chromium, D10 bad-message): do not act as a node, do not reconnect
         refused = String(message.reason ?? "error");
         lastError = `Check-in refused: ${refused}`;
-        try { deps.onRefused?.(refused); } catch { /* 宿主坏了 */ }
+        try { deps.onRefused?.(refused); } catch { /* The host is broken */ }
       }
       if (message.type === "queue.snapshot" || message.type === "task.opened") refreshCards();
       session.receive(message);
@@ -941,13 +1145,16 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
     },
     tick() {
       if (stopped || refused) return;
-      // 块 N:登记变了随时同步进节点描述;运行时版本在报到之后才可报(或变了)就重新报到一次(带手里的认领接续)
+      // Block N: whenever the registry changes, sync it into the node description; if the runtime version
+      // becomes reportable only after check-in (or changes), check in once more (resuming with the claims
+      // in hand)
       refreshCards();
       if (welcomed && cardsNow.runtime !== helloRuntime) {
         welcomed = false;
         session.start(session.held().filter((h) => runner.tokenOf(h.id) === h.token).map(({ id, token }) => ({ id, token })));
       }
-      // 让路之后当前帧迟迟做不完(播放、拖动时后台活的门关了,这一帧在舞台里被挡住):不再等,中止并立即放回
+      // After yielding the current frame stays unfinished (when playing or scrubbing, the gate for background
+      // work is closed and this frame is blocked in the stage): stop waiting, abort and release immediately
       const r = run;
       if (r && !r.ended && r.yieldCause && r.phase === "baking" && r.yieldAt !== null && deps.now() - r.yieldAt >= YIELD_FRAME_MAX_MS) {
         abortAndRelease(r, `yield-${r.yieldCause}`);
@@ -959,15 +1166,19 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
       const r = run;
       if (!r || r.ended) return;
       if (cause === "hidden") {
-        // 隐藏页的计时器被节流,续约不可靠:不等当前帧,中止并立即放回;迟到的结果丢掉
+        // Timers on a hidden page are throttled, so lease renewal is unreliable: do not wait for the current
+        // frame, abort and release immediately; discard late results
         abortAndRelease(r, "yield-hidden");
         return;
       }
       if (!r.yieldCause) { r.yieldCause = cause; r.yieldAt = deps.now(); }
-      // 在等哪一步决定什么时候放回:
-      //   prep       还没开始生成快照(查去重、取项目),没有「当前这一批」:立即放回并中止
-      //   baking     当前这一帧做完再放回(执行循环在帧回来之后看 yieldCause)
-      //   finishing  全段已齐,只剩组清单与报完成:照常完成(放回只会让下一个认领者重做)
+      // Which step we are waiting on decides when to release:
+      //   prep       snapshot generation has not started (checking dedup, fetching the project), so there
+      //              is no "current batch": release immediately and abort
+      //   baking     release after the current frame is done (the execution loop checks yieldCause once
+      //              the frame returns)
+      //   finishing  all segments are in, only assembling the manifest and reporting completion remain:
+      //              complete as usual (releasing would only make the next claimer redo it)
       if (r.phase === "prep") {
         release(r, `yield-${cause}`);
         r.controller.abort();
@@ -977,7 +1188,7 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
       if (stopped) return;
       const r = run;
       if (r) { r.controller.abort(); keepFrames(r.task.id, r.frames); }
-      try { session.yieldAll("offline"); } catch { /* 连接已坏 */ }
+      try { session.yieldAll("offline"); } catch { /* The connection is broken */ }
       if (r) endRun(r, "released:offline");
       stopped = true;
       runner.stop("offline");
@@ -998,7 +1209,8 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
         codeVersion: deps.codeVersion,
         holding: held.map((h) => ({
           id: h.id, token: h.token,
-          // 流任务的范围是分段号:按帧数报(宿主报的已做帧数 / 这一段任务的总帧数)
+          // A stream task's range is segment numbers: report by frame count (frames done as reported by the
+          // host / total frames of this segment task)
           done: r && r.task.id === h.id ? (r.task.kind === "stream" ? r.streamDone : r.frames.size) : 0,
           of: r && r.task.id === h.id && r.task.range ? (r.task.kind === "stream" ? streamTaskFrames(r.task)?.frames ?? 0 : r.task.range.to - r.task.range.from + 1) : 0,
           projectRev: r && r.task.id === h.id ? Number(r.task.source?.projectRev) : null,

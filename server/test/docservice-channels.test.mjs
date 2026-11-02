@@ -1,11 +1,15 @@
 /**
- * 文档服务核心的频道与出站背压（契约 `docs/plan/render-queue-contract.md` H.1、H.2、H.4，用例 C1～C7）。
- * 跑：node --test server/test/docservice-channels.test.mjs
+ * Document service core channels and outbound backpressure (contract
+ * `docs/plan/render-queue-contract.md` H.1, H.2, H.4, test cases C1-C7).
+ * Run: node --test server/test/docservice-channels.test.mjs
  *
- * 只照契约写，不看实现。核心单元测试：直接 `createRouter`，注入假的 `write` / `buffered` / `close`，不起网络。
- * `/healthz` 与 `describe()` 在组装层的那一半（C7 组装层）在 `docservice-backpressure.test.mjs` 里，那边起真服务。
+ * Written strictly against the contract, ignoring implementation. Core unit tests: directly call
+ * `createRouter`, inject fake `write` / `buffered` / `close`, no network started.
+ * The assembly layer half of `/healthz` and `describe()` (C7 assembly layer) is in
+ * `docservice-backpressure.test.mjs`, which starts real services.
  *
- * 字节数一律用纯 ASCII 消息，字符数与 UTF-8 字节数相同，实现按哪一种算都一样。
+ * Byte counts uniformly use pure ASCII messages; character count equals UTF-8 byte count, so
+ * either calculation yields the same result.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,11 +21,12 @@ async function loadRouter() {
 const PRINCIPAL = Object.freeze({ userId: 'u', tenantId: null });
 
 /**
- * 假传输：
- *   writes.get(connId)   写出去的文本（按顺序）
- *   setBuffered(c, n)    设定 buffered(c) 的返回值
- *   grow = true 时，每次 write 都把文本字节数加到这条连接的 buffered 上（模拟底层积压）
- *   closes               close(connId, code, reason) 的调用记录
+ * Fake transport:
+ *   writes.get(connId)   written text (in order)
+ *   setBuffered(c, n)    sets return value of buffered(c)
+ *   when grow = true, each write adds text byte count to this connection's buffered (simulating
+ *                        underlying backlog)
+ *   closes               call records of close(connId, code, reason)
  *   logs                 { event, ...fields }
  */
 async function harness({ highWaterBytes, maxPendingBytes, grow = false } = {}) {
@@ -58,7 +63,7 @@ async function harness({ highWaterBytes, maxPendingBytes, grow = false } = {}) {
   return h;
 }
 
-/** 声明频道前缀的模块；拿到的 ctx 存在 `mod.ctx` 上（connect 钩子里取） */
+/** Module declaring channel prefix; obtained ctx is stored on `mod.ctx` (retrieved in connect hook) */
 function chanModule(name, { channels = [name], types = [`${name}.`], ...extra } = {}) {
   const mod = {
     name,
@@ -72,7 +77,7 @@ function chanModule(name, { channels = [name], types = [`${name}.`], ...extra } 
   return mod;
 }
 
-/** 固定长度的纯 ASCII 消息：i 补成两位，序列化后长度与 i 无关 */
+/** Fixed-length pure ASCII message: i is padded to two digits, serialized length is independent of i */
 const seqMsg = (i) => ({ type: 'seq.m', i: String(i).padStart(2, '0'), pad: 'xxxxxxxxxxxxxxxxxxxx' });
 const SEQ_LEN = Buffer.byteLength(JSON.stringify(seqMsg(0)));
 
@@ -141,11 +146,11 @@ test('C2 prefix ownership: publishing to or subscribing to another module\'s pre
   assert.throws(() => plain.ctx.subscribe('c1', 'room:a'), Error);
   assert.deepEqual(h.msgs('c1'), [], 'The out-of-bounds calls sent nothing');
 
-  // 自己的前缀照常可用
+  // Own prefix remains usable as usual
   assert.equal(chat.ctx.subscribe('c1', 'chat:x'), true);
   assert.equal(chat.ctx.publish('chat:x', { type: 'chat.m' }), 1);
 
-  // 同一前缀的第二个模块：挂载抛错、不挂
+  // Second module with same prefix: mount throws error and is not mounted
   const dup = chanModule('room2', { channels: ['room'], types: ['room2.'] });
   assert.throws(() => router.mount(dup), Error, 'Two modules declaring the same prefix');
   assert.ok(!router.modules().includes('room2'), 'Not mounted after the throw');
@@ -153,13 +158,13 @@ test('C2 prefix ownership: publishing to or subscribing to another module\'s pre
   assert.throws(() => router.mount(dupMany), Error, 'A duplicate of any prefix in the declaration throws');
   assert.ok(!router.modules().includes('mixed'));
 
-  // 抛错后已挂的模块不受影响
+  // Already mounted modules are unaffected after error is thrown
   assert.equal(room.ctx.subscribe('c1', 'room:a'), true);
   assert.equal(room.ctx.publish('room:a', { type: 'room.m' }), 1);
   assert.equal(chat.ctx.publish('chat:x', { type: 'chat.m' }), 1);
   assert.deepEqual(router.modules(), ['room', 'chat', 'plain']);
 
-  // 卸载后前缀放出来，别的模块可以声明
+  // Prefix is released after unmount; other modules can declare it
   const h2 = await harness();
   const a = chanModule('a', { channels: ['shared'] });
   const unmountA = h2.router.mount(a);
@@ -214,25 +219,25 @@ test('C4 during a backlog, messages with the same key keep only the latest one, 
   const { ctx } = room;
   ctx.subscribe('c1', 'room:a');
 
-  // 不积压：直接写
+  // No backlog: write directly
   ctx.send('c1', { type: 'room.m', tag: 'X', v: 0 }, { coalesceKey: 'k1' });
   assert.deepEqual(h.msgs('c1').map((m) => m.tag), ['X'], 'Queue empty and buffered < highWater: write directly');
 
   h.setBuffered('c1', 5000);
-  ctx.send('c1', { type: 'room.m', tag: 'A', v: 1 }, { coalesceKey: 'k1' });   // 进队，不与已写出的 X 合并
-  ctx.send('c1', { type: 'room.m', tag: 'B' });                                 // 无键
-  ctx.send('c1', { type: 'room.m', tag: 'C', v: 2 }, { coalesceKey: 'k1' });   // 合并掉 A
-  ctx.send('c1', { type: 'room.m', tag: 'D' });                                 // 无键
-  ctx.send('c1', { type: 'room.m', tag: 'D' });                                 // 与上一条相同，仍不合并
+  ctx.send('c1', { type: 'room.m', tag: 'A', v: 1 }, { coalesceKey: 'k1' });   // Enqueue, does not merge with already written X
+  ctx.send('c1', { type: 'room.m', tag: 'B' });                                 // No key
+  ctx.send('c1', { type: 'room.m', tag: 'C', v: 2 }, { coalesceKey: 'k1' });   // Merge away A
+  ctx.send('c1', { type: 'room.m', tag: 'D' });                                 // No key
+  ctx.send('c1', { type: 'room.m', tag: 'D' });                                 // Same as previous one, still does not merge
   ctx.send('c1', { type: 'room.m', tag: 'E' }, { coalesceKey: 'k2' });
   assert.equal(ctx.publish('room:a', { type: 'room.m', tag: 'P', v: 1 }, { coalesceKey: 'p' }), 1);
-  assert.equal(ctx.publish('room:a', { type: 'room.m', tag: 'P', v: 2 }, { coalesceKey: 'p' }), 1, 'A publish that was coalesced also counts as delivered'); // 合并掉 P1
-  ctx.send('c1', { type: 'room.m', tag: 'F', v: 3 }, { coalesceKey: 'k1' });   // 合并掉 C，排到队尾
+  assert.equal(ctx.publish('room:a', { type: 'room.m', tag: 'P', v: 2 }, { coalesceKey: 'p' }), 1, 'A publish that was coalesced also counts as delivered'); // Merge away P1
+  ctx.send('c1', { type: 'room.m', tag: 'F', v: 3 }, { coalesceKey: 'k1' });   // Merge away C, append to queue tail
 
   assert.deepEqual(h.msgs('c1').map((m) => m.tag), ['X'], 'Nothing was written during the backlog');
   assert.equal(router.health().coalesced, 3, 'A, P1 and C were each coalesced once');
 
-  // 别的连接同键不跨连接合并
+  // Same key on other connections does not merge across connections
   h.setBuffered('c2', 5000);
   ctx.send('c2', { type: 'room.m', tag: 'Z' }, { coalesceKey: 'k1' });
   assert.equal(router.health().coalesced, 3, 'Coalescing happens only within the queue of the same connection');
@@ -245,7 +250,7 @@ test('C4 during a backlog, messages with the same key keep only the latest one, 
   assert.equal(got.at(-1).v, 3, 'The one kept is the latest k1');
   assert.deepEqual(h.msgs('c2'), [], 'c2 is still backed up');
 
-  // 排空后再积压：新一轮合并照常
+  // Backlog again after draining: new round of merging proceeds as usual
   h.setBuffered('c1', 5000);
   ctx.send('c1', { type: 'room.m', tag: 'G', v: 1 }, { coalesceKey: 'k1' });
   ctx.send('c1', { type: 'room.m', tag: 'G', v: 2 }, { coalesceKey: 'k1' });
@@ -272,15 +277,15 @@ test('C5 drained empties the queue in order until buffered is full again; while 
   for (let i = 0; i < 6; i++) ctx.send('c1', seqMsg(i));
   assert.deepEqual(idx(), [], 'buffered reached highWater: everything is queued');
 
-  // 底层排空一次；之后每次 write 都会让 buffered 涨上去
+  // Underlying layer drains once; each subsequent write increases buffered
   h.grow = true;
   h.setBuffered('c1', 0);
   router.drained('c1');
   assert.deepEqual(idx(), [0, 1, 2], `Written until buffered >= highWater (${hw}): 3 × ${L} bytes`);
-  router.drained('c1');   // 底层可能重复发 drain（H.7 第 4 条）：buffered 仍满，什么也不写
+  router.drained('c1');   // Underlying layer may send duplicate drain (H.7 item 4): buffered still full, writes nothing
   assert.deepEqual(idx(), [0, 1, 2], 'A repeated drained writes nothing extra and keeps the order');
 
-  // 底层又排空，但先来一条新消息：队列非空，它必须排在 3、4、5 后面
+  // Underlying layer drains again, but new message arrives first: queue non-empty, must queue behind 3, 4, 5
   h.setBuffered('c1', 0);
   ctx.send('c1', seqMsg(6));
   assert.deepEqual(idx(), [0, 1, 2], 'While the outbound queue is non-empty, new messages do not jump the queue by writing directly');
@@ -289,18 +294,18 @@ test('C5 drained empties the queue in order until buffered is full again; while 
   assert.deepEqual(idx(), [0, 1, 2, 3, 4, 5]);
   h.setBuffered('c1', 0);
   router.drained('c1');
-  router.drained('c1');   // 连调两次：第二次队已空
+  router.drained('c1');   // Called twice in a row: queue is already empty the second time
   assert.deepEqual(idx(), [0, 1, 2, 3, 4, 5, 6], 'Everything is written in send order, and a repeated drained changes neither order nor content');
   assert.deepEqual(h.msgs('c1').map((m) => m.pad), Array(7).fill(seqMsg(0).pad));
 
-  // 队空时 drained 什么也不做；之后恢复直接写
+  // drained does nothing when queue is empty; resumes direct writing afterwards
   h.setBuffered('c1', 0);
   router.drained('c1');
   assert.equal(idx().length, 7);
   ctx.send('c1', seqMsg(7));
   assert.deepEqual(idx(), [0, 1, 2, 3, 4, 5, 6, 7], 'Queue empty and buffered < highWater: write directly');
 
-  // 未知连接的 drained 不抛
+  // drained on unknown connection does not throw
   assert.doesNotThrow(() => router.drained('ghost'));
 });
 
@@ -332,7 +337,7 @@ test('C6 exceeding maxPendingBytes: close(connId, 1013, backpressure), the queue
   assert.equal(logged[0].connId, 'c1');
   assert.equal(logged[0].pendingBytes, 4 * L, 'pendingBytes = bytes in the queue + buffered');
 
-  // 之后的发送一律丢弃，队列已清空：排空也写不出任何东西
+  // Subsequent sends are all dropped, queue cleared: draining writes nothing out
   ctx.send('c1', seqMsg(3));
   ctx.publish('seq:all', seqMsg(4));
   h.setBuffered('c1', 0);
@@ -343,11 +348,11 @@ test('C6 exceeding maxPendingBytes: close(connId, 1013, backpressure), the queue
   assert.equal(h.closes.length, 1, 'does not close again');
   assert.equal(router.health().backpressureCloses, 1);
 
-  // 别的连接不受影响
+  // Other connections are unaffected
   ctx.send('c2', seqMsg(9));
   assert.deepEqual(h.msgs('c2').map((m) => m.i), ['09']);
 
-  // 组装层报断开之后，同 id 的新连接照常工作，计数不回退
+  // After assembly layer reports disconnect, new connection with same id works as usual, count does not regress
   router.disconnect('c1');
   router.connect('c1', PRINCIPAL, {});
   ctx.send('c1', seqMsg(7));
@@ -367,7 +372,7 @@ test('C6 default limits: CORE_DEFAULTS is 64 KiB / 1 MiB, and with no options pa
   router.connect('c1', PRINCIPAL, {});
   const { ctx } = seq;
   const pad = 'y'.repeat(100 * 1024);
-  h.setBuffered('c1', 64 * 1024);           // 恰好到 highWater：进队
+  h.setBuffered('c1', 64 * 1024);           // Exactly reaches highWater: enqueued
   for (let i = 0; i < 9; i++) ctx.send('c1', { type: 'seq.big', i, pad });
   assert.deepEqual(h.closes, [], '64 KiB + 9 × ~100 KiB < 1 MiB: not closed');
   assert.deepEqual(h.texts('c1'), [], 'buffered exactly equal to highWater also counts as full (only < writes directly)');
@@ -409,7 +414,7 @@ test('C7 core H.4 fields: health() channels / subscriptions / pendingBytesMax / 
   assert.deepEqual(router.describeConn('c3').subscriptions, []);
   assert.equal(d1.pendingBytes, 0);
 
-  // 积压：c1 buffered 500，队里 2 条（其中一条被合并）；c2 buffered 50 不进队
+  // Backlog: c1 buffered 500, 2 in queue (one was merged); c2 buffered 50 does not enqueue
   h.setBuffered('c1', 500);
   h.setBuffered('c2', 50);
   seq.ctx.send('c1', seqMsg(1), { coalesceKey: 'k' });
@@ -422,13 +427,13 @@ test('C7 core H.4 fields: health() channels / subscriptions / pendingBytesMax / 
   assert.equal(health.pendingBytesMax, 500 + 2 * L, 'maximum pendingBytes across all connections');
   assert.equal(health.coalesced, 1);
 
-  // 退订后没人订阅的频道不再计数
+  // Channels with no subscribers are no longer counted after unsubscribe
   room.ctx.unsubscribe('c1', 'room:b');
   health = router.health();
   assert.equal(health.channels, 2);
   assert.equal(health.subscriptions, 3);
 
-  // 排空后 pendingBytes 回落
+  // pendingBytes drops back after drain
   h.setBuffered('c1', 0);
   router.drained('c1');
   assert.equal(router.describeConn('c1').pendingBytes, 0);

@@ -1,26 +1,39 @@
 /**
- * 保存时暂停前台编辑(`docs/semantics/mechanism/document-service.md`「保存基准与修改状态检查」:
- * 「保存暂时禁用前台编辑，等待本机写完；失败不覆盖上次有效保存，并恢复编辑」)。
+ * Pause foreground editing while saving (`docs/semantics/mechanism/document-service.md` "Save
+ * baseline and modified-state check":
+ * "Saving temporarily disables foreground editing and waits for the local write to finish; on
+ * failure it does not overwrite the last valid save, and editing is restored").
  *
- * 「前台编辑」是用户在这台设备上直接动手的那些:键盘(含快捷键、Agent 面板里打字回车)、鼠标与触摸(点、拖、滚轮、右键)、
- * 拖放文件、剪贴板。上锁期间这些输入事件在 window 的捕获阶段就被拦下(取消缺省动作、不再往下传),编辑器自己的处理函数
- * 一个都收不到 —— 不是把按钮置灰,而是从输入源头掐断,快捷键、拖放、面板里的回车都走不到改项目那一步。
+ * "Foreground editing" is what the user does directly on this device: keyboard (including
+ * shortcuts, typing and pressing Enter in the Agent panel), mouse and touch (click, drag, wheel,
+ * right-click), file drag-and-drop, clipboard. While locked, these input events are intercepted in
+ * the window capture phase (default action canceled, no further propagation), so none of the
+ * editor's own handlers receive them: rather than greying out buttons, input is cut off at the
+ * source, so shortcuts, drag-and-drop and Enter in the panel never reach the step that modifies the
+ * project.
  *
- * 不在这里拦的:本机 Agent 正在跑的工具、素材入库、后台任务这类「已经开始的本机写入」—— 保存要**等它们写完**
- * (`io/localWrites.ts`),不是拦住它们;别的设备、云端来的修改也不拦(语义:「不要求整个云端长期停写」)。
- * 抬手类事件(pointerup / mouseup / keyup / dragend 等)放行:锁上之前按下的键、开始的拖动要能正常收尾,不然界面会卡在拖动中。
+ * Not intercepted here: "local writes that have already started", such as tools the local Agent is
+ * running, asset ingestion and background tasks: saving has to **wait for them to finish**
+ * (`io/localWrites.ts`), not block them; changes coming from other devices or the cloud are not
+ * blocked either (semantics: "the whole cloud is not required to stop writing for a long time").
+ * Release-type events (pointerup / mouseup / keyup / dragend, etc.) pass through: keys pressed and
+ * drags started before the lock must be able to finish normally, otherwise the UI would get stuck
+ * mid-drag.
  *
- * 锁从挑好落点之后开始(「另存为」要用户手势,挑落点必须是点击后的第一个 await,用户在那个对话框里点取消就不算保存、
- * 不上锁),到保存结束为止 —— 成功、等本机写入超时、写盘失败都解锁。
+ * The lock starts after the destination is chosen ("Save as" needs a user gesture, so choosing the
+ * destination must be the first await after the click; if the user clicks cancel in that dialog it
+ * does not count as saving and does not lock), and lasts until saving ends: success, timeout
+ * waiting for local writes, and disk write failure all unlock.
  */
 
-/** 上锁期间拦下的输入事件 */
+/** Input events intercepted while locked */
 export const BLOCKED_INPUT_EVENTS = [
   "keydown", "keypress", "beforeinput", "input", "compositionstart",
   "pointerdown", "mousedown", "touchstart", "click", "dblclick", "auxclick", "contextmenu", "wheel",
   "dragstart", "dragenter", "dragover", "drop",
   "paste", "cut",
-  // 桌面版标题栏菜单(撤销、重做、新建、打开……)经这个自定义事件把命令交给顶栏(`TopBar.tsx`)
+  // The desktop app's title bar menu (undo, redo, new, open...) hands commands to the top bar
+  // (`TopBar.tsx`) through this custom event
   "pc-titlebar-command",
 ] as const;
 
@@ -29,9 +42,9 @@ export type SaveKind = "proc" | "procp";
 export interface SaveLockState {
   saving: boolean;
   kind: SaveKind | null;
-  /** 正在等哪几样本机写入(给「正在保存」那一层看);写盘时为空 */
+  /** Which local writes are being waited on (for the "Saving" layer to show); empty while writing to disk */
   waiting: readonly string[];
-  /** 现在在哪一步:等本机写入 / 写文件 */
+  /** Which step it is at now: waiting for local writes / writing the file */
   step: "waiting" | "writing" | null;
 }
 
@@ -42,7 +55,7 @@ const listeners = new Set<() => void>();
 function setState(next: SaveLockState) {
   state = next;
   for (const l of listeners) {
-    try { l(); } catch { /* 订阅方出错不影响保存 */ }
+    try { l(); } catch { /* A subscriber's error does not affect saving */ }
   }
 }
 
@@ -55,33 +68,35 @@ export function subscribeSaveLock(l: () => void): () => void {
   return () => { listeners.delete(l); };
 }
 
-/** 现在是不是在保存(前台编辑暂停中) */
+/** Whether a save is in progress (foreground editing paused) */
 export function isSaveLocked(): boolean {
   return state.saving;
 }
 
 export interface SaveLock {
-  /** 更新「正在等什么」 */
+  /** Update "what is being waited on" */
   waiting(labels: readonly string[]): void;
-  /** 进入写文件这一步 */
+  /** Enter the file-writing step */
   writing(): void;
-  /** 解锁(可重复调用) */
+  /** Unlock (can be called repeatedly) */
   end(): void;
 }
 
 /**
- * 上锁。已经在保存时回 null(保存进行中再点一次保存:不另起一次)。
- * 调用方必须在 finally 里 `end()`。
+ * Lock. Returns null if a save is already in progress (clicking save again during a save: don't
+ * start another one).
+ * The caller must `end()` in a finally.
  */
 export function beginSaveLock(kind: SaveKind): SaveLock | null {
   if (state.saving) return null;
   installSaveInputGuard();
-  // 焦点留在输入框里的话,上锁前先让它失焦:输入框在失焦时提交的那一笔(已经打完的字)赶在保存之前落地
+  // If focus is in an input, blur it before locking: what the input commits on blur (text already
+  // typed) lands before the save
   try {
     const active = (globalThis as { document?: { activeElement?: { blur?: () => void } | null } }).document?.activeElement;
     active?.blur?.();
-  } catch { /* 没有 DOM(测试)或焦点元素不让失焦:不影响上锁 */ }
-  // 上一次保存留下的提示卡收起来:这一次的结果另说
+  } catch { /* No DOM (tests) or the focused element refuses to blur: locking is not affected */ }
+  // Dismiss the prompt card left by the previous save: this save's result is a separate matter
   showSaveNotice(null);
   setState({ saving: true, kind, waiting: [], step: "waiting" });
   let ended = false;
@@ -102,7 +117,7 @@ export function beginSaveLock(kind: SaveKind): SaveLock | null {
   };
 }
 
-/* ── 输入拦截 ──────────────────────────────────────────────── */
+/* ── Input interception ─────────────────────────────────────── */
 
 const guarded = new WeakSet<object>();
 
@@ -113,8 +128,9 @@ function swallow(e: Event) {
 }
 
 /**
- * 在 window 的捕获阶段挂上拦截(幂等)。模块载入时就挂:捕获阶段的 window 是事件路径上的第一站,
- * 挂得越早越排在同一站的其它监听前面。没上锁时它什么都不做。
+ * Attach the interception in the window capture phase (idempotent). It is attached at module load:
+ * the capture-phase window is the first stop on the event path, and the earlier it is attached, the
+ * earlier it sits ahead of the other listeners at the same stop. When not locked it does nothing.
  */
 export function installSaveInputGuard(target: EventTarget | undefined = (globalThis as { window?: EventTarget }).window): void {
   if (!target || guarded.has(target)) return;
@@ -124,7 +140,7 @@ export function installSaveInputGuard(target: EventTarget | undefined = (globalT
 
 installSaveInputGuard();
 
-/* ── 保存的结果提示 ────────────────────────────────────────── */
+/* ── Save result prompts ────────────────────────────────────── */
 
 export interface SaveNotice {
   tone: "error" | "info";
@@ -147,7 +163,7 @@ export function subscribeSaveNotice(l: () => void): () => void {
 export function showSaveNotice(next: SaveNotice | null): void {
   notice = next;
   for (const l of noticeListeners) {
-    try { l(); } catch { /* 同上 */ }
+    try { l(); } catch { /* Same as above */ }
   }
 }
 

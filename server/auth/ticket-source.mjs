@@ -1,13 +1,17 @@
 /**
- * 经文档服务连接取素材票据（契约 `docs/plan/auth-contract.md` 第 8 节 `auth.ticket`、第 11 节）。
+ * Obtains asset tickets over document service connection (contract `docs/plan/auth-contract.md`
+ * Section 8 `auth.ticket`, Section 11).
  *
- * `createTicketSource(endpoint, { access })` 回一个函数 `ticket({ refresh }?)`，直接交给素材客户端
- * （`server/asset-store/client.mjs` 的 `ticket` 选项）：
- * - 手里的票据剩余有效期不到 1/3 时换新的（计划第 12.2 节「客户端在剩 1/3 时经文档服务连接续签」）；
- * - `refresh: true`（素材服务回了 401）一律换新的；
- * - 连接没连上、服务端拒绝、超时：回 null（请求不带票据，由素材服务回 401）。
+ * `createTicketSource(endpoint, { access })` returns a function `ticket({ refresh }?)`, passed
+ * directly to the asset client (`ticket` option in `server/asset-store/client.mjs`):
+ * - Renew ticket when less than 1/3 validity remains (plan Section 12.2: "client renews via document
+ *   service connection when 1/3 remains");
+ * - `refresh: true` (asset service returned 401): always fetch a new one;
+ * - Connection not established, server rejected, or timeout: returns null (request carries no ticket,
+ *   asset service returns 401).
  *
- * `endpoint` 是 `createWsEndpoint` 的形状（`send`、`onMessage`），不引任何模块，浏览器也能用。
+ * `endpoint` has the shape of `createWsEndpoint` (`send`, `onMessage`), imports no modules, and
+ * works in browsers too.
  */
 import { TICKET_TTL } from './protocol.mjs';
 
@@ -16,9 +20,9 @@ let seq = 0;
 /**
  * @param {{ send(message: object): boolean, onMessage(handler: (message: object) => void): void }} endpoint
  * @param {object} [options]
- * @param {'r' | 'rw'} [options.access] 缺省 `rw`
+ * @param {'r' | 'rw'} [options.access] Defaults to `rw`
  * @param {() => number} [options.now]
- * @param {number} [options.timeoutMs] 等回包的上限，缺省 10 s
+ * @param {number} [options.timeoutMs] Maximum wait time for response, defaults to 10 s
  */
 export function createTicketSource(endpoint, { access = 'rw', now = Date.now, timeoutMs = 10_000 } = {}) {
   /** reqId → { resolve, timer } */

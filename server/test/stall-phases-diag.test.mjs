@@ -1,14 +1,20 @@
 /**
- * 丢认领、失败、丢弃的诊断(`docs/archive/agent-reports/AGENT-stall-phases.md`;契约 `docs/plan/render-queue-contract.md` A.12〔裁〕)。
- * 跑:npm test,或 node --test server/test/stall-phases-diag.test.mjs
+ * Diagnosis of lost claim, failure, and discard (`docs/archive/agent-reports/AGENT-stall-phases.md`;
+ * contract `docs/plan/render-queue-contract.md` A.12 [ruling]).
+ * Run: npm test, or node --test server/test/stall-phases-diag.test.mjs
  *
- *   D1  队列回收时给原认领者的 `task.lease-lost` 带真实原因(`lease-expired` / `stalled`),
- *       放回 open 时广播的任务视图带 `lastError`;没失败过的任务视图不带这一项
- *   D2  task-runner 的 `lost` 事件带阶段与毫秒数:推送途中丢认领 → `phase: 'push'`、`push` 的块数、距上次帧数变化、距认领
- *   D3  task-runner 的 `failed`(sink-incomplete)带产物库说的原因 `why` 与推送统计
- *   D4  `createAssetSink().put`:推送出错回 `{ complete: false, reason: 'push-failed:…', stats }`、记一行 `sink.incomplete`,
- *       每推完一块经 `report` 报一次;收全时回 `stats`
- *   D5  编辑器进程的转发器放行逐任务收尾行与 `sink.incomplete`,别的 `[queue-node]` 行照旧不转;会话行照旧转
+ *   D1  When queue reclaims, `task.lease-lost` sent to original claimer carries real reason
+ *       (`lease-expired` / `stalled`), task view broadcast when releasing back to open carries
+ *       `lastError`; task views that never failed do not carry this field
+ *   D2  task-runner `lost` event carries phase and milliseconds: lost claim during push →
+ *       `phase: 'push'`, number of `push` chunks, time since last frame count change, time since claim
+ *   D3  task-runner `failed` (sink-incomplete) carries reason `why` stated by artifact store and
+ *       push statistics
+ *   D4  `createAssetSink().put`: on push error returns
+ *       `{ complete: false, reason: 'push-failed:…', stats }`, logs a `sink.incomplete` line,
+ *       reports once via `report` after pushing each chunk; returns `stats` when fully received
+ *   D5  Editor process forwarder passes through per-task finalization lines and `sink.incomplete`,
+ *       other `[queue-node]` lines are not forwarded as usual; session lines forwarded as usual
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -34,7 +40,7 @@ function fineTask(label, { from = 0, to = 59 } = {}) {
   };
 }
 
-/** 一个队列、一个节点连接、一个发布方连接,消息同步投递,假时钟 */
+/** One queue, one node connection, one publisher connection, synchronous message delivery, fake clock */
 function queueRig(constants = {}) {
   let t = T0;
   const sent = [];
@@ -60,7 +66,7 @@ test('D1 the reclaimed lease-lost carries the real reason (stalled / lease-expir
   assert.equal('lastError' in opened0.task, false, 'the view of a task that never failed has no lastError');
   r.q.handle('node', { type: 'task.claim', id: task.id, expectVersion: 1 });
   r.q.handle('node', { type: 'task.progress', id: task.id, token: 2, done: 0 });
-  // 续约照发、帧数不变:严格超过 STALL_MS 按停滞回收
+  // Renewals sent as usual, frame count unchanged: reclaimed as stalled when strictly exceeding STALL_MS
   for (let s = 10; s <= 120; s += 10) { r.at(T0 + s * 1000); r.q.handle('node', { type: 'task.progress', id: task.id, token: 2, done: 0 }); }
   r.at(T0 + 120_001);
   const lost = r.of('node', 'task.lease-lost');
@@ -68,7 +74,7 @@ test('D1 the reclaimed lease-lost carries the real reason (stalled / lease-expir
   const reopened = r.of('watch', 'task.opened').at(-1);
   assert.equal(reopened.task.lastError, 'stalled', 'the broadcast of putting it back to open carries lastError');
 
-  // 再认领,不再续约:按租约回收
+  // Claimed again, no further renewals: reclaimed by lease
   r.q.handle('node', { type: 'task.claim', id: task.id, expectVersion: reopened.task.version });
   const claimed = r.of('node', 'task.claimed').at(-1);
   r.at(T0 + 120_001 + 30_001);
@@ -77,7 +83,7 @@ test('D1 the reclaimed lease-lost carries the real reason (stalled / lease-expir
   assert.equal(r.of('watch', 'task.opened').at(-1).task.lastError, 'lease-expired');
 });
 
-/** 可控时钟、假会话、可手动推进的执行器与产物库 */
+/** Controllable clock, fake session, manually advanceable executor and artifact store */
 function runnerRig({ putBlocks = 3 } = {}) {
   let t = T0;
   const events = [];
@@ -160,7 +166,7 @@ test('D3 the failed event for sink-incomplete carries the reason given by the ou
   assert.deepEqual(failed.push, { blocks: 10, pushed: 7, bytes: 700, ms: 2_000 });
 });
 
-/** 帧库里有 0..3 帧的最小管线(共享档) */
+/** Minimal pipeline (shared tier) with frames 0..3 in the frame store */
 function tinyPipeline(frames = 4) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-stall-diag-'));
   const dir = path.join(root, 'snap');
@@ -210,7 +216,7 @@ test('D4 output store put: a push error returns reason and stats and logs sink.i
     assert.equal(good.stats.pushed, 4);
     assert.deepEqual(counted, [0, 1, 2, 3, 4], 'once when the push starts + once per chunk');
 
-    // 缺帧:reason 是 range-missing
+    // Missing frames: reason is range-missing
     const short = await createAssetSink({ pipeline, client: ok }).put({ ...ref, range: { unit: 'localFrame', from: 0, to: 9 }, artifacts: null, meta: { taskId: 't', nodeId: 'N', token: 1 } });
     assert.equal(short.complete, false);
     assert.equal(short.reason, 'range-missing');
@@ -239,7 +245,8 @@ test('D5 the forwarder lets through the per-task wrap-up lines, sink.incomplete 
     'node.task-lost', 'node.task-discarded', 'node.task-failed', 'node.task-completed', 'sink.incomplete', 'sink.has-miss', 'manifest.get-failed',
     'docservice.session.resume',
   ]);
-  // 一轮几十个任务:逐任务行不被会话行的额度(每种每分钟 10 行)压掉
+  // Dozens of tasks in a round: per-task lines are not suppressed by the session-line quota
+  // (10 lines per minute for each type)
   const many = [];
   const f2 = createSessionLineForwarder((line) => many.push(line));
   f2(`${Array.from({ length: 40 }, (_, i) => `[queue-node] node.task-completed {"id":"t${i}"}`).join('\n')}\n`);

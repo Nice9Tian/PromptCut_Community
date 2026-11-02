@@ -1,6 +1,8 @@
 /**
- * 审查环路走 CLI(runners/cli-loop.mjs):一个角色回合起一次 CLI,结论从回复末尾的代码块里取,
- * 只读靠服务端的锁。这里用一个按角色写好台词的假 runner 顶替 agy,不起真进程。
+ * Review loop via CLI (runners/cli-loop.mjs): spawns a CLI once per role turn, extracts
+ * conclusions from the code block at the end of the reply, and enforces read-only via server
+ * locks. Here a mock runner with scripted lines per role replaces agy without spawning real
+ * processes.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +11,7 @@ import { startCliLoop, parseSubmission, submitFormat } from '../runners/cli-loop
 const block = (name, obj) => `OK.\n\`\`\`${name}\n${JSON.stringify(obj)}\n\`\`\``;
 const roleOf = (sys) => sys.startsWith('You are the judger (judge) of this video') ? 'judger' : sys.startsWith('You are the reviewer') ? 'reviewer' : 'worker';
 
-/** 假 runner:按角色弹台词;每次调用都发 session、text、done,就像 agy */
+/** Mock runner: emits lines by role; sends session, text, and done on each call, just like agy */
 function fakeCli(lines, calls) {
   const q = { judger: [...(lines.judger || [])], worker: [...(lines.worker || [])], reviewer: [...(lines.reviewer || [])] };
   let n = 0;
@@ -69,7 +71,8 @@ test('Full loop run: the judger/reviewer turns take the read-only lock, the work
   assert.equal(done[0].outcome, 'passed');
   assert.ok(!events.some((e) => e.type === 'session'), 'A role turn\'s session id must not leak to the frontend');
   assert.ok(events.some((e) => e.type === 'status' && /judger: passed/.test(e.text)));
-  // judger 开场只读 → 解锁 → worker 全开(null) → reviewer 只读 → judger 只读,每回合后都解锁
+  // judger starts read-only → unlock → worker fully open (null) → reviewer read-only →
+  // judger read-only, unlocked after each turn
   const readonly = (l) => Array.isArray(l) && l.includes('see_frames') && !l.includes('add_clip');
   assert.ok(readonly(locks[0]), 'The judger opens with the read-only lock');
   assert.equal(locks.at(-1), null, 'Must be unlocked at the end');
@@ -105,8 +108,10 @@ test('Resumable errors: retry in the same session; non-resumable errors end the 
 });
 
 /*
- * 实跑:worker 三次都被 agy 自家的内建工具拒掉(list_dir / read_url_content / grep_search),
- * 重试用完就 throw,整个环路报错结束 —— judger 定好的要求、worker 已经动过的工程全白跑。
+ * Live run: worker was rejected all three times by agy's built-in tools (list_dir /
+ * read_url_content / grep_search), and threw once retries were exhausted, ending the entire
+ * loop with an error: the requirements set by judger and the project edits made by worker
+ * were all wasted.
  */
 const denied = { error: { message: 'Antigravity denied its own built-in tool (GrepSearch)', retryable: true, retryPrompt: 'Continue' } };
 

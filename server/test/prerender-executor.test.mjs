@@ -1,28 +1,41 @@
 /**
- * 真实执行器（契约 `docs/plan/render-queue-contract.md` J.4，J.7 用例 J8～J11；设计附件
- * `docs/plan/queue-executor-design.md` 第 2、3、7 节）。
- * 跑：node --experimental-test-module-mocks --test server/test/prerender-executor.test.mjs
+ * Real executor (contract `docs/plan/render-queue-contract.md` J.4, J.7 test cases J8-J11; design
+ * appendix `docs/plan/queue-executor-design.md` sections 2, 3, 7).
+ * Run: node --experimental-test-module-mocks --test server/test/prerender-executor.test.mjs
  *
- * 只照契约与附件写，不看实现。
+ * Written strictly according to contract and appendix, without looking at implementation.
  *
- * 约定（照附件第 7 节「不用 Chrome」，写法同 `card-lock-pipeline.test.mjs`）：
- *   - `server/bakery/index.mjs` 整个换成假的（`mock.module`）。假 `openBakery` 回一个假预渲染间：
- *     `page.evaluate` 回这一套场景的 browserPlan（`{ graph, sourceVersions, environment }`，即 `window.__pcCardPlan()` 的形状），
- *     `loadProject` / `reset` / `page.setViewport` / `client.send` / `close` 都是空操作。
- *     假 `bakeFrames` 记下每次调用（`out`、`targetFrames`、`snapshotFrames`、三个开关），按真 `bakeFrames`
- *     （`server/bakery/bake.mjs`）的顺序逐帧走：每帧开头看 `signal`，已中止就抛 `{ cancelled: true }`（取消只在两帧之间生效）；
- *     这一帧要快照就先调 `onSnapshot`，再对 `targetFrames` 里的帧调 `onFrame`（这一帧的快照在截图之前生成）；
- *     `onBakeFrame(rec, frame, phase)` 在每帧开头（`'start'`）和快照之后、截图之前（`'shot'`）各调一次（中止用例用）。
- *     `onSnapshot` 的产物只由（片段、帧号）决定，与帧库在哪无关：
- *     隔离单卡那一路（`out` 在 `<root>/controls/` 下）每张卡一项、帧号原样；整场景那一路按片段起点换成本地帧。
- *   - `FramePipeline` 注入 `environment`，不探测；`dataRoot` 指向临时目录（成本读不到，预渲染集合按声明兜底）；
- *     `interactive: false`。PNG 那一支（`entry.cardCache` 的 `hasComplete` / `put` / `finish`）换成桩。
- *   - 执行器 `createPrerenderExecutor({ pipeline, projects, prepareProject, log })`；`projects.get` 由测试给，
- *     `prepareProject` 是深拷贝（记调用次数）。
- *   - 细任务由真的 `splitPlan` 从执行器的 PlanContext 切出（切分节点就是本机，指纹相同），再加上 TaskView 的字段。
- *   - 对照组：另一个帧库上，用现有的 `fillCardControls`（共享档）/ `renderLocalSnapshots`（本地档）一次渲完整张卡。
+ * Conventions (following appendix section 7 "No Chrome", written similarly to
+ * `card-lock-pipeline.test.mjs`):
+ *   - `server/bakery/index.mjs` is completely mocked (`mock.module`). Mock `openBakery` returns a
+ *     mock prerender chamber: `page.evaluate` returns the browserPlan for this set of scenes
+ *     (`{ graph, sourceVersions, environment }`, i.e. the shape of `window.__pcCardPlan()`),
+ *     and `loadProject` / `reset` / `page.setViewport` / `client.send` / `close` are all no-ops.
+ *     Mock `bakeFrames` records each invocation (`out`, `targetFrames`, `snapshotFrames`, three
+ *     switches), stepping through frames in the order of real `bakeFrames`
+ *     (`server/bakery/bake.mjs`): checks `signal` at the start of each frame, throwing
+ *     `{ cancelled: true }` if aborted (cancellation takes effect only between frames);
+ *     if this frame needs a snapshot, call `onSnapshot` first, then call `onFrame` for frames in
+ *     `targetFrames` (this frame's snapshot is generated before taking screenshot);
+ *     `onBakeFrame(rec, frame, phase)` is called once at the start of each frame (`'start'`) and
+ *     once after snapshot before screenshot (`'shot'`) (used by abort test cases).
+ *     `onSnapshot` outputs depend only on (clip, frame number), independent of frame store
+ *     location: the isolated single-card path (`out` under `<root>/controls/`) has one item per
+ *     card with original frame numbers; the whole-scene path converts to local frames based on
+ *     clip start point.
+ *   - `FramePipeline` injects `environment` without probing; `dataRoot` points to temp directory
+ *     (costs cannot be read, prerender set falls back to declarations); `interactive: false`.
+ *     The PNG branch (`hasComplete` / `put` / `finish` of `entry.cardCache`) is stubbed.
+ *   - Executor `createPrerenderExecutor({ pipeline, projects, prepareProject, log })`;
+ *     `projects.get` is provided by test, and `prepareProject` is a deep copy (recording call
+ *     count).
+ *   - Fine-grained tasks are sliced from the executor's PlanContext by the real `splitPlan`
+ *     (splitter node is this machine, same fingerprint), plus TaskView fields.
+ *   - Control group: On another frame store, use existing `fillCardControls` (shared tier) /
+ *     `renderLocalSnapshots` (local tier) to render the entire card at once.
  *
- * `server/prerender-executor.mjs`（及 `FramePipeline` 的新方法）还没有时，J8～J10 各自失败；J11 对照的是现有行为，应当通过。
+ * Before `server/prerender-executor.mjs` (and new `FramePipeline` methods) exist, J8-J10 each fail;
+ * J11 contrasts with existing behavior and should pass.
  */
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,14 +44,14 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-/* ------------------------------------------------------------------ 假的预渲染间 */
+/* ------------------------------------------------------------------ Mock prerender room */
 
 const bakeLog = [];
-/** 每次 bakeFrames 开始时调用（中止用例用它在渲染中途 abort） */
+/** Called at the start of each bakeFrames (used by abort test cases to abort mid-render) */
 let onBake = null;
-/** bakeFrames 里每帧调两次：`(rec, frame, 'start')` 在看 signal 之前，`(rec, frame, 'shot')` 在快照之后、截图之前 */
+/** Called twice per frame in bakeFrames: `(rec, frame, 'start')` before checking signal, `(rec, frame, 'shot')` after snapshot and before screenshot */
 let onBakeFrame = null;
-/** 当前场景：假 openBakery 开出来的预渲染间按它回 browserPlan、造快照产物 */
+/** Current scene: Prerender chamber opened by mock openBakery uses it to return browserPlan and create snapshot outputs */
 let scene = null;
 const opened = [];
 
@@ -106,7 +119,7 @@ async function loadExecutor() {
   return execMod;
 }
 
-/* ------------------------------------------------------------------ 场景 */
+/* ------------------------------------------------------------------ Scenario */
 
 const sha256 = (text) => crypto.createHash('sha256').update(text, 'utf8').digest('hex');
 const FPS = 30;
@@ -118,12 +131,12 @@ const OWN_ENV = describeEnvironment({
 const OWN = OWN_ENV.fingerprint;
 
 /**
- * 五个片段（5 秒，150 帧）：
- *   clip-a  demo-a  共享档，可缓存，0～5 秒，150 帧 → 切 3 段（0-59、60-119、120-149）
- *   clip-c  demo-c  共享档、canvasHeavy、用户卡，1～2 秒，30 帧
- *   clip-t  trans   sourceDependent（共享档但不可缓存）→ PlanContext 里要去掉
- *   clip-b  glass   belowDependent，本地档，1～4 秒，90 帧（全局帧 30～119）→ 切 2 段
- *   clip-s  text    无状态，不预渲染
+ * Five clips (5 seconds, 150 frames):
+ *   clip-a  demo-a  shared tier, cacheable, 0-5 seconds, 150 frames -> split into 3 segments (0-59, 60-119, 120-149)
+ *   clip-c  demo-c  shared tier, canvasHeavy, user card, 1-2 seconds, 30 frames
+ *   clip-t  trans   sourceDependent (shared tier but not cacheable) -> remove from PlanContext
+ *   clip-b  glass   belowDependent, local tier, 1-4 seconds, 90 frames (global frames 30-119) -> split into 2 segments
+ *   clip-s  text    stateless, no prerender
  */
 const START = { 'clip-a': 0, 'clip-c': 1, 'clip-t': 0, 'clip-b': 1, 'clip-s': 0 };
 const END = { 'clip-a': 5, 'clip-c': 2, 'clip-t': 1, 'clip-b': 4, 'clip-s': 5 };
@@ -167,7 +180,7 @@ async function tmpRoot(prefix = 'pc-m5b-exec-') {
   return root;
 }
 const pipes = [];
-/** 先关掉本用例建的管线（锁库、快照库的写盘可能还在落），再删临时目录 */
+/** First shut down pipeline created by this case (disk writes to lock store and snapshot store may still be flushing), then delete temp directory */
 async function cleanupRoots() {
   await Promise.allSettled(pipes.splice(0).map((p) => p.close()));
   await Promise.all(tmpRoots.splice(0).map((r) => fs.rm(r, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })));
@@ -189,7 +202,7 @@ function newPipeline(root) {
   return p;
 }
 
-/** PNG 那一支换成桩（不落盘） */
+/** Stub the PNG branch (no writes to disk) */
 function stubPng(entry) {
   const puts = [];
   entry.cardCache.hasComplete = async () => false;
@@ -198,7 +211,7 @@ function stubPng(entry) {
   return puts;
 }
 
-/** 执行器 + 它用的项目仓库（记调用） */
+/** Executor + project repository it uses (records calls) */
 async function executorFor(pipeline, { json = projectJson() } = {}) {
   const { createPrerenderExecutor } = await loadExecutor();
   const projects = {
@@ -214,7 +227,8 @@ async function executorFor(pipeline, { json = projectJson() } = {}) {
   const executor = createPrerenderExecutor({ pipeline, projects, prepareProject, log: (...a) => logs.push(a) });
   assert.equal(typeof executor?.plan, 'function', 'The executor has plan');
   assert.equal(typeof executor?.render, 'function', 'The executor has render');
-  // M6c 集成裁定:执行器不再有 isIdle(PC 节点的闲时门槛改为 queue-idle.mjs,m6c-contract「集成时的裁定」)
+  // M6c integration ruling: Executor no longer has isIdle (idle threshold for PC nodes changed
+  // to queue-idle.mjs, m6c-contract "Integration ruling")
   assert.equal(executor?.isIdle, undefined, 'The executor no longer has isIdle');
   return { executor, projects, prepared, prepareProject, logs };
 }
@@ -223,13 +237,13 @@ const view = (task) => ({ ...structuredClone(task), state: 'claimed', version: 1
 const planView = () => view(planTaskOf({ projectId: PID, projectRev: REV }));
 const signalNone = () => new AbortController().signal;
 
-/** 本机切分这一版（指纹相同，所以与 PlanContext 的键一致） */
+/** This version split on this machine (same fingerprint, so keys match PlanContext) */
 function splitOf(ctx) {
   return splitPlan({ ...ctx, planTask: planTaskOf({ projectId: PID, projectRev: REV }), envFingerprint: OWN, codeVersion: 'cv-test' });
 }
 const tasksOf = (ctx, clipId) => splitOf(ctx).filter((t) => t.input.clipId === clipId).sort((a, b) => a.range.from - b.range.from);
 
-/** bakeFrames 的调用记录，`out` 换成相对帧库根的路径 */
+/** Call records of bakeFrames, with `out` replaced by path relative to frame store root */
 const normalize = (root, recs) => recs.map((r) => ({ ...r, out: path.relative(root, r.out).split(path.sep).join('/') }));
 
 async function treeOf(dir) {
@@ -240,7 +254,7 @@ async function treeOf(dir) {
   return out;
 }
 
-/** 执行器的 render 返回的错误：code / retryable */
+/** Errors returned by executor's render: code / retryable */
 async function rejectionOf(promise) {
   try {
     await promise;
@@ -261,18 +275,18 @@ test('J8 plan: entryKey equals the key that pipeline.entry() computes from the s
 
   const ctx = await executor.plan(planView(), { signal: signalNone() });
 
-  // 取项目：按 plan 任务的 source 取这一版，再 prepareProject
+  // Fetch project: retrieve this version by plan task's source, then prepareProject
   assert.deepEqual(projects.calls[0], [PID, REV], 'projects.get(projectId, projectRev)');
   assert.ok(prepared.n >= 1, 'prepareProject was called');
 
-  // entryKey：与另一个管线对同一份 JSON 算出的 entry.key 相同
+  // entryKey: Same as entry.key computed by another pipeline for the same JSON
   const C = newPipeline(await tmpRoot());
   t.after(() => C.close());
   const expectedKey = (await C.entry(prepareProject(projectJson()))).key;
   assert.equal(ctx.entryKey, expectedKey, 'entryKey = pipeline.entry(prepareProject(json)).key');
   assert.equal(ctx.entryKey, (await B.entry(prepareProject(projectJson()))).key, 'Also identical on the same pipeline');
 
-  // cardPlan：键与真的 CardFrameCache.plan 一致，补了 cardId，去掉 sourceDependent
+  // cardPlan: Keys match real CardFrameCache.plan, added cardId, removed sourceDependent
   const reference = new CardFrameCache({ root: await tmpRoot(), project: projectJson(), envFingerprint: OWN }).plan(browserPlanOf());
   const byClip = new Map(ctx.cardPlan.map((c) => [c.clipId, c]));
   for (const clipId of ['clip-a', 'clip-c', 'clip-b']) {
@@ -293,12 +307,12 @@ test('J8 plan: entryKey equals the key that pipeline.entry() computes from the s
   assert.deepEqual(ctx.streams, [], 'streams is empty (J.0: streams do not go through the queue)');
   assert.ok(ctx.prerenderSet instanceof Set && ['clip-a', 'clip-c', 'clip-b'].every((c) => ctx.prerenderSet.has(c)), 'prerenderSet is included');
 
-  // 锚帧：anchorFrames(clips, fps)，只留在范围内的
+  // Anchor frames: anchorFrames(clips, fps), keeping only those within range
   const clips = projectJson().tracks.flatMap((tr) => tr.clips);
   const anchors = anchorFrames(clips, FPS).filter((f) => f >= 0 && f < 150);
   assert.deepEqual([...new Set(ctx.anchorFrames)].sort((a, b) => a - b), anchors);
 
-  // isUserCard / isGraphCard / weightOf（附件第 2 节的表）
+  // isUserCard / isGraphCard / weightOf (table in appendix section 2)
   assert.equal(ctx.isUserCard(byClip.get('clip-c')), true, 'A sourceVersions entry starting with user: is a user card');
   assert.equal(ctx.isUserCard(byClip.get('clip-a')), false);
   assert.equal(ctx.isGraphCard(byClip.get('clip-a')), false);
@@ -306,7 +320,7 @@ test('J8 plan: entryKey equals the key that pipeline.entry() computes from the s
   assert.equal(ctx.weightOf(byClip.get('clip-c')).class, 'heavy', 'canvasHeavy is recorded as heavy');
   assert.equal(ctx.weightOf(byClip.get('clip-b')).class, 'heavy', 'A local-tier card (belowDependent) is recorded as heavy');
 
-  // E.5 的不变量：同指纹切分，共享档任务的 resultKey 就是 control.snapshotKey
+  // E.5 invariant: Splitting with same fingerprint, shared tier task's resultKey is control.snapshotKey
   const tasks = splitOf(ctx);
   for (const task of tasks.filter((x) => x.tier === 'shared')) {
     assert.equal(task.resultKey, byClip.get(task.input.clipId).snapshotKey, `${task.id}: resultKey === snapshotKey`);
@@ -319,7 +333,7 @@ test('J8 plan: entryKey equals the key that pipeline.entry() computes from the s
   assert.deepEqual(tasks.map((x) => x.input.clipId).sort(), ['clip-a', 'clip-a', 'clip-a', 'clip-b', 'clip-b', 'clip-c'], 'Splits into a×3, b×2, c×1, no t');
   assert.equal(tasks.filter((x) => x.kind === 'stream').length, 0);
 
-  // plan 只算计划，不渲染；不借后台那条 lane
+  // plan only computes the plan, does not render; does not borrow the background lane
   assert.equal(bakeLog.length, bakesBefore, 'plan does not call bakeFrames');
   assert.equal(B.lanes.has('background'), false, 'plan does not borrow the background lane (attachment section 2: a new queue lane)');
 });
@@ -338,14 +352,15 @@ test('J8 plan: when no snapshot can be fetched, throws { code: no-snapshot, retr
   assert.equal(opened.length, openedBefore, 'No prerender room was opened');
 });
 
-// J8(执行器的 isIdle)在 M6c 作废:执行器不再有 isIdle,本机队列节点的闲时门槛改为 `queue-idle.mjs`
-// (契约 m6c-contract X5 与「集成时的裁定」),判据由 `m6c-queue-impl.test.mjs` 的 X5-1～X5-3 覆盖。
+// J8 (executor's isIdle) invalidated in M6c: executor no longer has isIdle; local queue node's
+// idle threshold changed to `queue-idle.mjs` (contract m6c-contract X5 and "Integration ruling"),
+// criteria covered by X5-1 to X5-3 in `m6c-queue-impl.test.mjs`.
 
 /* ================================================================== J9 */
 
 test('J9 render (shared tier, batch by batch: single-pass push turned off): renders the whole card segment by segment, 60 frames per segment; compared with fillCardControls rendering it all at once, the bakeFrames call records and the files written to disk are identical; progress callback', { timeout: 45_000 }, async (t) => {
   t.after(cleanupRoots);
-  // 对照：帧库 A，现有的 fillCardControls 一次渲完 clip-a
+  // Control: Frame store A, existing fillCardControls renders clip-a all at once
   const rootA = await tmpRoot();
   const A = newPipeline(rootA);
   t.after(() => A.close());
@@ -359,10 +374,10 @@ test('J9 render (shared tier, batch by batch: single-pass push turned off): rend
   const recA = normalize(rootA, bakeLog.slice(mark));
   assert.equal(recA.length, 38, 'Fixture: 150 frames in batches of 4 frames is 38 batches');
 
-  // 执行器：帧库 B，plan 之后逐段 render
+  // Executor: Frame store B, render segment by segment after plan
   const rootB = await tmpRoot();
   const B = newPipeline(rootB);
-  B.queueSinglePassOff = true; // 逐批这条路（canvas 重卡、播放头要的段、开关关掉时）
+  B.queueSinglePassOff = true; // Batch-by-batch path (canvas heavy card, segments requested by playhead, when switch is off)
   t.after(() => B.close());
   const { executor } = await executorFor(B);
   const ctx = await executor.plan(planView(), { signal: signalNone() });
@@ -400,7 +415,7 @@ test('J9 render (shared tier, batch by batch: single-pass push turned off): rend
   }
 });
 
-/** PNG 那一支用真的 CardFrameCache（假 PNG 原样落在 `controls/<key>/mov/frames/`），只把要 ffmpeg 的 finish 换成桩 */
+/** The PNG branch uses real CardFrameCache (mock PNG lands as-is in `controls/<key>/mov/frames/`), only stubbing finish which requires ffmpeg */
 function realPng(entry) {
   entry.cardCache.finish = async () => {};
 }
@@ -409,10 +424,10 @@ const pngNames = (tree) => Object.keys(tree).filter((n) => n.endsWith('.png'));
 const htmlFramesOf = (tree) => Object.keys(tree).filter((n) => n.endsWith('.html')).map((n) => Number(n.slice(0, -5))).sort((a, b) => a - b);
 const pngFramesOf = (tree) => pngNames(tree).map((n) => Number(n.slice(0, -4))).sort((a, b) => a - b);
 const span = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
-/** 按 4 帧一交时这一段的进度序列：4、8、…、n */
+/** Progress sequence for this segment when submitting every 4 frames: 4, 8, …, n */
 const progressBy4 = (n) => Array.from({ length: Math.ceil(n / 4) }, (_, i) => Math.min(4 * (i + 1), n));
 
-/** 对照组：帧库 A，现有的 fillCardControls 一次渲完 clip-a（快照与 PNG 都真落盘） */
+/** Control group: frame store A, existing fillCardControls renders clip-a in one pass (snapshots and PNGs hit disk) */
 async function oneShotClipA() {
   const rootA = await tmpRoot();
   const A = newPipeline(rootA);
@@ -429,7 +444,7 @@ async function oneShotClipA() {
   return { ctlA, recs, html, png };
 }
 
-/** 帧库 B 上的执行器，一段一趟顺推（缺省开着）；记下快照库每次入库的帧 */
+/** Executor on frame store B, forward push one pass per segment (default on); records frames in snapshot store */
 async function singlePassExecutor() {
   const rootB = await tmpRoot();
   const B = newPipeline(rootB);
@@ -487,7 +502,7 @@ test('J9b render (shared tier, single-pass push per segment): bakeFrames is call
   assert.deepEqual(pngNames(png), pngNames(A.png), 'The PNG file names are the same');
   for (const name of pngNames(A.png)) assert.ok(A.png[name].equals(png[name]), `PNG ${name} is byte-for-byte identical`);
 
-  // 入库仍每 4 帧交一次：每次交的是按 4 帧对齐的一组
+  // Storing still submits every 4 frames: each submission is a group aligned to 4 frames
   assert.deepEqual(commits.flat(), span(0, 149), 'The committed frames together make up the whole card, in order');
   for (const frames of commits) {
     assert.ok(frames.length >= 1 && frames.length <= 4, `A single commit has at most 4 frames: ${frames}`);
@@ -551,7 +566,8 @@ test('J10 render (local tier): converts each segment to global frames and render
     assert.ok(seen.length >= 1 && seen.every((v) => Number.isFinite(v) && v >= 0), `The local tier reports progress too: ${seen}`);
   }
 
-  // 已有的帧不再渲：再渲第一段 → 不调 bakeFrames（或调用里一帧都没有）
+  // Existing frames are not re-rendered: re-render first segment → do not call bakeFrames
+  // (or no frames in the call)
   mark = bakeLog.length;
   await executor.render(view(tasks[0]), { signal: signalNone(), progress: () => {} });
   const again = bakeLog.slice(mark).flatMap((r) => r.targetFrames);
@@ -566,7 +582,7 @@ test('J10 render (local tier): frames already present in this segment are not re
   const { executor } = await executorFor(B);
   const ctx = await executor.plan(planView(), { signal: signalNone() });
   const ctl = ctx.cardPlan.find((c) => c.clipId === 'clip-b');
-  // 预置本地帧 10～19（全局帧 40～49）
+  // Preset local frames 10-19 (global frames 40-49)
   await B.snapshots().commitSnapshots({ tier: 'local', entryKey: ctx.entryKey, key: ctl.snapshotKey, clipId: 'clip-b', capabilities: ctl.capabilities,
     items: Array.from({ length: 10 }, (_, i) => ({ localFrame: 10 + i, html: `<p>seed ${10 + i}</p>` })) });
   const [first] = tasksOf(ctx, 'clip-b');
@@ -613,7 +629,8 @@ test('J10 render: throws plan-mismatch (not retryable) and does not render when 
   });
   const serr = await rejectionOf(executor.render(stream, { signal: signalNone(), progress: () => {} }));
   assert.ok(serr, 'The stream task must fail');
-  // M6c X1：执行器接流任务；这条管线 interactive: false、没有轨道流生产者，所以回 no-streams（不可重试）
+  // M6c X1: Executor accepts stream tasks; this pipeline has interactive: false and no track
+  // stream producer, so it returns no-streams (non-retryable)
   assert.equal(serr.code, 'no-streams');
   assert.equal(serr.retryable, false);
   assert.equal(bakeLog.length, mark, 'A task that does not match renders no frames at all');
@@ -624,7 +641,7 @@ test('J10 render (batch by batch: single-pass push turned off): abort midway →
   t.after(() => { onBake = null; });
   const rootB = await tmpRoot();
   const B = newPipeline(rootB);
-  B.queueSinglePassOff = true; // 逐批这条路（canvas 重卡、播放头要的段、开关关掉时）
+  B.queueSinglePassOff = true; // Batch-by-batch path (canvas heavy card, segments requested by playhead, when switch is off)
   t.after(() => B.close());
   const { executor } = await executorFor(B);
   const ctx = await executor.plan(planView(), { signal: signalNone() });
@@ -657,7 +674,9 @@ test('J10b render (one sequential pass per segment): abort midway → rejected, 
   const [first, ...others] = tasks;
   const htmlDir = path.join(rootB, 'controls-html', first.resultKey);
 
-  // 第 15 帧的快照已经生成、截图之前中止：12～15 这一组的快照都生成了，但交库（第 15 帧截完图时）在中止之后，不该入库
+  // Frame 15 snapshot has been generated, abort before screenshot: snapshots for the 12-15 group
+  // are all generated, but submitting to store (when frame 15 screenshot finishes) is after abort,
+  // so they should not be stored
   const ABORT_AT = 15;
   const controller = new AbortController();
   onBakeFrame = async (_rec, frame, phase) => { if (frame === ABORT_AT && phase === 'shot') controller.abort(); };
@@ -685,7 +704,7 @@ test('J10b render (one sequential pass per segment): abort midway → rejected, 
   assert.deepEqual(pngFramesOf(png), span(0, ABORT_AT - 1), 'PNG is written only up to the abort point (the abort frame and everything after it are not written)');
   for (const name of pngNames(png)) assert.ok(png[name].equals(A.png[name]), `written PNG ${name} is complete and identical to a single full render`);
 
-  // 新信号重渲这一段：从头再推一趟，快照只补缺的 12～59
+  // Re-render this segment on new signal: push another pass from start, snapshots only fill missing 12-59
   mark = bakeLog.length;
   const seen2 = [];
   await executor.render(view(first), { signal: signalNone(), progress: (done) => seen2.push(done) });
@@ -707,7 +726,7 @@ test('J10b render (one sequential pass per segment): abort midway → rejected, 
 
 /* ================================================================== J11 */
 
-/** fillCardControls 对 clip-a 的现有行为：38 批，每批 4 帧（最后一批 2 帧），snapshotFrames 扣掉已有的 */
+/** Existing fillCardControls behavior on clip-a: 38 batches of 4 frames (last batch 2 frames); snapshotFrames deducts existing */
 function expectedFullCard(control, have = new Set()) {
   const out = [];
   for (let first = 0; first < control.count; first += 4) {
@@ -750,14 +769,14 @@ test('J11 fillCardControls behaves the same when no range argument is passed: ba
   assert.equal(Object.keys(base.tree).filter((n) => n.endsWith('.html')).length, 150, 'all 150 frames of the whole card are present');
   assert.equal(base.tree['0.html'].toString(), '<p>seed 0</p>', 'existing frames are not overwritten');
 
-  // 第 5 个参数给空对象、给 undefined：与不传相同
+  // Passing empty object or undefined for 5th argument: same as omitting it
   for (const extra of [[undefined], [{}]]) {
     const run = await fullCardRun(extra);
     assert.deepEqual(run.recs, base.recs, `5th argument ${JSON.stringify(extra[0])}: call records unchanged`);
     assert.deepEqual(Object.keys(run.tree), Object.keys(base.tree));
     for (const name of Object.keys(base.tree)) assert.ok(run.tree[name].equals(base.tree[name]), `${name} is identical`);
   }
-  // 范围覆盖整张卡：与不传相同
+  // Range covers the entire card: same as omitting it
   const whole = await fullCardRun([{ range: { from: 0, to: 149 } }]);
   assert.deepEqual(whole.recs, base.recs, 'when the range is the whole card, the result is the same as not passing it');
 });

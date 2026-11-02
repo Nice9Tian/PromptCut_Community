@@ -1,6 +1,7 @@
 /**
- * 素材效果卡的三个值构造器。文件是 .ts,但里面只有 `import type`,Node 自带的类型剥离
- * 能直接加载(试过 `import('./graphValues.ts')`),所以不用 vite。
+ * Three value constructors for media effect cards. The file is .ts, but contains only `import type`;
+ * Node's built-in type stripping can load it directly (tested `import('./graphValues.ts')`),
+ * so vite is not needed.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +13,8 @@ test('glsl assembles the fragment source, inputs and uniforms into the GlslValue
   assert.equal(value.type, 'glsl');
   assert.deepEqual(value.inputs, [source]);
   assert.deepEqual(value.uniforms, { amount: .5, tint: [1, 0, 0] });
-  // 不传就是空的,不是 undefined —— 执行器按 `value.inputs||[]` 走,两种都活,但空数组更好读
+  // Omitted means empty, not undefined: the executor uses `value.inputs||[]`, both work,
+  // but an empty array is easier to read
   assert.deepEqual(glsl('x').inputs, []);
   assert.deepEqual(glsl('x').uniforms, {});
 });

@@ -1,4 +1,7 @@
-/** update_clip 的 params 说明：工具定义里的静态版本与按 cardId 注入的真实 schema（server/card-params-schema.mjs）共用这一句 */
+/**
+ * Parameter description for update_clip: shared between the static version in the tool definition
+ * and the real schema injected by cardId (server/card-params-schema.mjs).
+ */
 export const PARAMS_PATCH_DESC = "Incremental patch: write only the parameter keys to change this time; keys not written keep their current values (they are not reset); do not bring back the whole old set of parameters from memory, as that would write back values the user just changed or undid. To know the current values, call get_clip first.";
 
 export const clipsTools = [

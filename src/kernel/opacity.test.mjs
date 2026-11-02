@@ -1,12 +1,14 @@
 /**
- * 卡片 clip 的不透明度 / 淡入淡出。跑:node --test src/kernel/opacity.test.mjs
+ * Card clip opacity / fade. Run: node --test src/kernel/opacity.test.mjs
  *
- * 以前这三个字段只有视频层吃,卡片上设了等于没设 —— 系统提示词让模型「遮到人就降不透明度」,
- * 它照做了、看一眼画面、什么都没变。现在 flattenOverlay 把字段带进时间轴、Stage 按 cardOpacityAt 应用。
- * 钉死:
- *   - 没设过的卡片 hasOpacityControls 为假,Stage 一个字都不碰(老项目导出基线不能动);
- *   - 提前挂载期(t < start)不能把进场第一帧吞成 0;
- *   - flattenOverlay 真的把三个字段带过来了。
+ * Previously only video layers respected these three fields; setting them on cards was a no-op:
+ * the system prompt told the model to "lower opacity when covering people", it complied, looked at
+ * the frame, and nothing changed. Now flattenOverlay carries the fields into the timeline, and
+ * Stage applies them via cardOpacityAt. Pin down:
+ *   - For unset cards hasOpacityControls is false, Stage touches nothing (export baselines of
+ *     legacy projects cannot change);
+ *   - The pre-mount period (t < start) must not swallow the first entrance frame to 0;
+ *   - flattenOverlay actually brings the three fields over.
  */
 import test from "node:test";
 import assert from "node:assert/strict";

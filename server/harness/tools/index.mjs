@@ -9,8 +9,9 @@ import { codeCacheTools } from '../../tools/code-cache.mjs';
 import { loadSkillTool } from '../../tools/agent-skills.mjs';
 
 /**
- * `only`:给了就只把名单里的工具交给模型(托管档的开放清单);`localTools: false` 不带读写本地文件的 text_editor。
- * 两个都不给时与原来相同。
+ * `only`: if provided, only passes tools in the list to the model (open manifest of the hosted
+ * tier); `localTools: false` excludes `text_editor` which reads and writes local files.
+ * When neither is provided, it behaves the same as before.
  */
 export async function buildTools({ callTool, workspaceDir, onEvent = () => {}, pollIntervalMs = 3000, jobTimeoutMs = 600000, only = null, localTools = true, codeCache = null, skills = [] }) {
   async function waitForJob(name, input, initial, context) {
@@ -37,15 +38,20 @@ export async function buildTools({ callTool, workspaceDir, onEvent = () => {}, p
   const result = offered.map(t => ({
     name: t.name,
     description: t.description + (['auto_workflow', 'stt_install', 'transcribe_media'].includes(t.name) ? ' In API mode background jobs are awaited automatically; do not poll densely or restart them yourself.' : ''),
-    // 深拷贝:下面要就地改写 params,而 mcpTools 是整个进程共享的模块级常量
+    // Deep clone: params will be rewritten in place below, while mcpTools is a module-level constant
+    // shared across the entire process
     inputSchema: JSON.parse(JSON.stringify(t.inputSchema)),
-    // context.callId 是这次 tool_use 的 id:交给编辑器放进工具调用事件,页面 AI 栏按它对上聊天记录(c65-integ2)
+    // context.callId is the id for this tool_use: passed to the editor into the tool call event,
+    // used by the page AI panel to match chat history (c65-integ2)
     async execute(input, context = {}) { return waitForJob(t.name, input, await callTool(t.name, input, { callId: context.callId }), context); },
   }));
   /*
-   * send_message 的 to: "user"(对用户说一两句话,界面画进气泡,2026-10-20 用户定)在这里就地答,不经公告板:
-   * 云端与本机都走这一层,不用另开路由。别的收件人照旧交给 callTool(多 Agent 协调)。
-   * 托管档的开放清单里没有 send_message 时,单独补一个只能发给用户的。
+   * `to: "user"` for `send_message` (say a sentence or two to the user, rendered by the UI inside
+   * bubbles, user decision, 2026-10-20) is answered in place here without going through the bulletin
+   * board: both cloud and local go through this layer without opening separate routes. Other
+   * recipients are handed off to `callTool` as usual (multi-Agent coordination).
+   * When `send_message` is missing from the open manifest of the hosted tier, add a standalone one
+   * that can only send to users.
    */
   const coord = result.find((t) => t.name === 'send_message');
   if (coord) {
@@ -55,21 +61,25 @@ export async function buildTools({ callTool, workspaceDir, onEvent = () => {}, p
   result.push(thinkTool);
   if (localTools) result.push(createTextEditorTool(workspaceDir));
   /*
-   * 代码块空间(A07,2026-10-22):本机与云端都给,不受托管档开放清单(only)限制——它只读写这个项目的代码块目录,
-   * 不碰项目、素材和别的文件。目录由宿主定(runners/api.mjs 的 codeCacheDir)。
+   * Code cache space (A07, 2026-10-22): provided for both local and cloud, unrestricted by the hosted
+   * tier open manifest (`only`): it only reads and writes this project's code cache directory,
+   * without touching project, asset, or other files. The directory is determined by the host
+   * (`codeCacheDir` in `runners/api.mjs`).
    */
   if (codeCache) result.push(...codeCacheTools(codeCache));
-  // 技能(issue 46):同样本机与云端都给,不受开放清单限制——它只读说明,不经 callTool
+  // Skills (issue 46): likewise provided for both local and cloud, unrestricted by the open manifest:
+  // it only reads instructions, without going through callTool
   if (skills.length) result.push(loadSkillTool(skills));
 
-  // 把 add_clip / update_clip 的 params 换成按 cardId 分支的真实 schema。
-  // 不做这一步的话它是个自由对象,模型看到的是「没有任何字段」,一个卡片参数都传不出去
-  // —— MCP server 那条路一直做了这件事,API 直连这条路以前漏了。
+  // Replace add_clip / update_clip params with the actual schema branched by cardId.
+  // Without this step, it is a free-form object, and the model sees "no fields", unable to pass any card parameters:
+  // the MCP server path has always done this, but the direct API path previously missed it.
   try {
     const cards = await callTool('list_cards', { detail: 'full' });
     injectCardParams(result, cards);
   } catch (error) {
-    // 拿不到卡片列表就退回自由对象:少了参数提示总比工具整个不能用强
+    // Fall back to a free-form object if the card list cannot be retrieved:
+    // missing parameter hints is better than the tool being completely unusable
     onEvent({ type: 'status', text: `Could not fetch the card schema; add_clip parameter hints will be missing: ${error.message}` });
   }
 

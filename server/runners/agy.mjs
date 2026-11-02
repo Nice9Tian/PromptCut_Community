@@ -9,17 +9,22 @@ function runAgy(exe, args, options) {
 }
 
 /**
- * 登记 agy 的 PromptCut MCP:**不在登记里写端口**,端口在每次起 agy 时经环境变量带进去。
+ * Register PromptCut MCP with agy: **do not write port into registration**; port is passed via
+ * environment variables each time agy starts.
  *
- * agy 的 MCP 登记是全局的(一台机器一份)。原来登记时写死 `-e PROMPTCUT_PORT=<端口>`,
- * 而「是否已登记」只比对 node 和脚本路径、不比端口 —— 同一份代码的两个实例(5190 的编辑台、
- * 5198 的测试)端口不同,后启动的会以为已经登记好,agy 的工具调用就一直打到前一个端口上;
- * 那个端口关了就全报错,被别的程序占着就一直挂着。
+ * agy MCP registration is global (one per machine). Previously, registration hardcoded
+ * `-e PROMPTCUT_PORT=<port>`, while "is already registered" only compared node and script paths,
+ * not port: two instances of the same code (editor on 5190, tests on 5198) have different ports;
+ * the later-started one would assume it was already registered, so agy tool calls kept hitting the
+ * previous port; if that port closed, all calls errored; if occupied by another program, calls hung
+ * indefinitely.
  *
- * 现在:登记里只有命令和脚本;PROMPTCUT_PORT / PROMPTCUT_AGENT 放在 agy 进程的环境变量里
- * (见下面 spawnCli 的 env),agy 起 MCP 子进程时继承下去,mcp-server.mjs 读到的就是
- * 发起这次对话的那个服务端。每个服务端进程第一次用 agy 时重登一次(`mcp add` 是「加或更新」),
- * 顺手把老版本写进登记的端口清掉;之后只在命令或脚本路径变了时才重登。
+ * Now: registration contains only command and script; PROMPTCUT_PORT / PROMPTCUT_AGENT are placed
+ * in the agy process environment variables (see spawnCli env below) and inherited when agy starts
+ * MCP child processes, so mcp-server.mjs reads the exact server that initiated this chat. Each
+ * server process re-registers once the first time it uses agy (`mcp add` is "add or update"), also
+ * clearing the port written into the registry by older versions; thereafter, re-registration only
+ * occurs when command or script path changes.
  */
 let registeredOnce = false;
 let registerPromise = null;
@@ -36,7 +41,7 @@ async function ensureMcpRegistered(exePath, mcpOpts, safeOnEvent) {
         const listStdout = runAgy(exePath, ['mcp', 'list'], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
         const line = listStdout.split(/\r?\n/).find((l) => l.split(/\s+/)[0] === 'promptcut');
         if (line && line.includes(mcpOpts.command) && line.includes(mcpOpts.args[0])) return;
-      } catch { /* 查不到就重登 */ }
+      } catch { /* Re-register if not found */ }
     }
     try {
       runAgy(exePath, mcpAddArgs(mcpOpts), { windowsHide: true, stdio: 'ignore' });
@@ -105,21 +110,25 @@ export function startRun(opts) {
 }
 
 /**
- * 只发给 agy 的一段补充说明,拼在通用系统提示词后面。
+ * Supplementary instructions sent only to agy, appended after the general system prompt.
  *
- * 通用提示词是四家 runner 共用的,它不知道「跑它的这一家自己还带着一套内建工具」。
- * 而 agy 带着 —— view_file / grep_search / find_by_name / run_command 那一套。
- * 它的工作区只有 `exports/ai-workspace` 那个小沙箱(见 vite-plugin-ai.ts 里的 cwd),
- * 伸到沙箱外的一律自动拒绝;而**一次拒绝会让 agy 放弃整轮、不产出任何东西**。
- * 也就是说,它随手读一个文件的代价是整轮作废,再由我们发一条续跑消息重来。
+ * The general prompt is shared among four runners; it does not know that "the runner executing it
+ * carries its own set of built-in tools". And agy carries them: view_file / grep_search /
+ * find_by_name / run_command. Its workspace is only the small sandbox `exports/ai-workspace` (see
+ * cwd in vite-plugin-ai.ts); anything reaching outside the sandbox is automatically rejected; and
+ * **a single rejection causes agy to abandon the entire round and produce nothing**. In other
+ * words, the cost of casually reading a file is invalidating the entire round, requiring us to send
+ * a resume message to start over.
  *
- * 实测里它把这四步全踩了:先 view_file 四个 MCP schema 的 json(那些 schema 早就在
- * 它自己的工具清单里)、再 grep_search 应用目录、再 view_file 用户附件的磁盘路径。
- * 光是「读一遍工具说明书」就白烧掉两轮。所以这里点名把替代路径写清楚。
+ * In testing it hit all four traps: first view_file on four MCP schema JSONs (those schemas were
+ * already in its own tool manifest), then grep_search on the app directory, then view_file on disk
+ * paths of user attachments. Just "reading the tool manuals" burned two rounds for nothing. So here
+ * we explicitly specify the alternative paths.
  *
- * 审查环路里又见过一次:worker 先 list_dir 应用目录、再 read_url_content 一个网页、
- * 再 grep_search 应用源码找 `project.tracks` —— 三个内建工具各撞一次墙,三轮全作废。
- * 所以清单要列全,并且说清「换一个内建工具也一样」。
+ * Seen again in the review loop: worker first ran list_dir on the app directory, then
+ * read_url_content on a web page, then grep_search on app source code looking for
+ * `project.tracks`: three built-in tools each hit a wall, invalidating all three rounds. So the
+ * list must be comprehensive, and make clear that "switching to another built-in tool is the same".
  */
 const AGY_ADDENDUM = `
 ## About your own built-in tools (only relevant to you)
@@ -151,11 +160,13 @@ Everything you need to do has a matching PromptCut tool:
 `;
 
 /**
- * 被拒的是哪一类权限,就指哪条 PromptCut 的路。
+ * Point to whichever PromptCut path corresponds to the type of permission rejected.
  *
- * 原来续跑话术写死「command 权限(run_command 等)被拒,改用 wait」。实跑里三次被拒分别是
- * list_dir(read_file)、read_url_content(read_url)、grep_search(read_file),一次 command 都没有 ——
- * 模型照着那句去躲 run_command,转手拿另一个内建工具再撞一次墙,重试用完,整个审查环路作废。
+ * Previously, retry wording hardcoded "command permission (run_command, etc.) rejected, use wait
+ * instead". In actual runs, the three rejections were list_dir(read_file),
+ * read_url_content(read_url), and grep_search(read_file), with zero command rejections: the model
+ * avoided run_command following that prompt, only to hit a wall again with another built-in tool;
+ * retries exhausted, the entire review loop was invalidated.
  */
 export function deniedAdvice(names, detail) {
   const s = `${names} ${detail}`.toLowerCase().replace(/[_\s-]/g, '');
@@ -180,18 +191,21 @@ function _startRun(opts) {
   const fullPrompt = `<<<System instructions>>>\\n${opts.systemPrompt}\\n${AGY_ADDENDUM}\\n<<<User message>>>\\n${opts.prompt}`;
 
   /*
-   * 提示词走 **stdin**,不走命令行参数。
+   * Prompts go through **stdin**, not command-line arguments.
    *
-   * 原来是 `-p <整个提示词>`。Windows 单条命令行上限 32767 字符,而系统提示词本身就
-   * 15,000 出头 —— 平时够用,一旦叠上文本协议那份工具清单(33,000 字符)就是 49,000,
-   * 直接 `spawn ENAMETOOLONG`。也就是说 agy 的「原生工具被拒 → 改用文本协议重试」
-   * 这条兜底路**从来没有成功过**,一进去就炸,而且炸得看不出所以然。
-   * claude.mjs 和 codex.mjs 早就是走 stdin 的,这里是唯一的例外。
+   * Previously it was `-p <entire prompt>`. A single command line on Windows has a limit of 32767
+   * characters, while the system prompt alone is just over 15,000: normally enough, but once
+   * stacked with the text protocol tool manifest (33,000 characters) it reaches 49,000, directly
+   * triggering `spawn ENAMETOOLONG`. In other words, agy's fallback path of "native tool rejected →
+   * retry with text protocol" **has never succeeded**: it crashes immediately upon entry, without any
+   * obvious explanation. claude.mjs and codex.mjs have long used stdin; this was the only exception.
    *
-   * `--input-format stream-json` 让 agy 从 stdin 逐行读 NDJSON;它本身就意味着 print 模式,
-   * 所以不再给 `-p`(给了反而会把后面那个标志当成提示词吃掉)。消息的形状是实测出来的:
-   * `{"event":"user","message":{"role":"user","content":"…"}}` —— 少 `event` 或少 `message`
-   * 都会被 agy 明确拒绝。实测 48,000 字符的提示词这样发过去正常返回。
+   * `--input-format stream-json` makes agy read NDJSON line-by-line from stdin; it inherently implies
+   * print mode, so `-p` is no longer provided (providing it would consume the following flag as the
+   * prompt). The message shape was determined through testing:
+   * `{"event":"user","message":{"role":"user","content":"…"}}`: missing either `event` or `message`
+   * is explicitly rejected by agy. In testing, a 48,000-character prompt sent this way returned
+   * normally.
    */
   const args = [
     '--input-format', 'stream-json',
@@ -203,16 +217,18 @@ function _startRun(opts) {
     args.push('--conversation', opts.sessionId);
   }
   /*
-   * 模型名和思考档**必须配对**,这是 agy 的硬规矩,配不上直接拒整轮:
+   * Model name and thinking tier **must pair up**; this is a strict agy rule, mismatch directly
+   * rejects the entire round:
    *
    *   --model gemini-3.8-flash-low --effort low   ✓
    *   --model gemini-3.8-flash-low --effort high  ✗ invalid model selection
-   *   --model gemini-3.8-flash     --effort low   ✓ 基名 + 档位,和第一条等价
+   *   --model gemini-3.8-flash     --effort low   ✓ base name + tier, equivalent to the first
    *
-   * 面板那边已经拆成「基名 + 档位」再发过来了(modelOptions.pairModelEffort),
-   * 这里把带后缀的写法再兜一道:后台任务、分工模式那几条路不一定经过面板,
-   * 而且会话历史里存的可能是早先那种带后缀的名字。剥掉后缀、拿它当档位,
-   * 结果和原来那个名字完全等价,但一定配得上。
+   * The panel has already split it into "base name + tier" before sending
+   * (modelOptions.pairModelEffort); here we add another fallback for suffixed forms: paths like
+   * background tasks and split-work mode do not necessarily go through the panel, and session
+   * history may store older suffixed names. Strip the suffix and use it as the tier; the result is
+   * completely equivalent to the original name, but guaranteed to match.
    */
   let model = opts.model || '';
   let effort = opts.effort || '';
@@ -224,8 +240,8 @@ function _startRun(opts) {
   if (model) {
     args.push('--model', model);
   }
-  // agy 支持 low|medium|high 三档,但**每个模型有哪几档不一样**(gemini-3.1-pro 就没有 medium);
-  // 没有加速档,前端会把那个开关灰掉
+  // agy supports low|medium|high three tiers, but **available tiers vary by model** (gemini-3.1-pro has no medium);
+  // without an acceleration tier, the frontend greys out that switch
   if (effort) {
     args.push('--effort', effort);
   }
@@ -243,27 +259,32 @@ function _startRun(opts) {
        return;
     }
     
-    // 端口和 Agent 页经环境变量交给 agy,它起 MCP 子进程时继承下去(登记里不写端口,见 ensureMcpRegistered)
+    // Port and Agent page are passed to agy via environment variables and inherited when it starts
+    // MCP child processes (port is not written into registration, see ensureMcpRegistered)
     const mcpEnv = opts.mcp?.env || {};
     childController = spawnCli(exePath, args, { cwd: opts.cwd, env: { ...process.env, ...mcpEnv } }, opts.onEvent, 'Antigravity');
     let emitted = '';
     /*
-     * callId:`agy:<对话 id>:<步号>`。agy 调 MCP 时在 tools/call 的 _meta 里带 conversation_id 和
-     * progressToken "<uuid>:<步号>",步号就是这里 step_update 的 step_index(续跑同一对话时接着涨,不会重号),
-     * mcp-server.mjs 按同样的写法拼出提示;这边经 opts.callPairing 报到,编辑器核对工具名和参数一致后配上
-     * (server/agent/call-pairing.mjs)。页面 AI 栏按它把文档服务的工具调用事件对上聊天记录里的这一条。
+     * callId: `agy:<chat id>:<step number>`. When agy calls MCP, it passes conversation_id and
+     * progressToken "<uuid>:<step number>" in _meta of tools/call; the step number is step_index from
+     * step_update here (keeps incrementing when resuming the same chat, without duplicate numbers), and
+     * mcp-server.mjs formats the prompt using the same pattern; here it checks in via opts.callPairing,
+     * and the editor pairs them after verifying that tool names and parameters match
+     * (server/agent/call-pairing.mjs). The AI panel on the page uses it to match document service tool
+     * call events with this entry in the chat history.
      */
     const pairing = pairingSession(opts.callPairing);
     let convId = opts.sessionId || null;
     childController.donePromise.then(() => pairing.close(), () => pairing.close());
 
-    // 提示词从这里进去(见上面 args 的说明)。EPIPE 忽略:进程要是已经自己退了,
-    // 真正的原因在 stderr / result 事件里,不该被一个写管道失败盖过去。
+    // Prompts enter here (see description of args above). Ignore EPIPE: if the process already exited
+    // on its own, the real cause is in stderr / result events and should not be masked by a broken pipe
+    // write failure.
     childController.child.stdin.on('error', () => {});
     try {
       childController.child.stdin.write(JSON.stringify({ event: 'user', message: { role: 'user', content: fullPrompt } }) + '\n');
       childController.child.stdin.end();
-    } catch { /* 同上 */ }
+    } catch { /* Same as above */ }
 
 
     childController.child.stdout.on('data', lineSplitter(line => {
@@ -280,8 +301,9 @@ function _startRun(opts) {
            if (su.step_type === 'tool') {
               let tName = su.tool_name;
               let tInput = su.tool_info?.parameters || {};
-              // 这一步到底是不是在调 PromptCut 的工具。agy 自己也有一大堆内建工具
-              // (run_command / browser_* / …),它们不走 MCP,被拒的处理方式完全不同
+              // Whether this step is actually calling a PromptCut tool. agy itself also has many built-in tools
+              // (run_command / browser_* / …); they do not go through MCP, and rejection handling is completely
+              // different.
               const isMcp = su.tool_name === 'call_mcp_tool';
               const ours = isMcp && (tInput.ServerName === undefined || tInput.ServerName === 'promptcut');
               if (isMcp) {
@@ -295,7 +317,7 @@ function _startRun(opts) {
 
               if (su.state === 'ACTIVE') {
                  if (callId && ours) {
-                    pairing.open(`agy:${conv}`); // 没见到 init 时补开(已开的不重开)
+                    pairing.open(`agy:${conv}`); // Open if init was not seen (do not reopen if already open)
                     pairing.announce(`agy:${conv}`, tName, tInput, callId);
                  }
                  childController.safeOnEvent({ type: 'tool_call', name: tName, input: tInput, ...call });
@@ -309,36 +331,42 @@ function _startRun(opts) {
               } else if (su.state === 'ERROR') {
                  const msg = su.tool_info?.error?.message || '';
                  /*
-                  * **「文件不存在」不是「被拒绝」,哪怕报错里出现了 permission 这个词。**
+                  * **"File does not exist" is not "rejected", even if the word permission appears in the error.**
                   *
-                  * agy 的权限判定要先把工具参数转一遍(`convert tool call for permissions`),
-                  * 这一步顺手去读文件;读不到就把 ENOENT 原样往上抛,于是整条报错长这样:
+                  * agy's permission check first converts tool arguments (`convert tool call for permissions`), and
+                  * this step happens to read the file; if unreadable, it throws ENOENT as is, so the full error
+                  * looks like this:
                   *
                   *   declaring permissions: cortex tool view_file: convert tool call for
-                  *   permissions: ... failed to read file: open <路径>:
+                  *   permissions: ... failed to read file: open <path>:
                   *   The system cannot find the file specified.
                   *
-                  * 里面有 permission,原来那个 includes 判定就一口咬定是权限问题,回给模型
-                  * 一句「无人值守模式下没法弹窗征求同意」—— 而真相是它写了个根本不存在的路径。
-                  * 模型照着这句话去猜权限,怎么试都不对;用户看到的也是一个假的权限故障。
-                  * 所以先认「找不到」,认出来就当成一次普通的工具失败,把原文交回去让它换个路径。
+                  * Because permission is in there, the original includes check insisted it was a permission issue,
+                  * returning to the model: "Cannot pop up dialog for consent in unattended mode": yet the truth was
+                  * that it specified a completely non-existent path. The model guessed permissions based on that
+                  * message and failed no matter what it tried; what the user saw was also a fake permission failure.
+                  * Therefore, recognize "not found" first; once recognized, treat it as an ordinary tool failure and
+                  * return the original text so it can switch to a different path.
                   */
                  const notFound = /cannot find the file|no such file|not found|ENOENT|系统找不到/i.test(msg); // i18n-allow
                  const denied = !notFound
                    && (msg.includes('permission') || msg.includes('权限') || msg.includes('denied') || msg.includes('not allowed')); // i18n-allow
                  /*
-                  * 「被拒」要分是谁被拒的,原来一律当成 MCP 被拒,两处都错:
+                  * "Rejected" must distinguish who was rejected; previously it was treated as MCP rejection across
+                  * the board, which was wrong in two places:
                   *
-                  * - 话说错了。agy 内建的 run_command 在无人值守模式下没法弹窗问,会被自动
-                  *   拒掉,而我们回一句「请点『授权 PromptCut 工具』」—— 那个按钮跟它一点关系
-                  *   没有,用户点了也没用。同一轮里 get_project / list_media 明明都成功了,
-                  *   MCP 根本是通的。
-                  * - 事也做错了。onPermissionDenied 会让整轮跑完之后改用文本协议重试,可文本协议
-                  *   换的只是「PromptCut 的工具怎么下达」,管不着 agy 自己那套 command 权限;
-                  *   重试一遍照样被拒。白跑一轮,还把用户等在那儿。
+                  * - The message was wrong. agy's built-in run_command cannot pop up a prompt in unattended mode
+                  *   and gets automatically rejected, yet we replied "Please click \"Authorize PromptCut tools\"":
+                  *   that button has nothing to do with it, and clicking it did nothing for the user. In the same
+                  *   round, get_project / list_media clearly succeeded, and MCP was completely reachable.
+                  * - The action was also wrong. onPermissionDenied causes the run to retry with the text protocol
+                  *   after the full round completes, but switching to the text protocol only changes "how PromptCut
+                  *   tools are dispatched" and cannot govern agy's own command permissions; retrying still gets
+                  *   rejected. It wasted an entire round and kept the user waiting.
                   *
-                  * 所以只有真的是 MCP 那条路被拒时才回退。agy 自家工具被拒就照实说,
-                  * 并且当成一次失败的工具调用交回给模型 —— 让它换个办法接着做,而不是整轮作废。
+                  * Therefore, only fall back when the MCP path itself is genuinely rejected. If agy's own tools are
+                  * rejected, report it truthfully and return it to the model as a failed tool call: let it try
+                  * another way to continue, rather than invalidating the entire round.
                   */
                  if (denied && isMcp) {
                     if (opts.onPermissionDenied) opts.onPermissionDenied();
@@ -361,15 +389,16 @@ function _startRun(opts) {
            const res = ev.result;
 
            /*
-            * agy 出错时照样发一条 result,只是 status 是 ERROR、error 里写着原因,
-            * 然后以非 0 退出。这里原来不看 status,把它当成正常收尾发了个 done ——
-            * 而 done 一发,spawnCli 里 hasDone 就为真,`close` 那条「exited with code 1」
-            * 也被一并压掉。于是界面上只剩一句「已启动 Antigravity」,几秒后无声无息地结束:
-            * 没有回复、没有报错、usage 全是 0,看起来就像连不上。
+            * When agy errors, it still sends a result, only status is ERROR, error contains the reason, and
+            * it exits with non-zero. Previously it did not check status here and treated it as normal
+            * completion, emitting done: once done was emitted, hasDone in spawnCli became true, and the
+            * "exited with code 1" on `close` was also suppressed. As a result, the UI only showed "Started
+            * Antigravity", ending silently a few seconds later: no reply, no error, usage all 0, appearing as
+            * if disconnected.
             *
-            * 实际最常撞上的是模型名不对(比如 `gemini-3.8.flash` —— agy 的名字是
-            * `gemini-3.8-flash-low` 这种),agy 说得清清楚楚,只是没人把这句话传出来。
-            * claude.mjs 那边一直是查 is_error 的,这里补齐。
+            * In practice, the most common issue is an incorrect model name (for example, `gemini-3.8.flash`:
+            * agy's name is `gemini-3.8-flash-low`); agy stated it clearly, but nobody passed this message out.
+            * claude.mjs has always checked is_error, so bring this in line here.
             */
            if (res.status === 'ERROR' || res.error) {
               const why = typeof res.error === 'string' ? res.error : (res.error?.message || tr("Antigravity reported an error without giving a reason"));
@@ -381,24 +410,25 @@ function _startRun(opts) {
 
            if (res.denied_actions && res.denied_actions.length > 0) {
                const deniedNames = res.denied_actions.map(a => a.display_name || a.action).join(', ');
-               // 被拒的原始说明。agy 把它放在 denied_actions 里(字段名各版本不一),
-               // 拼进续跑消息里给模型看 —— 比我们转述一遍准确
+               // Raw rejection explanation. agy puts it in denied_actions (field names vary across versions),
+               // spliced into the continuation message for the model to see: more accurate than our paraphrase.
                const deniedDetail = res.denied_actions
                  .map(a => a.reason || a.message || a.detail || '')
                  .filter(Boolean).join('; ');
                /*
-                * 被拒**而且什么都没产出** = 这一轮废了,不能报成功。
+                * Rejected **and produced nothing** = this round is wasted and cannot report success.
                 *
-                * agy 在无人值守模式下把自己的 run_command 自动拒掉之后就放弃整轮,
-                * result 里 denied_actions 有值、response 是空的,但 status 不是 ERROR。
-                * 原来这里只发一条 status 就照常 finish('done') —— 界面上是一串工具调用
-                * 之后毫无征兆地结束:没有回复、没有报错,用户完全不知道发生了什么。
-                * (用户原话:「这里拒绝好像是我们拒绝的,没有给 Agent 反馈而是直接中断了」。)
+                * When agy automatically rejects its own run_command in unattended mode, it gives up the entire
+                * round; denied_actions in result has values and response is empty, but status is not ERROR.
+                * Previously it only sent a status and called finish('done') as usual: on the UI, it ended
+                * abruptly without warning after a sequence of tool calls: no reply, no error, and the user had
+                * no idea what happened. (User quote: "This rejection looks like we rejected it; it didn't give
+                * feedback to the Agent and just aborted directly".)
                 *
-                * 拒绝这件事我们无法在 agy 的循环里回喂 —— 它是一次性的 CLI 调用,
-                * 自己管自己的工具。能做的是:把它如实报成错误,并且说清楚下一步。
-                * 真正的治本在另一头:补了 wait 工具,模型就不必再借 shell 去睡觉了
-                * (见 server/mcp-tools.mjs 里 wait 的说明)。
+                * We cannot feed this rejection back into agy's loop: it is a one-shot CLI invocation managing its
+                * own tools. What we can do is report it truthfully as an error and explain the next step clearly.
+                * The real root fix is on the other end: with the wait tool added, the model no longer needs to
+                * use the shell to sleep (see description of wait in server/mcp-tools.mjs).
                 */
                if (!String(finalResponse).trim() && !emitted.trim()) {
                   const why = deniedDetail || tr("Built-in tool {0} was rejected", deniedNames);
@@ -409,10 +439,11 @@ function _startRun(opts) {
                       + tr(" In unattended mode it cannot pop up a window to ask for consent, so reading files, reading web pages and running commands outside the workspace are always rejected automatically.")
                       + tr(" PromptCut's tools are unaffected: {0}.", tips.join('; ')),
                     /*
-                     * 这一类中断是「接着说就有可能成」的:上下文都还在(--conversation 会把
-                     * 整段对话带回来),缺的只是让它知道刚才为什么停、以及换哪条路。
-                     * 所以标成可续跑,并且**把中断原因和替代方案直接拼进续跑的那句话** ——
-                     * 不让它自己开口问「刚才怎么了」,省一轮往返,也省得它猜错。
+                     * This type of interruption can "succeed if continued": context is still there (--conversation
+                     * brings back the whole chat), and all that is missing is letting it know why it stopped just now
+                     * and which path to switch to. Therefore, mark it as resumable, and **splice the interruption reason
+                     * and alternative directly into the continuation prompt**: don't let it ask "what happened just
+                     * now", saving a round-trip and preventing it from guessing wrong.
                      */
                     retryable: true,
                     retryPrompt: `Continue from above. The previous turn was interrupted because: ${why}.\\n`

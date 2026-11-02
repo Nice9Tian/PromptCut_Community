@@ -1,16 +1,28 @@
 /**
- * 用户 2026-10-21 定的三件事(`docs/plan/user-decisions-2026-10-21.md` 第 2.2 节、第 3 节;报告 `docs/reports/AGENT-cut-look-ui.md`):
+ * Three items decided (user decision, 2026-10-21) (`docs/plan/user-decisions-2026-10-21.md`
+ * Section 2.2, Section 3; report `docs/reports/AGENT-cut-look-ui.md`):
  *
- *   CL-1  `cutLookView`:不给 cutId 原样返回(当前激活);给停放剪辑的 id 换成「那条当激活」的视图,原项目不动;id 不存在明确报错
- *   CL-2  Agent 服务端执行器(`agent-exec.mjs` 的 see_frames,本机绑了项目副本 / 云端托管档都走它):带 cutId 时交给渲染的是那条剪辑的视图、
- *         不给 t 取那条剪辑上次停下的播放头、`cutLook` 记号带给出图那一侧;不带 cutId 照旧;id 不存在报错;全程不提交、副本不变
- *   CL-3  没绑副本时的镜像那条路(`instance.mjs` 的 runMirroredTool):同上
- *   CL-4  账号模式出图(`account-runner.mjs` 的 prerenderPost):`cutLook` 时不问成员设备,直接交给托管渲染服务(请求体就是视图)
- *   CL-5  工具改名:模型清单里只有新名、旧名不在;入口新旧都认;发给页面的 SSE `call` 里是旧的内部操作名;
- *         路由表与页面执行器认新名;反向通道的提供方认新名、发给页面的 `tool` 仍是旧名
- *   CL-6  add_cut 只建不切;set_cut_segment 不再收 cutId(工具说明);PAGE_STATE_TOOLS / CLOUD_PLAYHEAD_TOOLS 跟着改
+ *   CL-1  `cutLookView`: returns as is if cutId is omitted (currently active); if given a parked
+ *         cut id, switches to a view with "that cut as active" while original project remains
+ *         untouched; reports a clear error if id does not exist
+ *   CL-2  Agent server executor (see_frames in `agent-exec.mjs`, used for both local bound project
+ *         replica / cloud hosted tier): when cutId is provided, what is passed to render is that
+ *         cut's view, omitted t takes that cut's last paused playhead, `cutLook` token is passed to
+ *         frame generation side; proceeds as usual without cutId; errors if id does not exist;
+ *         no commit throughout, replica unchanged
+ *   CL-3  Mirrored path when replica is not bound (runMirroredTool in `instance.mjs`): same as
+ *         above
+ *   CL-4  Frame generation in account mode (prerenderPost in `account-runner.mjs`): during `cutLook`,
+ *         does not query member devices, directly hands off to hosted render service (request body
+ *         is the view)
+ *   CL-5  Tool renaming: model manifest contains only new names, old names absent; entry points
+ *         accept both new and old; SSE `call` sent to page uses old internal operation name;
+ *         routing table and page executor accept new names; reverse channel provider accepts new
+ *         names, `tool` sent to page remains old name
+ *   CL-6  add_cut only creates without switching; set_cut_segment no longer accepts cutId (tool
+ *         description); PAGE_STATE_TOOLS / CLOUD_PLAYHEAD_TOOLS updated accordingly
  *
- * 跑:npm test -- server/test/cut-look-ui.test.mjs
+ * Run: npm test -- server/test/cut-look-ui.test.mjs
  */
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
@@ -27,7 +39,7 @@ import { HANDOFF_TOOL_NAMES } from '../agent/service/hosted-handoff.mjs';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
-/** 剪辑1(激活,红卡)+ 剪辑2(停放,蓝卡,上次停在 1.5 秒) */
+/** Cut 1 (active, red card) + Cut 2 (parked, blue card, last stopped at 1.5 seconds) */
 function project() {
   return {
     version: 1, id: 'p-look', name: 'look', width: 640, height: 360, fps: 30, duration: 4, themeId: 'midnight', media: [],
@@ -62,13 +74,13 @@ test('CL-1 cutLookView: without cutId it returns as is; with a parked cut it swa
   assert.equal(p.activeCutId, 'cut-1', 'The original project was not modified');
   assert.throws(() => cutLookView(p, 'cut-9'), (e) => e.code === 'cut-not-found' && /Cut "cut-9" not found/.test(e.message) && /Cut 2\(cut-2\)/.test(e.message));
   assert.throws(() => seeFramesView(p, 3), /cutId must be a string/);
-  // 老项目(没有 cuts):只有剪辑1
+  // Legacy project (no cuts): only Cut 1
   const old = { ...project(), cuts: undefined, activeCutId: undefined };
   assert.deepEqual(cutLookView(old).cut, { id: 'cut-1', name: 'Cut 1' });
   assert.throws(() => cutLookView(old, 'cut-2'), /Cut "cut-2" not found/);
 });
 
-/** 执行器要的最小项目副本(只读工具用到的那几样) */
+/** Minimal project replica required by executor (the few items used by read-only tools) */
 function fakeLink(p, rev = 7) {
   const replica = { hasBody: true, project: p, rev, waitRev: async () => true, offer() { throw new Error('A read tool must not commit'); } };
   return {
@@ -122,7 +134,7 @@ test('CL-2 executor see_frames: with cutId it renders the view of that cut witho
   assert.equal(posts.length, 0, 'Nothing is rendered when the id does not exist');
 });
 
-/** instance.mjs 的最小宿主:登记的路由收进 map,不开 HTTP */
+/** Minimal host for instance.mjs: registered routes collected into map, does not start HTTP */
 async function makeInstance(env = {}) {
   const { createAgentInstance } = await import('../agent/service/instance.mjs');
   const routes = new Map();
@@ -153,12 +165,13 @@ test('CL-3 the mirror path (no replica bound): with cutId it renders the view of
   await assert.rejects(() => inst.callTool('see_frames', { source: 'timeline', cutId: 'zz' }, 'a1'), /Cut "zz" not found/);
 });
 
-// 读的是闭源侧的 cloud/agent/account-runner.mjs；社区版没有 cloud/，这条跳过
+// Reads closed-source cloud/agent/account-runner.mjs; community edition has no cloud/, skips this test
 test('CL-4 account mode rendering: with cutLook it does not ask member devices and hands off directly to the hosted render service', { skip: (await import('node:fs')).existsSync(new URL('../../cloud', import.meta.url)) ? false : 'The current checkout has no cloud/ directory (community edition)' }, async () => {
   const fs = await import('node:fs');
   const text = fs.readFileSync(new URL('../../cloud/agent/account-runner.mjs', import.meta.url), 'utf8');
   assert.match(text, /opts\?\.cutLook !== true && typeof toolset\?\.pageBridge\?\.call === 'function'/, 'memberNodes is left empty when cutLook');
-  // 调度本身:没有成员节点时交给托管渲染,请求体原样(就是视图)
+  // Scheduling itself: handed off to hosted render when there are no member nodes, request body
+  // as is (which is the view)
   const { dispatchFrameSnapshot } = await import('../agent/service/frame-dispatcher.mjs');
   const view = cutLookView(project(), 'cut-2').project;
   let got = null;
@@ -183,13 +196,13 @@ test('CL-5 tool rename: the manifest has only the new name; the entry point acce
   }
   assert.equal(modelToolName('add_clip'), 'add_clip');
   assert.equal(pageToolName('add_clip'), 'add_clip');
-  // 不会动界面的工具名字里不带前缀
+  // Tools that do not modify UI have no prefix in their names
   for (const n of names) if (n.startsWith('user_interface_')) assert.ok(isUserInterfaceTool(n), `${n} is registered in ui-names.mjs`);
-  // 路由表 / 特殊分支认新名
+  // Routing table / special branches accept new names
   for (const n of ['user_interface_switch_cut', 'user_interface_seek', 'user_interface_play', 'user_interface_pause', 'user_interface_collect_login']) assert.ok(TOOL_ROUTES[n], n);
   assert.ok(SPECIAL_TOOLS.includes('user_interface_web_handoff'));
   for (const n of ['switch_cut', 'seek', 'play', 'pause', 'collect_login']) assert.equal(Object.hasOwn(TOOL_ROUTES, n), false);
-  // 云端工具表认新名;反向通道发给页面的仍是旧名
+  // Cloud tool table accepts new names; reverse channel still sends old names to the page
   for (const n of Object.values(UI_TOOL_RENAMES)) assert.ok(CLOUD_TOOL_PLAN[n], `${n} is in the cloud tool table`);
   for (const n of Object.keys(UI_TOOL_RENAMES)) assert.equal(Object.hasOwn(CLOUD_TOOL_PLAN, n), false, `The old name ${n} is not in the cloud tool table`);
   assert.ok(CLOUD_OPEN_TOOLS.has('user_interface_switch_cut'));
@@ -199,7 +212,7 @@ test('CL-5 tool rename: the manifest has only the new name; the entry point acce
   assert.deepEqual([...HANDOFF_TOOL_NAMES], ['user_interface_web_handoff']);
   assert.equal(checkCloudTool('user_interface_seek').ok, true);
 
-  // 反向通道的提供方:认新名(也认旧名),发给页面的 tool 是旧名
+  // Reverse channel provider: accepts new names (and old names), tool sent to the page is old name
   const sent = [];
   const control = createPageControlTools({
     bridge: { limits: { pageMs: 15_000 }, initiator: async () => ({ initiatorAccountId: 'acc', pageId: 'pg-1' }),
@@ -212,7 +225,7 @@ test('CL-5 tool rename: the manifest has only the new name; the entry point acce
   const bad = await control.call('user_interface_seek', {}, { projectId: 'p' });
   assert.match(bad.error, /user_interface_seek needs t/);
 
-  // 本机:SSE 发给页面的 call 里是旧名;入口新旧名都认
+  // Local: SSE call sent to the page uses old name; entry points accept both new and old names
   const { inst, routes } = await makeInstance();
   t.after(() => inst.close?.());
   const writes = [];

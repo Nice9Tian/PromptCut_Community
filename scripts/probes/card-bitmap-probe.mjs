@@ -1,38 +1,55 @@
 /**
- * 单张卡片画面(`bake_card`、3D 视图的贴图)是当场渲出的位图、不存这张卡的 HTML —— 的端到端探针
- * (报告 `docs/archive/agent-reports/AGENT-rr-card-bitmap.md`;语义 `docs/semantics/mechanism/asset-service.md`
- * 「不经任务队列的单张卡片画面」、`docs/semantics/glossary.md`「快照」)。
+ * End-to-end probe verifying single-card images (`bake_card`, 3D view textures) are bitmaps
+ * rendered on demand without storing the card's HTML (report:
+ * `docs/archive/agent-reports/AGENT-rr-card-bitmap.md`; semantics:
+ * `docs/semantics/mechanism/asset-service.md` "Single-card image without task queue",
+ * `docs/semantics/glossary.md` "Snapshot").
  *
- *   node scripts/probes/card-bitmap-probe.mjs --port 26900 --save <目录>      改之前跑:只把各用例的图存下来
- *   node scripts/probes/card-bitmap-probe.mjs --port 26900 --compare <目录>   改之后跑:和存下的图逐像素比,并核对落盘的东西
- *   node scripts/probes/card-bitmap-probe.mjs --port 26900                    不比图,只核对落盘的东西和缓存命中
- *   node scripts/probes/card-bitmap-probe.mjs --port 26900 --make-fixture     重新生成夹具项目(一般不用)
+ *   node scripts/probes/card-bitmap-probe.mjs --port 26900 --save <dir>      Run before changes: save images for each case
+ *   node scripts/probes/card-bitmap-probe.mjs --port 26900 --compare <dir>   Run after changes: pixel-compare with saved images and verify disk writes
+ *   node scripts/probes/card-bitmap-probe.mjs --port 26900                    No image comparison, only verify disk writes and cache hits
+ *   node scripts/probes/card-bitmap-probe.mjs --port 26900 --make-fixture     Regenerate fixture project (rarely needed)
  *
- * 自己起一个编辑器 dev server(`--port`,舞台另占 +1、+2;带 PROMPTCUT_NO_PORT_FILE=1;预渲染进程的端口由它自己向系统要),
- * 导出目录、数据目录、产物目录、卡片改动层都落在新建的临时目录;在 `--port + 5` 上起一台计数的「远程素材服务」当共享项目连着的那一台。
- * 夹具项目 `card-bitmap-probe.project.json`:四张卡各占一条序列、都在 0～4 秒 ——
- * blur-text(DOM 卡)、punch-pill(Motion 弹簧,DOM 卡)、particles(画布卡)、rs-bar-race(用户卡,源码取自
- * `server/test/fixtures/remotion-style/rs-bar-race.tsx`,经 `POST /api/cards/create` 建进临时的改动层)。
+ * Spawns its own editor dev server (`--port`, stage takes +1 and +2; with PROMPTCUT_NO_PORT_FILE=1;
+ * prerender process requests its own port from OS); export dir, data dir, output dir, and card
+ * overlay layer all reside in a new temp dir; spawns a counting "remote asset service" on
+ * `--port + 5` acting as the one connected to the shared project.
+ * Fixture project `card-bitmap-probe.project.json`: four cards each occupy one track, all 0-4s:
+ * blur-text (DOM card), punch-pill (Motion spring, DOM card), particles (canvas card), rs-bar-race
+ * (user card, source from `server/test/fixtures/remotion-style/rs-bar-race.tsx`, created into
+ * temporary overlay layer via `POST /api/cards/create`).
  *
- * 第一段(不开编辑器页面,免得页面自己的预渲染往帧库里写东西,分不清是谁写的):
- *   A1 `bake_card`(`POST /api/vision/bake`,预渲染进程的 Agent 专用实例):四张卡各要一张,回 `/api/asset/px/<sha256>`,取回是 PNG、
- *      哈希与地址一致,尺寸、说明文字(hint / note)、透明占比都在;
- *   A2 3D 视图的空闲贴图预取那条路(`POST <预渲染>/api/vision/bake-batch`,不带 priority = 普通预渲染队尾;带 priority = 插队);
- *   A3 3D 视图前台那条路(`POST /api/ui-render/bake-batch`,编辑器进程的热备渲染器);
- *   A4 同一输入再要一次:`cached: true`、同一个地址;
- *   A5 落盘:帧库(`<导出目录>/frame-library`)里没有新写入的 HTML(`html-manifest.json`、`html-cache/`、`snapshots.base64`、`*.html*`),
- *      也没有为这些单卡项目新建的条目目录;本机素材服务的产物目录里新写入的只有 `px` 下的 PNG,`snap` 下没有东西;
- *      计数的远程素材服务只收到 `px` 的 PNG(每一张都推到了),没有收到 `snap`;索引 `bake-index/<键>.json` 每条都指向一张 PNG;
- *   A6 (`--compare`)每个用例和改之前存下的图逐像素比:宽高相同、不同的像素数为 0。
- * 第二段(开编辑器页面):
- *   B1 载入夹具项目、播放头放到 2 秒、切到 3D 页:四块板子的贴图都出得来(页面收到的 `bake-batch` 回应里四张卡都有 px 地址,
- *      页面把每个地址当图片加载得出来,宽高与卡片的框一致);
- *   B2 (`--compare`)这些贴图按「片段 + 时刻」和改之前的逐像素比。
- * `--save` 时 A5 只记录不判(改之前本来就会写 HTML),其余照判。
+ * Part 1 (without opening editor page, to prevent page's own prerendering from writing to frame
+ * store, confusing who wrote what):
+ *   A1 `bake_card` (`POST /api/vision/bake`, dedicated Agent instance of prerender process):
+ *      request one for each of the four cards, returns `/api/asset/px/<sha256>`, fetched as PNG,
+ *      hash matches address, dimensions, hint / note, and transparency ratio are all present;
+ *   A2 Idle texture prefetch path for 3D view (`POST <prerender>/api/vision/bake-batch`, without
+ *      priority = tail of normal prerender queue; with priority = jump queue);
+ *   A3 3D view foreground path (`POST /api/ui-render/bake-batch`, editor process hot standby
+ *      renderer);
+ *   A4 Request the same input again: `cached: true`, same address;
+ *   A5 Disk writes: frame store (`<export-dir>/frame-library`) has no newly written HTML
+ *      (`html-manifest.json`, `html-cache/`, `snapshots.base64`, `*.html*`), and no entry directory
+ *      created for these single-card projects; local asset service output dir only has newly
+ *      written PNGs under `px`, nothing under `snap`; counting remote asset service only received
+ *      PNGs for `px` (each pushed successfully), received no `snap`; each entry in index
+ *      `bake-index/<key>.json` points to a PNG;
+ *   A6 (`--compare`) Pixel-by-pixel comparison of each case against pre-change saved images:
+ *      width and height match, 0 differing pixels.
+ * Part 2 (with editor page open):
+ *   B1 Load fixture project, move playhead to 2s, switch to 3D tab: textures appear for all four
+ *      boards (in `bake-batch` response received by page, all four cards have px addresses, page
+ *      successfully loads each address as image, width and height match card boxes);
+ *   B2 (`--compare`) Pixel-by-pixel comparison of these textures by "clip + timestamp" against
+ *      pre-change images.
+ * During `--save`, A5 is only recorded without assertion (pre-change originally wrote HTML),
+ * remainder asserted as usual.
  *
- * 结束时只停自己起的进程(编辑器进程树、计数服务、探针的无头 Chrome);`--keep` 不关、不删临时目录。
+ * On exit, only stop self-spawned processes (editor process tree, counting service, probe's headless
+ * Chrome); `--keep` leaves them running and does not delete the temp directory.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,并设 PROMPTCUT_NO_PORT_FILE=1
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR, and set PROMPTCUT_NO_PORT_FILE=1
 import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -107,7 +124,7 @@ async function startEditor() {
     { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
       env: { ...process.env, PROMPTCUT_EXPORT_DIR: EXPORT_DIR, PROMPTCUT_DATA_DIR: DATA_DIR, PROMPTCUT_NO_PORT_FILE: '1',
         PROMPTCUT_ARTIFACT_DIR: ARTIFACT_DIR, PROMPTCUT_CARD_OVERRIDES: OVERLAY_DIR,
-        // 预渲染进程的输出另存一份:推送、卡片位图入库的日志行只在它那里
+        // Save a separate copy of prerender process output: push and card bitmap storage logs only appear there
         PROMPTCUT_PRERENDER_LOG: PRERENDER_LOG,
         PROMPTCUT_ASSET_URL: `${REMOTE}/api/asset`, PROMPTCUT_PUSH: '1' } });
   const keep = (c) => { editorLog.push(c.toString()); if (editorLog.length > 800) editorLog.shift(); };
@@ -121,7 +138,7 @@ function stopEditor() {
   else editor.kill('SIGKILL');
 }
 
-/* ---- 计数的远程素材服务(同 bake-asset-probe.mjs):分片上传、对账、收尾、取回 ---- */
+/* ---- Counting remote asset service (same as bake-asset-probe.mjs): chunked upload, reconcile, finalize, retrieve ---- */
 const CHUNK = 8 * 1024 * 1024;
 const remoteBlobs = new Map(); // `${ns}/${hash}` → Buffer
 const remoteParts = new Map();
@@ -165,7 +182,7 @@ const remote = http.createServer(async (req, res) => {
   res.end(req.method === 'HEAD' ? undefined : blob);
 });
 
-/** 目录里递归列出的文件(相对路径,正斜杠) */
+/** Files recursively listed in directory (relative paths, forward slashes) */
 function walk(dir, base = dir) {
   const out = [];
   if (!fs.existsSync(dir)) return out;
@@ -175,7 +192,10 @@ function walk(dir, base = dir) {
   }
   return out;
 }
-/** 帧库里和 HTML 有关的文件:整场景或单卡的快照档、溢出目录、老的整包、任何 .html / .html.gz */
+/**
+ * HTML-related files in frame store: whole-scene or single-card snapshot files, overflow dir,
+ * old full bundles, any .html / .html.gz.
+ */
 const HTML_FILE = /(^|\/)(html-manifest\.json|snapshots\.base64)$|(^|\/)html-cache\/|\.html(\.gz)?$|(^|\/)snapshots?\//i;
 const indexEntries = () => (fs.existsSync(INDEX_DIR) ? fs.readdirSync(INDEX_DIR) : [])
   .filter((n) => /^[0-9a-f]{12}\.json$/.test(n))
@@ -189,7 +209,7 @@ async function post(url, payload, timeoutMs = 300000) {
 }
 const getBytes = async (url) => { const r = await fetch(url); return { status: r.status, type: r.headers.get('content-type'), bytes: Buffer.from(await r.arrayBuffer()) }; };
 
-/** 逐像素比两张 PNG。回 { same, width, height, diffPixels, maxDelta } */
+/** Compare two PNGs pixel by pixel. Returns { same, width, height, diffPixels, maxDelta } */
 function comparePng(a, b) {
   const pa = PNG.sync.read(a), pb = PNG.sync.read(b);
   if (pa.width !== pb.width || pa.height !== pb.height) return { same: false, size: [pa.width, pa.height, pb.width, pb.height] };
@@ -201,7 +221,7 @@ function comparePng(a, b) {
   return { same: diffPixels === 0, width: pa.width, height: pa.height, diffPixels, maxDelta, bytesEqual: a.equals(b) };
 }
 
-/** 用例的图:名字 → { bytes, meta }。`--save` 写盘,`--compare` 对照 */
+/** Test case images: name → { bytes, meta }. `--save` writes to disk, `--compare` compares */
 const images = new Map();
 const compared = [];
 function record(name, bytes, meta = {}) {
@@ -230,7 +250,7 @@ try {
   out.prerender = prerender?.url ?? null;
   const PRE = String(prerender?.url || EDITOR).replace(/\/+$/, '');
 
-  // 用户卡夹具:经真的建卡接口落进临时的改动层
+  // User card fixture: written into temporary overlay layer via real card creation API
   const created = await post(`${EDITOR}/api/cards/create`, { id: 'rs-bar-race', source: fs.readFileSync(USER_CARD, 'utf8'), projectId: 'card-bitmap-probe' });
   check(created.status === 200 && created.ok === true, 'User card fixture rs-bar-race created in the temporary overlay layer', { status: created.status, error: created.error, errors: created.errors });
 
@@ -252,7 +272,8 @@ try {
       for (const cardId of ['blur-text', 'punch-pill', 'particles']) m.actions.addClipOnNewTrack({ cardId, start: 0, duration: 4 });
       return JSON.parse(JSON.stringify(m.getState().project));
     });
-    // 固定的 id,两次跑的输入逐字相同;用户卡那一段照卡片的 defaults 手写(页面的卡片表里不一定已经有它)
+    // Fixed id, input is verbatim identical across both runs; user card section is handwritten
+    // from card defaults (page's card table may not have it yet)
     made.id = 'card-bitmap-probe';
     const names = { 'blur-text': 'blur', 'punch-pill': 'pill', particles: 'particles' };
     made.tracks = made.tracks.filter((tr) => tr.clips?.length === 1 && names[tr.clips[0].cardId]);
@@ -270,7 +291,7 @@ try {
   const libraryBefore = new Set(walk(LIBRARY_DIR));
   const artifactsBefore = new Set(walk(ARTIFACT_DIR));
   const ourHashes = new Set();
-  /** 取回一个 px 地址,核对是 PNG、哈希对得上,记成用例的图 */
+  /** Fetch a px address, verify it is a PNG with matching hash, record as test case image */
   const take = async (name, item, label) => {
     const okUrl = /^\/api\/asset\/px\/[0-9a-f]{64}$/.test(item?.url || '');
     if (!check(okUrl, `${label}: returns /api/asset/px/<sha256>`, item)) return null;
@@ -285,10 +306,10 @@ try {
     return { hash, bytes: got.bytes, width: png.width, height: png.height };
   };
 
-  /* ---- A1 bake_card:四张卡 ---- */
+  /* ---- A1 bake_card: four cards ---- */
   const BAKES = [
     { name: 'bake-blur', clipId: CLIP.blur, t: 2, size: 512, bg: '#0b0f17' },
-    { name: 'bake-pill', clipId: CLIP.pill, t: 0.2, size: 512 }, // 透明底;0.2 秒时弹簧还在动
+    { name: 'bake-pill', clipId: CLIP.pill, t: 0.2, size: 512 }, // Transparent background; spring is still moving at 0.2s
     { name: 'bake-particles', clipId: CLIP.particles, t: 1.5, size: 512, bg: '#101418' },
     { name: 'bake-user', clipId: CLIP.user, t: 1, size: 768 },
   ];
@@ -306,7 +327,7 @@ try {
     await take(b.name, r, `A1 ${b.name}`);
   }
 
-  /* ---- A2 3D 视图的贴图预取那条路(预渲染进程;普通预渲染队尾 / 插队) ---- */
+  /* ---- A2 3D view texture prefetch path (prerender process; tail of normal prerender queue / jump queue) ---- */
   const idle = await post(`${PRE}/api/vision/bake-batch`, { project, clips: [{ clipId: CLIP.blur, t: 1 }, { clipId: CLIP.blur, t: 3 }, { clipId: CLIP.particles, t: 1 }], size: 1024 });
   out.a2idle = { ok: idle.ok, baked: idle.baked?.map((x) => ({ clipId: x.clipId, t: x.t, url: x.url, width: x.width, height: x.height, cached: x.cached })), failed: idle.failed, error: idle.error };
   check(idle.ok && idle.baked?.length === 3 && !(idle.failed || []).length, 'A2 texture prefetch (back of queue): all three rendered', out.a2idle);
@@ -317,13 +338,13 @@ try {
   for (const x of front.baked || []) await take(`batch-front-${safe(x.clipId)}-${x.t}`, x, `A2 front of queue ${x.clipId}@${x.t}`);
   check([...(idle.baked || []), ...(front.baked || [])].every((x) => x.width === project.width && x.height === project.height), 'A2 textures come out at the card\'s frame (the project aspect ratio when there is no frame), with no loss of sharpness', { want: [project.width, project.height] });
 
-  /* ---- A3 3D 视图前台那条路(编辑器进程的热备渲染器) ---- */
+  /* ---- A3 3D view foreground path (editor process hot standby renderer) ---- */
   const ui = await post(`${EDITOR}/api/ui-render/bake-batch`, { project, clips: [{ clipId: CLIP.blur, t: 2.5 }, { clipId: CLIP.particles, t: 2.5 }], size: 1024, priority: 1 });
   out.a3 = { ok: ui.ok, baked: ui.baked?.map((x) => ({ clipId: x.clipId, t: x.t, url: x.url, width: x.width, height: x.height, cached: x.cached })), failed: ui.failed, error: ui.error };
   check(ui.ok && ui.baked?.length === 2 && !(ui.failed || []).length, 'A3 hot-standby renderer: both rendered', out.a3);
   for (const x of ui.baked || []) await take(`ui-${safe(x.clipId)}-${x.t}`, x, `A3 hot standby ${x.clipId}@${x.t}`);
 
-  /* ---- A4 同一输入再要一次:命中 ---- */
+  /* ---- A4 Request same input again: cache hit ---- */
   const again = await post(`${EDITOR}/api/vision/bake`, { project, clipId: BAKES[0].clipId, t: BAKES[0].t, size: BAKES[0].size, bg: BAKES[0].bg });
   check(again.ok && again.cached === true && again.url === out.a1[0].url, 'A4 bake_card with the same input again: cached, same address', { cached: again.cached, url: again.url });
   const againBatch = await post(`${PRE}/api/vision/bake-batch`, { project, clips: [{ clipId: CLIP.blur, t: 1 }, { clipId: CLIP.blur, t: 3 }], size: 1024 });
@@ -331,19 +352,22 @@ try {
   const status = await post(`${PRE}/api/vision/bake-status`, { project, clips: [{ clipId: CLIP.blur, t: 2.5 }], size: 1024 });
   check(status.ok && status.items?.[0]?.url === ui.baked?.[0]?.url, 'A4 the texture rendered by the hot-standby renderer counts as rendered in the inventory (both processes share the index)', status.items?.[0]);
 
-  /* ---- A5 落盘:只有位图,没有 HTML ---- */
+  /* ---- A5 Disk writes: only bitmaps, no HTML ---- */
   const allPushed = () => [...ourHashes].every((h) => remoteBlobs.has(`px/${h}`));
   for (const deadline = Date.now() + 20000; !allPushed() && Date.now() < deadline;) await delay(250);
   if (!allPushed()) {
-    // 预渲染进程的推送目标是它起来之后异步登记的(连上文档服务才登记);登记之前入库的位图当时不推,「下次命中时再推」(`bake-store.mjs`)。
-    // 机器忙的时候第一批会赶在登记之前:这里各再要一次(命中),再等
+    // Prerender process push targets are registered asynchronously after startup (only upon connecting
+    // to document service); bitmaps stored before registration are not pushed then, "pushed on next hit"
+    // (`bake-store.mjs`).
+    // Under heavy load, the first batch may precede registration: request each once more here (hit),
+    // then wait
     notes.push(`${[...ourHashes].filter((h) => !remoteBlobs.has(`px/${h}`)).length} bitmaps were not pushed to the remote in the first round (the push target registered late); request each once more, then wait`);
     for (const b of BAKES) await post(`${EDITOR}/api/vision/bake`, { project, clipId: b.clipId, t: b.t, size: b.size, bg: b.bg });
     await post(`${PRE}/api/vision/bake-batch`, { project, clips: [{ clipId: CLIP.blur, t: 1 }, { clipId: CLIP.blur, t: 3 }, { clipId: CLIP.particles, t: 1 }], size: 1024 });
     await post(`${PRE}/api/vision/bake-batch`, { project, clips: [{ clipId: CLIP.pill, t: 0.3 }, { clipId: CLIP.user, t: 2 }], size: 1024, priority: 1 });
     await until('Remote asset service received all of these', async () => allPushed(), 60000, 250);
   }
-  await delay(1500); // 帧库的存档是异步落盘的,等它写完再列
+  await delay(1500); // Frame store archiving is written to disk asynchronously; wait for write to finish before listing
   const libraryNew = walk(LIBRARY_DIR).filter((f) => !libraryBefore.has(f));
   const libraryHtml = libraryNew.filter((f) => HTML_FILE.test(f));
   const libraryEntries = [...new Set(libraryNew.map((f) => f.split('/')[0]).filter((d) => /^[0-9a-f]{16,}$/.test(d)))];
@@ -364,19 +388,19 @@ try {
   check([...ourHashes].every((h) => remoteBlobs.has(`px/${h}`)), 'A5 Every bitmap was pushed to the connected remote asset service', { want: ourHashes.size, got: [...ourHashes].filter((h) => remoteBlobs.has(`px/${h}`)).length });
   check(entries.length >= ourHashes.size - 1 && entries.every((e) => /^[0-9a-f]{64}$/.test(e.hash)) && [...ourHashes].every((h) => entries.some((e) => e.hash === h)), 'A5 Every bitmap in the bake-index records "input hash → content hash"', { entries: entries.length });
 
-  /* ---- B 3D 视图开着:贴图出得来 ---- */
+  /* ---- B 3D view open: textures appear ---- */
   browser = await launch();
   const page = await openEditorPage();
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(String(e)));
-  const seen = []; // 页面收到的 bake-batch 回应里的每一张
+  const seen = []; // Each image in the bake-batch response received by the page
   page.on('response', async (res) => {
     if (!/\/api\/(ui-render|vision)\/bake-batch$/.test(new URL(res.url()).pathname) || res.request().method() !== 'POST') return;
     try {
       const data = await res.json();
       const route = /ui-render/.test(res.url()) ? 'ui' : 'prefetch';
       for (const b of data.baked || []) seen.push({ route, clipId: b.clipId, t: b.t, url: b.url, width: b.width, height: b.height, cached: b.cached });
-    } catch { /* 被掐掉的请求没有正文 */ }
+    } catch { /* Aborted requests have no body */ }
   });
   await page.evaluate(async (project) => {
     const m = await import('/src/store/project.ts');
@@ -386,11 +410,12 @@ try {
   await page.evaluate(() => { [...document.querySelectorAll('[data-pc="preview-tabs"] button')].find((b) => b.textContent === '3D').click(); });
   await page.waitForSelector('.pc-3d-checker canvas', { timeout: 60000 });
   const cardClips = Object.values(CLIP);
-  // 等待时限只为防卡死(机器忙时热备渲染器一张要一两分钟);用了多久记下来,不当通过条件
+  // Wait timeout is only to prevent hangs (warm-standby renderer takes 1-2 minutes per image
+  // when the machine is busy); record elapsed time, not used as a pass condition
   const b1Started = Date.now();
   const allSeen = await until('Textures for all four boards in the 3D view arrived', async () => cardClips.every((id) => seen.some((s) => s.clipId === id && /^\/api\/asset\/px\//.test(s.url || ''))) || null, 600000, 500);
   const b1Ms = Date.now() - b1Started;
-  await delay(4000); // 让空闲预取再走几轮,多收几张(收到多少比多少)
+  await delay(4000); // Let idle prefetch run a few more rounds to collect a few more images (compare however many are received)
   out.b1 = { ms: b1Ms, seen: seen.length, byRoute: { ui: seen.filter((s) => s.route === 'ui').length, prefetch: seen.filter((s) => s.route === 'prefetch').length }, clips: cardClips.map((id) => ({ id, got: seen.filter((s) => s.clipId === id).length })) };
   check(!!allSeen, 'B1 3D view open: textures for all four cards came out (the page received px addresses)', out.b1);
   const uniq = new Map();
@@ -417,12 +442,12 @@ try {
   out.editorLogTail = editorLog.join('').split(/\r?\n/).filter((l) => /error|bake-store/i.test(l)).slice(-20);
   try { out.prerenderLog = fs.readFileSync(PRERENDER_LOG, 'utf8').split(/\r?\n/).filter((l) => /\[bake-store\] bake\.(push-failed|stale)|\[artifact-push\] push\.|render timeout/.test(l)).map((l) => l.slice(0, 260)).slice(0, 40); } catch { out.prerenderLog = null; }
   if (!KEEP) {
-    try { await browser?.close(); } catch { /* 已关 */ }
+    try { await browser?.close(); } catch { /* Closed */ }
     stopEditor();
     remote.closeAllConnections?.();
     remote.close();
     await delay(800);
-    try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* 进程刚退,留着 */ }
+    try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* Process just exited, keep it */ }
   }
 }
 

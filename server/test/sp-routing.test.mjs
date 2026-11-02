@@ -1,14 +1,22 @@
 /**
- * SP 阶段 sp-routing 的实现方自测（契约 `docs/plan/shared-project-contract.md` 第 3、4、5 节；验收 SP2、SP4、SP5、SP6）。
- * 用例名带编号 SPR-*：
- *   SPR-2*  令牌的边界（三种角色与独立主机凭项目凭证进入、凭证错被拒、托管端管理接口无令牌 401、
- *           局域网主机的管理接口非回环连不上、回环无令牌成功；局域网主机缺凭证存储拒绝启动）
- *   SPR-4*  局域网发现（纯函数：选网卡、广播地址、收包网卡、目标、包；两个 dgram 套接字在本机回环上模拟：
- *           查询与应答、周期通告与 45 s 过期、去重、网卡变化；编辑器里广播的起停）
- *   SPR-5*  打开时的路由（四种组合、手填、连不上不抛、发现 + 进入不连托管端）
- *   SPR-6*  缺省托管地址（守门：源码里只在 hosted-default.mjs 出现；三种覆盖顺序）
+ * Implementer self-test for sp-routing in SP phase (contract `docs/plan/shared-project-contract.md`
+ * Sections 3, 4, 5; acceptance check SP2, SP4, SP5, SP6).
+ * Test case names prefixed with SPR-*:
+ *   SPR-2*  Token boundaries (three roles and standalone host entering with project credentials,
+ *           rejected on incorrect credentials, 401 on hosted side management endpoint without
+ *           token, LAN host management endpoint unreachable from non-loopback, loopback succeeds
+ *           without token; LAN host refuses to start when credential store is missing)
+ *   SPR-4*  LAN discovery (pure functions: select network interface, broadcast address, receiving
+ *           network interface, target, packet; simulated with two dgram sockets on local loopback:
+ *           queries and responses, periodic announcements and 45 s expiration, deduplication,
+ *           network interface changes; starting and stopping broadcasting in the editor)
+ *   SPR-5*  Routing upon opening (four combinations, manual input, does not throw on connection
+ *           failure, discovery + entry without connecting to hosted side)
+ *   SPR-6*  Default hosted address (gatekeeper: appears only in hosted-default.mjs in source code;
+ *           three override orders)
  *
- * UDP 只绑 127.0.0.1（不开防火墙口子），网卡列表注入成回环一块。跑：node --test server/test/sp-routing.test.mjs
+ * UDP binds only to 127.0.0.1 (no firewall holes opened), network interface list injected as a
+ * single loopback interface. Run: node --test server/test/sp-routing.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -37,7 +45,7 @@ const PID = 'sp_abcdefghijklmnopqrstuvwxyz';
 delete process.env.PROMPTCUT_HOSTED_URL;
 delete process.env.PROMPTCUT_LAN_HOST;
 
-/* ================================================================== SPR-2 令牌的边界 */
+/* ================================================================== SPR-2 Token boundaries */
 
 for (const mode of ['hosted', 'lan']) {
   test(`SPR-2a ${mode}: the three roles page, agent and render, and the standalone host, all join successfully from a non-loopback source with project credentials and no cluster token`, async (t) => {
@@ -45,7 +53,7 @@ for (const mode of ['hosted', 'lan']) {
     const s = await startSharedService({ mode, isLoopback: () => loop, clusterToken: mode === 'hosted' ? randomToken() : undefined });
     t.after(() => s.close());
     const p = await createProject(s.base, { password: 'pw-ok' });
-    loop = false; // 之后的连接都当局域网 / 公网来的
+    loop = false; // Subsequent connections are all treated as coming from LAN / public network
     const dev = newDeviceId('r');
     for (const [role, extra] of [['page', {}], ['agent', { conversation: 7 }], ['render', {}]]) {
       const c = await join(s.base, { projectId: p.projectId, username: 'bob', deviceId: dev, password: 'pw-ok', role, ...extra });
@@ -53,7 +61,7 @@ for (const mode of ['hosted', 'lan']) {
       assert.equal(c.ws.protocol, 'promptcut.v1', role);
       c.close();
     }
-    // 独立主机：render 角色、profile host 报到
+    // Standalone host: render role, profile host check in
     const hostConn = await join(s.base, { projectId: p.projectId, username: 'host-a', deviceId: newDeviceId('h'), password: 'pw-ok', role: 'render' });
     await hostConn.opened;
     hostConn.send({ type: 'node.hello', reqId: 'h1', nodeId: 'host-a', profile: 'host', capabilities: {}, codeVersions: [], maxConcurrent: 1 });
@@ -117,14 +125,14 @@ test('SPR-2d LAN host: the admin endpoint is unreachable from non-loopback sourc
   local.close();
 });
 
-/* ---------------------------------------------------------------- 编辑器插件（TS 转译，同 asset-store-http.test.mjs 的办法） */
+/* ---------------------------------------------------------------- Editor plugin (TS transpilation, same approach as asset-store-http.test.mjs) */
 
 let pluginPromise = null;
 function loadPlugin() {
   pluginPromise ??= (() => {
     const ts = createRequire(import.meta.url)('typescript');
     const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-sp-routing-'));
-    process.on('exit', () => { try { fs.rmSync(OUT, { recursive: true, force: true }); } catch { /* 忽略 */ } });
+    process.on('exit', () => { try { fs.rmSync(OUT, { recursive: true, force: true }); } catch { /* Ignore */ } });
     const compiled = new Map();
     const resolveRel = (fromFile, spec) => {
       const base = path.resolve(path.dirname(fromFile), spec);
@@ -153,7 +161,7 @@ function loadPlugin() {
   return pluginPromise;
 }
 
-/** 插件 configureServer 用得到的最小 vite 服务器替身 */
+/** Minimal vite server stand-in needed by plugin configureServer */
 function fakeVite(root) {
   const httpServer = http.createServer();
   return {
@@ -186,7 +194,7 @@ test('SPR-2e LAN host (PROMPTCUT_LAN_HOST=1) refuses to start if the credential 
   b.httpServer.emit('close');
 });
 
-/* ================================================================== SPR-4 局域网发现 */
+/* ================================================================== SPR-4 LAN discovery */
 
 test('SPR-4a parameters match section 4 of the contract', () => {
   assert.equal(LAN_DISCOVERY.GROUP, '239.255.42.99');
@@ -220,7 +228,7 @@ test('SPR-4b selecting among multiple network interfaces (pure function): only i
     ppp: [{ address: '10.8.0.6', netmask: '255.255.255.255', family: 'IPv4', internal: false }],
   };
   const list = selectInterfaces(nics);
-  // 按网卡名（码位序）排，指纹稳定
+  // Sorted by network interface name (code point order), stable fingerprint
   assert.deepEqual(list.map((i) => i.address), ['192.168.50.96', '10.8.0.6', '172.20.16.1']);
   assert.deepEqual(list.map((i) => i.broadcast), ['192.168.50.255', null, '172.20.31.255']);
   assert.equal(broadcastOf('10.0.3.7', '255.0.0.0'), '10.255.255.255');
@@ -228,7 +236,7 @@ test('SPR-4b selecting among multiple network interfaces (pure function): only i
   assert.equal(broadcastOf('x', '255.0.0.0'), null);
   assert.equal(ipv4ToInt('256.1.1.1'), null);
 
-  // 收包网卡：地址相同 > 同一子网 > 没有
+  // Receiving network interface: identical address > same subnet > none
   assert.equal(interfaceFor('192.168.50.96', list)?.address, '192.168.50.96', 'the machine queries itself');
   assert.equal(interfaceFor('192.168.50.23', list)?.address, '192.168.50.96');
   assert.equal(interfaceFor('::ffff:172.20.20.9', list)?.address, '172.20.16.1', 'IPv4-mapped address');
@@ -242,7 +250,7 @@ test('SPR-4b selecting among multiple network interfaces (pure function): only i
     '172.20.16.1->239.255.42.99:54887:m', '172.20.16.1->172.20.31.255:54887:b',
   ]);
 
-  // 网卡变化看指纹
+  // Network interface changes are determined by fingerprint
   const a = interfaceSignature(list);
   assert.equal(interfaceSignature(selectInterfaces(nics)), a);
   assert.notEqual(interfaceSignature(selectInterfaces({ ...nics, ppp: [] })), a);
@@ -261,11 +269,11 @@ test('SPR-4c packets: shape of queries and announcements, ≤ 1 KiB, anything un
   const parsed = parsePacket(encodePacket(ann));
   assert.equal(parsed.docservice, ann.docservice);
   assert.equal(parsed.ttlMs, 45000);
-  // 最长的合法字段（64 个 4 字节字符的名字与设备名）也在 1 KiB 以内
+  // The longest valid fields (name and device name of 64 4-byte characters) are also within 1 KiB
   const big = buildAnnounce({ project: { projectId: PID, name: '😀'.repeat(64), mode: 'restricted' }, iface: { address: '255.255.255.255' }, hostDeviceName: '😀'.repeat(64), servicePort: 65535, nonce: 'x'.repeat(64) });
   assert.ok(encodePacket(big).length <= 1024);
   assert.ok(parsePacket(encodePacket(big)));
-  // 超出不发、超长不收
+  // Do not send if exceeding, do not receive if oversized
   assert.equal(encodePacket({ pad: 'x'.repeat(1100) }), null);
   assert.equal(parsePacket(Buffer.alloc(1025, 0x20)), null);
   for (const bad of [
@@ -275,7 +283,7 @@ test('SPR-4c packets: shape of queries and announcements, ≤ 1 KiB, anything un
   ]) assert.equal(parsePacket(Buffer.from(bad)), null, bad.slice(0, 60));
 });
 
-/** 本机回环上的一个主机端；projects 可改 */
+/** A host side on local loopback; projects is mutable */
 async function loHost(t, { projects = [{ projectId: PID, name: 'Demo', mode: 'free' }], ...opts } = {}) {
   const state = { projects };
   const logs = [];
@@ -338,7 +346,7 @@ test('SPR-4f periodic announcements (15 s ± 3 s, shortened here) reach the resi
   assert.equal(c.list()[0].hostDeviceName, 'PC-1');
   const before = host.stats().announces;
   await waitFor(() => host.stats().announces >= before + 2, 2000, 'announced two more times');
-  // 删掉项目：之后的通告里没有它；客户端还记着，45 s 后过期
+  // Delete project: absent from subsequent announcements; client still remembers it, expires after 45 s
   state.projects = [];
   await host.refresh();
   const n = host.stats().announces;
@@ -462,9 +470,9 @@ test('SPR-4i after discovery, join with project credentials (document service mo
   assert.deepEqual(found.errors, []);
 });
 
-/* ================================================================== SPR-5 打开时的路由 */
+/* ================================================================== SPR-5 Routing upon opening */
 
-/** 假的发现：回给定的主机表 */
+/** Fake discovery: returns the given host table */
 const fakeDiscover = (hosts) => async () => ({ hosts, errors: [] });
 const lanEntry = (base, p, device = 'PC-1') => ({ projectId: p.projectId, name: p.name, mode: p.mode, hostDeviceName: device, docservice: base, asset: base.replace(/^ws/, 'http').replace(/\/docservice$/, '/api/asset'), firstSeenMs: 3 });
 
@@ -481,7 +489,7 @@ test('SPR-5a four combinations: LAN only → join directly; hosted only → join
   loop = false;
   const discoverOf = (...ps) => fakeDiscover(ps.map((p) => lanEntry(lan.url, p)));
 
-  // 1. 只有局域网
+  // 1. LAN only
   let r = await findSharedProject({ name: 'only-lan', hostedUrl: hosted.url, lan: { discover: discoverOf(onlyLan) } });
   let route = pickRoute(r);
   assert.equal(route.action, 'enter');
@@ -490,20 +498,20 @@ test('SPR-5a four combinations: LAN only → join directly; hosted only → join
   });
   assert.deepEqual(r.errors, [], 'a 404 from the hosted side is not an error');
 
-  // 2. 只有托管（局域网谁也没应答：记超时，不抛）
+  // 2. Hosted only (no LAN response from anyone: record timeout, do not throw)
   r = await findSharedProject({ name: 'only-hosted', hostedUrl: hosted.url, lan: { discover: fakeDiscover([]) } });
   route = pickRoute(r);
   assert.equal(route.action, 'enter');
   assert.deepEqual(route.candidate, { where: 'hosted', base: candidateBaseOf(hosted.url), projectId: onlyHosted.projectId, name: 'only-hosted', mode: 'free' });
   assert.deepEqual(r.errors, [{ where: 'lan', reason: 'timeout' }]);
 
-  // 3. 两边都有：都列出，局域网在前，谁也不挑
+  // 3. Both present: list both, LAN first, neither is chosen
   r = await findSharedProject({ name: 'BOTH', hostedUrl: hosted.url, lan: { discover: discoverOf(bothL) } });
   route = pickRoute(r);
   assert.equal(route.action, 'choose');
   assert.deepEqual(route.candidates.map((c) => [c.where, c.projectId]), [['lan', bothL.projectId], ['hosted', bothH.projectId]]);
 
-  // 4. 都没有
+  // 4. Neither exists
   r = await findSharedProject({ name: 'nothing', hostedUrl: hosted.url, lan: { discover: fakeDiscover([]) } });
   route = pickRoute(r);
   assert.equal(route.action, 'not-found');
@@ -538,7 +546,7 @@ test('SPR-5c manual-entry fallback (the only route available to the browser): qu
   const reasons = r.errors.map((e) => `${e.where}:${e.reason}`).sort();
   assert.deepEqual(reasons, ['hosted:unreachable', 'lan:bad-address', 'lan:unreachable']);
   assert.equal(pickRoute(r).action, 'enter');
-  // 发现抛错也不抛
+  // Does not throw even if discovery throws an error
   const r2 = await findSharedProject({ name: 'x', hostedUrl: null, lan: { discover: async () => { throw new Error('boom'); } } });
   assert.deepEqual(r2.errors.map((e) => e.reason), ['discover-failed']);
   assert.equal(pickRoute(r2).action, 'not-found');
@@ -593,7 +601,7 @@ test('SPR-5e create: the hosted side POSTs shared/create to the hosted address; 
   await assert.rejects(createSharedProject({ where: 'moon', name: 'L4' }), TypeError);
 });
 
-/* ================================================================== SPR-6 缺省托管地址 */
+/* ================================================================== SPR-6 Default hosted address */
 
 test('SPR-6b override order: UI value → PROMPTCUT_HOSTED_URL → default; empty values fall through to the next; a malformed address throws and does not fall back', () => {
   assert.deepEqual(hostedUrlChoice({ env: {} }), { url: DEFAULT_HOSTED_URL, from: 'default' });
@@ -603,7 +611,7 @@ test('SPR-6b override order: UI value → PROMPTCUT_HOSTED_URL → default; empt
   assert.deepEqual(hostedUrlChoice({ ui: null, env: { PROMPTCUT_HOSTED_URL: ' http://e:1 ' } }), { url: 'http://e:1', from: 'env' });
   assert.throws(() => hostedUrlChoice({ ui: 'not a url', env: {} }), TypeError);
   assert.throws(() => hostedUrlChoice({ env: { PROMPTCUT_HOSTED_URL: 'ftp://x' } }), TypeError);
-  // 缺省读 process.env
+  // By default reads process.env
   process.env.PROMPTCUT_HOSTED_URL = 'http://127.0.0.9:1';
   try {
     assert.equal(resolveHostedUrl(), 'http://127.0.0.9:1');
@@ -621,7 +629,8 @@ test('SPR-6c routing connects to the hosted side in override order: with no over
   t.after(() => uiSvc.close());
   const pe = await createProject(envSvc.base, { name: 'same' });
   const pu = await createProject(uiSvc.base, { name: 'same' });
-  // 缺省：不真连外网，只看它往哪儿发。公开版没有缺省托管端，什么都不发
+  // By default: do not actually connect to external network, only check where it sends.
+  // Public edition has no default hosted side, sends nothing
   const seen = [];
   const spy = async (url) => { seen.push(String(url)); throw new TypeError('fetch failed'); };
   const d = await findSharedProject({ name: 'same', fetch: spy });

@@ -1,14 +1,26 @@
 /**
- * Vibe 模式里此刻连着的那个项目的云端 Agent:对话列表(侧栏的「项目 Agent」)、当前这条对话的消息、发送、停止、共有 / 私有。
+ * The Cloud Agent of the project currently connected in Vibe mode: the chat list ("Project Agents" in the
+ * sidebar), the messages of the current chat, send, stop, shared / private.
  *
- * 业务一律沿用编辑器右栏与手机版的同一套(`src/ai/cloud/useCloud.ts` 的 `useCloudChat`,做法照 `src/mobile/AgentChat.tsx`):
- *   - 发出去之前先过「告知托管方能读」(`product/agent.md`「告知托管方能读」):第一次用时弹框,选「我知道了」才发,按账号记住;
- *   - 发送是乐观显示:点了当场出自己的气泡,发不出去时那条气泡标「没有发出去」、原文放回输入框;断网时排着等网络恢复;
- *   - 对话权限(谁能发、谁能停、谁能切共有 / 私有)照 `cloudConversationControlPolicy`,只读成员(游客进别人的项目)不能发;
- *   - 侧栏列的对话来自同一份历史列表,再按共有 / 私有规则复核一遍(`vibeOrg.ts` 的 `viewableChats`),别人的私有对话不列。
+ * The business logic always reuses the same set as the editor's right rail and the mobile app
+ * (`useCloudChat` in `src/ai/cloud/useCloud.ts`, done the way `src/mobile/AgentChat.tsx` does it):
+ *   - Before sending, it first goes through the "host-can-read notice" (`product/agent.md` "Host-can-read
+ *     notice"): a dialog pops up on first use, sending happens only after choosing "Got it", and the
+ *     choice is remembered per account;
+ *   - Sending is shown optimistically: your own bubble appears the moment you click, and when it cannot
+ *     be sent that bubble is marked "Not sent" and the original text is put back in the input box; when
+ *     offline, messages queue up and wait for the network to recover;
+ *   - Chat permissions (who can send, who can stop, who can switch shared / private) follow
+ *     `cloudConversationControlPolicy`, and read-only members (a guest in someone else's project) cannot
+ *     send;
+ *   - The chats listed in the sidebar come from the same history list and are checked again against the
+ *     shared / private rules (`viewableChats` in `vibeOrg.ts`); other people's private chats are not
+ *     listed.
  *
- * 只在项目连上之后才有东西:没连项目时 `useCloudChat` 的键是空的,什么请求都不发。
- * 改动修改前 / 修改后的画面记录(右侧拓展栏)按当前对话设读取范围(`ToolVisual.tsx` 的 `setCloudVisualScope`)。
+ * It has content only after a project is connected: when no project is connected the key of
+ * `useCloudChat` is empty and no request is sent at all.
+ * The records of the before / after pictures of changes (right side panel) set their read scope by the
+ * current chat (`setCloudVisualScope` in `ToolVisual.tsx`).
  */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useCloudAgent, useCloudChat, type CloudAgentState, type CloudChat } from "../ai/extensions";
@@ -25,16 +37,16 @@ import type { VibeAgent } from "./vibeAgent";
 import type { VibeChat } from "./types";
 import { tr } from "../i18n/index.ts";
 
-/** 这一套占的对话页签号(`useCloudChat` 的本地存储键按它分):和编辑器右栏、手机版的页签互不相干 */
+/** The chat tab number this set occupies (the local storage keys of `useCloudChat` are split by it): unrelated to the tabs of the editor's right rail and the mobile app */
 export const VIBE_TAB = "vibe";
 
-/** 云端 Agent 的那一份。聊天页只认 `VibeAgent`(桌面版那一份见 `useVibeLocal.ts`),这里多出来的是云端才有的东西 */
+/** The Cloud Agent's version. The chat page only recognizes `VibeAgent` (the desktop app's version is in `useVibeLocal.ts`); what is extra here is what only the cloud has */
 export interface VibeCloud extends VibeAgent {
   cloud: CloudAgentState;
   chat: CloudChat;
-  /** 侧栏里这个项目底下列的对话(已按权限复核);当前那条还没发过消息的新对话也在里面(`fresh`) */
+  /** The chats listed under this project in the sidebar (already re-checked against permissions); the current new chat that has not sent a message yet is in there too (`fresh`) */
   chats: VibeChat[];
-  /** 正在看的那条对话 */
+  /** The chat being viewed */
   current: VibeChat | null;
 
   canSwitchVisibility: boolean;
@@ -56,7 +68,7 @@ export function useVibeCloud(o: { connected: boolean; shown: boolean }): VibeClo
   const stillCurrent = () => keyRef.current === qKey &&
     cloudConsentState().accountId === cloud.accountId && cloudConsentState().bindingVersion === consent.bindingVersion;
 
-  /* ---------- 告知(同手机版、桌面右栏) ---------- */
+  /* ---------- Notice (same as the mobile app and the desktop right rail) ---------- */
   const [consentOpen, setConsentOpen] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
   useEffect(() => {
@@ -88,7 +100,7 @@ export function useVibeCloud(o: { connected: boolean; shown: boolean }): VibeClo
     }
   };
 
-  /* ---------- 权限 ---------- */
+  /* ---------- Permissions ---------- */
   const currentMeta = chat.history.items.find((item) => item.id === chat.conversationId) ?? null;
   const policy = cloudConversationControlPolicy({
     accountMode: cloud.accountMode, accountId: cloud.accountId, creator, conversation: currentMeta,
@@ -103,11 +115,11 @@ export function useVibeCloud(o: { connected: boolean; shown: boolean }): VibeClo
     : view.revoked ? tr("You no longer have read access to this chat.")
     : null;
 
-  /* ---------- 侧栏要的对话 ---------- */
+  /* ---------- Chats the sidebar needs ---------- */
   const chats = useMemo(() => {
     if (!projectId) return [];
     const list = viewableChats(chat.history.items, { accountId: cloud.accountId, creator }, projectId);
-    // 刚开的新对话服务端还没有:先在本页列上,发过第一条之后列表里就有了
+    // The server does not have a just-opened new chat yet: list it on this page first; after the first message is sent it will be in the list
     if (chat.conversationId && !list.some((c) => c.id === chat.conversationId)) {
       list.unshift({ id: chat.conversationId, name: chat.messages.length ? tr("Cloud chat") : tr("New chat"), projectId, state: "idle", visibility: "shared", readOnly: false, fresh: true });
     }
@@ -115,7 +127,7 @@ export function useVibeCloud(o: { connected: boolean; shown: boolean }): VibeClo
   }, [chat.history.items, chat.conversationId, chat.messages.length, projectId, cloud.accountId, cloud.accountMode, creator, consent.accepted]);
   const current = chats.find((c) => c.id === chat.conversationId) ?? null;
 
-  /* ---------- 修改前 / 修改后的画面记录:按当前对话设读取范围 ---------- */
+  /* ---------- Before / after picture records: set the read scope by the current chat ---------- */
   useEffect(() => {
     if (!projectId || !cloud.url || !chat.conversationId) { setCloudVisualScope(null); return; }
     setCloudVisualScope({
@@ -125,7 +137,7 @@ export function useVibeCloud(o: { connected: boolean; shown: boolean }): VibeClo
   }, [projectId, cloud.url, cloud.accountId, chat.conversationId, currentMeta?.visibility, view.revoked]);
   useEffect(() => () => setCloudVisualScope(null), []);
 
-  /* ---------- 「没发出去」气泡上的重新发送 ---------- */
+  /* ---------- Resend on the "Not sent" bubble ---------- */
   const resendRef = useRef(chat.outbox.resend);
   resendRef.current = chat.outbox.resend;
   useEffect(() => {
@@ -137,7 +149,7 @@ export function useVibeCloud(o: { connected: boolean; shown: boolean }): VibeClo
     return () => window.removeEventListener(OUTBOX_RESEND_EVENT, onResend as EventListener);
   }, []);
 
-  /* ---------- 发送、停止、共有 / 私有 ---------- */
+  /* ---------- Send, stop, shared / private ---------- */
   const send = async (text: string): Promise<boolean> => {
     const body = text.trim();
     if (!body) return false;
@@ -196,7 +208,7 @@ export function useVibeCloud(o: { connected: boolean; shown: boolean }): VibeClo
     hint: tr("Runs in the cloud and keeps going after you close it; reopen to pick up where you left off."),
     canSend: !whyNot, whyNot,
     streaming: policy.streaming, canStop: policy.canStop,
-    // 和编辑器右栏同一个数法(`QueueList.tsx`):执行服务在问时,对话空闲时排第一的那条马上就开始,不算排队
+    // Counted the same way as the editor's right rail (`QueueList.tsx`): when the execution service is polling, the first message in an idle chat starts right away and does not count as queued
     queued: view.queue?.items.filter((i) => i.state === "queued" && !(chat.info?.executorMounted === true && isIdleHead(view.queue, i))).length ?? 0,
     waitingExecutor: cloud.accountMode && !!chat.info && chat.info.executorMounted !== true,
     consent: {

@@ -1,11 +1,14 @@
 /**
- * 回归:预渲染管线读成本记录的根目录(开发期 `PROMPTCUT_DATA_DIR` 没设的时候)。
- * 跑:node --test server/test/prerender-costs-root.test.mjs
+ * Regression: Root directory for prerender pipeline reading cost records (when
+ * `PROMPTCUT_DATA_DIR` is unset during development).
+ * Run: node --test server/test/prerender-costs-root.test.mjs
  *
- * 以前 `recordCardPlan` 把 `this.root`(帧库目录 `<仓库>/out/frame-library`)当成本根传给
- * `prerenderSetOfPlan`,于是读 `<帧库>/out/card-costs.json` —— 没人写这个文件;`vite-plugin-costs`
- * 写的是 `<仓库>/out/card-costs.json`。实测成本因此永远进不了预渲染集合,一律按声明兜底。
- * 探针和桌面版都设了 `PROMPTCUT_DATA_DIR`,所以一直没测出来。
+ * Previously `recordCardPlan` passed `this.root` (frame store directory
+ * `<repo>/out/frame-library`) as the cost root to `prerenderSetOfPlan`, reading
+ * `<frame-store>/out/card-costs.json`: nobody wrote this file; `vite-plugin-costs` wrote to
+ * `<repo>/out/card-costs.json`. Measured costs thus never entered the prerender set, always
+ * falling back to declared values. Both probes and desktop app set `PROMPTCUT_DATA_DIR`, so this
+ * was never caught.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -25,7 +28,7 @@ const clips = [
   { id: 'a', cardId: 'motion', start: 0, end: 6 },
   { id: 'b', cardId: 'lottie', start: 2, end: 20 },
 ];
-// `card-cache.mjs` 的 `plan()` 往 control 上写的那几项(同 prerender-set.test.mjs 的夹具)
+// Fields written to control by `plan()` in `card-cache.mjs` (same as fixture in prerender-set.test.mjs)
 const plan = clips.map(clip => {
   const node = { id: `n:${clip.id}`, clipId: clip.id, cardId: clip.cardId, definitionId: `def:${clip.cardId}`, inputs: {},
     params: { text: clip.cardId }, capabilities: caps[clip.id] };
@@ -33,7 +36,8 @@ const plan = clips.map(clip => {
     costKey: cardCostKey(node, `builtin:${clip.cardId}`, fps, Math.max(1, Math.round((clip.end - clip.start) * fps))),
     frameMode: caps[clip.id].frameMode, capabilities: caps[clip.id] };
 });
-// a:6 秒、每拍 1 ms,各位置都轻;b:18 秒,追帧超上界,各位置都重(口径见 prerender-set.test.mjs)
+// a: 6 seconds, 1 ms per tick, light at all positions; b: 18 seconds, frame catch-up exceeds
+// upper bound, heavy at all positions (criteria in prerender-set.test.mjs)
 const costs = [
   { identityKey: plan[0].costKey, device: 'dev', fps, stepMs: 1, stepMaxMs: 2, inlineMs: 0, rasterMs: 0, serializeMs: 0,
     catchUpMs: 180, kind: 'stepped', vtOk: true, seekOk: false, seekMs: null, demoted: false, measuredAt: 10 },
@@ -41,7 +45,7 @@ const costs = [
     catchUpMs: 540, kind: 'stepped', vtOk: false, seekOk: false, seekMs: null, demoted: false, measuredAt: 10 },
 ];
 
-/** 在没有 `PROMPTCUT_DATA_DIR` 的开发期环境里跑 `fn(仓库根)`,跑完删目录、还原环境变量 */
+/** Run `fn(repoRoot)` in dev environment without `PROMPTCUT_DATA_DIR`; delete dir and restore env vars after completion */
 function devLayout(fn) {
   const saved = process.env.PROMPTCUT_DATA_DIR;
   delete process.env.PROMPTCUT_DATA_DIR;
@@ -54,7 +58,7 @@ function devLayout(fn) {
 }
 
 test('In development: records the cost plugin writes into <repo>/out are readable by the prerender pipeline (the set is computed from measured costs, not from the declaration fallback)', () => devLayout(repo => {
-  upsertCosts(repo, costs);                                    // vite-plugin-costs 的写法:根 = Vite 的根目录
+  upsertCosts(repo, costs);                                    // vite-plugin-costs convention: root = Vite's root directory
   assert.ok(fs.existsSync(path.join(repo, 'out', 'card-costs.json')));
   const pipeline = new FramePipeline({ root: path.join(repo, 'out', 'frame-library'), origin: () => '', dataRoot: repo });
   const entry = { key: 'E', project: { fps } };
@@ -64,10 +68,10 @@ test('In development: records the cost plugin writes into <repo>/out are readabl
 
 test('In development: a same-named file under the frame store directory is no longer treated as a cost record (the cost root is dataRoot, not the frame store)', () => devLayout(repo => {
   const library = path.join(repo, 'out', 'frame-library');
-  // 旧的错误路径上放一份「两张都判轻」的记录:要是还读它,集合会变成空的
+  // Place a "both classified as light" record on the old erroneous path: if still read, the set becomes empty
   upsertCosts(library, costs.map(record => ({ ...record, catchUpMs: 0, kind: 'random', stepMs: 1 })));
   assert.ok(fs.existsSync(path.join(library, 'out', 'card-costs.json')));
-  // 真正的记录在 <仓库>/out
+  // The real record is in <repo>/out
   upsertCosts(repo, costs);
   const pipeline = new FramePipeline({ root: library, origin: () => '', dataRoot: repo });
   const entry = { key: 'E', project: { fps } };

@@ -1,4 +1,7 @@
-/** 素材流库与HTTP读口：从frame-stream纯移动，独立asset入口不加载渲染器。 */
+/**
+ * Asset stream store and HTTP read endpoint: pure move from frame-stream; standalone asset entry
+ * point does not load the renderer.
+ */
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -9,7 +12,7 @@ import { projectStorageKey } from './project-stores.mjs';
 import { readProjectFile, publishProjectFile, projectFileAccepted } from './project-io.mjs';
 const KEY_RE = /^[a-f0-9]{64}$/;
 
-/** 清单里就绪的分段号(区间,C3 的 `stream` 表单位是分段号) */
+/** Ready segment numbers in the manifest (range, C3's `stream` table unit is segment numbers) */
 export function readySegmentRanges(manifest) {
   return mergeRanges(Object.keys(manifest?.segments ?? {}).map(Number).filter(Number.isInteger));
 }
@@ -47,7 +50,7 @@ export class StreamStore {
       finally { await this.io.rm(temp, { force: true }); await lease?.release(); }
     }
   }
-  /** 扫盘(F5):每条流的「键 → 就绪分段」 */
+  /** Disk scan (F5): each stream's "key → ready segments" */
   async scan() {
     const out = [];
     let items = [];
@@ -67,14 +70,19 @@ export class StreamStore {
 }
 
 /**
- * 页面要的清单形状(不带签名等内部字段)。`originFrame`:清单里记的这条流的第一帧(项目帧号,分段从它起每 15 帧一段);
- * 改分段规则之前落盘的清单没有这一项,这里回 null。
+ * Manifest shape requested by the page (without internal fields like signatures). `originFrame`:
+ * the first frame of this stream recorded in the manifest (project frame number, segments are 15
+ * frames each starting from it); manifests written to disk before changing the segmentation rule
+ * do not have this entry, returning null here.
  */
 export function publicManifest(manifest) {
   if (!manifest) return null;
   const segments = {};
-  // `stride`:1 = 满密度,大于 1 = 稀疏(只截了分段的第一帧,其余样本重复它)。`box`:这个分段的位置矩形(平面坐标,和 `bound` 同一个
-  // 坐标系;产稀疏版时量的那一张里不透明像素的外接框,`null` = 那一张全透明;没量过的分段不带这一项)
+  // `stride`: 1 = full density, > 1 = sparse (only the first frame of the segment was captured,
+  // remaining samples duplicate it). `box`: position rectangle of this segment (plane coordinates,
+  // in the same coordinate system as `bound`; bounding box of opaque pixels in the frame measured
+  // when producing the sparse version, `null` = that frame is fully transparent; unmeasured segments
+  // do not have this entry)
   for (const [n, s] of Object.entries(manifest.segments ?? {})) segments[n] = { init: s.init, file: s.file, stride: s.stride, samples: s.samples, ...(s.box !== undefined ? { box: s.box } : {}) };
   const inits = {};
   for (const [id, i] of Object.entries(manifest.inits ?? {})) inits[id] = { codec: i.codec, width: i.width, height: i.height, rect: i.rect };
@@ -83,13 +91,15 @@ export function publicManifest(manifest) {
 }
 
 /**
- * 分段字节的读口(C3 的快照字节同源,页面直连预渲染进程):
+ * Read endpoint for segment bytes (same origin as C3 snapshot bytes, page connects directly to
+ * the prerender process):
  *
- *   GET /stream/<streamKey>/manifest            清单(`no-store`:分段会被替换)
- *   GET /stream/<streamKey>/init/<initId>       init.mp4(内容寻址,immutable)
- *   GET /stream/<streamKey>/seg/<n>-<hash>.m4s  分段(内容寻址,immutable)
+ *   GET /stream/<streamKey>/manifest            manifest (`no-store`: segments will be replaced)
+ *   GET /stream/<streamKey>/init/<initId>       init.mp4 (content-addressed, immutable)
+ *   GET /stream/<streamKey>/seg/<n>-<hash>.m4s  segment (content-addressed, immutable)
  *
- * `pathname` 是 `/api/frames` 之后那一段。认得就回 true(已经答了),不认得回 false。
+ * `pathname` is the part after `/api/frames`. Returns true if recognized (already responded),
+ * false if not recognized.
  */
 export function handleStreamRequest(store, req, res, pathname) {
   if (req.method !== 'GET' && req.method !== 'HEAD') return false;

@@ -1,10 +1,12 @@
-// .procp 打包件:zip 字节格式、首条目、按哈希去重、以及别的 zip 工具压出来的 deflate 条目。
+// .procp package: zip byte format, first entry, deduplication by hash, and deflate entries
+// compressed by other zip tools.
 //   node --test src/editor/io/procp.test.mjs
 //
-// procp.ts 顶上只有类型 import(store 和 proc.ts 都是函数里动态 import 的),
-// 所以这里可以直接加载它;装包本体是 packProcpFrom(procText, project),不碰 store。
-// 服务端那一侧(本地内容库)用一个假的 fetch 顶上:内容按 sha256 入库,和
-// server/vite-plugin-media.ts 的 storeMediaStream 是同一套规矩。
+// procp.ts has only type imports at the top (store and proc.ts are dynamically imported inside
+// functions), so it can be loaded directly here; the packaging core is packProcpFrom(procText,
+// project), which does not touch store. The server side (local content store) is replaced with
+// a fake fetch: content is stored by sha256, following the same rules as storeMediaStream in
+// server/vite-plugin-media.ts.
 import { srcUrl } from "../../testing/registerTs.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -21,8 +23,8 @@ const { restoreMediaUrls } = await import(srcUrl("editor/io/mediaUrls.ts"));
 
 const sha256 = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
 
-/** 假的本地内容库 + 假 fetch:只认 procp.ts 用到的那三条路由 */
-/** 假的素材目录(服务端 allowedMediaRoots 里的那一个)与本地内容库的落点 */
+/** Fake local content store + fake fetch: only recognizes the three routes used by procp.ts */
+/** Fake asset catalog (the one in server allowedMediaRoots) and drop target for local content store */
 const MEDIA_ROOT = "C:/Users/u/Videos/PromptCut/media";
 const STORE_DIR = "C:/pc/out/media";
 const norm = (p) => String(p).replace(/\\/g, "/");
@@ -31,7 +33,7 @@ const inRoot = (p) => norm(p).toLowerCase().startsWith(MEDIA_ROOT.toLowerCase() 
 function fakeStore() {
   /** hash -> {bytes, ext} */
   const store = new Map();
-  /** 假磁盘:素材目录里的老文件,绝对路径(正斜杠) -> bytes */
+  /** Fake disk: old files in the asset catalog, absolute path (forward slashes) -> bytes */
   const disk = new Map();
   const realFetch = globalThis.fetch;
   const addToStore = (bytes, name) => {
@@ -51,11 +53,12 @@ function fakeStore() {
         if (!hit) return new Response(null, { status: 404 });
         return new Response(hit.bytes, { status: 200 });
       }
-      // 迁移期的 /@media/<文件名>:素材目录里按文件名找
+      // Migration-period /@media/<filename>: look up by filename in the asset catalog
       const bytes = disk.get(`${MEDIA_ROOT}/${raw}`);
       return bytes ? new Response(bytes, { status: 200 }) : new Response(null, { status: 404 });
     }
-    // POST /api/media/adopt?path=:只收素材目录内的路径,就地算哈希挂进内容库
+    // POST /api/media/adopt?path=: only accepts paths within the asset catalog, computes hash in place
+    // and mounts into the content store
     if (u.startsWith("/api/media/adopt")) {
       const p = norm(new URL(u, "http://x").searchParams.get("path") || "");
       if (!inRoot(p)) return new Response("outside", { status: 403 });
@@ -63,7 +66,7 @@ function fakeStore() {
       if (!bytes) return new Response("ENOENT", { status: 500 });
       return Response.json(addToStore(bytes, p.split("/").pop()));
     }
-    // GET /api/media/file?path=:同样只读素材目录内的
+    // GET /api/media/file?path=: likewise only reads within the asset catalog
     if (u.startsWith("/api/media/file")) {
       const p = norm(new URL(u, "http://x").searchParams.get("path") || "");
       if (!inRoot(p)) return new Response("outside", { status: 403 });
@@ -77,7 +80,7 @@ function fakeStore() {
     if (u.startsWith("/api/media/upload/")) {
       const name = decodeURIComponent(u.slice("/api/media/upload/".length).split("?")[0]);
       const bytes = Buffer.from(await new Response(init.body).arrayBuffer());
-      // 服务端按**内容**定键,包里条目名写错也污染不了库
+      // Server keys by **content**; misspelled entry names in the package cannot pollute the store
       const hash = sha256(bytes);
       const deduped = store.has(hash);
       if (!deduped) store.set(hash, { bytes, ext: (name.split(".").pop() || "").toLowerCase() });
@@ -107,9 +110,10 @@ function projectWith(hashA, hashB) {
     media: [
       { id: "m1", kind: "video", name: "a.mp4", ext: "mp4", hash: hashA, url: `/@media/${hashA}` },
       { id: "m2", kind: "image", name: "b.png", ext: "png", hash: hashB, url: `/@media/${hashB}` },
-      // 同一份素材被第二条记录引用:包里只该有一份字节
+      // Same asset referenced by a second record: there should be only one copy of bytes in the package
       { id: "m3", kind: "video", name: "a-copy.mp4", ext: "mp4", hash: hashA, url: `/@media/${hashA}` },
-      // 迁移期的老素材:没有 hash,装不进包(也不该让整次打包失败)
+      // Old assets from the migration period: no hash, cannot be packed into package (and should not fail
+      // entire packaging)
       { id: "m4", kind: "video", name: "legacy.mp4", url: "/@media/legacy.mp4" },
     ],
   };
@@ -134,7 +138,7 @@ test("Packing: the first entry is project.proc, media files are named <hash>.<ex
     assert.equal(back.get(`media/${hashA}.mp4`).equals(CLIP_A), true);
     assert.equal(back.get(`media/${hashB}.png`).equals(CLIP_B), true);
 
-    // 包自己也认得出是包(名字没了也靠 PK\x03\x04)
+    // The package is recognized as a package on its own (relies on PK\x03\x04 even without a name)
     assert.equal(await isProcpFile(blob), true);
     assert.equal(await isProcpFile(new Blob([PROC_TEXT])), false);
     assert.equal(await isProcpFile(Object.assign(new Blob([PROC_TEXT]), { name: `x${PROCP_EXT}` })), true);
@@ -156,7 +160,7 @@ test("Round trip: unpacking into an empty store writes two new files, and unpack
     packer.restore();
   }
 
-  // 另一台机器:内容库是空的
+  // Another machine: content store is empty
   const other = fakeStore();
   try {
     const first = await unpackProcp(blob);
@@ -166,7 +170,7 @@ test("Round trip: unpacking into an empty store writes two new files, and unpack
     assert.equal(other.store.get(hashA).bytes.equals(CLIP_A), true);
     assert.equal(other.store.get(hashB).bytes.equals(CLIP_B), true);
 
-    // 同一个包再拆一次:一份字节都不再传
+    // Unpack the same package again: not a single byte is transferred again
     const again = await unpackProcp(blob);
     assert.equal(again.stored, 0);
     assert.equal(again.deduped, 2);
@@ -179,7 +183,7 @@ test("Round trip: unpacking into an empty store writes two new files, and unpack
 test("Deflate entries produced by other zip tools can be read too", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pc-procp-"));
   try {
-    const text = "PromptCut .procp deflate fixture\n".repeat(400); // 够重复,一定会被压
+    const text = "PromptCut .procp deflate fixture\n".repeat(400); // Repetitive enough, definitely gets compressed
     const src = path.join(dir, "project.proc");
     const zip = path.join(dir, "made-by-powershell.zip");
     fs.writeFileSync(src, text);
@@ -204,14 +208,15 @@ test("Deflate entries produced by other zip tools can be read too", async (t) =>
   }
 });
 
-/* ------------- 补入库:没有哈希的老素材也要进包(用户真机缺陷:老项目的配音没进 .procp) ------------- */
+/* ------------- Backfill into store: old assets without hashes must also enter the package
+ * (defect on real user machine: voiceover from old projects was missing from .procp) ------------- */
 
 const VOICE_A = Buffer.from("fake-mp3-voice-A-".repeat(23));
 const VOICE_B = Buffer.from("fake-mp3-voice-B-".repeat(29));
 const VOICE_C = Buffer.from("fake-mp3-voice-C-".repeat(17));
 const CLIP_V = Buffer.from("fake-mp4-video-V-".repeat(37));
 
-/** 编排文本:和 serializeProc 一样把项目放在 project 下(这里只关心素材表) */
+/** Arrangement text: places project under project like serializeProc (here only cares about asset table) */
 const procOf = (project) => JSON.stringify({ format: "promptcut-project", version: 1, project });
 
 test("Packing after the store backfill: a video with a hash, an audio with only a path, and an audio whose URL is /api/media/file?path=… all have their bytes packed, all three entries in the in-package project.proc carry a hash; nothing is missing after unpacking into an empty store", async () => {
@@ -225,9 +230,9 @@ test("Packing after the store backfill: a video with a hash, an audio with only 
     fake.disk.set(bPath, VOICE_B);
     actions.newProject("Store backfill");
     actions.addMedia({ kind: "video", name: "v.mp4", ext: "mp4", hash: hashV, url: `/@media/${hashV}` });
-    // 老形态:只有 path(Windows 反斜杠)
+    // Old format: only path (Windows backslashes)
     const a = actions.addMedia({ kind: "audio", name: "voice-a.mp3", url: "", path: `${MEDIA_ROOT}/voice-a.mp3`.replace(/\//g, "\\") });
-    // 0.7.0 / 0.7.1 生成的配音:地址是 /api/media/file?path=…,没有哈希
+    // Voiceover generated by 0.7.0 / 0.7.1: address is /api/media/file?path=…, no hash
     const b = actions.addMedia({ kind: "audio", name: "voice-决赛开场-b.mp3", url: `/api/media/file?path=${encodeURIComponent(bPath)}` });
     const oldA = getState().project.media.find((m) => m.id === a.id);
 
@@ -252,7 +257,7 @@ test("Packing after the store backfill: a video with a hash, an audio with only 
     fake.restore();
   }
 
-  // 另一台机器:内容库和素材目录都是空的
+  // Another machine: content store and asset catalog are both empty
   const other = fakeStore();
   try {
     const { procText, stored } = await unpackProcp(blob);

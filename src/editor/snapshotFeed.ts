@@ -1,51 +1,84 @@
 /**
- * 父页侧的快照 / 抑制投递（C4、C5、A3c 的消费方）。
+ * Parent-page side delivery of snapshots / suppression (the consumer of C4, C5 and A3c).
  *
- * R6 把「拿得到」那一半做完了（`snapshotSource.ts` 的就绪索引 SSE + 取字节、
- * `snapshotPick.mjs` 的回溯选帧纯函数、`dataMirror.pushWanted`）；这个文件是排程那一半：
+ * R6 finished the "can we get it" half (`snapshotSource.ts` with its ready-index SSE and byte
+ * fetching, `snapshotPick.mjs` with its pure look-back frame-picking function,
+ * `dataMirror.pushWanted`). This file is the scheduling half:
  *
- * - 每个播放头位置按 `planDispatch.currentPlan()` 的 `pipelineAt` 分出这一刻的重卡集合 `H(t)`，
- *   给每张重卡按就绪索引选一帧（`pickLayerSnapshot`，同区间内回溯、不跨区间、**不等待**）；
- * - **投递基线按 iframe 各一份**（A3c）：`patch` 是相对上次投递的增量，`null` = 摘掉；
- *   `setProject` 整份替换、K5 的角色互换要带 `reset`；`settled` 消息把 clipId 从基线里删掉，
- *   否则下次 C4 选到同一帧会按基线判「已挂着」不投、露出过期的活组件；
- * - **换 DOM 有节流**：每 ≥ 33 ms 一次（C4）。带 `reset` 的那次（互换后的首投）不受节流；
- * - **一次投递 ≤ 2 MB**（A3c）：一次一包，按兜底级别装（无流 > 超预算），装不下的下一拍再投、不摘。
+ * - For each playhead position, split out the set of heavy cards `H(t)` for this moment using the
+ *   `pipelineAt` of `planDispatch.currentPlan()`, and pick one frame per heavy card from the ready
+ *   index (`pickLayerSnapshot`: look back within the same interval, never across intervals,
+ *   **never wait**);
+ * - **One delivery baseline per iframe** (A3c): `patch` is a delta against the last delivery, and
+ *   `null` = remove. `setProject` replaces the whole thing, and the K5 role swap must carry
+ *   `reset`. A `settled` message deletes the clipId from the baseline; otherwise, when C4 next
+ *   picks the same frame, the baseline would judge it "already mounted", skip delivery, and expose
+ *   a stale live component;
+ * - **DOM swaps are throttled**: at most once every 33 ms (C4). The delivery that carries `reset`
+ *   (the first delivery after a swap) is not throttled;
+ * - **One delivery is <= 2 MB** (A3c): one packet at a time, packed by fallback level (no stream >
+ *   over budget). Whatever does not fit is delivered on the next beat, not removed.
  *
- * # 为什么取字节不能挡住 `setTime`
+ * # Why fetching bytes must not block `setTime`
  *
- * 总规则是「永远不等」。所以这里分成同步和异步两半：`pickForSetTime(t)` **同步**回
- * 手里已经有的那些字节（`have`），缺的那几帧当场发起 `fetchSnapshot`，到货之后走
- * 独立的 `setSnapshots` 投递。拖过一张 stateful 卡的入点时，缓存命中的那一份和 `t`
- * 在同一次 React 提交里生效（不闪初始态）；没命中的那一层由 `.pc-awaiting` 藏 500 ms。
+ * The overall rule is "never wait". So this is split into a synchronous half and an asynchronous
+ * half: `pickForSetTime(t)` returns **synchronously** the bytes already in hand (`have`), and
+ * starts `fetchSnapshot` on the spot for the missing frames; once they arrive they go out through
+ * the separate `setSnapshots` delivery. When dragging across the entry point of a stateful card,
+ * the cache-hit copy takes effect in the same React commit as `t` (no flash of the initial state);
+ * a layer that missed is hidden by `.pc-awaiting` for 500 ms.
  *
- * # 兜底顺序（mechanism/rendering.md「兜底顺序」）
+ * # Fallback order (mechanism/rendering.md, "Fallback order")
  *
- * 重卡贴的是轨道流，**播放、暂停、拖动都一样**（2026-10-13 用户定：每张卡的 HTML 快照作废）：这一帧的满密度流 →
- * 稀疏流（不晚于这一帧的最近一张）→ 占位符。父页这一侧管三件事：
+ * Heavy cards are pasted with the track stream, **the same for playing, pausing and dragging**
+ * (2026-10-13 user decision: the per-card HTML snapshot is void): the full-density stream for this
+ * frame → the sparse stream (the nearest one no later than this frame) → the placeholder. The
+ * parent page handles three things on its side:
  *
- *   1. 流平面只发这一帧所在分段已经就绪、解码器预算放行的那几条（`planesWithinBudget`，和舞台同一个函数）；
- *   2. 抑制：播放中是全部重卡；暂停 / 拖动时是「这一帧有流、还没追到精确活渲」的重卡（`FeedPlan.scrub`）——
- *      已经追到精确活渲的卡不抑制，它的流平面照发，舞台只拿它把播放头下这一帧先解好（起播头一拍就有）；
- *   3. **有流盖着的卡不读快照**（下面「快照这条路的分界」）：不选帧、不取字节、不投递、不等。
+ *   1. Stream planes are sent only for the ones whose segment containing this frame is ready and
+ *      that the decoder budget lets through (`planesWithinBudget`, the same function as the
+ *      stage);
+ *   2. Suppression: while playing it is all heavy cards; while paused / dragging it is the heavy
+ *      cards that "have a stream for this frame but have not yet caught up to the exact live
+ *      render" (`FeedPlan.scrub`). Cards that have already caught up to the exact live render are
+ *      not suppressed and their stream planes are still sent; the stage only uses them to decode
+ *      the frame under the playhead first (so the first beat of playback is ready);
+ *   3. **A card covered by a stream does not read snapshots** (see "Boundary of the snapshot
+ *      path" below): no frame picking, no byte fetching, no delivery, no waiting.
  *
- * **依赖下层的卡**（毛玻璃这一类，和审阅表没覆盖到的卡）走的是同一条顺序，只有两处不同（`streamLayers`）：
- * 它的流按舞台坐标产，流平面带 `plane: "stage"`（舞台把画布挂在舞台根下）；它的流只对产它时的那一版下层有效，
- * 那一层带着产流时的输入签名（`inputSig`），和父页按当前项目算的对不上就是**过期**的 —— 当作这张卡没有流，落到下一步。
+ * **Cards that depend on the layer below** (the frosted-glass kind, and cards the review table
+ * does not cover) follow the same order, with only two differences (`streamLayers`):
+ * Its stream is produced in stage coordinates, and the stream plane carries `plane: "stage"` (the
+ * stage mounts the canvas under the stage root); its stream is valid only for the version of the
+ * layer below at the time it was produced, and that layer carries the input signature from when
+ * the stream was produced (`inputSig`). If it does not match what the parent page computes from
+ * the current project, it is **stale**: treat the card as having no stream and fall through to the
+ * next step.
  *
- * 流这一拍画不出来时舞台留着上一张，最多留一个分段的时长，再没有才显示占位符（`streamPlayer`、`StageView`）。
+ * When the stream cannot draw on this beat, the stage keeps the previous one, for at most the
+ * duration of one segment, and only then shows the placeholder (`streamPlayer`, `StageView`).
  *
- * **只有一个舞台**(精简模式与最低一档,在线浏览器性能不足时;2026-10-13 用户定「只贴轨道流的稀疏版、同时活着的解码器给得少」)走的也是这条顺序,不同的只有:
- * 流平面带 `first`(舞台每个分段只解第一帧那一张,那一段是满密度的也一样);同屏流的预算用小的那一组
- * (`sparseStreamBudget`:4 个解码器、画幅之和两张 1080p 满屏卡);这一档的兜底顺序是「流的分段第一帧 → 占位符」。
- * **只有一个舞台**(舞台闸门第一级、最低一档、握手失败退回)时没有后台舞台可以追到精确再互换:暂停、拖动时重卡一律抑制、
- * 停下后由舞台在可见舞台里逐层追一帧精确活渲(`Preview` 的 `syncPlanes`、`settleLayers`)。
+ * **With only one stage** (lite mode and the lowest tier, when the online browser performs poorly;
+ * 2026-10-13 user decision: "paste only the sparse version of the track stream, and give few
+ * decoders alive at the same time") it follows this same order too, with these differences only:
+ * The stream plane carries `first` (the stage decodes only the first frame of each segment, even
+ * if that segment is full-density); the budget for streams on screen at once uses the small set
+ * (`sparseStreamBudget`: 4 decoders, total aspect ratio of two full-screen 1080p cards); the
+ * fallback order of this tier is "first frame of the stream segment → placeholder".
+ * **With only one stage** (first level of the stage gate, the lowest tier, handshake failure
+ * fallback) there is no background stage that can catch up to exact and then swap: while paused or
+ * dragging, heavy cards are always suppressed, and after stopping the stage catches up one exact
+ * live-render frame layer by layer in the visible stage (`syncPlanes`, `settleLayers` of
+ * `Preview`).
  *
- * # 快照已撤掉（己二）
+ * # Snapshots have been withdrawn (Ji-2)
  *
- * 每张卡的 HTML 快照已全量下线。重卡播放、暂停与拖动贴轨道流；
- * 这一帧贴不上流（流还没就绪、超预算、或没有流）的重卡在暂停/拖动态进 scrub 显示占位符（可活渲的纯 remotion 卡直接活渲）。
- * picks 恒回空表、wanted 恒回空数组、deliverSnapshots 退役为返回 0 的空操作。
+ * The per-card HTML snapshot has been fully taken offline. Heavy cards are pasted with the track
+ * stream when playing, pausing and dragging; a heavy card that cannot be pasted with a stream on
+ * this frame (the stream is not ready yet, over budget, or there is no stream) enters scrub in the
+ * paused/dragging state and shows the placeholder (a pure remotion card that can be live-rendered
+ * is live-rendered directly). picks always returns an empty table, wanted always returns an empty
+ * array, and deliverSnapshots is retired to a no-op that returns 0.
  */
 import { cardMountedAt } from "../render/frameWindow.mjs";
 import type { ReadyKind } from "../render/snapshotPick.mjs";
@@ -74,25 +107,32 @@ import { streamInputSig, streamSigStale } from "../render/streamInputSig.mjs";
 import { cardCapabilities, clipFrameMode } from "../kernel/frameMode.mjs";
 import { flatPlanProject, isFlatClipId } from "../kernel/cutFlatten.mjs";
 
-/** C4：换 DOM 每 rAF 至多一次、间隔 ≥ 33 ms */
+/** C4: DOM swap at most once per rAF, interval ≥ 33 ms */
 export const SNAPSHOT_THROTTLE_MS = 33;
-/** A3c：一次 `setSnapshots` 投递 ≤ 2 MB（回包的 `bytes` 是实测口子，超了就拆） */
+/** A3c: one `setSnapshots` delivery ≤ 2 MB (the reply's `bytes` is the measured opening; split if exceeded) */
 export const SNAPSHOT_DELIVERY_MAX_BYTES = 2 * 1024 * 1024;
 /** A lost iframe reply must not leave the delivery baseline committed forever. */
 export const SNAPSHOT_DELIVERY_TIMEOUT_MS = 8000;
-/** C4：一次最多报 8 条缺口给预渲染进程 */
+/** C4: report at most 8 gaps at a time to the prerender process */
 export const MAX_WANTED = 8;
 
 /**
- * 就绪索引里全部 `stream` 层(单卡流的成员就是它自己;组流挂在组里最上面那张上、带 `groupClipIds`)。
- * `originFrame` 是这条流自己的第一帧(分段从它起数,`render/streamSegments.mjs`);没带它的层(改分段规则之前的生产者发的)
- * 没法把帧号换成分段号,这里不收 —— 当作这张卡没有流。
+ * All `stream` layers in the ready index (for a single-card stream the member is the card itself;
+ * a group stream hangs on the topmost card of the group and carries `groupClipIds`).
+ * `originFrame` is this stream's own first frame (segments are counted from it,
+ * `render/streamSegments.mjs`); layers without it (sent by producers from before the segment rule
+ * changed) can't convert frame numbers to segment numbers, so they are not collected here: treat
+ * the card as having no stream.
  */
 interface StreamLayer { clipId: string; key: string; ranges: Array<[number, number]>; groupClipIds?: string[]; originFrame: number; members: string[]; plane?: "stage"; px?: number }
 /**
- * 一条流的编码画幅(预算按它乘帧率算,`render/streamBudget.mjs`;划分流的一侧用的是同一个式子):
- * 按舞台坐标产的流(组流、依赖下层的流)是整幅画面;单卡流是它的矩形上界(包裹层的框外扩一圈、夹在画面里)。
- * 每份项目(不可变对象)缓存一张 clipId → 像素数。项目里找不到这张卡的回 undefined(预算那边按满屏卡算)。
+ * The encoded aspect ratio of a stream (the budget multiplies it by the frame rate,
+ * `render/streamBudget.mjs`; the side that partitions streams uses the same formula):
+ * for streams produced in stage coordinates (group streams, streams depending on the layers below)
+ * it is the full frame; for a single-card stream it is the upper bound of its rectangle (the
+ * wrapper layer's box expanded by a margin, clamped inside the frame).
+ * Each project (an immutable object) caches one clipId → pixel count table. If the card isn't found
+ * in the project it returns undefined (the budget side treats it as a full-screen card).
  */
 const streamPixels = new WeakMap<Project, Map<string, number | undefined>>();
 function streamPixelsOf(project: Project, clipId: string, stage: boolean): number | undefined {
@@ -102,7 +142,7 @@ function streamPixelsOf(project: Project, clipId: string, stage: boolean): numbe
   if (!byClip) { byClip = new Map(); streamPixels.set(project, byClip); }
   if (!byClip.has(clipId)) {
     let found: TrackClip | undefined;
-    // 剪辑段里的卡在摊平视图里(`kernel/cutFlatten.mjs`)
+    // Cards inside a cut segment are in the flattened view (`kernel/cutFlatten.mjs`)
     for (const track of flatPlanProject(project).tracks ?? []) { found = (track.clips ?? []).find((c) => c.id === clipId); if (found) break; }
     byClip.set(clipId, found ? localStreamPixels(found.frame, size) : undefined);
   }
@@ -114,7 +154,7 @@ function streamLayers(project: Project): StreamLayer[] {
     const layer = byKind.get("stream");
     if (!layer || !isStreamOrigin(layer.originFrame)) continue;
     const below = layer.streamKind === "below";
-    // 依赖下层的流:下层已经改过、预渲染进程还没换版本的这一小段里,就绪索引里还是旧流 —— 签名对不上的不贴
+    // Stream depending on the layers below: in the short window where the lower layers have changed but the prerender process hasn't switched versions yet, the ready index still holds the old stream; don't attach one whose signature doesn't match
     if (below && belowStreamStale(project, clipId, layer.inputSig)) continue;
     out.push({ clipId, key: layer.key, ranges: layer.ranges as Array<[number, number]>, groupClipIds: layer.groupClipIds, originFrame: layer.originFrame,
       members: layer.groupClipIds?.length ? layer.groupClipIds : [clipId], ...(below ? { plane: "stage" as const } : {}),
@@ -124,10 +164,15 @@ function streamLayers(project: Project): StreamLayer[] {
 }
 
 /**
- * 依赖下层的流过没过期:那一层带的输入签名(产流时的那一版项目)和按当前项目算的对不上。签名里是目标卡和它下面每一层的
- * 片段输入、采样窗口、框、不透明度、淡入淡出、轨迹,以及下层的上下顺序(`render/streamInputSig.mjs`);上面的层不在里面。
- * 两边都有、同一算法版本、而且不同才算过期(`streamSigStale`);那一层没带签名的不判(照贴)。
- * 每份项目(不可变对象)缓存一张 clipId → 签名:父页每拍都问,项目不换新对象就不重算。
+ * Whether a stream depending on the layers below is stale: the input signature that layer carries
+ * (the project version at production time) doesn't match the one computed from the current
+ * project. The signature covers the target card and each layer below it: clip inputs, sampling
+ * window, box, opacity, fade in/out, trajectory, and the stacking order of the lower layers
+ * (`render/streamInputSig.mjs`); layers above are not included.
+ * It counts as stale only when both sides have a signature, the algorithm version is the same, and
+ * they differ (`streamSigStale`); a layer that carries no signature is not judged (attach as is).
+ * Each project (an immutable object) caches one clipId → signature table: the parent page asks on
+ * every tick, and nothing is recomputed as long as the project isn't a new object.
  */
 const belowSigs = new WeakMap<Project, Map<string, string | null>>();
 function belowSigOf(project: Project, clipId: string): string | null {
@@ -143,13 +188,13 @@ function belowStreamStale(project: Project, clipId: string, layerSig: string | u
 
 export type PickTier = "none" | "over";
 
-/** 这一刻某张卡选中的那一帧（向后兼容类型签名） */
+/** The frame picked for a card at this moment (backward-compatible type signature) */
 export interface Pick {
   clipId: string;
   kind: ReadyKind;
   key: string;
   localFrame: number;
-  /** 投递基线的比较键：换了它才换 DOM */
+  /** Comparison key of the delivery baseline: the DOM is swapped only when it changes */
   id: string;
   tier: PickTier;
 }
@@ -157,9 +202,9 @@ export interface Pick {
 interface Baseline {
   needsReset: boolean;
   lastSentAt: number;
-  /** 暂停态已经 settled(精确活渲、舞台自己撤了抑制)的卡:暂停中不再抑制(根因 B) */
+  /** Cards already settled in the paused state (exact live render, the stage lifted suppression itself): no longer suppressed while paused (root cause B) */
   settled: Set<string>;
-  /** 暂停态第二路互换之后:整台都精确 */
+  /** After the second-path swap in the paused state: the whole stage is exact */
   settledAll: boolean;
 }
 
@@ -171,22 +216,22 @@ let source: SnapshotSource = new HttpSnapshotSource();
 let readyIndex: ReadyIndex = new Map();
 let unsubscribe: (() => void) | null = null;
 let subscribedTo = "";
-/** 到货之后要重投一次：由宿主（`Preview`）挂上 */
+/** Re-deliver once after arrival: attached by the host (`Preview`) */
 let onArrive: (() => void) | null = null;
 
-/** 测试 / 探针:换一个快照来源 */
+/** Tests / probes: swap in a different snapshot source */
 export function setSnapshotSource(next: SnapshotSource): void {
   source = next;
 }
 
 /**
- * 状态到货后叫宿主刷新。传 null 撤掉。
+ * Tell the host to refresh after state arrives. Pass null to detach.
  */
 export function setSnapshotArrive(notify: (() => void) | null): void {
   onArrive = notify;
 }
 
-/** 就绪索引此刻的样子（验收探针看） */
+/** What the ready index looks like right now (read by the acceptance-check probe) */
 export function currentReadyIndex(): ReadyIndex {
   return readyIndex;
 }
@@ -198,9 +243,9 @@ export function snapshotFeedDebug(head: Playhead) {
     ready: [...readyIndex].map(([clipId, kinds]) => ({ clipId, kinds: [...kinds].map(([kind, layer]) => ({ kind, key: layer.key.slice(0, 12), ranges: layer.ranges.length })) })),
     heavy: planned.heavy,
     picks: [],
-    // 这一刻发给舞台的流平面盖着哪几张卡、暂停 / 拖动时抑制哪几张(贴流)
+    // Which cards the stream planes sent to the stage cover at this moment, and which cards are suppressed while paused / dragging (attach stream)
     streams: planned.streamPlanes.map((p) => ({ clipIds: p.clipIds, key: (p.key ?? "").slice(0, 12), originFrame: p.originFrame ?? null, plane: p.plane ?? null })),
-    // 就绪索引里有、但输入签名对不上当前项目的依赖下层的流(下层改过了,旧流不贴)
+    // Streams depending on the layers below that are in the ready index but whose input signature doesn't match the current project (the lower layers changed; don't attach the old stream)
     staleBelow: [...readyIndex].filter(([clipId, kinds]) => {
       const layer = kinds.get("stream");
       return layer?.streamKind === "below" && belowStreamStale(head.project, clipId, layer.inputSig);
@@ -215,11 +260,14 @@ export function snapshotFeedDebug(head: Playhead) {
 }
 
 /**
- * 订阅就绪索引（C3 的 SSE，页面直连预渲染进程）。**只按 session 做键**（根因 E）：
- * 编辑一次 `localRev` + 1，以前这里就清表、重连，而服务端 `/api/frames/ready` 根本不看
- * session / localRev —— 重连空档里播放中的重卡一律透明。现在客户端不抢先清表：旧的层按
- * 「沿用旧的预渲染结果」顶着，等预渲染进程发 `reset` 再清（这个会话的 preload 换了版本时，Item 4）。
- * 换项目（session 变了）才重连。
+ * Subscribe to the ready index (C3's SSE, the page connects directly to the prerender process).
+ * **Keyed by session only** (root cause E): every edit bumps `localRev` by 1; this used to clear
+ * the table and reconnect, while the server's `/api/frames/ready` doesn't look at session /
+ * localRev at all, so during the reconnect gap, heavy cards that were playing all went transparent.
+ * Now the client doesn't clear the table preemptively: old layers are held up as "keep using the
+ * old prerender output", and are cleared once the prerender process sends `reset` (when this
+ * session's preload changed version, Item 4).
+ * Reconnect only when the project changes (the session changed).
  */
 export function syncSnapshotSubscription(notify: () => void): void {
   onArrive = notify;
@@ -247,13 +295,14 @@ export function stopSnapshotFeed(): void {
   baselines.back = newBaseline();
 }
 
-/** `setProject` 整份替换 / K5 的角色互换：下一次投递带 `reset` */
+/** `setProject` replaces the whole thing / K5 role swap: the next delivery carries `reset` */
 export function markBaselineReset(role: StageRole): void {
   baselines[role].needsReset = true;
 }
 
 /**
- * K5 第一路 settled：舞台自己撤了抑制，父页记进 settled 表。
+ * K5 first path settled: the stage lifted suppression itself, and the parent page records it in the
+ * settled table.
  */
 export function noteSettled(role: StageRole, clipIds: readonly string[]): void {
   const base = baselines[role];
@@ -263,8 +312,9 @@ export function noteSettled(role: StageRole, clipIds: readonly string[]): void {
 }
 
 /**
- * K5 第二路暂停态互换之后:新 `front` 是后台整场景补跑出来的,**整台**都是精确活渲(根因 B)。
- * 暂停中不再抑制任何卡,直到下一次 `setTime` / 播放。
+ * After the K5 second-path swap in the paused state: the new `front` was re-run from the whole
+ * background scene, and **the whole stage** is exact live render (root cause B).
+ * While paused no card is suppressed any more, until the next `setTime` / playback.
  */
 export function markAllSettled(role: StageRole): void {
   noteSettledLog("all", role, "");
@@ -272,10 +322,12 @@ export function markAllSettled(role: StageRole): void {
 }
 
 /**
- * 「停下就撤兜底」(product/rendering.md「兜底顺序」末条):暂停态已经追到精确活渲的卡,暂停中不再盖回流。
- * 下一次 `setTime`(`clearSettled`)或播放时清空。
+ * "Drop the fallback once stopped" (product/rendering.md, last item of "Fallback order"): cards in
+ * the paused state that have already caught up to exact live render are no longer covered by the
+ * stream while paused.
+ * Cleared on the next `setTime` (`clearSettled`) or on playback.
  */
-/** 诊断:最近几次 settled 的清与设(谁、何时),探针排查「占位撤下后又盖回」用 */
+/** Diagnostics: the most recent settled clears and sets (who, when), used by probes to investigate "placeholder removed, then covered again" */
 const settledLog: { at: number; op: string; role: StageRole; why: string }[] = [];
 function noteSettledLog(op: string, role: StageRole, why: string) {
   settledLog.push({ at: Math.round(performance.now()), op, role, why });
@@ -293,7 +345,7 @@ function isSettled(role: StageRole, clipId: string): boolean {
   return base.settledAll || base.settled.has(clipId);
 }
 
-/* --------------------------------------------------------------- 按拍换快照（已退役保留签名兼容） */
+/* --------------------------------------------------------------- Per-tick snapshot swap (retired, signature kept for compatibility) */
 
 let beatSwap = false;
 
@@ -301,12 +353,12 @@ export function setBeatSwap(on: boolean, _opts: { swapMs?: number; occupied?: (t
   beatSwap = !!on;
 }
 
-/** 探针看 */
+/** For probes to read */
 export function beatSwapDebug() {
   return { on: beatSwap, swapMs: 0, perLayer: false, knownSizes: 0, last: null, deliveries: 0, underThrottle: 0, placeholders: 0 };
 }
 
-/** 这几张卡从上到下的顺序:轨道按项目里的先后(第一条在最上面),同一轨道里后面的片段盖在前面的上面 */
+/** The top-to-bottom order of these cards: tracks follow their order in the project (the first track is on top), and within the same track later clips cover earlier ones */
 export function topDownOrder(project: Project, clipIds: Iterable<string>): string[] {
   const want = new Set(clipIds);
   const out: string[] = [];
@@ -320,9 +372,9 @@ export function topDownOrder(project: Project, clipIds: Iterable<string>): strin
   return out;
 }
 
-/* --------------------------------------------------------------- 选帧与降级 */
+/* --------------------------------------------------------------- Frame picking and downgrade */
 
-/** 这一层的采样窗口。`firstFrame` 和预渲染进程的 `cardSampling(start, fps)` 同一个算式 */
+/** This layer's sampling window. `firstFrame` uses the same formula as the prerender process's `cardSampling(start, fps)` */
 function samplingOf(clip: { start: number; end: number }, fps: number): { firstFrame: number; count: number } {
   const firstFrame = Math.max(0, Math.ceil(clip.start * fps - 1e-9));
   const phase = firstFrame / fps - clip.start;
@@ -331,10 +383,13 @@ function samplingOf(clip: { start: number; end: number }, fps: number): { firstF
 }
 
 /**
- * K6：已经降级、但死素材还没就绪的卡。**照常活渲**（用户看到的画面不变，只是可能慢），
- * 就绪之后的下一拍才切进 `suppressed` / `streamPlanes` —— 和别的重卡同一机制。
+ * K6: cards that have been downgraded but whose dead media isn't ready yet. **Live-rendered as
+ * usual** (the picture the user sees is unchanged, just possibly slow); only on the tick after
+ * they become ready do they switch into `suppressed` / `streamPlanes`, the same mechanism as the
+ * other heavy cards.
  *
- * 每张卡 HTML 快照作废后，只看 `streamLayers(project)`（每帧所在分段已就绪）。
+ * Now that every card's HTML snapshot is void, only `streamLayers(project)` is consulted (the
+ * segment containing each frame is ready).
  */
 const pendingDemote = new Set<string>();
 
@@ -347,14 +402,16 @@ export function pendingDemotes(): ReadonlySet<string> {
 }
 
 /**
- * 「就绪」按当前播放位置判(mechanism/rendering.md「降级」;根因 D):从当前位置起 `min(fps, 片段剩余帧数)` 帧
- * 都有轨道流覆盖 —— 流按分段(这几帧落在的每一段都在同一条流的就绪区间里,组流算成员)。
+ * "Ready" is judged by the current playback position (mechanism/rendering.md, section "Downgrade";
+ * root cause D): starting from the current position, `min(fps, clip remaining frames)` frames are
+ * all covered by the track stream, by segment (every segment these frames fall in is within the
+ * same stream's ready interval; for a group stream, count the members).
  */
 function demoteReady(project: Project, clipId: string, globalFrame: number, localFrame: number, count: number, fps: number): boolean {
   const need = Math.max(0, Math.min(fps, count - localFrame) - 1);
   for (const layer of streamLayers(project)) {
     if (!layer.members.includes(clipId)) continue;
-    // 这几帧落在这条流的哪几段:按这条流自己的第一帧换算(早于第一帧的是负数段,不在就绪区间里)
+    // Which segments of this stream these frames fall in: converted from this stream's own first frame (frames before the first frame give negative segments, which are not in the ready interval)
     const firstSeg = streamSegmentOf(Math.max(0, globalFrame), layer.originFrame);
     const lastSeg = streamSegmentOf(Math.max(0, globalFrame + need), layer.originFrame);
     let all = true;
@@ -365,10 +422,16 @@ function demoteReady(project: Project, clipId: string, globalFrame: number, loca
 }
 
 /**
- * 在线浏览器模式下本页运行不了的卡（素材效果卡、运行不了的用户卡，`placeholderHost.needsLocalPc`；C10 契约第 9 节，2026-10-06 起本页能运行的用户卡不算）：
- * 有预渲染结果就照贴，与内置卡相同。它们在这台设备上**一律按重卡**：不管分派表怎么判（表还没算出来、旧记录判轻），
- * 播放中抑制；停下时不追（没有组件可追），所以暂停态的「已精确」（`settled`）对它们不成立，一直进 scrub 贴流或显示占位。
- * 判法与舞台同一个（`localOnlyClipIds`）；开关是 `setOnlineBrowserMode`，桌面恒为关，这里恒为空集合。
+ * Cards that cannot run on this page in online browser mode (media effect cards, user cards that cannot run,
+ * `placeholderHost.needsLocalPc`; C10 contract section 9; user cards that can run on this page do not count
+ * since 2026-10-06):
+ * if a prerender output exists, attach it as is, same as built-in cards. On this device they are **always
+ * treated as heavy cards**: no matter what the dispatch table says (table not computed yet, old record says
+ * light), they are suppressed during playback; when stopped they are not caught up (there is no component to
+ * catch up), so the "exact" state (`settled`) in the paused state does not hold for them, and they always go
+ * into scrub stream attachment or show a placeholder.
+ * The decision rule is the same as the stage's (`localOnlyClipIds`); the switch is `setOnlineBrowserMode`,
+ * which is always off on desktop, so here it is always an empty set.
  */
 let localOnlyMemo: { project: Project; key: string; ids: ReadonlySet<string> } | null = null;
 const NO_IDS: ReadonlySet<string> = new Set();
@@ -376,15 +439,17 @@ export function localOnlyOf(project: Project): ReadonlySet<string> {
   if (!onlineBrowserMode()) return NO_IDS;
   const key = `${cardsRegistryGen()}:${syncedUserCardsGen()}:${cardRunStatesGen()}`;
   if (localOnlyMemo && localOnlyMemo.project === project && localOnlyMemo.key === key) return localOnlyMemo.ids;
-  // 剪辑段里的卡也算(摊平视图里的虚拟片段,`kernel/cutFlatten.mjs`)
+  // Cards inside cut segments count too (virtual clips in the flattened view, `kernel/cutFlatten.mjs`)
   const ids = localOnlyClipIds(flatPlanProject(project).tracks.flatMap((tr) => tr.clips));
   localOnlyMemo = { project, key, ids };
   return ids;
 }
 
 /**
- * 这一刻活跃的卡片段（口径同 `Stage` / `FrameScene` 的 live 路：含 LEAD）。剪辑段换成它里面的卡(`kernel/cutFlatten.mjs` 的摊平视图;
- * 用户 2026-10-21 定:剪辑段里的卡和没有剪辑段时一样,轻卡活渲,重卡各自贴自己的流,没流时显示占位)
+ * Card clips active at this moment (same basis as the live path of `Stage` / `FrameScene`: includes LEAD).
+ * A cut segment is replaced by the cards inside it (the flattened view of `kernel/cutFlatten.mjs`;
+ * user decision, 2026-10-21: cards inside a cut segment behave as when there is no cut segment: light cards
+ * are live rendered, heavy cards each attach their own stream, and show a placeholder when there is no stream)
  */
 function activeCardClips(project: Project, t: number): TrackClip[] {
   const out: TrackClip[] = [];
@@ -399,8 +464,9 @@ function activeCardClips(project: Project, t: number): TrackClip[] {
 }
 
 /**
- * 剪辑段里的这张卡有没有自己的单卡流可产(独立卡;`streamPlanRules.mjs` 的 `soloStreamKind` 回 `'flat'` 的那一种)。
- * 能力表与卡片图里这张卡的节点同一个算法(`cardCapabilities`)
+ * Whether this card inside a cut segment can produce its own single-card stream (standalone card; the kind
+ * for which `soloStreamKind` in `streamPlanRules.mjs` returns `'flat'`).
+ * The capability table uses the same algorithm as this card's node in the card graph (`cardCapabilities`)
  */
 export function flatStreamable(clip: TrackClip): boolean {
   const def = clip.cardId ? getCard(clip.cardId) : undefined;
@@ -410,51 +476,63 @@ export function flatStreamable(clip: TrackClip): boolean {
 export interface Playhead {
   project: Project;
   t: number;
-  /** 播放中才有抑制集合（C5 / K5：拖动和暂停下不抑制、改贴流） */
+  /** The suppression set exists only during playback (C5 / K5: no suppression while dragging or paused, attach streams instead) */
   playing: boolean;
   /**
-   * 只有一个舞台:播放、拖动、暂停时判重的卡一律抑制(父页 `Preview` 的 `pumpFeed`);
-   * 停下时舞台把当前这一帧逐层追一次(`settleLayers`),画好的层照双舞台一样收 `settled`、不再盖回流。
+   * There is only one stage: cards judged heavy are always suppressed during playback, dragging and pause
+   * (`pumpFeed` of the parent page `Preview`);
+   * when stopped, the stage catches up the current frame layer by layer (`settleLayers`), and layers that are
+   * drawn take `settled` just like with two stages, without being covered by the stream again.
    */
   single?: boolean;
   /**
-   * 只贴稀疏版(只有一个舞台:精简模式与最低一档,即舞台闸门没到双舞台的设备):流平面带 `first`(每个分段只解第一帧),
-   * 预算用 `sparseStreamBudget`;页面一侧的在线来源也只取稀疏版(`snapshotSource.ts` 的 `small`)
+   * Attach only the sparse version (only one stage: lean mode and the lowest tier, i.e. devices whose stage gate
+   * did not reach dual stage): stream planes carry `first` (each segment decodes only its first frame),
+   * the budget uses `sparseStreamBudget`; the online source on the page side also takes only the sparse version
+   * (`small` of `snapshotSource.ts`)
    */
   sparseOnly?: boolean;
 }
 
 export interface FeedPlan {
-  /** 这一刻判重的卡（播放中就是 `setSuppressed` 的实参，再并上 K3(b) 的额外抑制） */
+  /** Cards judged heavy at this moment (during playback this is the argument of `setSuppressed`, merged with the extra suppression of K3(b)) */
   heavy: string[];
-  /** 快照已撤掉，恒为空表（保留签名向后兼容） */
+  /** Snapshots have been removed, always an empty table (signature kept for backward compatibility) */
   picks: Map<string, Pick>;
-  /** 缺口上报已撤掉，恒为空数组（保留签名向后兼容） */
+  /** Gap reporting has been removed, always an empty array (signature kept for backward compatibility) */
   wanted: { clipId: string; frame: number }[];
   /**
-   * 这一刻发给舞台的流平面（已按同屏流的预算截过，`planesWithinBudget`）：这一帧所在分段已经就绪的重卡的流。
-   * 播放、暂停、拖动都有。只有一个舞台时每条带 `first`（舞台每个分段只解第一帧那一张）。
+   * Stream planes sent to the stage at this moment (already truncated by the budget of concurrent streams,
+   * `planesWithinBudget`): the streams of heavy cards whose segment containing this frame is already ready.
+   * Present during playback, pause and dragging. With only one stage each one carries `first` (the stage decodes
+   * only the first frame of each segment).
    */
   streamPlanes: StreamPlaneRequest[];
   /**
-   * 这一帧有流、但超出预算的那几条（每条带 `over: true`）。舞台不为它们建解码器，只取清单，
-   * 占位符照清单里这一帧所在分段的位置矩形摆。和 `streamPlanes` 一起发给舞台（`streamPlanesAt`）。
+   * The streams that exist for this frame but exceed the budget (each carries `over: true`). The stage builds no
+   * decoder for them and only fetches the manifest; the placeholder is laid out by the position rectangle of the
+   * segment containing this frame in the manifest. Sent to the stage together with `streamPlanes`
+   * (`streamPlanesAt`).
    */
   overPlanes: StreamPlaneRequest[];
   /**
-   * 暂停 / 拖动时父页该抑制的卡：
-   * 还没追到精确活渲的重卡（以及 localOnly 卡）。
-   * 这一帧有流的贴流；没有流的若为 remotion 式卡则不进 scrub（露出活组件当场算），其余重卡进 scrub 显示占位符。
-   * 播放中恒为空（播放中抑制的是 `heavy`）。
+   * Cards the parent page should suppress while paused / dragging:
+   * heavy cards that have not caught up to exact live render (and localOnly cards).
+   * Those with a stream for this frame attach the stream; without a stream, a remotion-style card does not enter
+   * scrub (the live component is exposed and computed on the spot), and other heavy cards enter scrub and show
+   * a placeholder.
+   * Always empty during playback (what is suppressed during playback is `heavy`).
    */
   scrub: string[];
 }
 
 /**
- * 这一刻的投递计划。**纯算，不 fetch、不发 RPC**，所以验收探针可以单独看它。
+ * The delivery plan at this moment. **Pure computation, no fetch, no RPC**, so the acceptance probe can look
+ * at it on its own.
  *
- * 兜底顺序（mechanism/rendering.md「兜底顺序」）在父页这一侧：
- * 流平面只发这一帧有流、解码器预算放行的那几条；超出预算的标 `over`。
+ * The fallback order (mechanism/rendering.md, "Fallback order") is on the parent page side:
+ * stream planes carry only the streams that exist for this frame and are allowed by the decoder budget;
+ * those over budget are marked `over`.
  */
 export function planFeed({ project, t, playing, single, sparseOnly }: Playhead): FeedPlan {
   const plan = planDispatch.currentPlan();
@@ -464,13 +542,13 @@ export function planFeed({ project, t, playing, single, sparseOnly }: Playhead):
   const clips: { clip: TrackClip; firstFrame: number; count: number }[] = [];
   const localOnly = localOnlyOf(project);
   for (const clip of activeCardClips(project, t)) {
-    // 这台设备跑不了的卡一律按重卡(在线浏览器模式;见 `localOnlyOf`)
+    // Cards that this device cannot run are always treated as heavy cards (online browser mode; see `localOnlyOf`)
     if (pipelineAt(plan, clip.id, t) !== "heavy" && !localOnly.has(clip.id)) continue;
-    // 剪辑段里的卡只有独立卡产流(`streamPlanRules.mjs` 的 `'flat'`);别的(依赖下层、源依赖、没审阅过)在嵌套场景里照旧活渲,不抑制
+    // Among cards inside cut segments only standalone cards produce streams (`'flat'` in `streamPlanRules.mjs`); the others (depending on a lower layer, source dependency, not reviewed) are still live rendered in the nested scene, not suppressed
     if (isFlatClipId(clip.id) && !flatStreamable(clip)) continue;
     const { firstFrame, count } = samplingOf(clip, fps);
     if (pendingDemote.has(clip.id)) {
-      // K6：死素材就绪之前照常活渲，**不进 heavy**（也就不会被抑制、不会发流平面）
+      // K6: before the dead asset is ready, live render as usual, **do not enter heavy** (so it is not suppressed and no stream planes are sent)
       if (!demoteReady(project, clip.id, globalFrame, globalFrame - firstFrame, count, fps)) continue;
       pendingDemote.delete(clip.id);
     }
@@ -531,8 +609,8 @@ export function planFeed({ project, t, playing, single, sparseOnly }: Playhead):
 }
 
 /**
- * 取出这一次 `setTime` 能一起带过去的快照（已退役保留签名兼容）。
- * 仅执行 `clearSettled("front")` 并返回空快照。
+ * Take the snapshots that this `setTime` can carry along (retired, signature kept for compatibility).
+ * Only runs `clearSettled("front")` and returns an empty snapshot.
  */
 export function pickForSetTime(head: Playhead): { snapshots: Record<string, string | null>; awaiting: string[] } {
   clearSettled("front", `setTime ${head.t}`);
@@ -540,8 +618,8 @@ export function pickForSetTime(head: Playhead): { snapshots: Record<string, stri
 }
 
 /**
- * 投快照（已退役保留签名兼容）。
- * 播放中清空 settled，返回 0。
+ * Deliver snapshots (retired, signature kept for compatibility).
+ * Clears settled during playback and returns 0.
  */
 export async function deliverSnapshots(_stage: StageRpcClient, role: StageRole, head: Playhead): Promise<number> {
   if (head.playing) clearSettled(role, "playing");
@@ -549,9 +627,11 @@ export async function deliverSnapshots(_stage: StageRpcClient, role: StageRole, 
 }
 
 /**
- * K3(b)：播放中正在等后台补跑的 `vtOk = false` **轻卡**也要抑制（藏子树、`t` 冻住）。
- * 它没有流平面 —— 等待期间舞台在它的位置上显示占位符（T4，product/rendering.md「兜底顺序」：
- * 「等后台舞台补跑后互换」也不透明），用户看不到它用错状态跳变。互换之后这份就清空。
+ * K3(b): during playback, **light cards** with `vtOk = false` that are waiting for a background rerun must
+ * also be suppressed (subtree hidden, `t` frozen).
+ * It has no stream plane: while waiting, the stage shows a placeholder at its position (T4,
+ * product/rendering.md, "Fallback order": "swap after the background stage reruns" is also opaque), so the
+ * user does not see it jump through a wrong state. After the swap this set is cleared.
  */
 let extraSuppressed: readonly string[] = [];
 export function setExtraSuppressed(clipIds: readonly string[]): void {
@@ -559,9 +639,14 @@ export function setExtraSuppressed(clipIds: readonly string[]): void {
 }
 
 /**
- * R8：这一刻的流平面（C3 末段：由就绪索引里 `kind: 'stream'` 的层合成）：这一帧有流的重卡，播放、暂停、拖动都有，
- * **已按同屏流的预算截过**（`planesWithinBudget`，和舞台同一个函数）；超出预算的那几条跟在后面、带 `over: true`（舞台只拿它们的清单摆占位符）。
- * 父页在发 `setSuppressed(...)` 的同一处、**先于它**发 `setStreamPlanes(...)`（舞台等流的第一帧画出来才藏活子树）。
+ * R8: the stream planes at this moment (C3 final stage: synthesized from layers with `kind: 'stream'` in the
+ * ready index): the streams of heavy cards that have a stream for this frame, present during playback, pause
+ * and dragging,
+ * **already truncated by the budget of concurrent streams** (`planesWithinBudget`, the same function as the
+ * stage's); those over budget follow after them, carrying `over: true` (the stage takes only their manifests
+ * to lay out placeholders).
+ * The parent page, at the same place where it sends `setSuppressed(...)`, sends `setStreamPlanes(...)`
+ * **before it** (the stage hides the live subtree only after the first frame of the stream is drawn).
  */
 export function streamPlanesAt(head: Playhead): StreamPlaneRequest[] {
   const feed = planFeed(head);
@@ -569,8 +654,10 @@ export function streamPlanesAt(head: Playhead): StreamPlaneRequest[] {
 }
 
 /**
- * 这一刻该抑制哪几张。播放中：全部重卡（C5 / K5），加上等后台补跑互换的那几张。
- * 暂停 / 拖动：还没追到精确活渲的重卡（`FeedPlan.scrub`）—— 贴流或占位，不露出没推到位的活组件。
+ * Which cards to suppress at this moment. During playback: all heavy cards (C5 / K5), plus those waiting for
+ * the swap after the background rerun.
+ * Paused / dragging: heavy cards that have not caught up to exact live render (`FeedPlan.scrub`): attach the
+ * stream or a placeholder, and do not expose live components that are not advanced into place.
  */
 export function suppressedAt(head: Playhead): string[] {
   const feed = planFeed(head);
@@ -579,7 +666,7 @@ export function suppressedAt(head: Playhead): string[] {
   return [...new Set([...feed.heavy, ...extraSuppressed])].sort();
 }
 
-/** 测试用 */
+/** For tests */
 export function resetSnapshotFeed(): void {
   stopSnapshotFeed();
   beatSwap = false;

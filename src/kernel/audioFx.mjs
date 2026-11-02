@@ -1,34 +1,45 @@
 /**
- * 音频效果:定义、随时间变化的参数表达式,以及预览 / 导出共用的数值。
+ * Audio effects: definitions, time-varying parameter expressions, and values shared
+ * across preview / export.
  *
- * 和 kernel/filters.mjs(视频滤镜)一个路数:效果是项目级的库(project.audioFx),片段用 clip.audioFx 引用;
- * 参数可以写表达式(t / d / p + 自定义参数),规则只在这里写一次。
+ * Same approach as kernel/filters.mjs (video filters): effects are a project-level library
+ * (project.audioFx), referenced by clips via clip.audioFx; parameters can use expressions
+ * (t / d / p + custom parameters), with rules written only once here.
  *
- * # 为什么两条管线都是 Web Audio
+ * # Why both pipelines use Web Audio
  *
- * 视频滤镜要在 CSS 和 ffmpeg 里各实现一遍、逐像素对齐(见 filters.mjs 头注释)。声音这边不这么干:
- * 编辑台预览用浏览器的 Web Audio 实时播,导出时在同一个 Chrome 里用 OfflineAudioContext 把同一张节点图
- * 离线渲成 wav,再由 ffmpeg 合进成片(server/bakery/audio-mix.mjs 的 mixAudioInChrome)。
- * 同一份代码(src/audio/fxChain.ts)、同一套 DSP,天然一致 —— 压缩器、混响这类东西 ffmpeg 和浏览器的算法
- * 本来就不一样,硬对是对不齐的。实测:OfflineAudioContext 同一输入渲两次逐样本相同,88.7 秒立体声
- * 过「高通 + 压缩 + 2 秒卷积 + 增益」0.82 秒;highpass 和 ffmpeg 的同参数差 -91.8 dB。
+ * Video filters must be implemented separately in CSS and ffmpeg, aligned pixel-by-pixel
+ * (see the file header comment in filters.mjs). Audio does not do this: editor preview plays
+ * in real time using browser Web Audio; during export, OfflineAudioContext renders the same
+ * node graph to wav offline in the same Chrome, which ffmpeg then mixes into the final video
+ * (mixAudioInChrome in server/bakery/audio-mix.mjs).
+ * The same code (src/audio/fxChain.ts) and the same DSP are naturally consistent: algorithms
+ * for things like compressors and reverbs inherently differ between ffmpeg and browsers, so
+ * forcing them to match never aligns. Tested: rendering the same input twice in
+ * OfflineAudioContext is sample-by-sample identical; 88.7 seconds of stereo through
+ * "highpass + compression + 2s convolution + gain" takes 0.82 seconds; highpass differs
+ * from ffmpeg with the same parameters by -91.8 dB.
  *
- * 这个文件只管「数值」:哪几种效果、参数范围、这一刻每个参数是多少、混响的脉冲响应怎么生成。
- * 节点怎么接在 src/audio/fxChain.ts(浏览器)。纯 JS 是为了 node 直接跑的服务端和单测也能 import。
+ * This file only handles "values": which effect kinds, parameter ranges, what each parameter
+ * is at this instant, and how reverb impulse responses are generated. How nodes connect is in
+ * src/audio/fxChain.ts (browser). Plain JS is used so node-run server side and unit tests can
+ * also import it directly.
  *
- * # 时间表达式
+ * # Time expressions
  *
- * 和视频滤镜同一套小语法(filters.mjs 的 compileExpr):t = 片段内秒数、d = 片段时长、p = t/d,
- * 以及效果自己声明的参数名。每一步的每个参数都可以是数字或表达式。
+ * Same mini-grammar as video filters (compileExpr in filters.mjs): t = seconds within clip,
+ * d = clip duration, p = t/d, plus parameter names declared by the effect itself. Each parameter
+ * at each step can be a number or an expression.
  */
 
 import { BASE_VARS, compiledOf, FilterExprError, MAX_EXPR_LEN, normalizeParamDecls, RESERVED } from "./filters.mjs";
 
-/* ------------------------------------------------------------------ 种类 */
+/* ------------------------------------------------------------------ Kinds */
 
 /**
- * 每种效果的参数表。default 是「没填」时的值;neutral 给出来的种类,全部参数都等于 neutral 时这一步等于没接
- * (预览和导出都直接跳过,省节点)。
+ * Parameter table for each effect kind. default is the value when omitted; for kinds providing
+ * neutral, when all parameters equal neutral this step acts as not connected (both preview and
+ * export skip it directly to save nodes).
  */
 export const AUDIO_FX_KINDS = {
   gain: {
@@ -108,7 +119,7 @@ export const AUDIO_FX_KINDS = {
 export const MAX_AUDIO_OPS = 8;
 export { MAX_EXPR_LEN };
 
-/** 效果的参数名也不能和种类的参数名撞(不然表达式里写 freq 分不清是自定义的还是这一步的) */
+/** Effect parameter names cannot collide with kind parameter names (otherwise writing freq in an expression cannot distinguish custom vs. this step) */
 const KIND_PARAM_NAMES = new Set(Object.values(AUDIO_FX_KINDS).flatMap((k) => Object.keys(k.params)));
 const AUDIO_RESERVED = new Set([...RESERVED, ...KIND_PARAM_NAMES]);
 
@@ -119,15 +130,17 @@ export const AUDIO_EXPR_HELP =
   "e.g. { kind:'gain', db:'lerp(-18, 0, smoothstep(0, 1, t))' } (rises from -18 dB back to the original sound within the first second), " +
   "{ kind:'lowpass', freq:'lerp(400, 12000, p)' } (the whole segment slowly brightens from muffled).";
 
-/* ------------------------------------------------------------------ 定义校验 */
+/* ------------------------------------------------------------------ Definition validation */
 
 const round6 = (n) => Math.round(n * 1e6) / 1e6;
 const clamp = (x, a, b) => Math.min(Math.max(x, a), b);
 
 /**
- * 把模型 / 界面交来的效果定义洗成规范形状,不合规就抛(文案写给模型看)。
- * ops 每一步是 { kind, <参数名>: 数字 | 表达式 },没填的参数取种类的 default。
- * 返回 { name, description?, params?, ops }(id / createdAt 由调用方加)。
+ * Normalizes effect definitions submitted by models / UI into canonical shape, throwing if
+ * invalid (copy written for models).
+ * Each step in ops is { kind, <paramName>: number | expression }; omitted parameters take the
+ * kind's default.
+ * Returns { name, description?, params?, ops } (id / createdAt added by caller).
  */
 export function normalizeAudioFxDef(input) {
   if (!input || typeof input !== "object") throw new FilterExprError("The effect definition must be an object");
@@ -145,7 +158,7 @@ export function normalizeAudioFxDef(input) {
     const kind = op && op.kind;
     const spec = Object.hasOwn(AUDIO_FX_KINDS, kind) ? AUDIO_FX_KINDS[kind] : null;
     if (!spec) throw new FilterExprError(`ops[${i}].kind "${kind}" is not recognized, only: ${Object.keys(AUDIO_FX_KINDS).join(" / ")}`);
-    // 兼容 { kind, params: {...} } 的写法;扁平的 { kind, freq, q } 是主要形态
+    // Compatible with { kind, params: {...} } format; flat { kind, freq, q } is the primary form
     const src = op.params && typeof op.params === "object" ? { ...op.params, ...op, params: undefined } : op;
     const out = { kind };
     for (const key of Object.keys(src)) {
@@ -175,7 +188,7 @@ export function normalizeAudioFxDef(input) {
   });
 
   const def = { name, ...(description ? { description } : null), ...(keys.length ? { params } : null), ops };
-  // 抽几个时刻试算一遍:NaN / 无穷当场说,别等到导出
+  // Sample a few timestamps for trial runs: report NaN / infinity immediately, don't wait for export
   for (const d of [1, 10]) {
     for (const t of [0, d * 0.37, d]) {
       const env = envOf(def, undefined, t, d);
@@ -191,7 +204,7 @@ export function normalizeAudioFxDef(input) {
   return def;
 }
 
-/** 片段上的参数覆盖:只留声明过的键,夹进 min~max。不合法的键直接报错 */
+/** Parameter override on clips: keep only declared keys clamped to min~max. Invalid keys throw an error directly */
 export function normalizeAudioClipParams(def, input) {
   if (input === undefined || input === null) return undefined;
   if (typeof input !== "object") throw new FilterExprError("params must be an object");
@@ -205,7 +218,7 @@ export function normalizeAudioClipParams(def, input) {
   return Object.keys(out).length ? out : undefined;
 }
 
-/* ------------------------------------------------------------------ 求值 */
+/* ------------------------------------------------------------------ Evaluation */
 
 function envOf(def, clipParams, t, d) {
   const dd = Math.max(0, Number(d) || 0);
@@ -219,8 +232,10 @@ function envOf(def, clipParams, t, d) {
 }
 
 /**
- * 这一刻每一步的数值。t 是片段内秒数,d 是片段时长。算不出来(NaN)的退回 default,超范围的夹住。
- * 返回 [{ kind, values: { 参数名: 数字 } }],和 def.ops 一一对应(节点图的结构只由种类决定,逐帧只换数)。
+ * Numerical values of each step at this instant. t is seconds within clip, d is clip duration.
+ * Uncomputable values (NaN) fall back to default, and out-of-range values are clamped.
+ * Returns [{ kind, values: { paramName: number } }], mapping 1:1 with def.ops (node graph
+ * structure is determined solely by kind; frame-by-frame only swaps numbers).
  */
 export function resolveAudioOps(def, clipParams, t, d) {
   const vars = [...BASE_VARS, ...Object.keys(def.params || {})];
@@ -231,7 +246,7 @@ export function resolveAudioOps(def, clipParams, t, d) {
     for (const [key, ps] of Object.entries(spec.params)) {
       const raw = op[key];
       let v;
-      // 同 filters.mjs 的 resolveOps:工程文件里的坏表达式按 default 算,不在预览 / 混音里抛
+      // Same as resolveOps in filters.mjs: bad expressions in project files evaluate to default, not thrown in preview / mix
       try {
         v = typeof raw === "number" ? raw : typeof raw === "string" ? compiledOf(raw, vars).fn(env) : ps.default;
       } catch {
@@ -244,7 +259,7 @@ export function resolveAudioOps(def, clipParams, t, d) {
   });
 }
 
-/** 这一步是不是「等于没接」:声明了 neutral 的参数全在中性值上(增益 0 dB、混响 mix 0……) */
+/** Whether this step "acts as not connected": parameters declaring neutral are all at neutral values (gain 0 dB, reverb mix 0...) */
 export function isNeutralOp(op) {
   const spec = AUDIO_FX_KINDS[op.kind];
   const neutralKeys = Object.entries(spec.params).filter(([, ps]) => ps.neutral !== undefined);
@@ -252,7 +267,7 @@ export function isNeutralOp(op) {
   return neutralKeys.every(([key, ps]) => op.values[key] === ps.neutral);
 }
 
-/** 有没有随时间变的参数(用到 t 或 p)。没有的话预览只在挂上时设一次参数,导出也不用逐步排自动化 */
+/** Whether any parameters vary over time (using t or p). If none, preview sets parameters once on attach, and export does not need step-by-step automation */
 export function isAudioFxAnimated(def) {
   const vars = [...BASE_VARS, ...Object.keys(def.params || {})];
   return def.ops.some((op) =>
@@ -268,7 +283,7 @@ export function isAudioFxAnimated(def) {
   );
 }
 
-/** 一句话描述,给界面列表和工具回显用 */
+/** One-sentence description, for UI lists and tool echo */
 export function describeAudioFx(def) {
   return def.ops
     .map((op) => {
@@ -281,9 +296,9 @@ export function describeAudioFx(def) {
     .join(" · ");
 }
 
-/* ------------------------------------------------------------------ 混响脉冲响应 */
+/* ------------------------------------------------------------------ Reverb impulse response */
 
-/** 确定性的 PRNG(mulberry32):预览和导出、这台机器和那台机器,同一个 decay 生成同一条尾巴 */
+/** Deterministic PRNG (mulberry32): the same decay generates the same tail across preview, export, and different machines */
 function mulberry32(seed) {
   let a = seed >>> 0;
   return () => {
@@ -296,20 +311,23 @@ function mulberry32(seed) {
 }
 
 /**
- * 合成一条混响脉冲响应:白噪声 × 指数衰减,decay 秒后衰减 60 dB(RT60)。
- * 左右两声道用不同的种子,才有立体的扩散感。返回 [左, 右] 两条 Float32Array,长度 = decay × sampleRate。
- * 纯函数、确定性,单测能验;真正放进 ConvolverNode 在 src/audio/fxChain.ts。
+ * Synthesizes a reverb impulse response: white noise × exponential decay, decaying 60 dB after
+ * decay seconds (RT60).
+ * Left and right channels use different seeds to produce a stereo sense of diffusion. Returns
+ * [left, right] Float32Array pair, length = decay × sampleRate.
+ * Pure function, deterministic, verifiable by unit tests; actually placed into ConvolverNode
+ * in src/audio/fxChain.ts.
  */
 export function reverbImpulse(sampleRate, decay, seed = 1) {
   const dec = clamp(decay, 0.05, 10);
   const len = Math.max(1, Math.round(dec * sampleRate));
-  const k = Math.log(1000) / (dec * sampleRate); // e^(-k·n):n = decay·sr 时为 1/1000(-60 dB)
+  const k = Math.log(1000) / (dec * sampleRate); // e^(-k·n): 1/1000 (-60 dB) when n = decay·sr
   const out = [];
   for (let ch = 0; ch < 2; ch++) {
     const rnd = mulberry32(seed * 7919 + ch * 104729 + 17);
     const buf = new Float32Array(len);
     for (let i = 0; i < len; i++) buf[i] = (rnd() * 2 - 1) * Math.exp(-k * i);
-    // 归一:让整条尾巴的能量和一个单位脉冲相当,mix 0.25 在长短尾巴上听起来差不多响
+    // Normalize: match total tail energy to a unit impulse, so mix 0.25 sounds equally loud on long and short tails
     let e = 0;
     for (let i = 0; i < len; i++) e += buf[i] * buf[i];
     const g = e > 0 ? 1 / Math.sqrt(e) : 1;
@@ -319,11 +337,14 @@ export function reverbImpulse(sampleRate, decay, seed = 1) {
   return out;
 }
 
-/* ------------------------------------------------------------------ 预设 */
+/* ------------------------------------------------------------------ Presets */
 
 /**
- * 素材库「音频效果」页里「从预设新建」的几条。刻意少:够常见场景起步,细调让 Agent 或人改参数。
- * 每条经 normalizeAudioFxDef 洗过才进库(单测保证它们全都合规)。
+ * Presets under "New from preset" on the "Audio effects" page in the media library. Deliberately
+ * minimal: enough to get started in common scenarios; fine-tuning lets Agents or humans tweak
+ * parameters.
+ * Each item is sanitized via normalizeAudioFxDef before being stored (unit tests ensure all of
+ * them are valid).
  */
 export const AUDIO_FX_PRESETS = [
   {
@@ -364,16 +385,16 @@ export const AUDIO_FX_PRESETS = [
   },
 ];
 
-/* ------------------------------------------------------------------ 项目里的查找 */
+/* ------------------------------------------------------------------ Lookups in project */
 
-/** 片段挂着的效果定义(找不到就 null —— 效果被删了,片段按没效果播) */
+/** Effect definition attached to clip (null if not found: effect was deleted, clip plays without fx) */
 export function audioFxOfClip(project, clip) {
-  // 停用(`clip.audioFx.off`)的按没挂算:预览的 Web Audio 图和导出的 ffmpeg 混音共用这一处
+  // Disabled (`clip.audioFx.off`) counts as not attached: shared by preview Web Audio graph and export ffmpeg mix
   if (!clip || !clip.audioFx || !clip.audioFx.id || clip.audioFx.off) return null;
   return (project.audioFx || []).find((f) => f.id === clip.audioFx.id) || null;
 }
 
-/** 片段在时间轴时刻 T 的效果数值;没挂或找不到定义返回 null */
+/** Effect values of clip at timeline time T; returns null if not attached or definition not found */
 export function clipAudioFxAt(project, clip, T) {
   const def = audioFxOfClip(project, clip);
   if (!def) return null;

@@ -1,58 +1,64 @@
 /**
- * canvas 卡的共享 WebGL 渲染器(R9)—— 契约与消息的类型。
+ * Shared WebGL renderer for canvas cards (R9): Types for contracts and messages.
  *
- * # 为什么拆两半(M1)
+ * # Why split into two halves (M1)
  *
- * Worker 是独立的 JS 运行环境,`postMessage` 传不了函数。所以契约拆开:
- *   - **可序列化的一半**是 `CardDef.canvas`(下面的 `CanvasContract`),主线程读它决定
- *     `Stage` 要不要多渲一个 `[data-pc-gl-plane]` 兄弟平面、`beat` 里带哪些卡;
- *   - **函数的一半**放在卡文件同目录的 `<id>.gl.ts`,导出 `program`(下面的 `CanvasCardProgram`),
- *     **不 import React、不碰 DOM**。注册表是 `programs.ts`,Worker 和主线程退路 import 同一张。
+ * Worker is an isolated JS runtime environment; `postMessage` cannot transfer functions.
+ * So the contract is split:
+ *   - **The serializable half** is `CardDef.canvas` (`CanvasContract` below); the main thread
+ *     reads it to determine whether `Stage` needs to render an extra `[data-pc-gl-plane]` sibling
+ *     plane and which cards to include in `beat`;
+ *   - **The function half** is located in `<id>.gl.ts` in the same directory as the card file,
+ *     exporting `program` (`CanvasCardProgram` below), **without importing React or touching the
+ *     DOM**. The registry is `programs.ts`; Worker and the main thread fallback import the same copy.
  *
- * 三种进 Worker 的形状(`gl` / `three` / `2d`)共用一条规矩:**只收 `t`(本地秒)、params 和 `reset`**,
- * 不读 rAF / `performance.now` / `Date.now` —— Worker 里没有舞台的虚拟时钟,时间只能由主线程给。
- * 第四种 `dom2d` 不带函数、不进 Worker(粒子卡):卡的 `Component` 自己在 effect 里按 `t` 画。
+ * The three shapes entering Worker (`gl` / `three` / `2d`) share one rule: **accept only `t` (local
+ * seconds), params, and `reset`**, and never read rAF / `performance.now` / `Date.now`: Worker has
+ * no stage virtual clock, so time can only be provided by the main thread. The fourth shape `dom2d`
+ * has no functions and does not enter Worker (particle cards): the card's `Component` draws by `t`
+ * in an effect itself.
  *
- * `CardDef` 的字段用接口合并挂上(见文件末尾):`CardDef` 在 `kernel/types.ts`,这一步不动那个文件。
+ * `CardDef` fields are attached via interface merging (see end of file): `CardDef` lives in
+ * `kernel/types.ts`, and this step leaves that file untouched.
  */
 
 import type * as ThreeNs from "three";
 
-/** 纹理从哪来。`mediaId` 走项目素材(只用小尺寸的素材取 `tiers.small`),`url` 是写死的地址,`param` 是「地址在这个参数里」 */
+/** Where texture comes from: `mediaId` uses project assets (`tiers.small` for small-size only), `url` is fixed, `param` means "URL in this param" */
 export interface CanvasTextureSpec {
   name: string;
   mediaId?: string;
   url?: string;
-  /** 地址取自这个参数的值(空串 = 这张纹理不用)。`scene-3d` 的 `texture` 参数就是这种 */
+  /** URL from value of this param (empty string = texture unused). `texture` param of `scene-3d` is this kind */
   param?: string;
 }
 
-/** `CardDef.canvas`:可序列化的那一半(M1)。有这个字段的卡就是 canvas 卡 */
+/** `CardDef.canvas`: The serializable half (M1). Cards with this field are canvas cards */
 export interface CanvasContract {
   kind: "gl" | "three" | "2d" | "dom2d";
-  /** `programs.ts` 里的键;缺省 = 卡 id */
+  /** Key in `programs.ts`; default = card id */
   programId?: string;
   textures?: CanvasTextureSpec[];
-  /** M6 的声明位:纯片元卡将来可以合并成 uber-shader。本任务不实现,只留位置 */
+  /** M6 declaration flag: Pure fragment cards can merge into uber-shader in the future. Reserved only */
   fragmentOnly?: boolean;
 }
 
-/** `build` / `draw` 的第三个参数里,除了纹理还有画布尺寸和舞台信息(相机要用) */
+/** In third parameter of `build` / `draw`, includes canvas size and stage info (used by camera) besides textures */
 export interface CanvasProgramContext {
-  /** 画布像素宽高(= 片段实体框) */
+  /** Canvas pixel width and height (= clip entity box) */
   width: number;
   height: number;
-  /** 舞台画幅与三维相机的 fov(`CardProps.stage` 同一份) */
+  /** Stage aspect ratio and 3D camera fov (same copy as `CardProps.stage`) */
   stage: { width: number; height: number; camera3dFov?: number };
 }
 
-/** `gl`:一段着色器 + 每拍的 uniform */
+/** `gl`: A shader snippet + uniforms per tick */
 export interface GlProgram {
   kind: "gl";
   vertex: string;
   fragment: string;
   uniforms(t: number, params: Record<string, unknown>): Record<string, number | number[]>;
-  /** 缺省 `quad`:铺满区域的一个三角形条,顶点属性 `aPos`(−1..1) */
+  /** Default `quad`: a triangle strip filling the region, vertex attribute `aPos`(-1..1) */
   geometry?: "quad" | { vertices: number[]; indices?: number[] };
   extensions?: string[];
 }
@@ -64,13 +70,13 @@ export interface ThreeBuilt {
   dispose?(): void;
 }
 
-/** `three`:渲染器由共享上下文建一次,各卡的 scene 各画各的、画进图集自己的区域 */
+/** `three`: renderer is created once from the shared context; each card's scene renders independently into its own region of the atlas */
 export interface ThreeProgram {
   kind: "three";
   build(THREE: typeof ThreeNs, params: Record<string, any>, ctx: CanvasProgramContext & { textures: Record<string, ThreeNs.Texture> }): ThreeBuilt;
 }
 
-/** `2d`:同一个 Worker 里各自的 `OffscreenCanvas` 2D 上下文(不占 WebGL 上下文) */
+/** `2d`: respective `OffscreenCanvas` 2D contexts in the same Worker (does not occupy WebGL context) */
 export interface TwoDProgram {
   kind: "2d";
   draw(ctx: OffscreenCanvasRenderingContext2D, t: number, params: Record<string, any>, opts: CanvasProgramContext & { images: Record<string, ImageBitmap>; reset: boolean }): void;
@@ -78,21 +84,21 @@ export interface TwoDProgram {
 
 export type CanvasCardProgram = GlProgram | ThreeProgram | TwoDProgram;
 
-/* ------------------------------------------------------------------ 消息 */
+/* ------------------------------------------------------------------ Messages */
 
-/** 一张卡在这一份布局里的样子(`layout` 消息的一行) */
+/** Appearance of a card in this layout (one row of the `layout` message) */
 export interface GlLayoutCard {
   clipId: string;
   programId: string;
   kind: "gl" | "three" | "2d";
   w: number;
   h: number;
-  /** 已按参数 / 素材解析好的**绝对**地址(Worker 按它缓存解码后的位图) */
+  /** Resolved **absolute** address based on parameters / assets (Worker caches decoded bitmaps by it) */
   textures: Array<{ name: string; url: string }>;
   stage: CanvasProgramContext["stage"];
 }
 
-/** `beat` 里的一张卡(M3):`t` 一律是本地秒;`params` 只在变了时带 */
+/** A card in `beat` (M3): `t` is always local seconds; `params` is only included when changed */
 export interface GlBeatCard {
   clipId: string;
   t: number;
@@ -101,22 +107,22 @@ export interface GlBeatCard {
 }
 
 export type GlToWorker =
-  /** 路线 1 / 主线程退路:探能力、建上下文 */
+  /** Route 1 / main thread fallback: probe capabilities, create context */
   | { type: "init"; compact: boolean }
-  /** 路线 2:父页把一个舞台的端口交给 Worker */
+  /** Route 2: parent page hands over a stage port to the Worker */
   | { type: "connect"; stageId: string; port: MessagePort }
   | { type: "layout"; stageId: string; cards: GlLayoutCard[] }
   | {
     type: "beat"; stageId: string; seq: number; t: number; cards: GlBeatCard[];
-    /** 等编译 / 纹理就绪再画(导出、探针、生成快照);缺省 = 没好的卡这一拍留空 */
+    /** Wait for compilation / textures to be ready before rendering (export, probe, generate snapshots); default = leave unready cards blank for this tick */
     strict?: boolean;
-    /** 顺带量每张卡的 GPU 时间(M4) */
+    /** Also measure GPU time for each card (M4) */
     measure?: boolean;
-    /** 验收用:Worker 故意睡这么久再回 `done`(K4「慢帧就等」的验收) */
+    /** For acceptance check: Worker deliberately sleeps this long before returning `done` (acceptance check for K4 "wait on slow frames") */
     debugSleepMs?: number;
   }
   | { type: "release"; stageId: string }
-  /** 探针用:报诊断 */
+  /** For probe: report diagnostics */
   | { type: "diag"; stageId: string; seq: number };
 
 export type GlFromWorker =
@@ -125,20 +131,20 @@ export type GlFromWorker =
   | {
     type: "done"; stageId: string; seq: number; t: number;
     bitmaps: Map<string, ImageBitmap>;
-    /** 这一拍每张卡的 GPU 时间(毫秒;`measure` 时才有) */
+    /** GPU time for each card on this tick (milliseconds; only present during `measure`) */
     gpuMs?: Record<string, number>;
-    /** 这一拍没画出来的卡(编译 / 纹理还没好)和原因 */
+    /** Cards not rendered in this tick (compilation / textures not ready yet) and reasons */
     skipped?: Record<string, string>;
     error?: string;
   }
   | { type: "diag"; stageId: string; seq: number; diag: GlWorkerDiag };
 
 export interface GlWorkerDiag {
-  /** 这个 Worker 里活着的 WebGL 上下文数(验收:恰好一个) */
+  /** Number of live WebGL contexts in this Worker (acceptance check: exactly one) */
   contexts: number;
   stages: string[];
   programs: number;
-  /** 纹理缓存里的位图 / GL 纹理 / THREE.Texture 数与累计上传次数 */
+  /** Counts of bitmaps / GL textures / THREE.Texture in texture cache and cumulative upload count */
   bitmaps: number;
   glTextures: number;
   threeTextures: number;
@@ -153,9 +159,11 @@ export interface GlWorkerDiag {
 declare module "../../kernel/types" {
   interface CardDef<P = Record<string, unknown>> {
     /**
-     * canvas 卡的可序列化契约(R9 M1)。**不用顶层 `kind`**:那个名字被素材效果卡的类别占了。
-     * 有这个字段的卡就是 canvas 卡:`Stage` 在包裹层里多渲一个 `[data-pc-gl-plane]`(`dom2d` 除外),
-     * 卡的 `Component` 不再自己渲 `<canvas>`;函数的那一半在同目录的 `<id>.gl.ts`。
+     * Serializable contract for canvas cards (R9 M1). **Do not use top-level `kind`**: that name
+     * is taken by media effect card categories. Cards with this field are canvas cards: `Stage`
+     * renders an extra `[data-pc-gl-plane]` in wrapper layer (except `dom2d`), and the card's
+     * `Component` no longer renders `<canvas>` itself; the function half is in `<id>.gl.ts` in the
+     * same directory.
      */
     canvas?: CanvasContract;
   }

@@ -1,25 +1,34 @@
 import '../lib/no-user-dirs.mjs';
 /**
- * 浏览器版不画应用标题栏(2026-10-22 用户定:不要「显示顶部菜单栏」和 − □ × 三个按钮;桌面版照旧)的探针。
- * 用无头 Chrome 各开一个编辑器页面,看真实 DOM,不靠读源码:
+ * Probe verifying that the browser version does not render the application titlebar
+ * ((user decision, 2026-10-22): omit "Show top menu bar" and the three − □ × buttons; desktop app
+ * unchanged). Opens one editor page each in headless Chrome to inspect the real DOM rather than
+ * reading source code:
  *
  *   node scripts/probes/browser-titlebar-probe.mjs [--online-port 5960] [--desktop-port 5963] [--out out/browser-titlebar]
  *
- * 自己起两台开发服务(`PROMPTCUT_NO_PORT_FILE=1`,不写公共端口文件;端口各占「端口 +1」「+2」当舞台端口,三个连号要空着):
- *   - 在线:`vite --mode online`(编译期常量 `VITE_PC_ONLINE=1`),开 `/?editor`;
- *   - 桌面:`vite`(缺省模式),开 `/?editor`。
+ * Starts two dev servers itself (`PROMPTCUT_NO_PORT_FILE=1`, no shared port file written; each takes
+ * "port + 1" and "+ 2" as stage ports, so three consecutive ports must be free):
+ *   - Online: `vite --mode online` (compile-time constant `VITE_PC_ONLINE=1`), opens `/?editor`;
+ *   - Desktop: `vite` (default mode), opens `/?editor`.
  *
- * 检查(每项一行 JSON `{ check, ok, ... }`,最后一行 `{ summary }`;有失败退出码 1):
- *   O1 在线:编辑器顶栏在(`.pc-bar--main`),页面上没有 `.pc-titlebar`、`.pc-titlebar-menus`、`.pc-titlebar-window-controls`、
- *      `.pc-window-control`,也没有应用菜单(`nav[aria-label="应用菜单"]`)里的按钮。
- *   O2 在线:没有空占位——编辑器顶栏贴在页面最上沿(顶边 y = 0)。
- *   O3 在线:顶栏「⋯」菜单里有:皮肤…、快捷键、关于 PromptCut;点「快捷键」「关于 PromptCut」各弹一次说明(dialog 文字对得上)。
- *   O4 在线:另五项的入口都在顶栏上:撤销、重做、首页、导出视频(按钮在,撤销重做按钮在)。
- *   D1 桌面:`.pc-titlebar` 在,菜单行(文件/编辑/视图/帮助)和三个窗口按钮(最小化/最大化/关闭)都在。
- *   D2 桌面:点「文件」开得出菜单,里面有「导出视频」「返回首页」;点「帮助」开得出,里面有「快捷键」「关于 PromptCut」。
- *   D3 桌面:顶栏「⋯」菜单里没有「快捷键」「关于 PromptCut」(不重复)。
- * 截图写进 `--out`:`online-editor.png`(在线,标题栏两组都不在)、`online-more-menu.png`(在线,「⋯」菜单展开)、
- * `desktop-editor.png`(桌面,两组都在)、`desktop-file-menu.png`(桌面,「文件」菜单展开)。
+ * Checks (one JSON line `{ check, ok, ... }` per item, final line `{ summary }`; exit code 1 on failure):
+ *   O1 Online: editor top bar is present (`.pc-bar--main`), and `.pc-titlebar`, `.pc-titlebar-menus`,
+ *      `.pc-titlebar-window-controls`, and `.pc-window-control` are absent from the page, as are
+ *      buttons in the application menu (`nav[aria-label="Application menu"]`).
+ *   O2 Online: no empty placeholder: editor top bar sits against the top edge of the page (top y = 0).
+ *   O3 Online: top bar "⋯" menu contains: Skin…, Shortcuts, About PromptCut; clicking "Shortcuts"
+ *      and "About PromptCut" each opens a dialog once (dialog text matches).
+ *   O4 Online: entry points for the other five items are on the top bar: Undo, Redo, Home,
+ *      Export video (buttons are present, undo and redo buttons are present).
+ *   D1 Desktop: `.pc-titlebar` is present; menu bar (File/Edit/View/Help) and three window buttons
+ *      (Minimize/Maximize/Close) are all present.
+ *   D2 Desktop: clicking "File" opens its menu containing "Export video" and "Back to home";
+ *      clicking "Help" opens its menu containing "Shortcuts" and "About PromptCut".
+ *   D3 Desktop: top bar "⋯" menu does not contain "Shortcuts" or "About PromptCut" (no duplication).
+ * Screenshots written to `--out`: `online-editor.png` (online, neither titlebar group present),
+ * `online-more-menu.png` (online, "⋯" menu expanded), `desktop-editor.png` (desktop, both groups present),
+ * `desktop-file-menu.png` (desktop, "File" menu expanded).
  */
 import puppeteer from 'puppeteer';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
@@ -65,7 +74,7 @@ async function waitHttp(port, ms = 60000) {
   }
   return false;
 }
-const killTree = (child) => { try { spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); } catch { /* 已退出 */ } };
+const killTree = (child) => { try { spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); } catch { /* Exited */ } };
 
 const servers = [startVite(ONLINE_PORT, 'online'), startVite(DESKTOP_PORT, null)];
 let browser;
@@ -81,7 +90,7 @@ try {
     page.on('dialog', async (d) => { dialogs.push(d.message()); await d.dismiss(); });
     await page.goto(`http://127.0.0.1:${port}/?editor`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.pc-bar--main', { timeout: 60000 });
-    await sleep(1500); // 让皮肤、布局落定
+    await sleep(1500); // Let skin and layout settle
     return { page, dialogs };
   }
   const textOf = (page, sel) => page.$$eval(sel, (els) => els.map((e) => (e.textContent || '').trim()));
@@ -94,7 +103,7 @@ try {
     return false;
   };
 
-  // ---------------- 在线
+  // ---------------- Online
   {
     const { page, dialogs } = await openEditor(ONLINE_PORT);
     const probe = await page.evaluate(() => ({
@@ -110,7 +119,7 @@ try {
     report('O2 online: the top bar sits flush against the top edge of the page, with no empty placeholder', probe.barTop === 0, { barTop: probe.barTop });
     await page.screenshot({ path: path.join(OUT, 'online-editor.png') });
 
-    // O4 另五项入口在顶栏上
+    // O4 Entry points for the other five items are on the top bar
     const entries = await page.evaluate(() => ({
       undo: Boolean(document.querySelector('[data-pc="undo-btn"] button')),
       redo: Boolean(document.querySelector('[data-pc="redo-btn"] button')),
@@ -118,7 +127,7 @@ try {
     }));
     report('O4 online: the entries for Undo, Redo, Home and Export video are on the top bar', entries.undo && entries.redo && entries.labels.includes('home page') && entries.labels.includes('Export video'), entries);
 
-    // O3 「⋯」菜单
+    // O3 "⋯" menu
     await page.click('button[title="More settings"]');
     await page.waitForSelector('.pc-more-menu', { timeout: 5000 });
     const items = await textOf(page, '.pc-more-menu .pc-btn');
@@ -134,7 +143,7 @@ try {
     await page.close();
   }
 
-  // ---------------- 桌面
+  // ---------------- Desktop
   {
     const { page } = await openEditor(DESKTOP_PORT);
     const probe = await page.evaluate(() => ({
@@ -150,7 +159,8 @@ try {
     await page.waitForSelector('.pc-titlebar-menu', { timeout: 5000 });
     const fileItems = await textOf(page, '.pc-titlebar-menu .pc-titlebar-menu-item');
     await page.screenshot({ path: path.join(OUT, 'desktop-file-menu.png') });
-    // 菜单开着时鼠标移到别的菜单名上就切过去(onMouseEnter);这里用悬停,点击反而会把刚切过去的又收起
+    // When a menu is open, moving the mouse over another menu name switches to it (onMouseEnter);
+    // hover is used here, as clicking would collapse the menu that was just switched to
     const helpBtn = (await page.$$('.pc-titlebar-menu-button'))[3];
     await helpBtn.hover();
     await sleep(300);
@@ -170,7 +180,7 @@ try {
 } catch (e) {
   report('probe', false, { error: String(e?.stack || e).slice(0, 800) });
 } finally {
-  try { await browser?.close(); } catch { /* 已关 */ }
+  try { await browser?.close(); } catch { /* Closed */ }
   for (const s of servers) killTree(s);
 }
 const failed = results.filter((r) => !r.ok).length;

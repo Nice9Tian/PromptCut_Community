@@ -1,9 +1,9 @@
 /**
- * 通用像素映射的纯内核。
+ * Pure kernel for generic pixel maps.
  *
- * 这里故意不接 DOM、Canvas 或 ffmpeg：定义和表达式在编辑器、see_frames、导出
- * 之间共用，具体渲染器只需要调用 mapRgba。表达式复用滤镜里的安全解析器，绝不
- * 使用 eval / Function。
+ * Deliberately does not touch DOM, Canvas, or ffmpeg here: definitions and expressions are shared
+ * between editor, see_frames, and export, and concrete renderers only need to call mapRgba.
+ * Expressions reuse the safe parser from filters and never use eval / Function.
  */
 import { compiledOf, parseExpr, astToFn, applyTableOps, normalizeFilterDef, MAX_TABLE_POINTS, FilterExprError } from "./filters.mjs";
 
@@ -135,7 +135,7 @@ function sequenceTarget(rgba, seqFrom, seqTo, mode) {
   return seqTo[i].map((v, k) => v + (seqTo[i + 1][k] - v) * f);
 }
 
-/** 将一个 0~1 RGBA 像素映射成新像素。媒体目标由渲染器提供 targetRgba。 */
+/** Maps a 0~1 RGBA pixel to a new pixel. For media targets, the renderer provides targetRgba. */
 export function mapRgba(def, rgba, env = {}, targetRgba = null) {
   const input = [clamp01(rgba?.[0] ?? 0), clamp01(rgba?.[1] ?? 0), clamp01(rgba?.[2] ?? 0), clamp01(rgba?.[3] ?? 1)];
   const e = { r: input[0], g: input[1], b: input[2], a: input[3], luma: input[0] * 0.2126 + input[1] * 0.7152 + input[2] * 0.0722, x: env.x ?? 0, y: env.y ?? 0, t: env.t ?? 0 };
@@ -154,22 +154,30 @@ export function mapRgba(def, rgba, env = {}, targetRgba = null) {
   return input.map((v, i) => v * (1 - w) + target[i] * w);
 }
 
-/* ================================================================== 分类:A 整帧调色 / B 逐像素 / C 翻译不了 */
+/* ================================================================== Classification: A whole-frame color grading / B per-pixel / C untranslatable */
 
 /**
- * 像素映射有三条去向(见 docs/archive/restructure_planning/render_pipeline_restructure.md 3.9):
+ * Pixel maps have three destinations (see docs/archive/restructure_planning/render_pipeline_restructure.md 3.9):
  *
- *   A 整帧调色  where 恒定、to 只是颜色到颜色的函数 → 等价于一串 curves / matrix 滤镜步骤。
- *              这种活交给 create_filter:预览走 SVG 滤镜、导出走 lutrgb / colorchannelmixer,
- *              两边都在 GPU 合成器上做,不占每拍预算。工具据此**拒绝**并回一份现成的 ops。
- *   B 逐像素    where 引用颜色 / x / y / t 做选区,或 to 是 transparent、另一段素材、通道互相
- *              依赖的非线性表达式 → 只能逐像素算,走 compilePixelMapGlsl 的 WebGL 后端。
- *   C 翻译不了  表达式里有 GLSL 没有对应物的写法 → 拒绝,并指出是哪一处。
+ *   A whole-frame color grading  where is constant, to is only a color-to-color function → equivalent
+ *                                to a series of curves / matrix filter steps. This work is handed to
+ *                                create_filter: preview uses SVG filters, export uses lutrgb /
+ *                                colorchannelmixer, both run on the GPU compositor and do not consume
+ *                                the per-tick budget. The tool rejects accordingly and returns
+ *                                ready-made ops.
+ *   B per-pixel                  where references color / x / y / t to make selections, or to is
+ *                                transparent, another media clip, or a non-linear expression with
+ *                                cross-channel dependencies → can only be computed per-pixel, using
+ *                                the WebGL backend of compilePixelMapGlsl.
+ *   C untranslatable             expression contains constructs with no GLSL equivalent → reject
+ *                                and point out where.
  *
- * A 的判据不只看形状:形状对上之后还要**逐值核对**等价滤镜和 mapRgba 算出来的是不是同一个
- * 像素(0~255 全值域,差 ≤ 1 级)。核不过就当 B —— 比如 step() 这种阶跃函数,33 点的取样表
- * 表示不了;又比如颜色序列本质是「按最近邻取色」的阶梯函数。这样「判了 A 就一定能换」是
- * 有保证的,不靠人肉推演。
+ * Qualifying for A checks more than shape: once the shape matches, it also performs a **value-by-value
+ * check** to verify whether the equivalent filter and mapRgba compute the same pixel (across the full
+ * 0~255 range, difference ≤ 1 level). If verification fails, treat as B: for example, step functions
+ * like step() cannot be represented by a 33-point sampling table; likewise, a color sequence is
+ * essentially a step function that "samples color by nearest neighbor". This guarantees that
+ * "classified as A means definitely swappable", without relying on manual deduction.
  */
 
 const round6 = (n) => Math.round(n * 1e6) / 1e6;
@@ -179,17 +187,17 @@ const LINEAR_VARS = ["r", "g", "b", "luma"];
 const astOf = (v) => typeof v === "number" ? { t: "num", v } : parseExpr(String(v), PIXEL_VARS).ast;
 const usesOf = (v) => typeof v === "number" ? new Set() : parseExpr(String(v), PIXEL_VARS).uses;
 const envOf = (r, g, b, a = 1, x = 0, y = 0, t = 0) => ({ r, g, b, a, luma: r * 0.2126 + g * 0.7152 + b * 0.0722, x, y, t });
-/** 只放一个通道有值的 env:每通道只依赖自己的表达式用它取样 */
+/** env with a value in only one channel: used for sampling expressions where each channel depends only on itself */
 const chanEnv = (ch, v) => envOf(ch === "r" ? v : 0, ch === "g" ? v : 0, ch === "b" ? v : 0);
 
-/** where 是不是恒定;是就回它的常数值(已夹到 0~1),否则回 null */
+/** Whether where is constant; if so, returns its constant value (clamped to 0~1), otherwise returns null */
 function constWhere(def) {
   const { uses } = parseExpr(def.where, PIXEL_VARS);
   if (uses.size) return null;
   return clamp01(compiledOf(def.where, PIXEL_VARS).fn(envOf(0, 0, 0)));
 }
 
-/** to.a 是不是恒等(等价滤镜动不了 alpha,所以不恒等就不能判 A) */
+/** Whether to.a is identity (equivalent filters cannot touch alpha, so if not identity it cannot be classified as A) */
 function alphaIsIdentity(def) {
   if (def.to?.kind !== "expr") return false;
   const raw = def.to.a ?? "a";
@@ -202,7 +210,7 @@ function alphaIsIdentity(def) {
   return true;
 }
 
-/** 每通道只依赖自己 → 一步 curves(33 点取样;where 的常数权重折进表里) */
+/** Each channel depends only on itself → one-step curves (33-point sampling; constant weight of where folded into table) */
 function curvesCandidate(def, w) {
   const out = { kind: "curves" };
   for (const ch of ["r", "g", "b"]) {
@@ -216,7 +224,10 @@ function curvesCandidate(def, w) {
   return [out];
 }
 
-/** r/g/b 的线性组合(luma 也是线性的) → 一步 matrix;系数用基向量探出来,准不准由逐值核对说了算 */
+/**
+ * Linear combination of r/g/b (luma is also linear) → one-step matrix; coefficients probed with
+ * basis vectors, accuracy decided by value-by-value check.
+ */
 function matrixCandidate(def, w) {
   for (const ch of ["r", "g", "b"]) {
     for (const n of usesOf(def.to[ch])) if (!LINEAR_VARS.includes(n)) return null;
@@ -233,7 +244,7 @@ function matrixCandidate(def, w) {
   return [{ kind: "matrix", values, offset }];
 }
 
-/** 整帧换成一种颜色 = 把原色按 1-w 压住、再加 w 倍的目标色 */
+/** Replace whole frame with a single color = suppress original color by 1-w, then add w times target color */
 function colorCandidate(def, w) {
   const c = parseColor(def.to.value);
   if (!c || c[3] !== 1) return null;
@@ -244,10 +255,11 @@ function colorCandidate(def, w) {
 }
 
 /**
- * 颜色序列:from 全是灰阶时,取色只由 r/g/b 的**算术平均**决定(sequenceTarget 用的是 RGB
- * 欧氏最近邻,到灰点 (v,v,v) 的距离在 v = 均值时最小 —— 不是 0.2126/0.7152/0.0722 那套亮度权重)。
- * 于是等价物 = 一步把均值铺到三个通道的 matrix + 一步查表。w 必须是 1:混合会用到原色,
- * 而 matrix 那一步已经把原色抹掉了。
+ * Color sequence: when from is entirely grayscale, color selection is determined solely by the
+ * **arithmetic mean** of r/g/b (sequenceTarget uses RGB Euclidean nearest neighbor; distance to gray
+ * point (v,v,v) is minimal when v = mean, not the 0.2126/0.7152/0.0722 luminance weights).
+ * Thus equivalent = one-step matrix spreading the mean across all three channels + one-step lookup
+ * table. w must be 1: blending uses original color, and the matrix step has already wiped it out.
  */
 function sequenceCandidate(def, w) {
   if (w !== 1 || !def.colorSequence) return null;
@@ -265,7 +277,10 @@ function sequenceCandidate(def, w) {
   return [{ kind: "matrix", values: Array(9).fill(third), offset: [0, 0, 0] }, curves];
 }
 
-/** 逐值核对的取样点:256 级灰阶 + 每通道 256 级(另两通道 0 / 0.5 / 1)+ 33³ 网格 */
+/**
+ * Sample points for value-by-value check: 256 grayscale levels + 256 levels per channel (other two
+ * channels 0 / 0.5 / 1) + 33³ grid.
+ */
 function* verifySamples() {
   for (let i = 0; i < 256; i++) { const v = i / 255; yield [v, v, v]; }
   for (let c = 0; c < 3; c++) for (const other of [0, 128 / 255, 1]) for (let i = 0; i < 256; i++) {
@@ -279,12 +294,12 @@ function* verifySamples() {
   }
 }
 
-/** 等价滤镜和 mapRgba 在不透明像素上最多差几级(0~255) */
+/** Maximum level difference between equivalent filter and mapRgba on opaque pixels (0~255) */
 export function pixelMapOpsDiff(def, ops, samples = verifySamples()) {
   let worst = 0;
   for (const rgb of samples) {
     const ref = mapRgba(def, [rgb[0], rgb[1], rgb[2], 1]);
-    if (Math.round(ref[3] * 255) !== 255) return 255; // 等价滤镜动不了 alpha
+    if (Math.round(ref[3] * 255) !== 255) return 255; // Equivalent filters cannot touch alpha
     const got = applyTableOps(ops, rgb);
     for (let k = 0; k < 3; k++) {
       const d = Math.abs(Math.round(ref[k] * 255) - Math.round(got[k] * 255));
@@ -294,7 +309,7 @@ export function pixelMapOpsDiff(def, ops, samples = verifySamples()) {
   return worst;
 }
 
-/** A 类的等价滤镜步骤;判不了 A 时回 { why } 说明卡在哪 */
+/** Equivalent filter steps for class A; returns { why } explaining what blocked it when not class A */
 function flatColorOps(def) {
   const w = constWhere(def);
   if (w === null) {
@@ -334,10 +349,11 @@ function flatColorOps(def) {
 }
 
 /**
- * 给一条(已 normalize 的)像素映射定性。返回:
- *   { kind: "A", ops, filter, diff, reason, alphaNote? }  整帧调色:ops 可以直接交给 create_filter
- *   { kind: "B", backend: "webgl", reason, usesTarget }   逐像素:接单,走 WebGL 后端
- *   { kind: "C", reason }                                 翻译不了
+ * Classifies a (normalized) pixel map. Returns:
+ *   { kind: "A", ops, filter, diff, reason, alphaNote? }  whole-frame color grading: ops can be
+ *                                                         passed directly to create_filter
+ *   { kind: "B", backend: "webgl", reason, usesTarget }   per-pixel: accepted, uses WebGL backend
+ *   { kind: "C", reason }                                 untranslatable
  */
 export function classifyPixelMap(def) {
   const flat = flatColorOps(def);
@@ -359,11 +375,14 @@ export function classifyPixelMap(def) {
   return { kind: "B", backend: "webgl", reason: flat.why, usesTarget: glsl.usesTarget };
 }
 
-/* ================================================================== GLSL 后端 */
+/* ================================================================== GLSL backend */
 
 export class PixelMapGlslError extends FilterExprError {}
 
-/** 解析器的函数集 → GLSL。名字一样的在这里,不一样的在 emitCall 里单独处理 */
+/**
+ * Parser function set → GLSL. Same-named functions are here; differing ones are handled separately
+ * in emitCall.
+ */
 const GLSL_FUNCS = {
   sin: "sin", cos: "cos", tan: "tan", abs: "abs", sqrt: "sqrt", exp: "exp", log: "log",
   floor: "floor", ceil: "ceil", sign: "sign", min: "min", max: "max", mod: "mod", clamp: "clamp",
@@ -380,9 +399,11 @@ const literalInt = (n) => n.t === "num" && Number.isInteger(n.v) ? n.v
 const isEvenIntLiteral = (n) => { const k = literalInt(n); return k !== null && k % 2 === 0; };
 
 /**
- * 保守判断一棵子树恒不为负。GLSL 的 pow 在底数为负时无定义,而 JS 的 Math.pow 对负底数 +
- * 整数指数是有定义的,所以两边对不上的写法要当场说翻译不了(C 类)。
- * 像素映射的变量 r g b a luma x y 都在 0~1,t 是片段内秒数、不为负,所以变量一律算非负。
+ * Conservatively determines that a subtree is always non-negative. GLSL pow is undefined when the
+ * base is negative, whereas JS Math.pow is defined for negative base + integer exponent, so
+ * expressions where the two sides mismatch must be reported as untranslatable on the spot (class C).
+ * Pixel map variables r, g, b, a, luma, x, y are all in 0~1, and t is seconds within the clip and
+ * non-negative, so variables are all considered non-negative.
  */
 function isNonNegative(n) {
   if (n.t === "num") return n.v >= 0;
@@ -419,7 +440,8 @@ function emitPow(aNode, bNode) {
 function emitCall(n) {
   const a = n.args.map(emitExpr);
   if (n.name === "pow") return emitPow(n.args[0], n.args[1]);
-  // GLSL 的 round() 在正好 .5 时往哪边取由实现决定;Math.round 恒为向上,floor(x+0.5) 和它逐值一致
+  // In GLSL, which direction round() rounds at exactly .5 is implementation-defined; Math.round is
+  // always upwards, and floor(x+0.5) matches it value-by-value.
   if (n.name === "round") return `floor((${a[0]}) + 0.5)`;
   if (n.name === "lerp") return `mix(${a[0]}, ${a[1]}, ${a[2]})`;
   if (n.name === "min" || n.name === "max") return a.reduce((l, r) => `${n.name}(${l}, ${r})`);
@@ -454,7 +476,10 @@ void main() {
 }
 `;
 
-/** 颜色序列那一段:最近邻找下标,再按 mode 取色 / 插值。和 sequenceTarget 逐句对应 */
+/**
+ * Color sequence section: finds index by nearest neighbor, then picks color / interpolates by mode;
+ * corresponds statement-by-statement with sequenceTarget.
+ */
 function sequenceGlsl(def) {
   const from = def.colorSequence.from.map(parseColor);
   const to = def.colorSequence.to.map(parseColor);
@@ -463,12 +488,15 @@ function sequenceGlsl(def) {
     + `const vec4 PC_FROM[${nf}] = vec4[${nf}](${from.map(vec4Of).join(", ")});\n`
     + `const vec4 PC_TO[${nt}] = vec4[${nt}](${to.map(vec4Of).join(", ")});\n`;
   /*
-   * 距离比的是平方(和 Math.hypot 的大小顺序一样,少一次开方)。减 PC_SEQ_EPS 是为了对上
-   * sequenceTarget 的「并列时取靠前那个」:JS 在 float64 上算,GLSL 只有 float32,正好并列的
-   * 像素两边会各自往不同方向舍入 —— 实测 testsrc2 上 from = [#000, #808080, #fff] 时
-   * r+g+b 恰好等于 192 的像素就是精确并列,不加这一下会选到后一个、整块颜色跳掉。
-   * 取 1e-6:float32 在 0~3 这个量级的误差约 1e-7,而 8 位输入能产生的相邻非并列距离差
-   * 至少是 2·v/255 量级(灰阶序列约 4e-3),差着三个数量级,不会误伤。
+   * Distances are compared squared (same ordering as Math.hypot, saving one square root).
+   * Subtracting PC_SEQ_EPS is to match sequenceTarget's "pick earlier one on tie": JS computes on
+   * float64 while GLSL only has float32, so exactly tied pixels would round in different directions
+   * on each side: testing on testsrc2 showed that when from = [#000, #808080, #fff], pixels where
+   * r+g+b equals exactly 192 are an exact tie; without this nudge, the later one is selected, causing
+   * the entire color block to jump.
+   * 1e-6 is chosen: float32 error at the 0~3 magnitude is ~1e-7, while the adjacent non-tied distance
+   * difference produced by 8-bit input is at least on the order of 2·v/255 (~4e-3 for grayscale
+   * sequences), differing by three orders of magnitude, so it will not cause collateral damage.
    */
   let body = `  int idx = 0;\n  float best = 1e30;\n`
     + `  for (int i = 0; i < ${nf}; i++) {\n`
@@ -488,14 +516,15 @@ function sequenceGlsl(def) {
 }
 
 /**
- * 把一条像素映射翻译成 WebGL2 的片元着色器。纯函数、可单测。
+ * Translates a pixel map into a WebGL2 fragment shader. Pure function, unit-testable.
  *
- * 口径逐条照 mapRgba:输入先夹到 0~1;luma = .2126r + .7152g + .0722b;x / y 是列 / 行除以
- * 画面宽 / 高(y 从**上**往下数,和 ImageData 的行序一致);t 是 uniform;where 夹到 0~1,
- * 为 0 时原样返回;continuous 按 w 混合;discrete 的语义照 sequenceTarget。
- * lerp → mix、^ → pow、round → floor(x+0.5),其余函数一一对应。
+ * Specs follow mapRgba item-by-item: input is first clamped to 0~1; luma = .2126r + .7152g + .0722b;
+ * x / y are column / row divided by frame width / height (y counts from **top** to bottom, matching
+ * ImageData row order); t is a uniform; where is clamped to 0~1, returned as-is when 0; continuous
+ * blends by w; discrete semantics follow sequenceTarget.
+ * lerp → mix, ^ → pow, round → floor(x+0.5), and remaining functions map one-to-one.
  *
- * 返回 { fragment, vertex, usesTarget, usesTime, key }。
+ * Returns { fragment, vertex, usesTarget, usesTime, key }.
  */
 export function compilePixelMapGlsl(def) {
   if (!def || typeof def !== "object") throw new PixelMapGlslError("A pixel map definition must be an object");
@@ -559,20 +588,22 @@ ${target}  fragColor = src * (1.0 - w) + target * w;
   };
 }
 
-/* ------------------------------------------------------------------ 项目里的查找 */
+/* ------------------------------------------------------------------ Lookups in project */
 
 /**
- * 片段挂着的像素映射定义;没挂、定义被删了、或者这一段上停用了(`clip.pixelMap.off`)都给 null。
+ * Pixel map definition attached to the clip; returns null if not attached, definition was deleted,
+ * or disabled on this clip (`clip.pixelMap.off`).
  *
- * 滤镜和音频效果各有一个这样的口(`filterOfClip`、`audioFxOfClip`),像素映射原先没有 ——
- * 画面那边是在 FrameScene 里就地 find 的,所以停用这件事要多处各判一遍。收成一处。
+ * Filters and audio effects each have an accessor like this (`filterOfClip`, `audioFxOfClip`);
+ * pixel maps previously did not: the video side called find in-place in FrameScene, so whether it
+ * was disabled had to be checked separately in multiple places. Consolidated into one place.
  */
 export function pixelMapOfClip(project, clip) {
   if (!clip || !clip.pixelMap || !clip.pixelMap.id || clip.pixelMap.off) return null;
   return (project?.pixelMaps || []).find((d) => d.id === clip.pixelMap.id) || null;
 }
 
-/** 内容哈希:program 按它缓存(和 filters 的 svgFilterId 同一套) */
+/** Content hash: program is cached by it (same scheme as svgFilterId in filters) */
 export function hash36(text) {
   let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
   for (let i = 0; i < text.length; i++) {
@@ -588,6 +619,6 @@ export function hash36(text) {
 // The export page runs the same function inside its Chrome context when it has
 // to rasterize a pixel map. Keeping this as an explicit bridge avoids eval and
 // keeps the expression parser shared by editor, export and see_frames.
-// mapRgba 本身不再进任何渲染路径(逐像素 CPU 循环已整体删除,见 render/pixelMapGl.ts),
-// 只留给单测和 GPU / CPU 对照用。
+// mapRgba itself no longer enters any render path (per-pixel CPU loop removed entirely, see
+// render/pixelMapGl.ts), kept only for unit tests and GPU / CPU comparison.
 if (typeof window !== "undefined") window.__pcMapRgba = mapRgba;

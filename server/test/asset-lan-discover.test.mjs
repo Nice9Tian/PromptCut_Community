@@ -1,10 +1,15 @@
 /**
- * `scripts/probes/asset-lan-discover.mjs`：`asset-lan-probe` 不给 `--asset` 时找素材服务地址的那一段。
- * 放本机的项目，素材服务地址经局域网发现带回、不进 `service.endpoints`；探针以前只等 `service.endpoints`，会超时。
+ * `scripts/probes/asset-lan-discover.mjs`: the part that locates the asset service address
+ * when `asset-lan-probe` is not given `--asset`. For projects on this machine, the asset service
+ * address is brought back via LAN discovery and does not enter `service.endpoints`; the probe
+ * previously only waited for `service.endpoints` and would time out.
  *
- * 本机能验的：挑候选的纯函数、按顺序试地址、以及一台本机替身——真的 `createLanHost`（回环网卡、随机 UDP 端口）
- * 通告一个项目，服务端口指向一台假素材服务（只认带票据的 `GET …/chunks`），经真的 `discoverLan` 找到并试通。
- * 跨机（两台机器、真实网卡上的组播与子网广播）不在这里，待跨机复核。
+ * What can be verified locally: the pure function for picking candidates, trying addresses
+ * in order, and a local stand-in: a real `createLanHost` (loopback adapter, random UDP port)
+ * announces a project, with the service port pointing to a fake asset service (only accepting
+ * `GET …/chunks` with a ticket), found and tested via real `discoverLan`.
+ * Cross-machine (two machines, multicast and subnet broadcast on real network cards) is not
+ * covered here, pending cross-machine review.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -51,7 +56,7 @@ test('asset-lan-discover:discoverLanAsset does not filter by name when projectId
   assert.equal(r3.errors[0].reason, 'discover');
 });
 
-/** 假素材服务:带 Bearer 的 GET /api/asset/media/<哈希>/chunks 回 200,其余 401 */
+/** Fake asset service: GET /api/asset/media/<hash>/chunks with Bearer returns 200, others 401 */
 async function fakeAsset(t) {
   const hits = [];
   const srv = http.createServer((req, res) => {

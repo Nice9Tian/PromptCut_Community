@@ -1,15 +1,21 @@
 /**
- * codex、agy 两路的工具调用也带 callId(修 C6.5 遗留:原来这两路拿不到,只能在 Agent 操作记录里撤)。
+ * Tool calls on both codex and agy paths also carry callId (fixes C6.5 leftover: originally these
+ * two paths could not obtain it and could only revert in Agent operation records).
  *
- * 跑法 —— **必须带这个 flag**(假的 child_process):
+ * How to run: **must include this flag** (mock child_process):
  *   node --experimental-test-module-mocks --test server/test/runner-callid.test.mjs
  *
- * 夹具是 2026-09-27 在本机实录的输出流和 MCP 请求(codex-cli 0.156.1、agy 1.2.11,原文见
- * docs/archive/agent-reports/AGENT-runner-callid.md;里面没有凭证,用户目录换成了占位):
- *   - codex 的 `_meta` 带 threadId(= 输出流 thread.started 的 thread_id)和它自己的 callId(输出流里没有);
- *     输出流工具条目的 id 是 item_0、item_1 —— 只能按(thread、工具名、参数)配对;
- *   - agy 的 `_meta` 带 conversation_id 和 progressToken "<uuid>:<步号>",步号 = 输出流的 step_index。
- * 覆盖:两种先后顺序、同名同参并行(不配,退回原来的行为)、同名同参先后(配对各自的)、配对失败的退化。
+ * Fixtures are output streams and MCP requests recorded live on this machine on 2026-09-27
+ * (codex-cli 0.156.1, agy 1.2.11; see original in docs/archive/agent-reports/AGENT-runner-callid.md;
+ * contains no credentials, user directories replaced with placeholders):
+ *   - codex `_meta` carries threadId (= thread_id of thread.started in output stream) and its own
+ *     callId (not in output stream); output stream tool item ids are item_0, item_1: can only pair
+ *     by (thread, tool name, arguments);
+ *   - agy `_meta` carries conversation_id and progressToken "<uuid>:<step_number>", step number =
+ *     step_index in output stream.
+ * Coverage: two arrival orders, parallel with same name and same arguments (no pairing, fall back
+ * to original behavior), sequential with same name and same arguments (pair their respective ones),
+ * degradation on pairing failure.
  */
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,7 +25,7 @@ import { PassThrough, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import * as realChildProcess from 'node:child_process';
 
-/** 假的 CLI 进程:测试自己往它的 stdout 写行,决定每一行在什么时候到 */
+/** Mock CLI process: the test writes lines to its stdout itself, deciding when each line arrives */
 let lastChild = null;
 mock.module('node:child_process', { exports: { ...realChildProcess, spawn: (cmd, args, opts) => {
   if (cmd === 'taskkill') { const k = new EventEmitter(); return k; }
@@ -41,10 +47,13 @@ const agy = await import('../runners/agy.mjs');
 
 const tick = (ms = 10) => new Promise((r) => setTimeout(r, ms));
 
-// ---------------------------------------------------------------- 夹具(实录)
+// ---------------------------------------------------------------- Fixtures (recorded live)
 
 const CODEX_THREAD = '01a0e00b-4a61-7e70-af46-a8cf5a166523';
-/** codex exec --json 的输出流(实录,两次串行的 get_answer;工具名换成了 get_clip,参数原样) */
+/**
+ * Output stream of codex exec --json (live recorded, two serial get_answer; tool name replaced
+ * with get_clip, arguments as-is)
+ */
 const codexStream = (tool = 'get_clip') => [
   { type: 'thread.started', thread_id: CODEX_THREAD },
   { type: 'turn.started' },
@@ -55,7 +64,7 @@ const codexStream = (tool = 'get_clip') => [
   { type: 'item.completed', item: { id: 'item_2', type: 'agent_message', text: 'alpha: 42\nbeta: 42' } },
   { type: 'turn.completed', usage: { input_tokens: 29129, cached_input_tokens: 26752, output_tokens: 83 } },
 ];
-/** codex 发给 MCP 的 tools/call 的 _meta(实录) */
+/** _meta sent by codex to MCP tools/call (live recorded) */
 const codexMeta = {
   callId: 'exec-ba81ac03-fea9-48f1-85a9-4ec13937f9f9',
   'x-codex-turn-metadata': { session_id: CODEX_THREAD, thread_id: CODEX_THREAD, reasoning_effort: 'low', turn_id: '01a0e00b-4a9a-7c10-8644-674679b27b6e', model: 'gpt-6-astra', thread_source: 'user', turn_trigger: 'exec', sandbox: 'none', sandbox_mode: 'read-only', codex_version: '0.156.1' },
@@ -64,7 +73,7 @@ const codexMeta = {
 };
 
 const AGY_CONV = '5b290f32-0511-401d-8e85-30ceb9cbd662';
-/** agy --output-format stream-json 的输出流(实录,init 里的内建工具清单删了) */
+/** Output stream of agy --output-format stream-json (live recorded, built-in tool manifest in init removed) */
 const agyStream = [
   { event: 'init', conversation_id: AGY_CONV, init: { model: 'gemini-3.8-flash', permission_mode: 'request-review' } },
   { event: 'step_update', step_update: { conversation_id: AGY_CONV, step_index: 0, state: 'DONE', step_type: 'user_input' } },
@@ -75,20 +84,20 @@ const agyStream = [
   { event: 'step_update', step_update: { conversation_id: AGY_CONV, step_index: 4, state: 'DONE', step_type: 'agent_response', text_delta: 'c1: 42, c2: 42' } },
   { event: 'result', result: { conversation_id: AGY_CONV, status: 'SUCCESS', response: 'c1: 42, c2: 42', num_turns: 1 } },
 ];
-/** agy 发给 MCP 的 tools/call 的 _meta(实录;artifacts_dir 里的用户目录换成了占位) */
+/** _meta sent by agy to MCP tools/call (live recorded; user directory in artifacts_dir replaced with placeholder) */
 const agyMeta = (step) => ({
   'antigravity.google/artifacts_dir': `C:\\Users\\<user>\\.gemini\\antigravity-cli\\brain\\${AGY_CONV}`,
   'antigravity.google/conversation_id': AGY_CONV,
   progressToken: `29d2aeee-8ff2-4280-9aec-237872d543e5:${step}`,
 });
 
-// ---------------------------------------------------------------- 配对本身
+// ---------------------------------------------------------------- Pairing itself
 
 test('Pairing: check-in then claim or claim then check-in, both get the same callId that the runner sent to the page', async () => {
   const p = createCallPairing({ waitMs: 500 });
   p.open('codex:t');
   p.announce('codex:t', 'add_clip', { a: 1, b: [1, { y: 2, x: 1 }] }, 'cx-1');
-  // 键的顺序不同也认得出来
+  // Recognized even when key order differs
   assert.equal(await p.claim('codex:t', 'add_clip', { b: [1, { x: 1, y: 2 }], a: 1 }), 'cx-1');
   const waiting = p.claim('codex:t', 'add_clip', { a: 2 });
   await tick();
@@ -99,12 +108,12 @@ test('Pairing: check-in then claim or claim then check-in, both get the same cal
 test('Pairing: same name and same arguments in parallel, cannot tell which is which, so neither side is paired (falls back to the old behavior), and no wrong pairing is allowed', async () => {
   const p = createCallPairing({ waitMs: 300 });
   p.open('codex:t');
-  // 报到在前:两条同钥匙都还没被认领
+  // Check-in first: neither of the two identical keys has been claimed yet
   p.announce('codex:t', 'add_clip', { a: 1 }, 'cx-1');
   p.announce('codex:t', 'add_clip', { a: 1 }, 'cx-2');
   assert.equal(await p.claim('codex:t', 'add_clip', { a: 1 }), undefined);
   assert.equal(await p.claim('codex:t', 'add_clip', { a: 1 }), undefined);
-  // 认领在前:两个认领者在等同一把钥匙
+  // Claim first: two claimers waiting for the same key
   const q = createCallPairing({ waitMs: 300 });
   q.open('codex:u');
   const w1 = q.claim('codex:u', 'add_clip', { a: 1 });
@@ -146,14 +155,14 @@ test('Degradation on pairing failure: mismatched arguments, mismatched scope, no
 test('Pairing: the agy hint (chat + step number) matches only that one entry; a matching hint with mismatched arguments does not pair', async () => {
   const p = createCallPairing({ waitMs: 60 });
   p.open(`agy:${AGY_CONV}`);
-  // 同名同参两步都挂着,有提示照样分得清
+  // Two steps with the same name and arguments are both pending; still distinguished with hint
   p.announce(`agy:${AGY_CONV}`, 'get_clip', { id: 'c1' }, `agy:${AGY_CONV}:2`);
   p.announce(`agy:${AGY_CONV}`, 'get_clip', { id: 'c1' }, `agy:${AGY_CONV}:3`);
   assert.equal(await p.claim(`agy:${AGY_CONV}`, 'get_clip', { id: 'c1' }, `agy:${AGY_CONV}:3`), `agy:${AGY_CONV}:3`);
   assert.equal(await p.claim(`agy:${AGY_CONV}`, 'get_clip', { id: 'c1' }, `agy:${AGY_CONV}:2`), `agy:${AGY_CONV}:2`);
   p.announce(`agy:${AGY_CONV}`, 'get_clip', { id: 'c9' }, `agy:${AGY_CONV}:7`);
   assert.equal(await p.claim(`agy:${AGY_CONV}`, 'get_clip', { id: 'zz' }, `agy:${AGY_CONV}:7`), undefined);
-  // 提示的那一步还没报到:等它;别的步报到不抢
+  // The hinted step has not checked in yet: wait for it; check-ins from other steps do not preempt
   const w = p.claim(`agy:${AGY_CONV}`, 'get_clip', { id: 'c5' }, `agy:${AGY_CONV}:9`);
   await tick();
   p.announce(`agy:${AGY_CONV}`, 'get_clip', { id: 'c5' }, `agy:${AGY_CONV}:8`);
@@ -167,7 +176,7 @@ test('argsKey: key order does not matter, different values are different', () =>
   assert.equal(argsKey(undefined), argsKey({}));
 });
 
-// ---------------------------------------------------------------- runner 用实录的输出流
+// ---------------------------------------------------------------- runner using live-recorded output stream
 
 async function startCodex(pairing) {
   const events = [];
@@ -183,13 +192,13 @@ test('codex: recorded output stream: tool_call / tool_result carry the same call
   const scope = `codex:${CODEX_THREAD}`;
   child.feed(started); child.feed(turn);
   await tick();
-  // 第一次:MCP 先到(输出流那行还没到)
+  // First time: MCP arrives first (that line in output stream has not arrived yet)
   const claim0 = pairing.claim(scope, 'get_clip', { key: 'alpha' });
   await tick();
   child.feed(s0);
   const id0 = await claim0;
   child.feed(c0);
-  // 第二次:输出流先到
+  // Second time: output stream arrives first
   child.feed(s1);
   await tick();
   const id1 = await pairing.claim(scope, 'get_clip', { key: 'beta' });
@@ -246,13 +255,13 @@ test('agy: recorded output stream: callId is agy:<chat>:<step number>, matches t
   const [init, user, a2, d2, a3, d3, text, result] = agyStream;
   child.feed(init); child.feed(user);
   await tick();
-  // 步 2:MCP 先到
+  // Step 2: MCP arrives first
   const claim2 = pairing.claim(scope, 'get_clip', { clip_id: 'c1', id: 'c1' }, hintOf(agyMeta(2)));
   await tick();
   child.feed(a2);
   const id2 = await claim2;
   child.feed(d2);
-  // 步 3:输出流先到
+  // Step 3: output stream arrives first
   child.feed(a3);
   await tick();
   const id3 = await pairing.claim(scope, 'get_clip', { clip_id: 'c2', id: 'c2' }, hintOf(agyMeta(3)));
@@ -268,7 +277,7 @@ test('agy: recorded output stream: callId is agy:<chat>:<step number>, matches t
   assert.deepEqual(pairing.stats(), { entries: 0, waiters: 0, scopes: 0 });
 });
 
-// ---------------------------------------------------------------- mcp-server 把 _meta 里的线索转给编辑器
+// ---------------------------------------------------------------- mcp-server forwards clues in _meta to editor
 
 test('mcp-server: codex _meta becomes pair.scope, agy _meta becomes scope + hint; Claude toolUseId is unchanged, without pair', async () => {
   const bodies = [];
@@ -283,7 +292,7 @@ test('mcp-server: codex _meta becomes pair.scope, agy _meta becomes scope + hint
   });
   await new Promise((r) => bridge.listen(0, '127.0.0.1', r));
   const port = bridge.address().port;
-  // 用真的 spawn 起 mcp-server(上面 mock 的是 runner 用的那份;这里从原模块拿)
+  // Launch mcp-server with real spawn (the mock above is for runner; here obtain from original module)
   const child = realChildProcess.spawn(process.execPath, [fileURLToPath(new URL('../mcp-server.mjs', import.meta.url))], { env: { ...process.env, PROMPTCUT_PORT: String(port), PROMPTCUT_AGENT: 'conv-x' }, stdio: ['pipe', 'pipe', 'pipe'] });
   let buf = '';
   child.stdout.on('data', (d) => { buf += d; });

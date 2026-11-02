@@ -1,16 +1,27 @@
 /**
- * M7-T：页面一侧的纯浏览器节点。
- *   - 当节点的条件（第 2 节）：身份为手机、最低一档、退回单舞台、开发构建（D16）、非 Chromium（D14）、非成员、测量没落定 → 不当节点；
- *   - D10 页面侧：`node.hello` 只报原始值 `environment`、`profile: 'browser'`、`maxConcurrent: 1`，watch 只列本项目；
- *   - 第 4.1 节：认领到就 progress(0)；
- *   - D8 让路：播放 / 拖动 / 更急的后台活来了，当前帧做完就放回（一次，不计失败），此后不再生成快照、不再认领；
- *     页面隐藏不等当前帧，立即放回，迟到的帧丢掉；
- *   - D6 用任务的 projectRev：先用发布时留存的已确认版本，没有再 project.snapshot.get，都没有就放回（no-snapshot），不拿别的版本渲。
- * 依据：`docs/plan/m7-contract.md` 第 2、4、5 节与第 13 节裁定 D6、D8、D10、D14、D16。假设见 `m7-kit.mjs` 的 K10、K11。
- * 页面节点的实现还没派（契约第 9 节 `claude/rq-m7-node`），所以这些用例现在都 skip。
- * 跑：node --experimental-test-module-mocks --test server/test/m7-page-node.test.mjs
+ * M7-T: Pure browser node on the page side.
+ *   - Conditions for acting as a node (Section 2): phone identity, lowest tier, falling back to
+ *     single stage, development build (D16), non-Chromium (D14), non-member, measurement not
+ *     settled → does not act as a node;
+ *   - D10 page side: `node.hello` reports only raw `environment`, `profile: 'browser'`,
+ *     `maxConcurrent: 1`, watch lists only this project;
+ *   - Section 4.1: progress(0) upon claim;
+ *   - D8 yield: when play / scrub / more urgent background job arrives, release after completing
+ *     current frame (once, not counted as failure), no longer generating snapshots or claiming
+ *     thereafter;
+ *     when page is hidden, release immediately without waiting for current frame; late frames are
+ *     dropped;
+ *   - D6 uses task projectRev: first use confirmed version retained at publish time, if none use
+ *     project.snapshot.get, if neither exists release (no-snapshot), without rendering with any
+ *     other version.
+ * Basis: `docs/plan/m7-contract.md` Sections 2, 4, 5 and Section 13 rulings D6, D8, D10, D14, D16.
+ * Assumptions in K10, K11 of `m7-kit.mjs`.
+ * Page node implementation has not been assigned yet (Contract Section 9 `claude/rq-m7-node`), so
+ * these test cases are all skipped for now.
+ * Run: node --experimental-test-module-mocks --test server/test/m7-page-node.test.mjs
  *
- * 没有真实计时断言：时钟是假的，异步只用「让出宏任务回合」等 Promise 链走完。
+ * No real timing assertions: clock is fake, async only uses "yielding macro-task turns" to wait for
+ * Promise chains to finish.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,7 +30,7 @@ import {
   flush, deferred, snapTask, gateOpts,
 } from './m7-kit.mjs';
 
-/* ================================================================== K10 当节点的条件 */
+/* ================================================================== K10 Conditions for acting as a node */
 
 const GOOD = Object.freeze({ online: true, codeVersion: 'cv-1', phone: false, lowest: false, stageLayout: 'dual', userAgent: UA.chrome, member: true, measured: true });
 
@@ -45,14 +56,15 @@ test('Conditions for acting as a node: identity is a computer, not the lowest ti
   for (const [patch, what] of no) assert.equal(judge(patch), false, `${what} does not act as a node`);
 });
 
-/* ================================================================== K11 编排 */
+/* ================================================================== K11 Arrangement */
 
 const PROJECT = 'p1';
 const USER = 'zoe@devA';
 
 /**
- * 页面节点的试验台（K11 的形状集中在这里；集成对账改这里）。
- * `sent` 是节点发往 render 连接的全部消息；`bakes` 是每次 bakeFrame 的调用（带可控的 deferred）。
+ * Test rig for page node (K11 shapes are centralized here; modify here for integration reconciliation).
+ * `sent` is all messages sent by node to render connection; `bakes` is each bakeFrame call (with
+ * controllable deferred).
  */
 async function nodeRig({ kept = new Map(), snapshots = new Map(), idle = true } = {}) {
   const gate = browserNodeGate();
@@ -92,7 +104,7 @@ async function nodeRig({ kept = new Map(), snapshots = new Map(), idle = true } 
     yieldFor: (cause) => call('yieldFor', cause),
     stop: () => call('stop'),
     of: (type) => sent.filter((m) => m.type === type),
-    /** 报到、拿指纹、看见一个任务并认领到它；回认领令牌 */
+    /** Check in, obtain fingerprint, see a task and claim it; returns claim token */
     async claimOne(task, token = 7) {
       rig.start();
       await flush();
@@ -112,7 +124,7 @@ async function nodeRig({ kept = new Map(), snapshots = new Map(), idle = true } 
 }
 
 const FP = 'aaaaaaaaaaaaaaaa';
-/** 三帧的一段（本地帧 0～2），projectRev 7 */
+/** A segment of three frames (local frames 0-2), projectRev 7 */
 const TASK = () => snapTask({ fp: FP, span: 3, projectRev: 7, input: { dual: true, bake: { count: 3, sampling: { firstFrame: 0 } } } });
 const P7 = { id: PROJECT, rev: 7, marker: 'kept-7' };
 
@@ -160,7 +172,8 @@ for (const cause of ['drag', 'play', 'urgent']) {
     const token = await rig.claimOne(task);
     await flush();
     assert.equal(rig.bakes.length, 1, 'Frame 0 is in progress');
-    // 拖动 / 播放开始时父页的 isIdle() 同时变假（第 2 节闲的判据），并通知节点让路
+    // When scrub / play starts, parent page's isIdle() simultaneously becomes false (Section 2 idle
+    // criteria), and notifies node to yield
     rig.state.idle = false;
     rig.yieldFor(cause);
     await flush();
@@ -173,7 +186,7 @@ for (const cause of ['drag', 'play', 'urgent']) {
     assert.equal(rig.bakes.length, 1, 'The next frame is not generated after the release');
     assert.equal(rig.of('task.complete').length, 0);
     assert.equal(rig.of('task.fail').length, 0, 'Yielding is not a failure (C2)');
-    // 让路期间不认领
+    // Do not claim during yield
     const claimsBefore = rig.of('task.claim').length;
     rig.receive({ type: 'task.opened', task: { ...TASK(), id: 'snapshot:other:0-2', state: 'open', version: 1, attempts: 0, source: { projectId: PROJECT, projectRev: 7, userId: USER } }, epoch: 'e1' });
     rig.advance(1_000);
@@ -196,7 +209,7 @@ test('D8 page hidden: do not wait for the current frame, release immediately; th
   assert.equal(rel.length, 1, `Release immediately when hidden: ${JSON.stringify(rig.sent)}`);
   assert.deepEqual([rel[0].id, rel[0].token], [task.id, token]);
   const progressBefore = rig.of('task.progress').length;
-  // 生成快照的中止信号应已触发（能停就停）
+  // Snapshot generation abort signal should have triggered (stop whenever possible)
   assert.equal(rig.bakes[0].job.signal?.aborted, true, 'Hiding aborts the stage\'s current snapshot generation');
   rig.bakes[0].resolve({ hash: '0'.repeat(64), bytes: 100, htmlGz: new ArrayBuffer(8) });
   await flush();

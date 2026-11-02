@@ -1,6 +1,8 @@
 /**
- * 网关把一次工具调用拆成两条(实跑:gemini-3.8-flash 经 openlux 的 OpenAI 兼容口):
- * 前一条 set_position 参数为空,后一条参数齐全但名字为空、id 也不同。provider 要把它们合回一次。
+ * The gateway splits one tool call into two (actual run: gemini-3.8-flash via openlux's
+ * OpenAI-compatible endpoint):
+ * the first has empty set_position arguments; the second has complete arguments but an empty name
+ * and a different id. The provider must merge them back into one.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

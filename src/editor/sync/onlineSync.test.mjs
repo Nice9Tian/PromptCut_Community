@@ -1,10 +1,14 @@
 /**
- * 在线页面的离线提示与本地备份(C10 契约第 10 节、第 17 节表 A、第 18 节第 4 条)的纯逻辑单测。跑:
+ * Pure logic unit tests for offline notices and local backups on online pages (C10 contract Section 10,
+ * Section 17 Table A, Section 18 Item 4). Run:
  *   node --test src/editor/sync/onlineSync.test.mjs
  *
- * - `onlineStatus.ts`:表 A 五条措辞一字不差;状态 → 措辞;常驻提示与离开那一问的条件;离线改动存在哪;恢复阶段的状态机;
- * - `offlineCache.ts`:缺省存储挑哪一种、存不存得住(退到内存版时关页面就没,界面要说实话);
- * - `onlineBackups.ts`:只进内存(不碰任何浏览器存储)、不自动下载、逐个下载出 JSON。
+ * - `onlineStatus.ts`: Table A five wordings verbatim; state → wording; conditions for persistent
+ *   notices and the leave prompt; where offline changes are stored; state machine for recovery phase;
+ * - `offlineCache.ts`: which default storage to pick, whether it persists (when falling back to
+ *   in-memory version, gone upon closing page, UI must tell the truth);
+ * - `onlineBackups.ts`: memory only (touches no browser storage), no automatic download, downloads
+ *   JSON one by one.
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import { test } from "node:test";
@@ -22,7 +26,7 @@ test("The five status wordings in table A match the persistent notice word for w
     recovering: "Connection restored. Submitting the changes made while offline…",
     recovered: "All changes made while offline have been submitted.",
   });
-  // 〔裁:2026-10-22 主会话〕按改动存没存下来分两句
+  // [ruling: 2026-10-22 lead session] Split into two sentences based on whether changes were saved
   assert.deepEqual({ ...st.OFFLINE_UNSENT_TEXT }, {
     saved: "Currently offline. Your changes are saved on this machine and will be merged back into the project once you're back online.",
     page: "Currently offline. Your changes exist only on this page and will be lost when you close it.",
@@ -47,30 +51,35 @@ test("status → wording: no network, cannot reach the document service, cannot 
 
 test("confirmation when leaving the editor: it says \"changes exist only in this page\", not \"project not saved\"", () => {
   assert.equal(st.UNSENT_LEAVE_TEXT, "You are offline, and your changes exist only in this page. Leaving the editor will lose them. Continue?");
-  // 手机版用自己的确认框(按钮「取消 / 离开」),正文一样、不带那一问
+  // Mobile app uses its own confirmation dialog (buttons "Cancel / Leave"), same body text, without that question
   assert.equal(st.UNSENT_LEAVE_TEXT, `${st.UNSENT_LEAVE_BODY} Continue?`);
   assert.doesNotMatch(st.UNSENT_LEAVE_BODY, /Continue/);
-  // 在线页面都是云端项目,没有本机草稿(issue #16):这一句里不许再出现「未保存」那套说法
+  // Online pages are all cloud projects, no local drafts (issue #16): the "unsaved" phrasing is not
+  // allowed in this sentence
   assert.doesNotMatch(st.UNSENT_LEAVE_TEXT, /unsaved|save the project/);
-  // 游客的项目不落盘(`offlineStore: "page"`):离线时攒的改动离开就没了,要问
+  // Guest projects are not persisted to disk (`offlineStore: "page"`): changes accumulated offline
+  // are lost on leave, prompt required
   assert.equal(st.unsentAtRisk("offline", 1, "page"), true);
   assert.equal(st.unsentAtRisk("paused", 1, "page"), true);
-  // 账号云端项目落盘到浏览器本地缓存:再进这个项目会接着提交,不问
+  // Account cloud projects persist to disk in browser local cache: re-entering this project
+  // continues submitting, no prompt
   assert.equal(st.unsentAtRisk("offline", 3, "saved"), false);
-  // 连着、或者手里没有没提交的:都不问
+  // Connected, or holding no uncommitted changes: neither prompts
   assert.equal(st.unsentAtRisk("online", 3, "page"), false);
   assert.equal(st.unsentAtRisk("offline", 0, "page"), false);
 });
 
 test("if it can't persist, say so: when the browser cannot provide storage, offline changes count as \"only in this page\"", () => {
-  // 退到内存版那一种:写进去不报错、关页面就没,不许说「已存在本机」
+  // The fallback in-memory variant: writing succeeds without error, gone upon closing page, not
+  // allowed to say "stored on this machine"
   assert.equal(st.offlineStoreOf({ durable: false, account: true, online: true }), "page");
   assert.equal(st.offlineStoreOf({ durable: false, account: true, online: false }), "page", "same for the desktop app");
-  // 存得住的照旧:账号项目(含游客)落盘、桌面版有本机恢复文件 → 本机;在线页面的口令房间不落盘 → 本页
+  // Persistable ones as before: account projects (including guests) persist to disk, desktop app has
+  // local recovery file → this machine; passphrase rooms on online pages do not persist to disk → this page
   assert.equal(st.offlineStoreOf({ durable: true, account: true, online: true }), "saved");
   assert.equal(st.offlineStoreOf({ durable: true, account: false, online: false }), "saved");
   assert.equal(st.offlineStoreOf({ durable: true, account: false, online: true }), "page");
-  // 存不住那一句气泡:说的是「为什么」,不和常驻提示重样
+  // Non-persistable bubble: explains "why", does not duplicate persistent notice
   assert.equal(st.UNSENT_NO_STORE_TOAST, "This browser can't store changes made offline: they exist only in this page and will be lost if you close the page or leave the editor.");
   assert.notEqual(st.UNSENT_NO_STORE_TOAST, st.OFFLINE_UNSENT_TEXT.page);
 });
@@ -127,12 +136,12 @@ test("recovery phase: changes accumulated offline → still unconfirmed after co
   assert.equal(s.phase, "recovering");
   s = st.nextRecovery(s, "online", 0);
   assert.equal(s.phase, "recovered");
-  // 离线期间什么都没改:回来不提示
+  // Nothing modified during offline: no notice upon return
   let q = { phase: null, wasOffline: false, hadUnsent: false };
   q = st.nextRecovery(q, "offline", 0);
   q = st.nextRecovery(q, "online", 0);
   assert.equal(q.phase, null);
-  // 回来后第一条被拒 → 暂停 → 丢弃:不说「已全部提交」
+  // First item rejected upon return → paused → discarded: do not say "all submitted"
   let d = { phase: null, wasOffline: false, hadUnsent: false };
   d = st.nextRecovery(d, "offline", 2);
   d = st.nextRecovery(d, "connecting", 2);
@@ -141,7 +150,7 @@ test("recovery phase: changes accumulated offline → still unconfirmed after co
   assert.equal(d.phase, null);
   d = st.nextRecovery(d, "online", 0);
   assert.equal(d.phase, null, "after discarding, recovery complete is not reported");
-  // 刚回来就已经全确认了:直接恢复完成
+  // Already fully confirmed right after returning: recovery completes directly
   let r = { phase: null, wasOffline: false, hadUnsent: false };
   r = st.nextRecovery(r, "offline", 1);
   r = st.nextRecovery(r, "online", 0);
@@ -152,7 +161,7 @@ const overwritten = { kind: "overwritten", projectId: "p", entity: "/tracks/@t/c
 const discard = { kind: "offline-discard", projectId: "p", baseRev: 3, batch: [{ opId: "o1", ops: [] }, { opId: "o2", ops: [] }], project: { name: "x" }, at: Date.UTC(2026, 8, 27, 4, 5, 6) };
 
 test("backups: kept in memory only and not downloaded automatically, downloaded one by one from the list as JSON (LocalBackup as is)", () => {
-  // 任何浏览器存储被碰到就炸
+  // Blows up if any browser storage is touched
   const trap = new Proxy({}, { get() { throw new Error("must not touch browser storage"); } });
   const saved = { localStorage: globalThis.localStorage, sessionStorage: globalThis.sessionStorage, indexedDB: globalThis.indexedDB };
   Object.defineProperty(globalThis, "localStorage", { value: trap, configurable: true });

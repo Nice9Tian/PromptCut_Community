@@ -15,11 +15,13 @@ import type { ProviderInfo, AiProvider, SttInfo, PublicAiConfig, AiConfigPatch, 
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 把「非默认、又容易让排查跑偏」的设置挑成人话，放在诊断报告最前面。
+ * Pick out the settings that are "non-default and easy to send troubleshooting off course" and put
+ * them in plain language at the very top of the diagnostic report.
  *
- * 这些值服务端那份 config 里全都有，问题在于没人会去翻。文本协议模式尤其：
- * 它一开，模型就改用回复正文里的文本块下达工具调用，工具相关的症状全变样，
- * 而开关本身藏在「更多」里，用户自己都未必记得点过。
+ * All of these values are in the server's config, but nobody ever digs through it. Text protocol
+ * mode especially: once it is on, the model issues tool calls through text blocks in the reply
+ * body instead, every tool-related symptom changes, and the switch itself is hidden under "More",
+ * so the user may not even remember turning it on.
  */
 function notableSettings(cfg: PublicAiConfig | null | undefined, current: AiProvider | null): string[] {
   if (!cfg) return [tr("Could not get the server config (/api/ai/diagnostics returned no config), the content below may be incomplete")];
@@ -30,12 +32,14 @@ function notableSettings(cfg: PublicAiConfig | null | undefined, current: AiProv
   out.push(tr("Currently using: {0}; default in config: {1}", current ?? tr("(not selected yet)"), cfg.defaultProvider ?? tr("(not set)")));
   if (current === "api") {
     out.push(tr("Direct API: {0}, model {1}, maxTokens {2}", cfg.api.vendor, cfg.api.model || tr("(not filled in)"), cfg.api.maxTokens));
-    // redactDebug 会把 apiKey 整个换成 [REDACTED]，连「到底配没配」都看不出来了。
-    // 这两个字段名躲开它的匹配，好让支持能分清「没配 Key」和「Key 不对」。
+    // redactDebug replaces apiKey wholesale with [REDACTED], so even "whether it was configured at all"
+    // can no longer be seen. These two field names dodge its matching, so support can tell "no Key
+    // configured" from "wrong Key".
     out.push(cfg.api.apiKey.set ? tr("API Key: configured, last four {0}", cfg.api.apiKey.last4) : tr("API Key: not configured"));
     if (cfg.api.baseUrl) out.push(tr("Using custom baseUrl: {0}", cfg.api.baseUrl));
   }
-  // 模型清单是空的，面板上就只有「默认」一项可选 —— 用户常报「换不了模型」其实是这个
+  // The model list is empty, so the panel has only "Default" to choose -- users often report "cannot
+  // change model", and this is what it actually is
   for (const id of ["claude", "codex", "agy"] as const) {
     if (!cfg.cliModels?.[id]) out.push(tr("{0} has no model list configured, so the panel will only show \"Default\"", id));
   }
@@ -55,15 +59,17 @@ export function AiSetupDialog(props: {
   installState: Partial<Record<AiProvider, "idle" | "installing" | "ok" | "timeout" | "failed">>;
   installError: Partial<Record<AiProvider, string>>;
   config: PublicAiConfig | null; onSaveConfig: (partial: AiConfigPatch) => Promise<void>;
-  /** 「清理密钥」:删掉那一路的密钥文件 */
+  /** "Clear keys": delete the key file of that route */
   onClearKey?: (kind: KeyKind) => Promise<void>;
 }): JSX.Element | null {
   const { open, onClose, providers, stt, current, onChoose, onLogin, loginState, setupJobs, onCancelSetup, onInstall, installState, installError, config, onSaveConfig, onClearKey } = props;
-  // 遮罩:按下和松开都在遮罩上才关。在输入框里拖着选文字、松手滑到外面,不能把窗口关了
+  // Backdrop: close only if both press and release are on the backdrop. Dragging to select text in
+  // an input and releasing outside must not close the window
   const backdrop = useBackdropClose(onClose);
   const [clearing, setClearing] = useState<KeyKind | "">("");
   const [clearMsg, setClearMsg] = useState("");
-  /** 粘贴授权码：码只放在这个输入框的状态里，提交后立刻清空，不进诊断报告、不写日志 */
+  /** Paste the authorization code: the code lives only in this input's state, is cleared right after
+   * submit, and goes into neither the diagnostic report nor logs */
   const [authCode, setAuthCode] = useState("");
   const [authCodeBusy, setAuthCodeBusy] = useState(false);
   const [authCodeMsg, setAuthCodeMsg] = useState("");
@@ -107,13 +113,13 @@ export function AiSetupDialog(props: {
     }
   };
 
-  /** null = 停在第一级的选择页;有值 = 进了那一项的配置页 */
+  /** null = stay on the first-level selection page; a value = entered the configuration page of that item */
   const [openedEntry, setOpenedEntry] = useState<SetupEntryId | null>(null);
 
   const [apiVendor, setApiVendor] = useState<ApiVendor>("anthropic");
   const [apiBaseUrl, setApiBaseUrl] = useState("");
   const [apiModel, setApiModel] = useState("");
-  /** Router 那一路的模型清单(| 分隔),独立于自定义页 */
+  /** Model list of the Router route (separated by |), independent of the custom page */
   const [routerModel, setRouterModel] = useState("");
   const [savingRouter, setSavingRouter] = useState(false);
   const [routerMsg, setRouterMsg] = useState("");
@@ -123,25 +129,27 @@ export function AiSetupDialog(props: {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  /** provider → 安装方式:能一键装的给命令,不能的给一句人话 */
+  /** provider → install method: a command for those that can be installed in one click, a plain sentence for those that cannot */
   const [installPlans, setInstallPlans] = useState<Partial<Record<string, { command?: string; hint?: string }>>>({});
   const [agyPerms, setAgyPerms] = useState<{ path: string; total: number; granted: string[]; missing: string[] } | null>(null);
   const [agyPermError, setAgyPermError] = useState("");
   const [granting, setGranting] = useState(false);
   const [toolProtocol, setToolProtocol] = useState(false);
   /**
-   * 「深度自主」开着时一次运行最多跑多少轮。存成字符串是为了让输入框能清空 ——
-   * 用数字 state 的话,删到空会被当成 0,而 0 在这里是「不限轮次」这个真实取值,
-   * 用户只是想改个数字就莫名其妙变成了无限跑。
+   * The maximum number of rounds in one run when "deep autonomy" is on. Stored as a string so the
+   * input can be cleared -- with a numeric state, deleting down to empty would be taken as 0, and 0
+   * here is a real value meaning "unlimited rounds", so a user who only wanted to change a number
+   * would inexplicably end up with unlimited running.
    */
   const [deepRounds, setDeepRounds] = useState("300");
   const [deepRoundsMsg, setDeepRoundsMsg] = useState("");
-  /** 「更多」里放高级开关。每次打开对话框都收回去,免得上次展开过就一直敞着 */
+  /** Advanced switches live under "More". Collapsed every time the dialog opens, so it does not stay
+   * open just because it was expanded last time */
   const [moreOpen, setMoreOpen] = useState(false);
-  /** 三家 CLI 的可选模型清单(| 分隔),面板上的模型选择器读它 */
+  /** Selectable model lists of the three CLIs (separated by |); the model selector on the panel reads it */
   const [cliModels, setCliModels] = useState<Record<string, string>>({});
   const [savingModels, setSavingModels] = useState(false);
-  /** 额度熔断:阈值配置(全局)+ 每家 CLI 最近查到的用量 */
+  /** Quota cutoff: threshold config (global) + the most recently queried usage of each CLI */
   const [quotaCfg, setQuotaCfg] = useState<QuotaConfig>({ enabled: true, thresholdPercent: 80, checkEveryBytes: 262144 });
   const [quotaInfo, setQuotaInfo] = useState<Record<string, QuotaInfo | undefined>>({});
   const [quotaBusy, setQuotaBusy] = useState<Record<string, boolean>>({});
@@ -152,18 +160,19 @@ export function AiSetupDialog(props: {
   const [modelsMsg, setModelsMsg] = useState("");
   const [diagState, setDiagState] = useState("");
   /*
-   * 收好的报告 + 装它的子窗口。
+   * The collected report + the child window that holds it.
    *
-   * 以前是点一下就按长度自己选路走掉(短的进剪贴板、长的落盘),用户既看不到
-   * 报告长什么样也没得挑。现在先摆出来,复制 / 保存为文件 / 提交三条路由用户定。
+   * It used to pick a route by length on a single click and be done (short ones to the clipboard,
+   * long ones to disk), so the user could neither see what the report looked like nor choose. Now
+   * it is shown first, and the three routes, copy / save as file / submit, are the user's decision.
    */
   const [diagReport, setDiagReport] = useState("");
   const [diagOpen, setDiagOpen] = useState(false);
   /*
-   * 报告到底去哪了,要弹一条看得见的提示。
+   * Where the report went needs a visible toast.
    *
-   * 以前只把这句话塞进「使用这一项」旁边那行小灰字里,点完 Debugger 什么动静都
-   * 没有,用户根本不知道复制成功没有。
+   * It used to just put that sentence in the small grey line next to "Use this one", and after
+   * clicking Debugger nothing happened at all, so the user had no idea whether the copy succeeded.
    */
   const [diagToast, setDiagToast] = useState("");
   const diagToastTimer = useRef<number | null>(null);
@@ -173,16 +182,17 @@ export function AiSetupDialog(props: {
     diagToastTimer.current = window.setTimeout(() => setDiagToast(""), 6000);
   };
   useEffect(() => () => { if (diagToastTimer.current) window.clearTimeout(diagToastTimer.current); }, []);
-  /** 「显示」小节读写的是所有分页共用的显示偏好(chat/viewPrefs),不是这个对话框自己的状态 */
+  /** The "Display" subsection reads and writes the display preferences shared by all tabs (chat/viewPrefs), not this dialog's own state */
   const viewPrefs = useViewPrefs();
 
   /*
-   * 导航状态只在「对话框被打开」这一刻重置。
+   * Navigation state is reset only at the moment "the dialog is opened".
    *
-   * 以前这段和下面的表单同步写在同一个 effect 里,依赖是 [open, current, config] ——
-   * 于是**每次保存配置都会把人踢回第一级**:填完 API Key 点保存,config 一变,
-   * effect 重跑,setOpenedEntry(null) 把详情页收掉;「更多」展开着也会被合上。
-   * 拆成两个:这个只看 open,那个只管把 config 同步进表单。
+   * This used to be in the same effect as the form sync below, with dependencies
+   * [open, current, config] -- so **every config save kicked the user back to the first level**:
+   * fill in the API Key and click save, config changes, the effect reruns, and
+   * setOpenedEntry(null) closes the detail page; an expanded "More" would also be folded.
+   * Split into two: this one watches only open, and the other only syncs config into the form.
    */
   useEffect(() => {
     if (!open) return;
@@ -191,20 +201,23 @@ export function AiSetupDialog(props: {
     setDiagState("");
     setDiagReport("");
     setDiagOpen(false);
-    // 保存反馈和没提交的输入也属于「这一次打开」的状态,不能跟着 config 走:
-    // 跟着走的话保存成功那一刻 config 一变,「已保存」当场被抹掉,用户什么都没看见。
+    // Save feedback and uncommitted input also belong to the state of "this opening" and must not
+    // follow config: if they did, the moment a save succeeds config changes and "Saved" is wiped on
+    // the spot, so the user sees nothing.
     setApiKeyInput("");
     setSaveSuccess(false);
     setSaveError(null);
-    // 「自主轮次」那句回执同理:保存成功那一刻 config 一变,下面同步表单的 effect 会重跑,
-    // 把清空放在那边等于自己抹掉刚写的回执 —— 存成功了用户却什么反馈都看不见
+    // The same goes for the "autonomy rounds" receipt: the moment a save succeeds config changes and
+    // the form-sync effect below reruns, so clearing it there would wipe the receipt just written --
+    // the save succeeded yet the user sees no feedback at all
     setDeepRoundsMsg("");
   }, [open]);
 
   useEffect(() => {
     if (!open) return;
     if (config) {
-      // 两路各读各的 profile;老服务端没有 profiles 时退回顶层那份
+      // Each of the two routes reads its own profile; an old server without profiles falls back to the
+      // top-level one
       const custom = config.api.profiles?.custom ?? config.api;
       setApiVendor(custom.vendor);
       setApiBaseUrl(custom.baseUrl);
@@ -226,7 +239,8 @@ export function AiSetupDialog(props: {
 
   useEffect(() => {
     if (!open) return;
-    // 未安装的那几项:问服务端能不能一键装、命令是什么(dryRun 只回答不执行)
+    // For the items not installed: ask the server whether one-click install is possible and what the
+    // command is (dryRun only answers, does not execute)
     for (const p of providers) {
       if (p.available) continue;
       fetch("/api/ai/install", {
@@ -251,7 +265,7 @@ export function AiSetupDialog(props: {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       e.preventDefault();
-      // Esc 先退回上一级,再按一次才关掉整个对话框
+      // Esc first goes back one level, and only a second press closes the whole dialog
       if (openedEntry) goTo(null);
       else onClose();
     };
@@ -283,10 +297,11 @@ export function AiSetupDialog(props: {
     setSaving(true);
     setSaveError(null);
     setSaveSuccess(false);
-    // 显式写进 custom 那一路:即使当前生效的是 Router,也不会把 Router 的配置冲掉
+    // Write explicitly into the custom route: even if Router is currently in effect, Router's config
+    // is not overwritten
     const patch: AiConfigPatch = { api: { profiles: { custom: { vendor: apiVendor, baseUrl: apiBaseUrl, model: apiModel } } } };
     if (replaceKey && apiKeyInput.trim()) { patch.api!.apiKey = apiKeyInput.trim(); patch.api!.source = "custom"; }
-    else if (config?.keys?.custom.set) patch.api!.source = "custom"; // 保存自定义页 = 切到自定义那一路
+    else if (config?.keys?.custom.set) patch.api!.source = "custom"; // Saving the custom page = switching to the custom route
     try {
       await onSaveConfig(patch);
       setSaveSuccess(true);
@@ -312,7 +327,7 @@ export function AiSetupDialog(props: {
     }
   };
 
-  /** agy 自己能列模型,不用手打。其余两家没有列表命令,只能手填 */
+  /** agy can list models itself, no need to type them. The other two have no list command, so they must be filled in by hand */
   const loadAgyModels = async () => {
     setLoadingAgyModels(true);
     setModelsMsg("");
@@ -331,10 +346,11 @@ export function AiSetupDialog(props: {
   };
 
   /**
-   * API 直连:从接口自己拉模型清单，省得手打。
+   * Direct API: pull the model list from the endpoint itself, to save typing.
    *
-   * 读的是**已保存**的配置（服务端拿 baseUrl 和解密后的 Key 去打 /v1/models），
-   * 所以先存再读——不然刚在框里改的地址还没落盘，读回来的是上一次那份。
+   * It reads the **saved** config (the server takes baseUrl and the decrypted Key and calls
+   * /v1/models), so save first, then read -- otherwise an address just edited in the box is not on
+   * disk yet, and what is read back is the previous one.
    */
   const loadApiModels = async () => {
     setLoadingApiModels(true);
@@ -365,7 +381,7 @@ export function AiSetupDialog(props: {
     }
   };
 
-  /** 查一家的用量。Claude 那条要跑一次 claude -p /usage,十来秒 */
+  /** Query the usage of one vendor. The Claude one has to run claude -p /usage once, about ten seconds */
   const loadQuota = async (provider: string, refresh: boolean) => {
     setQuotaBusy((prev) => ({ ...prev, [provider]: true }));
     try {
@@ -384,17 +400,18 @@ export function AiSetupDialog(props: {
     await onSaveConfig({ toolProtocol: checked });
   };
 
-  /** 「自主轮次」改过没有。改过就在「更多」按钮上挂个点,不展开也知道这儿动过 */
+  /** Whether "autonomy rounds" has been changed. If so, hang a dot on the "More" button, so you can tell it was touched even when collapsed */
   const roundsChanged = (config?.deepAutoRounds ?? 300) !== 300;
 
   /**
-   * 「自主轮次」失焦时存。不做「边打字边存」:中间态(比如把 300 删成 3 再删成空)
-   * 每一步都落盘,既没意义也会把 0 这个特殊值误存进去。
+   * Save "autonomy rounds" on blur. Do not "save as you type": intermediate states (say, deleting 300
+   * down to 3, then to empty) each hitting disk is pointless and would also wrongly store the
+   * special value 0.
    */
   const handleSaveDeepRounds = async () => {
     const raw = deepRounds.trim();
     if (raw === "") {
-      // 清空不当成 0。0 是「不限」,得让用户自己打出来
+      // Clearing is not treated as 0. 0 means "unlimited" and must be typed out by the user
       setDeepRounds(String(config?.deepAutoRounds ?? 300));
       setDeepRoundsMsg("");
       return;
@@ -414,12 +431,15 @@ export function AiSetupDialog(props: {
   };
 
   /**
-   * 排查信息:服务端那份(平台、CLI 路径、各家安装/登录状态、脱敏后的配置)
-   * 加上浏览器这边的一点上下文,收成一份 JSON 摆进子窗口。密钥在服务端就已经
-   * 换成 last4,机器码只留首组(它同时是配置分发的解密口令),redactDebug 再兜一道底。
+   * Troubleshooting info: the server's part (platform, CLI paths, install/login state of each
+   * vendor, the redacted config) plus a bit of browser-side context, collected into one JSON and
+   * shown in a child window. Keys are already replaced with last4 on the server, the machine code
+   * keeps only its first group (it is also the decryption passphrase for config distribution), and
+   * redactDebug is one more safety net.
    *
-   * 先收完再开窗:收集要等服务端 refresh 一遍各家 CLI 状态,先开窗会闪一下空白;
-   * 收集期间「正在收集…」显示在底部那行小字上。
+   * Collect fully before opening the window: collection waits for the server to refresh the status
+   * of each CLI, and opening the window first would flash blank; during collection "Collecting..."
+   * shows on the small text line at the bottom.
    */
   const openDiagnostics = async () => {
     setDiagState(tr("Collecting…"));
@@ -432,9 +452,10 @@ export function AiSetupDialog(props: {
         redactDebug({
           format: "PromptCut AI setup diagnostics v2",
           copiedAt: new Date().toISOString(),
-          // 摆在最前面:和默认值不一样、又最容易让人查错方向的几条。
-          // 服务端那份 config 里本来就有,但埋在几百行 JSON 底下没人翻得到 ——
-          // 「用户其实开着文本协议模式」这种乌龙就是这么来的。
+          // Put at the very top: the few entries that differ from the defaults and most easily send people
+          // the wrong way when investigating. They are already in the server's config, but buried under
+          // hundreds of lines of JSON where nobody finds them -- that is how mix-ups like "the user actually
+          // has text protocol mode on" come about.
           notable: notableSettings(server?.config, current),
           browser: { userAgent: navigator.userAgent, language: navigator.language },
           openedEntry,
@@ -451,13 +472,14 @@ export function AiSetupDialog(props: {
       showDiagToast(tr("Failed to collect diagnostics: {0}", why));
       return;
     }
-    // 收集成功就把报告摆进子窗口,复制 / 保存为文件 / 提交由用户自己挑。
+    // On successful collection, show the report in the child window; copy / save as file / submit is
+    // the user's own pick.
     setDiagReport(report);
     setDiagOpen(true);
     setDiagState("");
   };
 
-  /** 切换入口时把上一项的诊断输出清掉,免得看着像是当前这项的 */
+  /** When switching entries, clear the previous item's diagnostic output, so it does not look like it belongs to the current one */
   const goTo = (id: SetupEntryId | null) => {
     setOpenedEntry(id);
     setDiagState("");
@@ -465,7 +487,7 @@ export function AiSetupDialog(props: {
     setDiagOpen(false);
   };
 
-  /** 这一项现在能不能用,以及不能用的话缺什么 */
+  /** Whether this item is usable right now, and if not, what is missing */
   const readiness = (entry: SetupEntry): { ok: boolean; label: string; tone: "ok" | "warn" | "idle" } => {
     if (isCliEntry(entry.id)) {
       const p = providers.find((x) => x.id === entry.provider);
@@ -800,7 +822,7 @@ export function AiSetupDialog(props: {
     <>
     <div className="ais-backdrop" {...backdrop}>
       <div className="ais-dialog" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-        {/* 报告去哪了要看得见。role=status 让读屏软件也念出来 */}
+        {/* Make it visible where the report went. role=status lets screen readers announce it too */}
         {diagToast && (
           <div className="ais-toast" role="status" onClick={() => setDiagToast("")}>
             {diagToast}
@@ -831,8 +853,10 @@ export function AiSetupDialog(props: {
               })}
             </div>
             {/*
-              「显示」:原来 AI 面板顶栏上的「简洁 / 详细」切换搬到这里。它是看习惯定一次就不怎么动的偏好,
-              不值得在每个分页的顶栏上常驻一个分段按钮;不收进「更多」,因为它不危险,找得到比防误触要紧。
+              "Display": the "Compact / Detailed" toggle originally on the AI panel top bar was moved here. It
+              is a preference set once based on viewing habits and rarely touched, not worth keeping a permanent
+              segmented button on the top bar of every tab; not tucked into "More" because it is not dangerous,
+              and discoverability is more important than preventing accidental clicks.
             */}
             <div className="ais-more ais-display">
               <div className="ais-more-title">{tr("Display")}</div>
@@ -852,9 +876,11 @@ export function AiSetupDialog(props: {
               </label>
             </div>
             {/*
-              文本协议模式收进「更多」里。它以前是这一页上一个裸的勾选框,谁都可能顺手点一下,
-              可它改的是模型下达工具调用的方式 —— 打开之后调用写在正文里,比原生工具慢也更容易出错,
-              属于「CLI 真的拒绝原生工具了」才该动的开关,不该和选驱动放在同一层。
+              Text protocol mode is tucked into "More". Previously it was a bare checkbox on this page that
+              anyone could click casually, yet it alters how the model issues tool calls: once enabled, calls
+              are written in the body text, which is slower and more error-prone than native tools; it belongs
+              to switches that should only be touched when "the CLI genuinely rejects native tools", and should
+              not sit on the same level as driver selection.
             */}
             {moreOpen && (
               <div className="ais-more">
@@ -873,8 +899,9 @@ export function AiSetupDialog(props: {
                   </span>
                 </label>
                 {/*
-                  自主轮次:只在输入框旁边的「深度自主」按下时才起作用,所以放在这里而不是
-                  面板上 —— 面板管的是「这一次怎么跑」,一个数值上限是设一次就不动的东西。
+                  Autonomous rounds: only takes effect when "Deep autonomy" next to the input box is pressed,
+                  which is why it is placed here rather than on the panel: the panel governs "how this run executes",
+                  whereas a numerical limit is something configured once and left alone.
                 */}
                 <label className="ais-more-row">
                   <input
@@ -900,9 +927,9 @@ export function AiSetupDialog(props: {
             <div className="ais-footer">
               <div className="ais-footer-actions">
                 {/*
-                  收起来是为了防误触,但不能收到「开着也看不出来」。里面有非默认项时
-                  按钮上挂个点:用户不展开也知道这儿动过,不至于一直开着文本协议模式
-                  却在别处找原因。
+                  Collapsed to prevent accidental clicks, but shouldn't be collapsed so far that "you can't tell
+                  it's on". When it has non-default options, put a dot on the button: users know it was modified
+                  without expanding, avoiding keeping text protocol mode on while looking elsewhere for the cause.
                 */}
                 <button
                   className="ais-btn ais-more-btn"

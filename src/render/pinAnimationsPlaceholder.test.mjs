@@ -1,11 +1,14 @@
 /**
- * 占位符的动画豁免(`pinAnimations.ts`)。跑:node --test src/render/pinAnimationsPlaceholder.test.mjs
+ * Animation exemption for placeholders (`pinAnimations.ts`).
+ * Run: node --test src/render/pinAnimationsPlaceholder.test.mjs
  *
- * 占位组件的 CSS 动画(名字以 `pc-ph-` 开头,contract 的 `PLACEHOLDER_ANIMATION_PREFIX`)负责
- * 「来不及满 120 ms 才显示」和沙漏转动,它们按真实时间走;舞台的钉时间(整页 `sync`、子树 `syncIn`)
- * 要是把它们也钉住,暂停态虚拟时钟不动,占位符就永远停在不可见的第 0 毫秒。
+ * CSS animations of placeholder components (names starting with `pc-ph-`, contract's
+ * `PLACEHOLDER_ANIMATION_PREFIX`) handle "display only after 120 ms delay" and hourglass rotation,
+ * which run in real time; if stage time pinning (full-page `sync`, subtree `syncIn`) also pins them,
+ * the virtual clock does not advance in paused state, and placeholders stay at invisible 0 ms forever.
  *
- * 对照:名字只是**像**(不以前缀开头)的卡片动画照样被钉 —— 豁免只认 `isPlaceholderAnimation`。
+ * Contrast: card animations whose names merely **look similar** (not starting with the prefix)
+ * are still pinned: exemption only recognizes `isPlaceholderAnimation`.
  */
 import test from "node:test";
 import assert from "node:assert/strict";

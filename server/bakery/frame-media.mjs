@@ -1,9 +1,9 @@
 /**
- * Node 侧:等这一帧的素材就绪。
+ * Node side: wait for this frame's assets to be ready.
  *
- * 页面侧的 `__pcHideFrameMedia` / `__pcPrepareFrameMedia` 已经搬进页面 bundle
- * (`src/render/frameMedia.ts`,由 ExportView 在 React 之前装好);这里只剩下驱动它的那一半 ——
- * 名字和语义不变,`capture-snapshot.mjs` 照旧 import 这个文件。
+ * The page side's `__pcHideFrameMedia` / `__pcPrepareFrameMedia` have moved into the page bundle
+ * (`src/render/frameMedia.ts`, installed by ExportView before React); only the driver half remains
+ * here: names and semantics are unchanged, and `capture-snapshot.mjs` imports this file as before.
  */
 export async function prepareFrameMedia(bakery) {
   // The decoder can need compositor ticks to deliver loadeddata/seeked in headless-shell.

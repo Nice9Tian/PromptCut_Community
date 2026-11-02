@@ -1,4 +1,4 @@
-/** 素材授权 adapter：唯一 doc authority 注入核验与持久撤销订阅；这里不生成账号/成员权限。 */
+/** Asset authorization adapter: injects verification and durable revocation subscriptions via sole doc authority; does not generate account/member permissions here. */
 import { EventEmitter } from 'node:events';
 const REQUEST = Symbol.for('promptcut.asset.request.v2');
 export const assetContextOf = req => req?.[REQUEST] ?? null;
@@ -15,7 +15,7 @@ export function waitAssetWritable(stream) {
   });
 }
 
-/** principal 是已核验票据输出；projectId必须相同。每次调用 authority，不能用 TTL 缓存放宽撤销。 */
+/** principal is verified ticket output; projectId must match. Calls authority each time, cannot relax revocations with TTL caching. */
 export async function authorizeAsset({ authority, principal, projectId, action, resource }) {
   if (!principal || principal.projectId !== projectId) throw assetAccessError('project-mismatch');
   if (typeof authority?.checkAccess !== 'function') throw assetAccessError('authority-unavailable', 503);
@@ -32,8 +32,12 @@ export async function authorizeAsset({ authority, principal, projectId, action, 
 /**
  * openProjectStream({authority,principal,projectId,action,resource,close})
  * -> lease {signal,assert(),track(stream),release(),closed}
- * 注册在 recheck 之前，堵住 check -> open 的撤销缝；回调先同步 abort，再等待真实资源关闭，回调返回真实关闭完成；持久事件消费/ACK由注入的可信服务adapter处理，doc订阅本身不自动ACK。
- * authority.subscribeRevocations(context, async event=>...) 必须同步登记，返回 unsubscribe；服务启动 head 同步由 doc adapter 保证。
+ * Registered before recheck to close the check -> open revocation gap; callback aborts
+ * synchronously first, then waits for real resources to close, callback returns real closure
+ * completion; durable event consumption/ACK is handled by injected trusted service adapter, doc
+ * subscription itself does not auto-ACK.
+ * authority.subscribeRevocations(context, async event=>...) must register synchronously, returning
+ * unsubscribe; service startup head sync is guaranteed by doc adapter.
  */
 export async function openProjectStream({ authority, principal, projectId, action = 'read', resource, close = () => {} }) {
   if (typeof authority?.subscribeRevocations !== 'function') throw assetAccessError('revocation-unavailable', 503);
@@ -119,7 +123,7 @@ export async function createAssetResourceLease({ context = {}, check, subscribe,
     run(task) { const finish = this.hold(); return Promise.resolve().then(task).finally(finish); },
     release() {
       if (!releasePromise) {
-        released = true; // HTTP已结束：拒新动作，但仍拥有未actualclose的资源，继续接撤销。
+        released = true; // HTTP ended: rejects new actions, but still owns resources not actualclosed, continues receiving revocations.
         releasePromise = waitTracked().then(() => { if (!barrierError) unsubscribe?.(); });
       }
       return releasePromise;
@@ -128,7 +132,7 @@ export async function createAssetResourceLease({ context = {}, check, subscribe,
   };
 }
 
-/** 接线工厂；resolvePrincipal(req)由中央票据/账号模块提供，不接受调用者自报projectId。 */
+/** Wiring factory; resolvePrincipal(req) is provided by central ticket/account module, does not accept caller-reported projectId. */
 export function createProjectAssetAccess({ authority, resolvePrincipal }) {
   if (typeof resolvePrincipal !== 'function') throw new TypeError('resolvePrincipal required');
   return {
@@ -141,7 +145,7 @@ export function createProjectAssetAccess({ authority, resolvePrincipal }) {
   };
 }
 
-/** 同一项目每次请求的 BlobStore facade；底层 fs 在登记/收尾发布点再次核权。 */
+/** BlobStore facade for each request to the same project; underlying fs re-verifies authority at registration/finalize publication points. */
 export function authorizedAssetStore(store, lease) {
   if (!lease) return store;
   if (store.projectId !== lease.projectId) throw assetAccessError('project-mismatch');

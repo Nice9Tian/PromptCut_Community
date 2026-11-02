@@ -1,17 +1,28 @@
 /**
- * 在线执行用户卡与素材效果卡 · 轻重与界面(`docs/plan/online-card-exec-contract.md` 第 6、8 节)。跑:
+ * Online execution of user cards and media effect cards · Light/heavy and UI
+ * (`docs/plan/online-card-exec-contract.md` sections 6 and 8). Run:
  *   node --experimental-test-module-mocks --test src/editor/onlineCardsL.test.mjs
  *
- *   OCE-L-01 「本页运行不了」的判法(`placeholderHost.needsLocalPc`):素材效果卡照旧算;用户卡只有运行不了的才算 ——
- *            构建时就在包里的不算(不按档另挡,2026-10-21 起),同步来的看运行状态(只有 `ready` 不算);桌面恒不算
- *   OCE-L-02 时间轴不再挂「需要本地 PC 渲染辅助」徽标(2026-10-21 用户定撤掉):判定函数没了,片段里也不引它
- *   OCE-L-03 测量门:卡片源码同步完之后,再等同步来的卡第一次载入有结果(没有 `loading` 的了)才开;成功失败都算;
- *            仍受同一个上限封顶;没有在载入的卡时与原来相同
- *   OCE-L-04 导出:同步来的用户卡与素材效果卡不管判轻判重都必须用预渲染原尺寸(导出页不执行它们的代码);层表里没有它们的层、
- *            或没有层表,算缺;「只核对判重的卡」(按判定的表)不把它们放过去;别的卡的核对与原来相同
- *   OCE-L-05 参数面板的说明跟着运行状态走:能运行、还在载入不出说明,九种里其余七种各有一句(文字见 `cardRunStates.ts`;
- *            原来的第十种随旧档位 2026-10-22 删掉)
- *   OCE-L-06 接线(按源码核):分派表、测量、时间轴片段都订阅了运行状态;六处判断都经 `placeholderHost` 的同一个函数
+ *   OCE-L-01 "Cannot run on this page" heuristic (`placeholderHost.needsLocalPc`): media effect
+ *            cards count as before; user cards count only if they cannot run: those in bundle at
+ *            build time do not count (no tier blocking starting 2026-10-21); synced cards check
+ *            run state (only `ready` does not count); desktop never counts
+ *   OCE-L-02 Timeline no longer displays "Requires local PC rendering assistance" badge
+ *            (user decision, 2026-10-21: removed): predicate function is gone, clips no longer
+ *            reference it
+ *   OCE-L-03 Measurement gate: after card sources finish syncing, wait until first load of synced
+ *            cards has results (none in `loading`) before opening; both success and failure count;
+ *            still capped by same limit; identical to original when no cards are loading
+ *   OCE-L-04 Export: synced user cards and media effect cards must use prerendered original size
+ *            whether classified as light or heavy (export page does not run their code); counted
+ *            as missing if their layer is not in layer table or if no layer table; "Only verify
+ *            cards classified as heavy" (by classification table) does not let them pass;
+ *            verifying other cards remains as before
+ *   OCE-L-05 Parameters panel descriptions follow run state: no description if runnable or still
+ *            loading; remaining seven of nine each have a sentence (see `cardRunStates.ts` for text;
+ *            former tenth removed with old tier on 2026-10-22)
+ *   OCE-L-06 Wiring (verified against source): dispatch table, measurement, timeline clips all
+ *            subscribe to run state; all six checks go through same `placeholderHost` function
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import { test, mock } from "node:test";
@@ -57,14 +68,17 @@ test("OCE-L-01 judging method for cards that cannot run on this page: media effe
       R.setCardRunStates([["synced", { state }]]);
       assert.equal(local("synced"), state !== "ready", `Run state ${state}`);
     }
-    // 执行它的环境(舞台)里:载入成功就是运行时注册表里有定义
+    // In the environment executing it (stage): successful load means a definition exists in runtime
+    // registry
     R.setCardRunStates([]);
     R.setRuntimeCards([dom("synced")]);
     assert.equal(local("synced"), false, "A synced card that loaded successfully in the stage");
     R.setRuntimeCards([dom("synced", { Component: undefined, card: () => ({}) })]);
     assert.equal(local("synced"), true, "A synced media effect card loaded in the stage: media effect cards count as before");
     R.setRuntimeCards([]);
-    // 2026-10-21 起不按档另挡用户卡(原来按档挡的那道开关与那一种运行状态 2026-10-22 删掉):本页能运行的照常运行、停下追精确帧
+    // Starting 2026-10-21, do not block user cards by tier (the switch blocking by tier and that run
+    // state were deleted on 2026-10-22): those runnable on this page run as usual; pause and catch up
+    // exact frames
     R.setCardRunStates([["synced", { state: "not-isolated" }]]);
     assert.equal(local("repo-user"), false, "A build-time user card can run on this page, does not count");
     assert.equal(local("synced"), true, "Synced card run state is not ready: counts");
@@ -72,7 +86,7 @@ test("OCE-L-01 judging method for cards that cannot run on this page: media effe
     assert.deepEqual([...H.localOnlyClipIds([{ id: "a", cardId: "builtin" }, { id: "b", cardId: "repo-user" }, { id: "c", cardId: "synced" }, { id: "d", cardId: "gpu" }])], ["c", "d"]);
     R.setCardRunStates([["synced", { state: "ready" }]]);
     assert.deepEqual([...H.localOnlyClipIds([{ id: "a", cardId: "builtin" }, { id: "b", cardId: "repo-user" }, { id: "c", cardId: "synced" }, { id: "d", cardId: "gpu" }])], ["d"]);
-    // 桌面(模式关着)
+    // Desktop (mode is off)
     H.setOnlineBrowserMode(false);
     for (const id of ["repo-user", "synced", "gpu", "audio-only"]) assert.equal(local(id), false, `Desktop: ${id}`);
     assert.equal(H.localOnlyClipIds([{ id: "d", cardId: "gpu" }]).size, 0);
@@ -97,7 +111,7 @@ test("OCE-L-03 measurement gate: after card source sync finishes, also wait unti
   globalThis.__pcOnlinePage = true;
   try {
     R.setSyncedUserCards([{ id: "x", name: "x" }, { id: "y", name: "y" }]);
-    // 没有在载入的卡:与原来相同,同步完就开
+    // No cards loading: same as before, opens once sync finishes
     R.setCardRunStates([["x", { state: "not-isolated" }]]);
     let clock = fakeClock();
     G.resetMeasureGate(clock);
@@ -106,7 +120,7 @@ test("OCE-L-03 measurement gate: after card source sync finishes, also wait unti
     assert.equal(G.measureGateOpen(), true);
     assert.equal(G.measureGateDiag().reason, "synced");
 
-    // 有卡还在载入:同步完了也先不开
+    // A card is still loading: do not open yet even after sync finishes
     R.setCardRunStates([["x", { state: "loading" }], ["y", { state: "loading" }]]);
     clock = fakeClock();
     G.resetMeasureGate(clock);
@@ -119,7 +133,7 @@ test("OCE-L-03 measurement gate: after card source sync finishes, also wait unti
     assert.equal(G.measureGateOpen(), true, "All have a result (success and failure both count): open");
     assert.equal(G.measureGateDiag().reason, "synced");
 
-    // 一直在载入:到上限照开
+    // Keeps loading: open anyway once the limit is reached
     R.setCardRunStates([["x", { state: "loading" }]]);
     clock = fakeClock();
     G.resetMeasureGate(clock);
@@ -130,11 +144,11 @@ test("OCE-L-03 measurement gate: after card source sync finishes, also wait unti
     clock.advance(1);
     assert.equal(G.measureGateOpen(), true);
     assert.equal(G.measureGateDiag().reason, "timeout");
-    // 开了之后运行状态再变不影响门
+    // Once opened, subsequent changes to runtime status do not affect the gate
     R.setCardRunStates([["x", { state: "ready", version: "2" }]]);
     assert.equal(G.measureGateOpen(), true);
 
-    // 源码同步回了失败、卡在载入:等到有结果,原因是 failed
+    // Source code sync returned failure and is stuck loading: wait for a result, reason is failed
     R.setCardRunStates([["x", { state: "loading" }]]);
     clock = fakeClock();
     G.resetMeasureGate(clock);
@@ -163,7 +177,7 @@ test("OCE-L-04 export: synced cards must use the original-size prerender, and if
       return ready.includes(rk) ? { type: "content.item", body: frames } : { type: "content.item", missing: true };
     } });
 
-  // 层表里有重卡的层;同步卡 s1 有层且齐,s2 没有层
+  // Layer table has layers for heavy cards; synced card s1 has complete layers, s2 has no layers
   const deps = depsOf([layer("heavy", "rk-h"), layer("s1", "rk-s1")], ["rk-h", "rk-s1"]);
   const base = await O.loadOriginalsIndex("proj", deps);
   assert.deepEqual(base.missing, [], "Without requiredClips: same as before");
@@ -175,16 +189,17 @@ test("OCE-L-04 export: synced cards must use the original-size prerender, and if
   assert.equal(idx.hashAt("heavy", 1), HASH);
   assert.equal(idx.hashAt("light", 1), undefined, "Other cards unchanged");
 
-  // 「只核对判重的卡」(按判定的表)不把同步卡放过去
+  // "Only check cards classified as heavy" (by classification table) does not let synced cards pass
   const low = await O.loadOriginalsIndex("proj", deps, { onlyClips: ["heavy"], requiredClips: ["s1", "s2"] });
   assert.deepEqual(low.missing, ["s2"]);
   assert.equal(low.hashAt("s1", 2), HASH, "Even if the page classifies it as light, the original size is still fetched");
 
-  // 同步卡的层有、帧不齐:照旧算缺
+  // Synced card has layers but incomplete frames: still counted as missing
   const partial = await O.loadOriginalsIndex("proj", depsOf([layer("s1", "rk-s1")], []), { requiredClips: ["s1"] });
   assert.deepEqual(partial.missing, ["s1"]);
 
-  // 没有层表:页面判重的与必须用原尺寸的都算缺
+  // No layer table: cards classified as heavy by the page and those requiring original size are both
+  // counted as missing
   const noMap = await O.loadOriginalsIndex("proj", depsOf(null, []), { fallbackHeavy: ["heavy"], requiredClips: ["s1"] });
   assert.deepEqual(noMap.missing.sort(), ["heavy", "s1"]);
   assert.equal(noMap.hashAt("s1", 0), null);
@@ -200,7 +215,7 @@ test("OCE-L-05 the note in the parameters panel follows the run state", () => {
   }
   assert.match(ERS.runStateMessage({ state: "missing-module", detail: "lodash" }), /references a module that is not available on the online page: lodash/);
   assert.equal(R.CARD_RUN_STATES.length, 9, "Nine run states (the former tenth was removed along with the old tier)");
-  // 面板组件读注册表的运行状态并订阅它
+  // Panel component reads runtime status from the registry and subscribes to it
   const form = fs.readFileSync(fileURLToPath(srcUrl("editor/left/ParamsForm.tsx")), "utf8");
   assert.match(form, /useSyncExternalStore\(onCardRunStatesChanged, cardRunStatesGen\)/);
   assert.match(form, /runStateMessage\(/);
@@ -215,7 +230,8 @@ test("OCE-L-06 wiring: when the run state changes, the dispatch table, measureme
   assert.match(read("editor/timeline/ClipView.tsx"), /useSyncExternalStore\(onCardRunStatesChanged, cardRunStatesGen\)/, "Timeline clips are redrawn");
   assert.match(read("editor/snapshotFeed.ts"), /cardRunStatesGen\(\)/, "The memo on the feed side carries the run-state generation");
   assert.match(read("editor/costIdentity.ts"), /cardRunStatesGen\(\)/, "The cost identity memo carries the run-state generation");
-  // 契约第 6 节的各处都经 `localOnlyClipIds` / `unsupportedHere` / `needsLocalPc`,不自己再判「是不是用户卡」
+  // All places in section 6 of the contract go through `localOnlyClipIds` / `unsupportedHere` /
+  // `needsLocalPc`, without checking "whether it is a user card" on their own
   for (const [rel, re] of [
     ["editor/costIdentity.ts", /localOnlyClipIds\(/], ["editor/snapshotFeed.ts", /localOnlyClipIds\(/],
     ["StageView.tsx", /localOnlyClipIds\(/], ["render/Stage.tsx", /unsupportedHere\(clip\.cardId, def\)/],
@@ -224,7 +240,8 @@ test("OCE-L-06 wiring: when the run state changes, the dispatch table, measureme
     assert.match(text, re, `${rel} uses the same judging method`);
     assert.doesNotMatch(text, /isUserCardId\(/, `${rel} does not judge "is it a user card" by itself`);
   }
-  // 撤快照后 stageSwap 不再直接投快照，统一由 snapshotFeed.streamPlanesAt / suppressedAt 接管，不自己判「是不是用户卡」
+  // After removing snapshots, stageSwap no longer directly projects snapshots; snapshotFeed.streamPlanesAt /
+  // suppressedAt takes over uniformly, without checking "whether it is a user card" on its own
   assert.doesNotMatch(read("editor/stageSwap.ts"), /isUserCardId\(/, "editor/stageSwap.ts does not judge \"is it a user card\" by itself");
 });
 
@@ -245,9 +262,11 @@ test("OCE-L-07 during export, ask the render node to fill in the original size o
   } finally { off(); W.setExportWantedClips([]); }
   const read = (rel) => fs.readFileSync(fileURLToPath(srcUrl(rel)), "utf8");
   const exp = read("export/onlineExport.ts");
-  // 2026-10-13 起在线导出分「快速导出」「完整导出」:同步卡的画面不再靠平时的清单计划补「预渲染原尺寸」(每张卡的 HTML 快照),
-  // 改由导出自己发一份只为导出的计划、请渲染节点逐帧渲(`export/exportFrames.ts`)。导出不再往这张表里记东西;
-  // 表与 `Preview.tsx` 里并清单的那一处留着(恒为空),等撤快照那一块一并删
+  // As of 2026-10-13, online export is divided into "Fast export" and "Full export": synced card visuals
+  // no longer rely on regular manifest plans to supplement "prerender original size" (HTML snapshot of
+  // each card); instead, export issues an export-only plan and requests render nodes to render frame by
+  // frame (`export/exportFrames.ts`). Export no longer records anything into this table; the table and
+  // the manifest-merging spot in `Preview.tsx` are kept (always empty), to be deleted with snapshot removal
   assert.doesNotMatch(exp, /setExportWantedClips/, "Export no longer merges synced card clips into the usual manifest plan");
   assert.match(exp, /nonRunnable: \(\) => nonRunnableClips\(p\)/, "Synced cards are handled as \"not executed on this page\"");
   assert.match(exp, /cardLayers: cardLayerDeps\(\)/, "Export prepares the ready-made sources of card pictures itself");

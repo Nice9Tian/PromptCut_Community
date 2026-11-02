@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-// 先接上「分页清单跟着当前项目走」,下面第一次读 getTabs() 时才是当前项目的清单
+// First hook up "the tab manifest follows the current project", so that the first read of getTabs() below gets the current project's manifest
 import "../../ai/agentTabsProject";
 import { activateTab, addTab, getActiveTabId, getAgentProjectId, getTabs, subscribeTabs } from "../../ai/agentTabs";
 import { setRailCollapsed, toggleRailCollapsed } from "../sideRails";
@@ -27,15 +27,19 @@ import {
 } from "./railLayout";
 
 /**
- * 侧边 rail 自由布局的模块级 store(纯逻辑在 railLayout.ts)。
+ * Module-level store for the free layout of the side rails (pure logic in railLayout.ts).
  *
- *   - 布局存 localStorage `pc.rail.layout.v1`;没存过就按改版前的样子生成,选中项沿用旧键
- *     `pc.left.section` / `pc.right.page` / agentTabs 的当前页。
- *   - 订阅 agentTabs:关掉的 Agent 从布局里拿掉,新开的补进来(从哪一侧的「+」点的就放哪一侧)。
- *   - 收起状态仍归 sideRails(`pc.rail.<side>.collapsed`),这里只在该收 / 该展开的时候调它:
- *     一侧被拖空强制收起,项放下 / 点开时展开目标侧。
+ *   - The layout is stored in localStorage `pc.rail.layout.v1`; if never stored, it is generated as it looked
+ *     before the redesign, and the selected items reuse the old keys
+ *     `pc.left.section` / `pc.right.page` / the current page of agentTabs.
+ *   - Subscribes to agentTabs: closed Agents are removed from the layout and newly opened ones are added (to
+ *     whichever side's "+" they were opened from).
+ *   - The collapsed state still belongs to sideRails (`pc.rail.<side>.collapsed`); this module only calls it
+ *     when something should collapse / expand:
+ *     a side dragged empty is forced to collapse, and the target side expands when an item is dropped / opened.
  *
- * 分区被选中时照旧写 `pc.left.section`(scripts/left-check.mjs 读它),Agent 被选中时照旧 activateTab。
+ * When a section is selected, `pc.left.section` is still written as before (scripts/left-check.mjs reads it),
+ * and when an Agent is selected, activateTab is still called as before.
  */
 
 const STORAGE_KEY = "pc.rail.layout.v1";
@@ -60,7 +64,7 @@ function initialLayout(): RailLayout {
   try {
     return validateLayout(JSON.parse(stored), agentIds, fallback);
   } catch {
-    // 存坏了就当没存过
+    // If the stored data is corrupt, treat it as never stored
     return fallback;
   }
 }
@@ -69,13 +73,14 @@ function persist(next: RailLayout) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   } catch {
-    /* 存不下也让本次会话生效 */
+    /* Even if it cannot be stored, make it take effect for this session */
   }
 }
 
 let layout: RailLayout = initialLayout();
 persist(layout);
-// 拖空的一侧抽屉强制收起(只剩剪辑组也算空):上次关掉编辑器时就是空的,sideRails 那边的键又被清过,也要收着
+// Force-collapse the drawer of a side dragged empty (having only the cut group counts as empty): it was empty
+// when the editor was last closed, and the sideRails key was cleared, so it must stay collapsed too
 for (const side of SIDES) if (!hasPages(layout[side])) setRailCollapsed(side, true);
 
 const listeners = new Set<() => void>();
@@ -102,12 +107,12 @@ export function useRailLayout(): RailLayout {
   return useSyncExternalStore(subscribeRailLayout, getRailLayout, getRailLayout);
 }
 
-/** 这一项在哪一侧(不在布局里返回 null) */
+/** Which side this item is on (returns null if it is not in the layout) */
 export function railSideOf(item: ItemId): Side | null {
   return sideOf(layout, item);
 }
 
-/** 选中一项之后的连带动作:Agent 同步到 agentTabs 的当前页,分区照旧记 pc.left.section */
+/** Follow-up actions after selecting an item: an Agent syncs to the current page of agentTabs, a section is still recorded in pc.left.section */
 function noteActivated(item: ItemId) {
   const tabId = agentIdOf(item);
   if (tabId) activateTab(tabId);
@@ -115,7 +120,8 @@ function noteActivated(item: ItemId) {
 }
 
 /**
- * 选中一项(在哪一侧就改哪一侧)。expand = 顺手把那一侧展开(外部要把某一页拉出来时用,比如 captionsBus)。
+ * Select an item (changes whichever side it is on). expand = also expand that side (used when something
+ * external needs to bring a page out, e.g. captionsBus).
  */
 export function activateRailItem(item: ItemId, opts: { expand?: boolean } = {}): void {
   const side = sideOf(layout, item);
@@ -125,7 +131,7 @@ export function activateRailItem(item: ItemId, opts: { expand?: boolean } = {}):
   if (opts.expand) setRailCollapsed(side, false);
 }
 
-/** rail 上点一项:点的是这一侧此刻选中的项 = 收起 / 展开;点别的项 = 切过去并展开 */
+/** Click an item on the rail: clicking the item currently selected on this side = collapse / expand; clicking another item = switch to it and expand */
 export function clickRailItem(side: Side, item: ItemId): void {
   if (effectiveActive(layout, side) === item) {
     toggleRailCollapsed(side);
@@ -135,8 +141,10 @@ export function clickRailItem(side: Side, item: ItemId): void {
 }
 
 /**
- * 拖放落定。shownGap 是目标 rail 上画出来的那些项里的落点(含被拖项本身,和拖动时的指示线一致)。
- * 放下之后:被拖项成为目标侧选中项、展开目标侧;源侧改选相邻一项,源侧空了收起源侧。
+ * Drag-and-drop settle. shownGap is the drop position among the items drawn on the target rail (including the
+ * dragged item itself, consistent with the indicator line while dragging).
+ * After the drop: the dragged item becomes the selected item of the target side and the target side expands;
+ * the source side selects an adjacent item, and collapses if it became empty.
  */
 export function moveRailItem(item: ItemId, side: Side, shownGap: number): void {
   const full = layout[side];
@@ -146,11 +154,11 @@ export function moveRailItem(item: ItemId, side: Side, shownGap: number): void {
   commit(res.layout);
   noteActivated(item);
   if (res.emptied) setRailCollapsed(res.emptied, true);
-  // 剪辑组没有页面:挪过去不用展开目标侧的抽屉
+  // The cut group has no page: moving it over does not need to expand the target side's drawer
   if (isPageItem(item)) setRailCollapsed(side, false);
 }
 
-/** 这一侧的「+」:新开一个 Agent 分页,插在这一侧最后一个 Agent 后面,并在这一侧打开 */
+/** "+" of this side: open a new Agent tab, insert it after the last Agent on this side, and open it on this side */
 let pendingAddSide: Side | null = null;
 export function addAgentOnSide(side: Side): void {
   pendingAddSide = side;
@@ -160,19 +168,19 @@ export function addAgentOnSide(side: Side): void {
   } finally {
     pendingAddSide = null;
   }
-  // 订阅回调里已经放好并选中了;这里再兜一次(比如回调因为别的原因没跑到)
+  // The subscription callback has already placed and selected it; this is a second safety net (e.g. the callback did not run for some other reason)
   const item = agentItem(tabId);
   if (!sideOf(layout, item)) commit(syncAgents(layout, getTabs().map((t) => t.id), side).layout);
   activateRailItem(item, { expand: true });
 }
 
-// agentTabs 每次变化(含忙碌 / 未读这类只改字段的)都来一遍;没有增删时 syncAgents 原样返回,不会写盘
+// Fires on every change of agentTabs (including field-only changes like busy / unread); when nothing was added or removed, syncAgents returns the input as is and nothing is written to disk
 let lastProjectId = getAgentProjectId();
 subscribeTabs(() => {
   const hint = pendingAddSide;
   const res = syncAgents(layout, getTabs().map((t) => t.id), hint);
-  // 换了项目、或把会话全关光回到开始页:这一份清单的当前页(项目的当前 Agent / 开始页)新补进 rail 时顺手选中它(不展开)。
-  // 否则它的位置原先是别的项目的 Agent,关掉后 active 会退到剧本或分区
+  // Switched project, or closed all sessions and returned to the start page: when this manifest's current page (the project's current Agent / start page) is newly added to the rail, select it along the way (without expanding).
+  // Otherwise its position used to be an Agent of another project, and after it is closed, active would fall back to the script or a section
   const projectChanged = getAgentProjectId() !== lastProjectId;
   lastProjectId = getAgentProjectId();
   const activeItem = agentItem(getActiveTabId());
@@ -183,7 +191,7 @@ subscribeTabs(() => {
   if (hint && res.added.length) setRailCollapsed(hint, false);
 });
 
-// 自动化验证用:puppeteer 里能直接读布局、不经拖动也能挪项
+// For automated verification: puppeteer can read the layout directly and move items without dragging
 declare global {
   interface Window {
     __pcRailLayout?: {

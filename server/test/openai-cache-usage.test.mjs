@@ -1,7 +1,9 @@
 /**
- * OpenAI 兼容接口的缓存命中量:网关自动缓存,命中多少在 usage.prompt_tokens_details.cached_tokens。
- * prompt_tokens 已经含着它 —— input 照报 prompt_tokens,不能再加一遍。
- * 数字取自对 openlux 网关的实测(gemini-3.8-flash,同一前缀连发两次的第二次)。
+ * Cache hits on OpenAI-compatible API: gateway caches automatically; hit count is in
+ * usage.prompt_tokens_details.cached_tokens.
+ * prompt_tokens already includes it: input reports prompt_tokens as is, must not add it again.
+ * Numbers are taken from actual measurements on openlux gateway (gemini-3.8-flash, the second of
+ * two consecutive requests with the same prefix).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

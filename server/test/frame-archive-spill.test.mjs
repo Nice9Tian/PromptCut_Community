@@ -1,7 +1,8 @@
 /**
- * `LazyFrameStore.readSpill`：文件被占用之类的暂时性读错误要退避重试、不删文件；
- * 只有内容解不开或文件已经没了才按「缓存坏了」处理。
- * 跑：npm test
+ * `LazyFrameStore.readSpill`: temporary read errors like file being busy should back off and retry
+ * without deleting the file; only treat as "cache corrupted" if contents cannot be unpacked or file
+ * is already gone.
+ * Run: npm test
  */
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,7 +19,10 @@ function withStore(fn) {
 
 const codeError = (code) => Object.assign(new Error(`${code}: fake`), { code });
 
-/** 让 fs.readFileSync 对 spill 文件前 n 次抛 code，之后照常读；返回计数器 */
+/**
+ * Makes fs.readFileSync throw code for the first n times on spill files, then reads normally;
+ * returns counter
+ */
 function failFirst(file, n, code) {
   const real = fs.readFileSync;
   const counter = { calls: 0 };
@@ -41,7 +45,7 @@ test('the first two reads throw EBUSY: after retrying, the content is read and t
   } finally { mock.restoreAll(); }
   assert.equal(counter.calls, 3);
   assert.ok(fs.existsSync(file), 'the file was deleted');
-  // 经 get() 走同一条路
+  // Takes the same path via get()
   failFirst(file, 1, 'EPERM');
   try { assert.equal(store.get(7), '<div>seven</div>'); } finally { mock.restoreAll(); }
   assert.ok(fs.existsSync(file));

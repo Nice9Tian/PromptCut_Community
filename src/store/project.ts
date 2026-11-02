@@ -1,9 +1,10 @@
 // Facade for backward compatibility
-// 这里只转出拆分前 project.ts 本来就对外公开的那几个名字(EditorState / planPlacement /
-// getState / subscribe / useStore,再加下面拼出来的 actions;StoreHold 是给停靠栏藏起来的分区页用的;
-// onLocalCommit 是「用户正在编辑」旁听本页面自己的修改用的,见 src/editor/userEditing.ts)。core.ts 里的 state、set、
-// setProject、history、future、listeners、emit 等是包内原语,只给 src/store/actions 用,
-// 不从这里转出去。
+// Only re-export the names originally public in project.ts before splitting (EditorState /
+// planPlacement / getState / subscribe / useStore, plus actions assembled below; StoreHold is for
+// section tabs hidden by the dock; onLocalCommit is for "User is editing" to listen to this page's
+// own modifications, see src/editor/userEditing.ts). state, set, setProject, history, future,
+// listeners, emit, etc. in core.ts are package-internal primitives, used only by src/store/actions,
+// not re-exported from here.
 export type { EditorState } from "./core";
 export { getState, subscribe, useStore, StoreHold, planPlacement, onLocalCommit, setProjectLoader, withMerge } from "./core";
 

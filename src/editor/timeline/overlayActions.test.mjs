@@ -1,8 +1,9 @@
 /**
- * 对一张叠加卡动手的那几个动作(`overlayActions.ts`)。桌面菜单和手机版「调整」表单共用它。
+ * Actions operating on an overlay card (`overlayActions.ts`). Shared by the desktop menu and the
+ * mobile app "Adjust" form.
  *
- * 守两件事:启用时把 `off` 整个删掉(不留 `off: false` 也不留 `off: undefined`),
- * 以及素材效果卡两样都不接。
+ * Ensure two things: when enabling, completely delete `off` (leaving neither `off: false` nor
+ * `off: undefined`), and media effect cards accept neither.
  */
 import test from "node:test";
 import assert from "node:assert/strict";

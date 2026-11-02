@@ -1,24 +1,29 @@
 /**
  * node --test server/test/gemini-provider.test.mjs
  *
- * Gemini 本家 provider 的几条契约。钉的都是**错了不报错**的那类:
+ * Several contracts for the first-party Gemini provider. All pin down the **fails without
+ * reporting errors** variety:
  *
- *   - 思考档位以前一个字都没发。cfg.effort 从 runners/api.mjs 一路传进来,
- *     openai.mjs 发成 reasoning_effort,gemini.mjs 拿到手却整个丢掉 ——
- *     面板上那个思考档对 Gemini 是死的,选什么都一样,而且没有任何迹象。
- *   - 思考内容是「带 thought:true 的普通 text part」。判断顺序写反的话它会被
- *     text 分支劫走:模型的思考被当成正文播出去,而「在想什么」那栏一直空着。
- *   - functionResponse.response 协议上是 Struct(必须是对象)。以前一律 JSON.stringify
- *     拍成字符串,既多烧 token 又把嵌套抹平,模型得自己从字符串里再读一遍。
- *   - finishReason 是 MALFORMED_FUNCTION_CALL / SAFETY 时以前也 yield 'stop',
- *     上层就以为这轮正常讲完了 —— 界面上没有任何提示,要么原地不动,要么再起一轮转圈。
+ *   - Thinking tier previously sent nothing at all. cfg.effort was passed all the way from
+ *     runners/api.mjs, openai.mjs sent it as reasoning_effort, but gemini.mjs discarded it
+ *     entirely: the thinking tier on the panel was dead for Gemini, selecting anything made no
+ *     difference, with no indication whatsoever.
+ *   - Thinking content is an "ordinary text part with thought:true". If evaluation order is
+ *     reversed, it gets hijacked by the text branch: model thinking is broadcast as body text,
+ *     while the "thinking" column remains permanently empty.
+ *   - functionResponse.response is structurally a Struct (must be an object). Previously it was
+ *     always flattened into a string with JSON.stringify, both wasting tokens and flattening
+ *     nesting, forcing the model to re-read it from a string.
+ *   - When finishReason is MALFORMED_FUNCTION_CALL / SAFETY, it previously also yielded 'stop',
+ *     causing the upper layer to assume this round finished normally: no indication appeared in
+ *     the UI, either staying stuck in place or spinning for another round.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const { createProvider } = await import('../harness/providers/gemini.mjs');
 
-/** 把若干个 candidate 片段包成一条 Gemini SSE 流 */
+/** Wrap several candidate fragments into a Gemini SSE stream */
 function sse(...chunks) {
   return {
     ok: true, status: 200,
@@ -34,7 +39,7 @@ const err400 = (msg) => ({ ok: false, status: 400, headers: { get: () => null },
 
 const userMsg = (text) => [{ role: 'user', content: [{ type: 'text', text }] }];
 
-/** 跑一遍 stream,把事件和每次请求的 body 都收下来 */
+/** Run stream once and collect events along with the body of each request */
 async function run(cfg, { messages = userMsg('Hello'), tools = [], responses } = {}) {
   const sent = [];
   let i = 0;
@@ -57,7 +62,7 @@ async function run(cfg, { messages = userMsg('Hello'), tools = [], responses } =
 
 const CFG = { model: 'gemini-3.1-pro', apiKey: 'k' };
 
-/* ── 思考档位 ─────────────────────────────────────────────────── */
+/* ── Thinking tier ─────────────────────────────────────────────── */
 
 test('cfg.effort must be sent as thinkingConfig: previously nothing at all was sent here', async () => {
   const { sent } = await run({ ...CFG, effort: 'high' }, { responses: [() => sse(parts({ text: 'Hmm' }))] });
@@ -99,7 +104,7 @@ test('a 400 when thinkingConfig was not sent is reported as usual; do not resend
   assert.match(String(threw?.message), /gemini HTTP 400/);
 });
 
-/* ── 思考内容 ─────────────────────────────────────────────────── */
+/* ── Thinking content ──────────────────────────────────────────── */
 
 test('a part with thought:true goes through thinking_delta and must not leak into the main text', async () => {
   const { events } = await run(CFG, {
@@ -118,7 +123,7 @@ test('the event type must be thinking_delta: agent.mjs only recognizes this name
   assert.ok(!kinds.has('thought'), "must not be called thought, the upper layer does not recognize it");
 });
 
-/* ── 工具调用的 id ─────────────────────────────────────────────── */
+/* ── Tool call id ──────────────────────────────────────────────── */
 
 test('use the official functionCall.id when there is one; only assign our own number when there is none', async () => {
   const { events } = await run(CFG, {
@@ -144,7 +149,7 @@ test('self-assigned numbers never repeat within a stream: on a number collision 
   assert.equal(new Set(ids).size, ids.length, `numbers collided: ${ids.join(', ')}`);
 });
 
-/* ── 工具结果回传 ─────────────────────────────────────────────── */
+/* ── Tool result return ────────────────────────────────────────── */
 
 const withToolResult = (content, toolUseId = 'call_abc') => [
   { role: 'user', content: [{ type: 'text', text: 'Take a look' }] },
@@ -180,7 +185,7 @@ test('the name in functionResponse is looked up from the current turn\'s tool_us
   assert.equal(fnResp(sent).name, 'see_frames');
 });
 
-/* ── 收尾 ─────────────────────────────────────────────────────── */
+/* ── Finalize ──────────────────────────────────────────────────── */
 
 test('a normal finish still yields stop', async () => {
   for (const reason of ['STOP', 'MAX_TOKENS']) {

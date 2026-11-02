@@ -40,12 +40,13 @@ test("track mute affects preview and export, unmute restores audio", () => {
 test("Sounds under /@media/ in the media library are looked up by the passed-in sourceOf and are no longer skipped", () => {
   const p = fixture();
   p.media[1].url = "/@media/%E9%85%8D%E4%B9%90.m4a";
-  // 默认规则只认 /@export/<id>/media/,这条以前直接被丢掉,成片没声音
+  // Default rule only recognizes /@export/<id>/media/; this was previously dropped directly,
+  // leaving no sound in the final video
   assert.equal(buildAudioPlan(p, ".", () => true).length, 0);
   const plan = buildAudioPlan(p, ".", () => true, (m) => (m.url.startsWith("/@media/") ? "C:/lib/配乐.m4a" : null));
   assert.equal(plan.length, 1);
   assert.equal(plan[0].file, "C:/lib/配乐.m4a");
-  // 同源 http 地址不查本地磁盘
+  // Same-origin http URLs do not check local disk
   assert.equal(buildAudioPlan(p, ".", () => false, () => "http://127.0.0.1:5190/@media/x.m4a").length, 1);
 });
 

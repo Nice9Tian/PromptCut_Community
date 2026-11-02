@@ -1,6 +1,7 @@
 /**
- * RGBA → I420(BT.601 有限范围):和 ffmpeg 的 `-pix_fmt yuv420p` 同一个换算(`yuv.ts`)。
- * 跑:node --test src/export/yuv.test.mjs;有 ffmpeg 时另和 ffmpeg 的换算逐字节比(误差 ≤ 1)。
+ * RGBA → I420 (BT.601 limited range): same conversion as ffmpeg `-pix_fmt yuv420p` (`yuv.ts`).
+ * Run: node --test src/export/yuv.test.mjs; when ffmpeg is available, also compare
+ * byte-for-byte with ffmpeg conversion (error ≤ 1).
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,7 +31,8 @@ test('YUV3 Byte-by-byte comparison with ffmpeg rgba → yuv420p (default matrix)
   const w = 64, h = 32;
   const rgba = new Uint8Array(w * h * 4);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) rgba.set([(x * 4) & 255, (y * 8) & 255, ((x + y) * 3) & 255, 255], (y * w + x) * 4);
-  // 色度只比平坦的块:ffmpeg 的色度下采样滤波和 2×2 平均不同,这里比亮度全平面 + 纯色块的色度
+  // Only compare chroma on flat blocks: ffmpeg chroma subsampling filter differs from 2×2 averaging,
+  // here compare full luma plane + chroma of solid color blocks
   const r = spawnSync(ffmpeg, ['-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${w}x${h}`, '-i', '-', '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-'], { input: Buffer.from(rgba), maxBuffer: 1 << 24 });
   assert.equal(r.status, 0, String(r.stderr));
   const ref = r.stdout;

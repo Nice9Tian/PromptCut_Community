@@ -1,33 +1,39 @@
 /**
- * 渲染出来的那一帧在交出去之前要做的像素活:合成素材层、压底色、数透明像素、缩图。
+ * Pixel work on the rendered frame before handing it over: composite asset layers, flatten background
+ * color, count transparent pixels, downscale image.
  *
- * # 为什么单独放在这里
+ * # Why kept separately here
  *
- * 这些全是 pngjs 的同步解码 / 编码加逐像素循环。原来写在 vite-plugin-vision.ts 里,跑在
- * **给编辑器供模块的那个 Vite 进程**的事件循环上 —— 实测一张有内容的 1080p 帧解码 54 ms、
- * 编码 94 ms,see_frames 每帧解两次编两次,事件循环每帧被卡约 300 ms,期间编辑器要的模块、
- * 素材、接口一个都发不出去(docs/archive/topics/decoupling-plan.md 第 1.1 节)。
+ * These are all synchronous pngjs decoding / encoding plus per-pixel loops. Originally written in
+ * vite-plugin-vision.ts, running on the event loop of **the Vite process serving modules to the editor**:
+ * benchmarked on a 1080p frame with content, decoding took 54 ms and encoding took 94 ms; see_frames
+ * decoded twice and encoded twice per frame, blocking the event loop for ~300 ms per frame, during which
+ * none of the modules, assets, or endpoints needed by the editor could be served
+ * (docs/archive/topics/decoupling-plan.md section 1.1).
  *
- * 现在由渲染 worker(scripts/render-worker.mjs)在自己的进程里做完,父进程只读结果文件的字节,
- * 不解码。纯函数放在 .mjs 里,node --test 不经 vite 就能测。
+ * Now completed by the render worker (scripts/render-worker.mjs) in its own process; the parent process
+ * only reads bytes from the result file without decoding. Pure functions live in .mjs, testable with
+ * node --test without going through vite.
  */
 import fs from "node:fs/promises";
 import { PNG } from "pngjs";
 import { composeFrame } from "./vision-compose.mjs";
 
-/** 缩图的长边上限:给模型看清楚画面够了,再大只是白烧上下文 */
+/** Long-edge ceiling for downscaling: enough for model to see clearly; larger only wastes context */
 export const MAX_EDGE = 768;
-/** 透明处画成棋盘格,模型才分得清「透明」和「黑色」 */
+/** Transparent areas drawn as checkerboard so model can distinguish "transparent" from "black" */
 const CHECKER_A = [0x6b, 0x70, 0x7b];
 const CHECKER_B = [0x8b, 0x91, 0x9c];
 const CHECKER_PX = 16;
 
 /**
- * 等比缩到 maxEdge 以内,同时把透明底合成到棋盘格上。
+ * Scales down proportionally within maxEdge while compositing the transparent background onto a
+ * checkerboard.
  *
- * 用 pngjs 手写而不是拉 sharp / 再起一个 ffmpeg:这一步只是把一张图缩小,
- * 为它引入一个原生依赖或者又一个子进程不划算。盒式平均对「看清楚画面上有什么」
- * 足够,而且缩小时它比取点采样更不容易把细字抖没。
+ * Hand-rolled with pngjs instead of pulling in sharp or spawning another ffmpeg: this step only
+ * shrinks an image, so introducing a native dependency or another child process is not worth it.
+ * Box averaging is sufficient for "seeing clearly what is on screen", and when downscaling it is less
+ * prone to jittering away fine text than point sampling.
  */
 export function shrink(png, maxEdge = MAX_EDGE) {
   const scale = Math.min(1, maxEdge / Math.max(png.width, png.height));
@@ -45,7 +51,7 @@ export function shrink(png, maxEdge = MAX_EDGE) {
       for (let sy = sy0; sy < sy1; sy++) {
         for (let sx = sx0; sx < sx1; sx++) {
           const i = (sy * png.width + sx) << 2;
-          // 先按各自的 alpha 预乘再平均,否则透明像素里的垃圾颜色会把边缘染脏
+          // Premultiply by alpha before averaging; otherwise garbage colors in transparent pixels stain edges
           const al = png.data[i + 3] / 255;
           r += png.data[i] * al; g += png.data[i + 1] * al; b += png.data[i + 2] * al;
           a += al; n++;
@@ -53,8 +59,8 @@ export function shrink(png, maxEdge = MAX_EDGE) {
       }
       const o = (y * w + x) << 2;
       const cover = a / n;
-      // 合成到棋盘格上:out = 前景(已预乘) + 格子色 × (1 - 覆盖率)。
-      // 卡片盖住的地方 cover=1,格子一点都露不出来;只有真透明的地方才看得见格子。
+      // Composite onto checkerboard: out = foreground (premultiplied) + grid color × (1 - coverage).
+      // Where covered by a card, cover=1 and no grid shows through; grid is visible only where truly transparent.
       const matte = (((x / CHECKER_PX) | 0) + ((y / CHECKER_PX) | 0)) % 2 === 0 ? CHECKER_A : CHECKER_B;
       out.data[o] = Math.round(r / n + matte[0] * (1 - cover));
       out.data[o + 1] = Math.round(g / n + matte[1] * (1 - cover));
@@ -66,10 +72,11 @@ export function shrink(png, maxEdge = MAX_EDGE) {
 }
 
 /**
- * 把透明底压平到一个底色上(原地改)。`hex` 是六位十六进制(不带 #)。
+ * Flattens transparent background onto a background color (in-place). `hex` is 6-digit hex (without #).
  *
- * 这个选择只该在**预渲染的时候**做一次:不传 = 透明底,物体在卡片没画的地方也透空(挖空观感,
- * 适合标志 / 招牌);传了 = 实心物体表面印着这张卡。
+ * This choice should only be made once **during prerender**: omitted = transparent background, objects
+ * show through where the card has not drawn (cutout look, suitable for logos / signs); passed = solid
+ * object with this card printed on its surface.
  */
 export function flatten(png, hex) {
   const v = parseInt(hex, 16);
@@ -84,7 +91,7 @@ export function flatten(png, hex) {
   return png;
 }
 
-/** 全透明像素占比,保留三位小数。渲出一张空图时它是 1 —— bake_card 靠它提醒「这张卡在这一刻没画东西」 */
+/** Transparent pixel ratio (3 decimals). 1 for an empty render: bake_card uses it to warn "this card drew nothing at this moment" */
 export function transparentRatio(png) {
   let clear = 0;
   for (let i = 3; i < png.data.length; i += 4) if (png.data[i] === 0) clear++;
@@ -92,17 +99,18 @@ export function transparentRatio(png) {
 }
 
 /**
- * 一帧的后处理。
+ * Post-processing for a single frame.
  *
  * item:
- *   cards   —— 页面渲出来的卡片层 PNG(透明底)
- *   layers  —— 素材层 PNG,从下到上(ffmpeg 抽的帧,见 vision-compose 的 extractArgs)
- *   out     —— 写到哪儿
- *   bg      —— 六位十六进制底色;不给就保持透明
- *   stats   —— 要不要数透明像素
- *   shrink  —— 要不要缩到 MAX_EDGE 并铺棋盘格(给模型看的那一种)
+ *   cards   : card layer PNG rendered from page (transparent background)
+ *   layers  : asset layer PNGs, bottom to top (frames extracted by ffmpeg, see extractArgs in vision-compose)
+ *   out     : destination path
+ *   bg      : 6-digit hex background color; keeps transparency if omitted
+ *   stats   : whether to count transparent pixels
+ *   shrink  : whether to shrink to MAX_EDGE and overlay checkerboard (the kind for models to inspect)
  *
- * **什么都不用做就不解码**:原样拷过去。原来没有素材层时也要 read 再 write 一遍,纯属白烧。
+ * **Skip decoding when nothing to do**: copy over as-is. Previously read and wrote again even when
+ * there were no asset layers, which was completely wasted work.
  */
 export async function postFrame(item) {
   const layers = Array.isArray(item.layers) ? item.layers : [];

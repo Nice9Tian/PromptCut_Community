@@ -1,13 +1,17 @@
 /**
- * 仅供测试。让 runners/cli-runtime.mjs 的 resolveCli(claude / codex / agy)与本机装了什么无关。
+ * For testing only. Decouples resolveCli(claude / codex / agy) in runners/cli-runtime.mjs from what
+ * is installed on the local machine.
  *
- * resolveCli 的第一个候选是 `<PROMPTCUT_CLI_HOME>/<名>/<名>.exe`(非 win32 无后缀),存在就直接返回;
- * 此后 cliCommand 对 .exe 原样返回、不改参数。本机若装的是 npm 版(.cmd 垫片),cliCommand 会把命令
- * 改成 node + 入口脚本,垫片找不到入口时还会包成 PowerShell 的 -EncodedCommand,
- * 断言 spawn 实参的用例就会因机器而异。这里把 PROMPTCUT_CLI_HOME 指到临时目录并放好空的假可执行文件,
- * 三个 CLI 就都解析到它。cliEnv('codex') 要建的 codex-home 也落在这个临时目录,不写用户目录。
+ * The first candidate of resolveCli is `<PROMPTCUT_CLI_HOME>/<name>/<name>.exe` (no extension on
+ * non-win32); returns directly if it exists. Thereafter, cliCommand returns .exe as is without
+ * modifying arguments. If the npm version (.cmd shim) is installed locally, cliCommand rewrites the
+ * command to node + entry script; when the shim cannot find the entry point, it even wraps it into
+ * PowerShell's -EncodedCommand, causing test cases that assert spawn arguments to vary across
+ * machines. Here, PROMPTCUT_CLI_HOME points to a temp directory with empty fake executables placed
+ * inside, so all three CLIs resolve to it. The codex-home created by cliEnv('codex') also lands in
+ * this temp directory, without writing to the user directory.
  *
- * 用法(文件顶层、import 被测模块之前):
+ * Usage (file top level, before importing the module under test):
  *   const fakeCli = useFakeCliHome();
  *   after(() => fakeCli.dispose());
  */

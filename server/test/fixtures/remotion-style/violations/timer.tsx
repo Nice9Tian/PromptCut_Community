@@ -1,4 +1,7 @@
-/** 违规样例（测试夹具，不进卡片库）：定时器。建卡时应当被拒绝并指出行号。 */
+/**
+ * Violation example (test fixture, not added to the card library): timers. Should be rejected
+ * during card creation, pointing to the line number.
+ */
 import { useEffect } from "react";
 import type { CardDef, CardProps } from "../../kernel/types";
 import { tween } from "../../kernel/remotionStyle";

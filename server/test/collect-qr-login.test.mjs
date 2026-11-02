@@ -1,5 +1,5 @@
-// 哔哩哔哩扫码登录(接口版):假 fetch 回放 generate / poll 的各种响应。
-// 跑法:node --test server/test/collect-qr-login.test.mjs
+// Bilibili QR code login (API version): mock fetch replays various generate / poll responses.
+// Run command: node --test server/test/collect-qr-login.test.mjs
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,7 +14,7 @@ const KEY = 'aa6b16028dda91ae6543bed069a249ea';
 const GEN = { code: 0, message: 'OK', data: { url: `https://account.bilibili.com/h5/account-h5/auth/scan-web?navhide=1&callback=close&qrcode_key=${KEY}&from=`, qrcode_key: KEY } };
 const pollBody = (code, message, url = '') => ({ code: 0, message: 'OK', data: { url, refresh_token: '', timestamp: 0, code, message } });
 
-/** 造一个假 fetch:按顺序回放 poll 的响应 */
+/** Create a mock fetch: replays poll responses in order */
 function fakeFetch(pollResponses) {
   const calls = [];
   const queue = [...pollResponses];
@@ -98,11 +98,11 @@ test('start → waiting → scanned → ok: saves to disk on successful login, t
     assert.ok(ok.expiresAt);
     assert.ok(fs.existsSync(ok.path));
     assert.equal(ok.count, 4);
-    // 存盘的能被 collect-cookies 读回来当登录态
+    // Saved content can be read back by collect-cookies as the login state
     const st = savedCookieStatus(dir, 'bilibili');
     assert.equal(st.loggedIn, true);
     assert.equal(st.userId, '42');
-    // 成功之后不再打网络
+    // No longer hits the network after success
     const again = await q.poll(KEY, { dataDir: dir });
     assert.equal(again.state, 'ok');
     assert.equal(calls.filter((c) => c.url.includes('/poll')).length, 3);
@@ -117,7 +117,7 @@ test('Expired: when Bilibili says 86038 or the local ttl is exceeded, expired is
   const q = createQrLogin({ fetchImpl, now: () => t });
   await q.start();
   assert.equal((await q.poll(KEY)).state, 'expired');
-  // 本地判过期不打网络
+  // Determining expiration locally does not hit the network
   const q2 = createQrLogin({ fetchImpl: fakeFetch([]).fetchImpl, now: () => t });
   await q2.start();
   t += 181 * 1000;

@@ -1,13 +1,15 @@
 /**
- * 「该预渲染哪一刻」的单测。跑:node --test src/editor/preview/bakeTime.test.mjs
+ * Unit test for "which moment to prerender". Run: node --test src/editor/preview/bakeTime.test.mjs
  *
- * 钉死的是那个真实 bug:渲中点 → 播放头 0.23 秒时 3D 里显示的是 1.0 秒的画面
- * (mu-number-ticker,滚动 1.6 秒,clip [0,2]:0.23 秒该是 81%,中点是 100%)。
- * 这类错**不报错**,只表现为「界面上的数字和 3D 里的数字对不上」,所以要有测试盯着。
+ * Pins down that real bug: rendering midpoint -> when playhead is at 0.23s, 3D displays 1.0s frame
+ * (mu-number-ticker, scrolls 1.6s, clip [0,2]: 0.23s should be 81%, midpoint is 100%).
+ * This kind of error **throws no error**, manifesting only as "numbers in UI do not match numbers
+ * in 3D", so tests must keep watch.
  *
- * 另外两条同样是错了不报错的:
- *   - 往前取会把还没播到的画面提前显示出来(比慢一格更误导);
- *   - 前台吸附的格子和预渲染排的格子对不上,会表现成「明明预渲染过还要现场渲染」。
+ * Two other cases also throw no error when wrong:
+ *   - Picking forward displays frames not yet reached ahead of time (more misleading than lagging);
+ *   - Frontend snap grid not matching prerender scheduled grid manifests as "rendering on-demand
+ *     despite having prerendered".
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -22,7 +24,7 @@ import {
 } from "./bakeTime.ts";
 
 const clip = (over = {}) => ({ id: "c1", cardId: "mu-number-ticker", start: 0, end: 2, params: {}, ...over });
-/** 用户报的那张卡:滚动 1.6 秒,之后停住 */
+/** The card reported by the user: scrolls for 1.6s, then stops */
 const TICKER = { settleMs: 1600, after: "hold" };
 
 test("That is the bug: 0.23 s must not pick the midpoint 1.0 s", () => {
@@ -60,7 +62,7 @@ test("An evolve card must be sampled over its whole span, not just the entrance 
 
 test("The grid cell snapped to in the foreground must land on a grid cell scheduled by the prerender, otherwise the prerender schedule is wasted", () => {
   const c = clip({ end: 4 });
-  const motion = { settleMs: 4000, after: "hold" }; // 整段都在动 → 不抽稀
+  const motion = { settleMs: 4000, after: "hold" }; // Entire clip in motion → no decimation
   const planned = new Set(sampleTimesFor(c, motion, { maxPerClip: 999 }).map((x) => x.toFixed(3)));
   for (let t = 0; t < 4; t += 0.05) {
     const got = pickBakeT(c, motion, t).toFixed(3);
@@ -69,13 +71,15 @@ test("The grid cell snapped to in the foreground must land on a grid cell schedu
 });
 
 /**
- * 上面那条用的是默认的 0.25 —— 而 0.25 是**二进制精确**的,所以它永远绿,
- * 钉不住真正的风险。逐帧那一档的步长是 1/30、1/24、1/29.97,一个都不精确。
+ * The test above uses default 0.25: and 0.25 is **exact in binary**, so it is always green and
+ * cannot pin down the real risk. Step sizes for the frame-by-frame tier are 1/30, 1/24, 1/29.97,
+ * none of which are exact.
  *
- * 这条曾经真的挂过:`sampleTimesFor` 累加(`rel += step`)、`pickBakeT` floor 再乘,
- * 30fps 下 60 个采样点有 39 个差 2.8e-17。而缓存键是拿这个浮点数格式化出来的,
- * 于是**预渲染出来的图显示端一张都问不到,还不报错** —— 只表现为「明明预渲染过还要现场渲染」。
- * 所以这里比的是**逐位相等**(===),不是 toFixed 之后相等。
+ * This test actually failed before: `sampleTimesFor` accumulated (`rel += step`), while `pickBakeT`
+ * floored then multiplied; at 30fps, 39 of 60 sample points differed by 2.8e-17. The cache key is
+ * formatted from this float, so **the display side could not find a single prerendered image, yet
+ * threw no error**: it only manifested as "rendering on-demand despite having prerendered".
+ * Therefore, what is tested here is **bitwise equality** (===), not equality after toFixed.
  */
 test("Step sizes that are not exact in binary (the per-frame tier) must also line up: being off by 2.8e-17 means all the prerendering is wasted", () => {
   for (const [name, step] of [["1/30", 1 / 30], ["1/24", 1 / 24], ["1/29.97", 1 / 29.97], ["0.1", 0.1]]) {
@@ -85,10 +89,10 @@ test("Step sizes that are not exact in binary (the per-frame tier) must also lin
     const set = new Set(planned);
     assert.ok(planned.length > 20, `${name}: too few sample points, this test did not exercise anything`);
     for (const want of planned) {
-      // 停在这个采样点上,吸附回来必须是**同一个浮点数**
+      // Stopped at this sample point, snapping back must yield the **exact same float**
       assert.ok(set.has(pickBakeT(c, motion, want, { stepSec: step })), `${name}: stopping at ${want} does not snap back to itself`);
     }
-    // 也测格子之间的位置:往回吸附到的那一刻必须在名单里
+    // Also test positions between grid slots: the moment snapped back to must be in the list
     for (let t = 0; t < 3; t += 0.017) {
       assert.ok(set.has(pickBakeT(c, motion, t, { stepSec: step })), `${name}: the moment t=${t} snaps to is not in the prerender list`);
     }
@@ -107,7 +111,8 @@ test("Thinning only reduces coverage; the first and last are always kept", () =>
 test("The cache key must include which moment it is: without it you get \"the picture does not update when the moment changes\"", () => {
   const c = clip();
   assert.notEqual(texKeyOf(c, 0.25), texKeyOf(c, 1));
-  // 位置和三维变换不进键:预渲染的时候 frame 被摘掉,转一下卡贴图一个像素都不变
+  // Position and 3D transforms do not enter the key: frame is stripped during prerendering;
+  // rotating the card does not change a single pixel of the texture
   assert.equal(texKeyOf({ ...c, frame: { w: 800, h: 400 } }, 0.25), texKeyOf({ ...c, frame: { w: 800, h: 400 } }, 0.25));
 });
 
@@ -133,8 +138,8 @@ test("Cards without lifecycle are handled with conservative values: better to sa
 test("Edge cases: zero-length clip, playhead outside the segment, t not a number: must neither throw nor return NaN", () => {
   for (const [c, t] of [
     [clip({ start: 3, end: 3 }), 3],
-    [clip({ start: 5, end: 7 }), 0],      // 播放头在段前(预渲染会问到还没播到的段)
-    [clip({ start: 5, end: 7 }), 99],     // 段后
+    [clip({ start: 5, end: 7 }), 0],      // Playhead before the clip (prerendering will query clips not yet played)
+    [clip({ start: 5, end: 7 }), 99],     // After the clip
     [clip(), Number.NaN],
   ]) {
     const got = pickBakeT(c, TICKER, t);

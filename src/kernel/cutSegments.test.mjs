@@ -1,13 +1,14 @@
 /**
- * kernel/cutSegments.ts 与 cuts.ts 里剪辑段相关部分的单测。跑:npm test -- src/kernel/cutSegments.test.mjs
+ * Unit tests for kernel/cutSegments.ts and cut-segment-related parts in cuts.ts.
+ * Run: npm test -- src/kernel/cutSegments.test.mjs
  *
- * 钉死:
- *   - 新项目 / 没有 cuts 的老文件只有「剪辑1」;带着 cuts 的项目原样不动;
- *   - 循环引用(自己、A→B→A、A→B→C→A)在放置时拒绝,原因说得清;
- *   - 悬空引用、协作合并造出来的环:渲染侧跳过,不抛;
- *   - 删被引用的剪辑:引用它的剪辑段连同转场一起删;
- *   - 渲染子项目、预卷、flattenOverlay 交出的剪辑段片段;
- *   - 声音那份派生项目:平移、裁窗、偏移、静音、音量、包络。
+ * Pinned down:
+ *   - New projects / legacy files without cuts have only "Cut 1"; projects with cuts stay as-is;
+ *   - Circular references (self, A→B→A, A→B→C→A) are rejected on placement with a clear reason;
+ *   - Dangling references, cycles from collaboration merge: skipped on render side, do not throw;
+ *   - Deleting a referenced cut: cut segments referencing it are deleted together with transitions;
+ *   - Cut segment clips produced by subproject rendering, preroll, and flattenOverlay;
+ *   - Derived project for audio: translation, window cropping, offset, mute, volume, envelope.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -24,7 +25,7 @@ const card = (id, start, end, extra = {}) => ({ id, cardId: "x", start, end, par
 const media = (id, start, end, extra = {}) => ({ id, cardId: "", mediaId: "m1", mediaOffset: 0, start, end, params: {}, ...extra });
 const seg = (id, cutId, start, end, extra = {}) => ({ id, cardId: "", cutId, start, end, params: {}, ...extra });
 
-/** 三条剪辑:A(激活)、B、C;内容按参数给 */
+/** Three cuts: A (active), B, C; content supplied by parameters */
 function proj({ a = [], b = [], c = [], bDur = 10, cDur = 10 } = {}) {
   const p = createEmptyProject("t");
   return {
@@ -99,7 +100,7 @@ test("Dangling references and cycles: the sub-project is null, flattenOverlay sk
   const dangling = proj({ a: [seg("s1", "Z", 0, 5)] });
   assert.equal(cutSubProject(dangling, "Z"), null);
   assert.equal(flattenOverlay(dangling).clips.length, 0);
-  // 协作合并出来的环 B→C→B:从 A 渲 B,B 里的 C 里又指回 B,那一层跳过
+  // Cycle B→C→B from collaboration merge: rendering B from A, C in B points back to B, that layer is skipped
   const loop = proj({ a: [seg("s1", "B", 0, 5)], b: [seg("s2", "C", 0, 5)], c: [seg("s3", "B", 0, 5)] });
   assert.deepEqual(cutCycles(loop).map((c) => c.sort()), [["B", "C"]]);
   const b = cutSubProject(loop, "B");
@@ -107,7 +108,7 @@ test("Dangling references and cycles: the sub-project is null, flattenOverlay sk
   assert.ok(b && c);
   assert.equal(cutSubProject(c, "B"), null, "B is already on the path");
   assert.equal(flattenOverlay(c).clips.length, 0);
-  // 指回根(激活剪辑)同样跳过
+  // Pointing back to the root (active cut) is also skipped
   const root = proj({ a: [seg("s1", "B", 0, 5)], b: [seg("s2", "A", 0, 5)] });
   assert.equal(cutSubProject(cutSubProject(root, "B"), "A"), null);
 });
@@ -125,7 +126,7 @@ test("flattenOverlay turns a cut segment into an @cut card with a sub-project; t
   assert.equal(c.opacity, 0.5);
   assert.deepEqual(c.cut.project.tracks, p.cuts[1].tracks);
   assert.equal(c.cut.project.activeCutId, "B");
-  // 同一份 cuts 再算一次,拿到同一个子项目对象(舞台的 memo 不白算)
+  // Recompute with the same cuts to get the same subproject object (so stage memo is not wasted)
   assert.equal(flattenOverlay({ ...p, tracks: [...p.tracks] }).clips[0].cut.project, c.cut.project);
 });
 
@@ -139,10 +140,10 @@ test("Preroll: when the offset cuts into a card that must advance by its history
     assert.equal(c.cut.offset, 1);
     assert.equal(c.cut.from, 5);
     assert.equal(c.cut.frameMode, "stateful");
-    // 贴着时间轴开头:预卷截到段起点
+    // Flush against timeline start: preroll clamped to segment start
     const q = proj({ a: [seg("s1", "B", 1, 5, { cutOffset: 3 })], b: [card("b1", 0, 6)] });
     assert.equal(cutPreroll(q, q.tracks[0].clips[0]), 1);
-    // 都是直接求值的卡:不预卷,口径 direct
+    // All are directly evaluated cards: no preroll, caliber direct
     const d = proj({ a: [seg("s1", "B", 5, 9, { cutOffset: 3 })], b: [card("b1", 1, 6, { params: { direct: true } })] });
     assert.equal(cutPreroll(d, d.tracks[0].clips[0]), 0);
     assert.equal(flattenOverlay(d).clips[0].cut.frameMode, "direct");
@@ -162,25 +163,25 @@ test("Sound-derived project: shift, crop to the window, media offset follows alo
   const clips = q.tracks.flatMap((t) => t.clips).filter((c) => !isCutSegment(c));
   const v1 = clips.find((c) => c.cutOrigin?.clipId === "v1");
   const v2 = clips.find((c) => c.cutOrigin?.clipId === "v2");
-  // 子时间 τ ↔ 父时间 τ + 8;v1 原本 0~5 → 8~13,裁到窗口 10~16 → 10~13,素材偏移 +2
+  // Child time τ ↔ parent time τ + 8; v1 originally 0~5 → 8~13, cropped to window 10~16 → 10~13, asset offset +2
   assert.deepEqual([v1.start, v1.end, v1.mediaOffset], [10, 13, 2]);
   assert.equal(v1.audioVolume, 0.5);
   assert.equal(v1.fadeOut, undefined, "Its own fade moves into the envelope");
-  // v2 原本 6~9 → 14~17,裁到 14~16
+  // v2 originally 6~9 → 14~17, cropped to 14~16
   assert.deepEqual([v2.start, v2.end], [14, 16]);
   assert.ok(Math.abs(v2.audioVolume - 0.4) < 1e-9);
-  // 包络:段的淡入 1 秒(10~11)、v1 自己按原起止 8~13 的淡出 1 秒(12~13)
+  // Envelope: segment fade-in 1s (10~11), v1's own fade-out 1s (12~13) based on original range 8~13
   assert.ok(Math.abs(opacityAt(v1, 10.5) - 0.5) < 1e-9);
   assert.ok(Math.abs(opacityAt(v1, 12.5) - 0.5) < 1e-9);
   assert.equal(opacityAt(v1, 11.5), 1);
-  // 段静音 → 展开的都静音
+  // Segment muted → all expanded clips are muted
   const m = audioProjectOf(proj({ a: [seg("s1", "B", 0, 5, { audioMuted: true })], b: [media("v1", 0, 5)] }));
   assert.ok(m.tracks.flatMap((t) => t.clips).filter((c) => c.cutOrigin).every((c) => c.audioMuted));
-  // 被引用剪辑事后变短:窗口截到它的总时长
+  // Referenced cut becomes shorter later: window clamped to its total duration
   const short = audioProjectOf(proj({ a: [seg("s1", "B", 0, 10)], b: [media("v1", 0, 10)], bDur: 4 }));
   const v = short.tracks.flatMap((t) => t.clips).find((c) => c.cutOrigin);
   assert.equal(v.end, 4);
-  // 没有剪辑段:原样返回同一个对象
+  // No cut segments: return the same object as-is
   const plain = proj({ a: [media("v1", 0, 5)] });
   assert.equal(audioProjectOf(plain), plain);
 });
@@ -194,8 +195,8 @@ test("Sound nested two levels deep: offsets accumulate level by level, ids carry
   const clips = audioProjectOf(p).tracks.flatMap((t) => t.clips).filter((c) => c.cutOrigin);
   assert.equal(clips.length, 1);
   const v = clips[0];
-  // B 时间 τB ↔ 父 τB + 9;C 时间 τC ↔ B 时间 τC − 1(s2 起点 2、偏移 3)↔ 父 τC + 8
-  // s2 在父上 11~17;v1 在 C 里 0~10 → 父 8~18,裁到 11~17,素材偏移 3
+  // B time τB ↔ parent τB + 9; C time τC ↔ B time τC − 1 (s2 start 2, offset 3) ↔ parent τC + 8
+  // s2 on parent 11~17; v1 in C 0~10 → parent 8~18, cropped to 11~17, asset offset 3
   assert.deepEqual([v.start, v.end, v.mediaOffset], [11, 17, 3]);
   assert.equal(v.id, "s1/s2/v1");
   assert.deepEqual(v.cutOrigin.segments, ["s1", "s2"]);
@@ -223,9 +224,9 @@ test("Export mix manifest: cut segments expand into audioPlanOf, envelopes go in
   assert.ok(needsGainCurve(e));
   const curve = gainCurve(e, 5); // 10, 11, 12, 13, 14
   assert.ok(Math.abs(curve[0]) < 1e-6 && Math.abs(curve[1] - 0.5) < 1e-6 && Math.abs(curve[2] - 1) < 1e-6);
-  // 没有包络:和 fadeEnvelope 逐点一样
+  // No envelope: identical point-by-point to fadeEnvelope
   const plainEntry = { volume: 0.7, fadeIn: 1, fadeOut: 1, dur: 3, start: 0 };
   assert.deepEqual([...gainCurve(plainEntry, 7)], [...fadeEnvelope(0.7, 1, 1, 3, 7)]);
-  // 没有剪辑段的项目:清单和以前一样(没有 env 键)
+  // Projects without cut segments: manifest is the same as before (no env key)
   assert.equal("env" in audioPlanOf(proj({ a: [media("v1", 0, 4)] }))[0], false);
 });

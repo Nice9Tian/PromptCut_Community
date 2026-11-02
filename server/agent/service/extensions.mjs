@@ -1,23 +1,32 @@
 /**
- * Agent 服务扩展模块加载入口（公开侧接缝）。
+ * Agent service extension module loading entry point (public-side seam).
  *
- * 1. 为什么惰性加载（不在模块求值阶段顶层 await）：
- *    `cloud/agent/account-runner.mjs` 静态引用了 `server/agent/service/conversation-policy.mjs`，
- *    而 `conversation-policy.mjs` 又静态引用了 `create-agent-service.mjs`（后者再引用本文件）。
- *    若在本模块求值阶段用顶层 await 动态 import `cloud/agent/manifest.mjs`，会形成
- *    `extensions.mjs (top-level await) -> manifest.mjs -> account-runner.mjs -> conversation-policy.mjs -> create-agent-service.mjs -> extensions.mjs`
- *    的 ESM 顶层 await 循环等待死锁。
- *    因此本模块在求值阶段不做任何加载，将 `<云端目录>/agent/manifest.mjs` 的探测与加载推迟到第一次调用
- *    `getAgentExtensions()` / `findAgentExtension(name)` 时（此时所有静态 ESM 模块均已求值完毕），并按解析后的路径缓存结果。
+ * 1. Why lazy loading (no top-level await during module evaluation):
+ *    `cloud/agent/account-runner.mjs` statically references
+ *    `server/agent/service/conversation-policy.mjs`, and `conversation-policy.mjs` in turn
+ *    statically references `create-agent-service.mjs` (which then references this file).
+ *    If top-level await is used to dynamically import `cloud/agent/manifest.mjs` during this
+ *    module's evaluation phase, it creates an ESM top-level await circular wait deadlock:
+ *    `extensions.mjs (top-level await) -> manifest.mjs -> account-runner.mjs -> conversation-policy.mjs -> create-agent-service.mjs -> extensions.mjs`.
+ *    Therefore, this module performs no loading during evaluation, deferring the probing and
+ *    loading of `<cloud directory>/agent/manifest.mjs` to the first call to `getAgentExtensions()` /
+ *    `findAgentExtension(name)` (when all static ESM modules have finished evaluating), and caches
+ *    the result by resolved path.
  *
- * 2. 为什么云端目录要能由环境变量 `PROMPTCUT_CLOUD_DIR` 指定（不能只靠 `../../..`）：
- *    在双仓子模块布局下，公开仓库作为子模块挂在私有仓库的 `community/` 下（本文件位于 `community/server/agent/service/extensions.mjs`），
- *    而 `cloud/agent/manifest.mjs` 在私有仓库根下。支持由 `PROMPTCUT_CLOUD_DIR` 显式指定云端目录位置，
- *    缺省仍为 `<当前仓库根>/cloud`，使单仓与子模块两种布局都能工作。
+ * 2. Why the cloud directory must be configurable via the `PROMPTCUT_CLOUD_DIR` environment
+ *    variable (and cannot rely solely on `../../..`):
+ *    Under a dual-repo submodule layout, the public repository is mounted as a submodule under
+ *    `community/` of the private repository (this file is located at
+ *    `community/server/agent/service/extensions.mjs`), while `cloud/agent/manifest.mjs` is at the
+ *    private repository root. Supporting explicit specification of the cloud directory location
+ *    via `PROMPTCUT_CLOUD_DIR`, defaulting to `<current repo root>/cloud`, allows both single-repo
+ *    and submodule layouts to work.
  *
- * 3. 守门规则的唯一例外：
- *    总纲（`docs/plan/community-boundary.md` 第二节不变量 3）规定「共享树里不许出现 `cloud/` 字样」。
- *    **本文件是那条规则在 Agent 服务中的唯一例外，守门测试应当只放行它一个**，别的共享文件一律不许出现 `cloud/`。
+ * 3. The only exception to the gatekeeper rule:
+ *    The master plan (`docs/plan/community-boundary.md` Section 2 Invariant 3) stipulates that
+ *    "the string `cloud/` must not appear in the shared tree".
+ *    **This file is the sole exception to that rule in the Agent service; the gatekeeper test
+ *    should only pass this one**, and no other shared file is ever allowed to contain `cloud/`.
  */
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
@@ -38,7 +47,8 @@ function resolveManifestFile() {
 }
 
 /**
- * 惰性探测并加载云端 Agent 扩展表。社区版（无 `cloud/agent/manifest.mjs`）回冻结空数组 `[]`。
+ * Lazily probes and loads the Cloud Agent extension list. Community edition (without
+ * `cloud/agent/manifest.mjs`) returns frozen empty array `[]`.
  * @returns {ReadonlyArray<any>}
  */
 export function getAgentExtensions() {
@@ -57,7 +67,8 @@ export function getAgentExtensions() {
 }
 
 /**
- * 按名字取已挂载的 Agent 扩展。社区版（无 `cloud/agent/manifest.mjs`）回 `null`。
+ * Gets a mounted Agent extension by name. Community edition (without `cloud/agent/manifest.mjs`)
+ * returns `null`.
  * @param {string} name
  */
 export function findAgentExtension(name) {

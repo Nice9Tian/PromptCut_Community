@@ -3,21 +3,28 @@ import { MessageHistory } from './history.mjs';
 import * as P from './loop-prompts.mjs';
 
 /**
- * 审查环路:judger 开场定要求 → worker 执行 → reviewer 审查 → judger 裁决。
+ * Review loop: judger opens by setting requirements → worker executes → reviewer reviews →
+ * judger delivers verdict.
  *
- * 只有 judger 能宣布完成(phase_done)。worker 连续失败三次,第四次不干活、改为反省,
- * judger 读完反省改写要求和检查项,再给一批。第二次走到反省就停下,交给用户。
+ * Only judger can declare completion (phase_done). If worker fails three times in a row, on the
+ * fourth time it does no work and reflects instead; after judger reads the reflection, it rewrites
+ * requirements and checklist items, then provides another batch. If it reaches reflection a second
+ * time, it stops and hands off to the user.
  *
- * 每个方框是一个「角色回合」:各自的系统提示、各自能用的工具、各自的历史。
- * 回合怎么跑由后端决定 —— API 直连是 new Agent(...)(本文件的 apiBackend),
- * agy 这类命令行是起一次 CLI(runners/cli-loop.mjs)。环路本身只管顺序和裁决。
+ * Each box is a "role turn": its own system prompt, its own available tools, and its own history.
+ * How a turn runs is determined by the backend: direct API is new Agent(...) (apiBackend in this
+ * file), while command lines like agy spawn a CLI once (runners/cli-loop.mjs). The loop itself only
+ * manages order and verdicts.
  *
- * worker 每一轮都换一段新的历史并重新注入用户原话 —— 截断只钉住最近一条用户文字消息
- * (history.mjs),指望 worker 从早期历史里翻回原始需求是靠不住的。
+ * worker switches to a new history segment each round and re-injects the user's original words:
+ * truncation only pins the most recent user text message (history.mjs), and relying on worker to
+ * retrieve original requirements from early history is unreliable.
  *
- * 某个回合重试用完仍然中断(后端交回 interrupted),不作废整个环路:worker 的改动照样交给
- * reviewer / judger 核对、算一次没通过;reviewer 中断就让 judger 自己核对。worker 连着中断
- * MAX_INTERRUPTS 次才停下 —— 那多半是环境问题,再跑只是空烧。
+ * If a turn exhausts retries and is still interrupted (backend returns interrupted), the whole
+ * loop is not invalidated: worker's changes are still handed to reviewer / judger for verification
+ * and counted as a failure; if reviewer is interrupted, judger verifies on its own. worker stops
+ * only after being interrupted MAX_INTERRUPTS times in a row: that is mostly an environment issue,
+ * and running further is just burning resources for nothing.
  */
 
 const FAILS_PER_BATCH = 3;
@@ -29,14 +36,15 @@ const MAX_INTERRUPTS = 2;
 const RETRY_PROMPT = 'The previous request was cut off by a gateway timeout. Your earlier progress is all still there; continue from where you stopped.';
 const NUDGE_PROMPT = 'You have not submitted your conclusion as required. Submit it now.';
 
-/** 和 runners/api.mjs 判「可续跑」用的是同一套:超时类的错误才重试 */
+/** Uses the same rules as runners/api.mjs for deciding "resumable": only retry on timeout errors */
 export const isTimeout = (err) => err?.name === 'TimeoutError' || /timeout|timed out|aborted due to timeout|no data received/i.test(String(err?.message || ''));
 
 const str = (description) => ({ type: 'string', description });
 
 /**
- * 各回合交结论用的「提交」。API 直连里它们是本地工具(调一次就记下参数),
- * 命令行里是回复末尾的一个代码块(cli-loop.mjs 解析)。定义只写这一份。
+ * "submit" used by each turn to deliver conclusions. In direct API they are local tools (recording
+ * parameters with a single call), while in CLI they are a code block at the end of the reply
+ * (parsed by cli-loop.mjs). Defined only once here.
  */
 export const SUBMIT_DEFS = {
   issue_plan: {
@@ -103,19 +111,21 @@ export const SUBMIT_DEFS = {
 };
 
 /**
- * API 直连的角色回合:new Agent(...),提交做成本地的记录型工具。
+ * Role turn for direct API: new Agent(...), with submit implemented as local recording tools.
  *
- * access:'all' 全部工具 / 'readonly' 只读白名单 / 'none' 一个工具都不给(反省)。
- * session:上一次回合返回的历史对象,传回来就接着那段历史说(judger 被推一次时用)。
+ * access: 'all' all tools / 'readonly' read-only allowlist / 'none' no tools given (reflection).
+ * session: history object returned from previous turn; passed back to continue conversation from
+ * that history (used when judger is nudged once).
  */
 export function apiBackend(o, onRoleEvent) {
   const byName = new Map(o.tools.map((t) => [t.name, t]));
   const readOnly = P.READ_ONLY_TOOLS.map((n) => byName.get(n)).filter(Boolean);
   const everything = o.tools.filter((t) => !SUBMIT_DEFS[t.name]);
   /*
-   * worker 每轮至少 60 次往返。常规对话的上限是 24,实跑里 worker 第一次交付就撞上它、
-   * 在「最后核对画面」之前被截断 —— 而截断出来的半成品正是这个环路要治的病。
-   * 深度自主给的更大(或不限)就用那个。
+   * worker gets at least 60 round trips per round. The limit for regular chat is 24; in real runs,
+   * worker hit it on its first delivery and was truncated before "final visual check", and the
+   * half-finished artifact produced by truncation is precisely what this loop is meant to cure.
+   * If deep autonomy specifies a larger value (or unlimited), use that instead.
    */
   const workerRounds = Math.max(o.maxIterations ?? 0, WORKER_MIN_ROUNDS);
 
@@ -139,9 +149,11 @@ export function apiBackend(o, onRoleEvent) {
         onEvent: (ev) => onRoleEvent(role, ev),
       });
       /*
-       * 上游卡住(闲置超时)时接着这一段历史再请求一次,而不是让异常冒出去结束整个环路。
-       * 环路一跑十几分钟,一次网关卡顿就把前面所有角色的进度作废,代价太大。
-       * 用户点停止(signal.aborted)不重试;同一个回合最多重试 RETRIES 次。
+       * When upstream gets stuck (idle timeout), request again from this history segment instead of
+       * letting the exception bubble up to terminate the entire loop. The loop runs for a dozen minutes;
+       * invalidating all preceding roles' progress over a single gateway stall is too costly.
+       * Do not retry if the user clicks stop (signal.aborted); retry at most RETRIES times for the
+       * same turn.
        */
       let res;
       for (let attempt = 0; ; attempt++) {
@@ -161,11 +173,13 @@ export function apiBackend(o, onRoleEvent) {
 const ROLE_LABEL = { judger: 'judger', worker: 'worker', reviewer: 'reviewer' };
 
 /**
- * 把环路的原始事件翻成聊天栏认得的那几种(text / thinking / status / progress …),前端不用改:
- * - 阶段切换、每次裁决 → status 行,裁决逐条列出来,用户一眼看到为什么没过;
- * - reviewer / judger 说的话 → thinking(折叠区),不混进回复正文;
- * - worker 的交货和环路的最终结论 → text;
- * - progress 的文字前面加上角色。
+ * Translates raw loop events into the types recognized by the chat panel (text / thinking /
+ * status / progress …), so the frontend needs no changes:
+ * - Phase transitions, each verdict → status line; list verdicts item by item so the user sees at
+ *   a glance why it failed;
+ * - Words spoken by reviewer / judger → thinking (collapsed section), not mixed into reply body;
+ * - worker's delivery and loop's final conclusion → text;
+ * - Prepend the role to the progress text.
  */
 export function presentLoopEvent(ev) {
   if (ev.type === 'loop') {
@@ -181,9 +195,10 @@ export function presentLoopEvent(ev) {
         if (ev.verdict !== 'request_revision') return [{ type: 'status', text: 'judger gave no verdict, treating as not passed' }];
         const rulings = ev.input?.rulings || [];
         /*
-         * 没有逐条裁定也会判不通过:judger 自己用只读工具核对,发现问题在 reviewer 意见之外
-         * (实跑:worker 的总结说做了,工程里其实没动)。这时「采纳 0 条」读起来像什么都没发生,
-         * 改成直接把 judger 的要求摆出来。
+         * Can also rule as failed without item-by-item verdicts: judger checks on its own using read-only
+         * tools and discovers issues outside reviewer's feedback (actual run: worker's summary claimed it
+         * was done, but nothing was actually touched in the project). In this case, "0 accepted" reads like
+         * nothing happened, so change to directly lay out judger's requirements.
          */
         if (!rulings.length) {
           const first = String(ev.input?.requirements || '').split('\n').map((s) => s.trim()).find(Boolean) || '(no requirements written)';
@@ -198,7 +213,8 @@ export function presentLoopEvent(ev) {
       }
       case 'stalled': return [{ type: 'status', text: 'Stuck on the same problem twice in a row, entering reflection early' }];
       case 'retry': {
-        // API 直连多半是网关超时;CLI 那边更常见的是它自己的内建工具被拒这类中断,话要说对
+        // Direct API is mostly gateway timeouts; for CLI, interruptions like its built-in tools being
+        // rejected are more common, so phrase it accurately
         const why = !ev.reason || isTimeout({ message: ev.reason }) ? 'the request gateway timed out' : 'was interrupted';
         return [{ type: 'status', text: `${role}: this round ${why}, retrying from the previous progress (attempt ${ev.attempt})` }];
       }
@@ -224,12 +240,14 @@ const signature = (rulings) => (rulings || [])
 
 /**
  * @param {object} o
- * @param {Function} [o.backendFactory] (onRoleEvent) => { runRole }。不给就用 apiBackend,
- *                                     那时需要 o.provider(可用 o.providers 按角色覆盖)和 o.tools
- * @param {string} o.system             编辑台的系统提示(worker 用)
- * @param {string} o.userText           用户这一条消息
- * @param {object} [o.lessonsStore]     { read(): string[], add(list) } 教训跨运行保存
- * @param {MessageHistory} [o.history]  会话历史:只记用户原话和环路的最终结论,供下一条消息接着聊
+ * @param {Function} [o.backendFactory] (onRoleEvent) => { runRole }. Defaults to apiBackend,
+ *                                     which requires o.provider (can be overridden per role via
+ *                                     o.providers) and o.tools
+ * @param {string} o.system             System prompt for the editor (used by worker)
+ * @param {string} o.userText           This user message
+ * @param {object} [o.lessonsStore]     { read(): string[], add(list) } persists lessons across runs
+ * @param {MessageHistory} [o.history]  Session history: records only user's original words and the
+ *                                     loop's final conclusion, for subsequent messages to continue
  */
 export async function runReviewLoop(o) {
   const { system, userText, onEvent = () => {} } = o;
@@ -254,7 +272,7 @@ export async function runReviewLoop(o) {
     return res;
   }
 
-  /** judger 回合:必须交出 submit 里的某一个;没交就推一次,再不交返回 null */
+  /** judger turn: must deliver one of submit; nudged once if not delivered, returns null if still not delivered */
   async function judgerTurn(stage, prompt, submit) {
     say({ stage, role: 'judger' });
     const sys = P.judgerSystem({ lessons: [...lessons, ...newLessons] });
@@ -275,7 +293,7 @@ export async function runReviewLoop(o) {
     return { outcome, text, usage, completed, failed, lessons: newLessons };
   };
 
-  // ── judger 开场 ──
+  // ── judger opening ──
   const plan = await judgerTurn('plan', P.judgerOpenPrompt({ userText }), ['issue_plan']);
   if (!plan) return finish('no_plan', 'judger could not produce task requirements and a checklist, so the loop did not start. You can rephrase and send it again.');
   let requirements = plan.input.requirements;
@@ -304,7 +322,8 @@ export async function runReviewLoop(o) {
           'Changes already made earlier are still in the project. After you deal with the reason above, send another message to continue.',
         ].join('\n'));
       }
-      // 中断的 worker 多半没写交货总结,但它中断前动过的工程是真的 —— 交给后面的人按工程现状核对
+      // An interrupted worker mostly wrote no delivery summary, but project changes made before
+      // interruption are real: hand them to subsequent roles to verify against current project state
       const delivery = work.interrupted
         ? [`(worker was interrupted by technical causes this round and could not finish the delivery summary. Reason: ${work.interrupted})`,
           'The changes it made to the project before the interruption are still there. Please verify the current state of the project directly with read-only tools.',
@@ -320,9 +339,11 @@ export async function runReviewLoop(o) {
       const opinions = review.submitted?.input?.opinions
         ?? (!review.interrupted && review.text?.trim() ? [{ issue: review.text.trim(), evidence: '(reviewer did not submit in the required format; this is its original text)' }] : []);
 
-      // ── judger 裁决 ──
-      // 开场播报用 judging:原来也叫 verdict,而 verdict 事件没带裁决结果时会显示成「judger 没有给出裁决」——
-      // 每一轮裁决之前都凭空多一行这句,看着像 judger 次次都要推一下才肯交
+      // ── judger verdict ──
+      // Opening announcement uses judging: previously also named verdict, and when a verdict event lacked
+      // a ruling result it displayed as "judger gave no verdict":
+      // this line appeared out of nowhere before each round of verdicts, looking as if judger needed a
+      // nudge every single time before delivering
       const verdict = await judgerTurn('judging', P.judgerVerdictPrompt({
         userText, requirements, delivery, opinions, reviewerInterrupted: !!review.interrupted && !review.submitted,
       }), ['phase_done', 'request_revision', 'need_user']);
@@ -339,13 +360,13 @@ export async function runReviewLoop(o) {
       if (verdict?.input?.requirements) requirements = verdict.input.requirements;
       if (verdict?.input?.reviewerBrief) brief = verdict.input.reviewerBrief;
 
-      // 连续两次裁决的缺口一模一样:卡住了,不等满三次,提前反省
+      // Gaps in two consecutive verdicts are identical: stuck, do not wait for three times, reflect early
       const sig = signature(rulings);
       if (sig && sig === prevSig) { say({ stage: 'stalled', role: 'judger' }); break; }
       prevSig = sig;
     }
 
-    // ── worker 反省(不给工具) ──
+    // ── worker reflection (no tools given) ──
     say({ stage: 'reflect', role: 'worker', batch });
     const reflect = await run('worker', { system: system + P.WORKER_RULES, access: 'none', submit: [], prompt: P.reflectPrompt({ verdicts, toolCounts }) });
     reflections.push(reflect.text);
@@ -360,7 +381,7 @@ export async function runReviewLoop(o) {
       ].join('\n'));
     }
 
-    // ── judger 改写 ──
+    // ── judger rewrite ──
     const plan2 = await judgerTurn('rewrite', P.judgerRewritePrompt({ userText, reflection: reflect.text, verdicts }), ['issue_plan']);
     if (plan2) {
       requirements = plan2.input.requirements;

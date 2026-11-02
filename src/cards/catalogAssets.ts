@@ -1,17 +1,23 @@
 /**
- * 动效素材目录:server/catalog 下现成的 Lottie 动画和 tsParticles 配置。
+ * Motion graphics asset catalog: the ready-made Lottie animations and tsParticles configs under
+ * server/catalog.
  *
- * 文件本身早就随包发出去了(runtime/app/server/catalog),但以前软件里没有任何地方
- * 把它们列出来 —— 左栏素材面板不显示、list_cards 不提、参数表单是个纯文本框,
- * 用户和 AI 都得自己知道 `/catalog/<kind>/<name>.json` 这种路径才用得上。
+ * The files themselves have long shipped with the package (runtime/app/server/catalog), but
+ * previously nowhere in the software listed them: the left rail's media panel did not show them,
+ * list_cards did not mention them, and the parameter form was a plain text box, so both the user and
+ * the AI had to know a path like `/catalog/<kind>/<name>.json` to make use of them.
  *
- * 这里把两份 index.json 在构建时读进来(vite 直接 import JSON),给三处用:
- *   - Lottie 卡的 src、粒子卡的 config 两个控件变成 `asset` 类型,options 就是这份目录,
- *     list_cards 原样返回 controls,AI 不用再翻建卡指南就能看到有哪些素材;
- *   - 左栏素材面板多一组「动效素材」,点一下 / 拖到时间轴就是带好 URL 的卡;
- *   - 参数表单给这两个控件一个下拉,手填仍然保留。
+ * Here the two index.json files are read in at build time (vite imports the JSON directly), for
+ * three uses:
+ *   - The Lottie card's src and the particle card's config, two controls, become the `asset` type,
+ *     with options being this catalog, and list_cards returns controls as is, so the AI can see which
+ *     assets exist without paging through the card-creation guide again;
+ *   - The left rail's media panel gets an extra group "Motion graphics media", and a click / drag
+ *     onto the timeline gives a card with the URL already filled in;
+ *   - The parameter form gives these two controls a dropdown, while manual entry is still kept.
  *
- * 只读 index.json 里登记过的条目;服务端 /catalog 路由也只放行这些名字。
+ * Only entries registered in index.json are read; the server's /catalog route also lets only these
+ * names through.
  */
 import lottieIndex from "../../server/catalog/lottie/index.json";
 import particlesIndex from "../../server/catalog/particles/index.json";
@@ -21,15 +27,15 @@ export type AssetKind = "lottie" | "particles";
 export interface CatalogAsset {
   kind: AssetKind;
   name: string;
-  /** 同源 URL,直接填进卡片参数 */
+  /** Same-origin URL, filled directly into the card parameter */
   url: string;
   description: string;
-  /** 模型看过画面后写的观察,比 description 具体 */
+  /** The observation written by the model after looking at the picture; more specific than description */
   note?: string;
-  /** 建议的使用场合 */
+  /** Suggested use cases */
   use?: string;
   tags: string[];
-  /** Lottie 才有:动画本身的时长 / 画布尺寸 */
+  /** Lottie only: the animation's own duration / canvas size */
   seconds?: number;
   w?: number;
   h?: number;
@@ -75,33 +81,35 @@ export function assetsOf(kind: AssetKind): CatalogAsset[] {
 }
 
 /**
- * 素材所属的卡和参数名:选中一个素材要往哪张卡的哪个参数里填 URL。
- * extra 是同时要清掉的东西:Lottie 卡的 json(内联文本)优先级高于 src,默认值又是一段演示动画,
- * 只填 src 不清 json 的话播出来的还是演示 —— 实测踩过。
+ * The card and parameter name an asset belongs to: which parameter of which card gets the URL when
+ * an asset is selected.
+ * extra is what must be cleared at the same time: the Lottie card's json (inline text) has higher
+ * priority than src, and its default value is a demo animation, so filling only src without clearing
+ * json would still play the demo: this was hit in real testing.
  */
 export const ASSET_TARGET: Record<AssetKind, { cardId: string; paramKey: string; extra: Record<string, unknown> }> = {
   lottie: { cardId: "lottie", paramKey: "src", extra: { json: "" } },
   particles: { cardId: "particles", paramKey: "config", extra: {} },
 };
 
-/** 选中一个素材后要写进 clip 的参数 */
+/** The parameters to write into the clip after an asset is selected */
 export function assetParams(a: CatalogAsset): Record<string, unknown> {
   const t = ASSET_TARGET[a.kind];
   return { ...t.extra, [t.paramKey]: a.url };
 }
 
-/** 一行能读懂的标签:名字 + 说明(下拉框和 list_cards 里都用它) */
+/** A one-line readable label: name + description (used by both the dropdown and list_cards) */
 export function assetLabel(a: CatalogAsset): string {
   const extra = a.kind === "lottie" && a.seconds ? `,${a.seconds}s` : "";
   return `${a.name} — ${a.description || a.note || ""}${extra}`;
 }
 
-/** 给 `asset` 控件的 options。value 是 URL,填进参数就能用 */
+/** The options for the `asset` control. value is the URL, usable once filled into the parameter */
 export function assetOptions(kind: AssetKind): { value: string; label: string }[] {
   return assetsOf(kind).map((a) => ({ value: a.url, label: assetLabel(a) }));
 }
 
-/** 按 URL 反查(参数表单显示当前选的是哪个) */
+/** Reverse lookup by URL (the parameter form shows which one is currently selected) */
 export function findAssetByUrl(kind: AssetKind, url: string): CatalogAsset | undefined {
   return assetsOf(kind).find((a) => a.url === url);
 }

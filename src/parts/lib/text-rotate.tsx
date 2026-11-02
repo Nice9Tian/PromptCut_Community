@@ -4,8 +4,8 @@ import { WordRotate } from "../../cards/magicui/vendor/word-rotate";
 import { fitOr } from "../fit";
 
 /**
- * 文字轮换:从 mu-word-rotate 拆出。
- * 前缀文字加上可无限轮换的后缀词汇。
+ * Word rotate: extracted from mu-word-rotate.
+ * Prefix text plus infinitely rotating suffix words.
  */
 interface Params {
   prefix: string;

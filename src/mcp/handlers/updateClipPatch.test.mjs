@@ -1,7 +1,10 @@
 /**
- * update_clip 的 params 是增量补丁(线上 2026-10-21:模型把凭记忆的整份参数带回来,把用户刚点「撤销这步」撤掉的颜色写了回去)。
- * 钉住:只传的键被改、没传的键保持当前值(含用户中途撤销后的值);回包的 changedParams 列出真正变了的键,
- * 带回旧值的那一刻能被看见;params 太长只给键名。跑:node --test src/mcp/handlers/updateClipPatch.test.mjs
+ * update_clip params is a delta patch (production, 2026-10-21: model brought back full parameters
+ * from memory, overwriting the color that the user had just undone by clicking "Undo this step").
+ * Pin down: only passed keys are modified, omitted keys retain current values (including values
+ * after intermediate user undos); changedParams in response lists truly changed keys so the
+ * moment an old value is brought back can be noticed; if params is too long, only key names are
+ * returned. Run: node --test src/mcp/handlers/updateClipPatch.test.mjs
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test, { mock } from "node:test";
@@ -45,7 +48,7 @@ test("After the user undoes a step midway, a patch with only size does not write
   load({ color: "#ffd27f", count: 5, speed: 1, seed: 3, size: 10 });
   clipsHandlers.updateClip({ clipId: "c1", params: { color: "#a8d8ff" } });
   assert.equal(paramsOf().color, "#a8d8ff");
-  actions.undo(); // 用户点「撤销这步」
+  actions.undo(); // User clicks "Undo this step"
   assert.equal(paramsOf().color, "#ffd27f");
   const r = clipsHandlers.updateClip({ clipId: "c1", params: { size: 30 } });
   assert.equal(paramsOf().color, "#ffd27f", "The color keeps the value after the undo");
@@ -55,7 +58,8 @@ test("After the user undoes a step midway, a patch with only size does not write
 test("Opposite case: when the whole old parameter set is brought back, changedParams in the response points out the keys that were written back (from → to)", () => {
   load({ color: "#ffd27f", count: 5, speed: 1, seed: 3, size: 10 });
   clipsHandlers.updateClip({ clipId: "c1", params: { color: "#a8d8ff" } });
-  // 模型凭记忆带回整份:color 是它上一轮读到的 #a8d8ff 之前的值之外的陈旧值
+  // Model brings back full set from memory: color is a stale value older than the #a8d8ff it read
+  // in the previous round
   actions.undo();
   const stale = { color: "#a8d8ff", count: 5, speed: 1, seed: 3, size: 30 };
   const r = clipsHandlers.updateClip({ clipId: "c1", params: stale });

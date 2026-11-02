@@ -1,22 +1,39 @@
 /**
- * 纯浏览器节点在后台舞台上生成快照的「活」与每一帧的舞台往返(M7 契约第 4.3 节;从 `browserNodeHost.ts` 拆出,
- * `claude/queue-maint` 任务 F:好在 Node 里不起浏览器写舞台互换的剧本,见 `stageBake.test.mjs`)。
+ * The "job" in which a browser-only node generates snapshots on the background stage, and the
+ * per-frame stage round trip (M7 contract section 4.3; split out of `browserNodeHost.ts`,
+ * `claude/queue-maint` task F: the good part is that Node can run the stage-swap script without
+ * starting a browser, see `stageBake.test.mjs`).
  *
- * 宿主(`browserNodeHost.ts`)一帧的前半段在这里:
+ * The first half of a frame on the host (`browserNodeHost.ts`) lives here:
  *
- *   - **活(lease)**:一段细任务认领到的第一帧,在单飞队列里排一个 `bake` 活(最不急:补跑 > 测量 > 探针 > 生成快照),
- *     拿到后台舞台才开工;这一段收尾(完成、失败、放回、丢认领)时宿主调 `close()` 交还。更急的活排进来时单飞队列 abort
- *     这个活,这里转给 `onUrgent()`,节点在当前帧做完后放回(D8)。
- *   - **每帧前核后台位置**:舞台互换(K5)或 iframe 重载之后,后台位置上换了人(`backStage()` 不再是这个活记的那台),
- *     就改用新的后台舞台,并把这一段的隔离单卡工程整份重灌过去(`pushProject('back', …, { reset })`)再发这一帧。
- *     做到哪一帧记在节点里(`browserNode.ts` 的已做帧),重开时只补缺的帧。
- *   - **顺推时先发下一帧**:推素材服务的网络往返与舞台推下一帧并行;下一帧的回包只在节点真来要它、且还是同一台舞台时才用。
- *   - **一帧中途换了人**(本模块补的,任务 F 剧本查出):互换或重载发生在一帧在飞时,旧舞台已不是后台,回 `cancelled` /
- *     `role`,或者帧做完了但它的 `bake-frame` 事件在互换之后才到、被 `stageBridge` 按角色滤掉。以前这一段按可重试失败交回
- *     (计一次失败,三次进 failed);现在只要后台位置确实换了人,就在新的后台舞台上重灌、重做这一帧(每帧最多
- *     `SWAP_REDO_MAX` 次),不计失败。后台位置没换人时照旧按失败交回。
+ *   - **Job (lease)**: for the first frame of a small task segment that has been claimed, queue a
+ *     `bake` job in the single-flight queue (lowest priority: rerun > measurement > probe >
+ *     generate snapshots). Work starts only once the background stage is acquired. When the segment
+ *     ends (done, failed, released, or claim lost) the host calls `close()` to hand it back. When a
+ *     more urgent job is queued, the single-flight queue aborts this job and this module forwards
+ *     that to `onUrgent()`; the node releases the segment after finishing the current frame (D8).
+ *   - **Check the background position before each frame**: after a stage swap (K5) or an iframe
+ *     reload, someone else may occupy the background position (`backStage()` is no longer the one
+ *     this job recorded). In that case, switch to the new background stage, reload the isolated
+ *     single-card project of this segment onto it in full (`pushProject('back', …, { reset })`),
+ *     and then send the frame. Which frames are done is recorded in the node (the done frames in
+ *     `browserNode.ts`), so a reopened job only fills in the missing frames.
+ *   - **Send the next frame first when advancing sequentially**: the network round trip that pushes
+ *     to the asset service runs in parallel with the stage pushing the next frame. The reply for
+ *     the next frame is used only if the node actually asks for it and the stage is still the same.
+ *   - **Stage changed mid-frame** (added by this module, found by the task F script): a swap or
+ *     reload happens while a frame is in flight, so the old stage is no longer the background and
+ *     replies `cancelled` / `role`, or the frame finished but its `bake-frame` event arrived after
+ *     the swap and was filtered out by role in `stageBridge`. Previously this segment was handed
+ *     back as a retryable failure (counted as one failure, and three failures move it to failed).
+ *     Now, whenever the background position really did change hands, the frame is reloaded and
+ *     redone on the new background stage (at most `SWAP_REDO_MAX` times per frame) without counting
+ *     a failure. If the background position did not change hands, it is handed back as a failure
+ *     as before.
  *
- * 舞台、单飞队列、事件都经 `deps` 注入(宿主传 `stageJobs` / `stageBridge` 的真函数;剧本传同一套真函数配假舞台)。
+ * The stage, the single-flight queue and the events are all injected through `deps` (the host
+ * passes the real functions of `stageJobs` / `stageBridge`; the script passes the same real
+ * functions with a fake stage).
  */
 import { bakeFrameBase, bakeInputOf, isolatedBakeProject, type BakeInput } from "../online/bakeTask.ts";
 import type { Project } from "../kernel/project";
@@ -27,76 +44,76 @@ import { tr } from "../i18n/index.ts";
 export type BakeFrameEvent = Extract<StageEvent, { type: "bake-frame" }>;
 export type BakeFrameOk = Extract<BakeFrameReply, { ok: true }>;
 
-/** 一帧中途后台位置换了人时,在新舞台上重做这一帧最多几次(三级数字) */
+/** The maximum number of times to redo a frame on the new stage when the background position changes hands mid-frame (tier-3 number) */
 export const SWAP_REDO_MAX = 2;
 
-/** 生成快照的回包里不可重试的原因:再做一遍结果一样 */
+/** Reasons in the reply of generating snapshots that are not retryable: doing it again gives the same result */
 const FINAL_REASONS = new Set(["lossy", "no-clip", "no-control", "frame-mismatch", "unsupported"]);
-/** 旧舞台已不是后台时会回的原因(`StageView.tsx` 的 `bakeFrame`):后台位置换了人就重做,不算失败 */
+/** The reason replied when the old stage is no longer the background (`bakeFrame` of `StageView.tsx`): redo when the background position changes hands, not counted as a failure */
 const SWAPPED_REASONS = new Set(["cancelled", "role", "no-project"]);
 
 export interface StageBakerDeps {
-  /** 单飞队列(`stageJobs.ts` 的 `runBackJob`) */
+  /** Single-flight queue (`runBackJob` of `stageJobs.ts`) */
   runBackJob: (kind: "bake", run: (ctx: { stage: StageRpcClient; signal: AbortSignal }) => Promise<void>) => Promise<unknown>;
-  /** 此刻的后台舞台(`stageBridge.ts` 的 `backStage`) */
+  /** The current background stage (`backStage` of `stageBridge.ts`) */
   backStage: () => StageRpcClient | null;
-  /** 往后台舞台灌项目(`stageBridge.ts` 的 `pushProject`) */
+  /** Push the project onto the background stage (`pushProject` of `stageBridge.ts`) */
   pushProject: (role: "back", project: Project, opts: { reset?: boolean }) => Promise<void>;
-  /** 舞台事件(已按角色过滤;`stageBridge.ts` 的 `onStageEvent`) */
+  /** Stage events (already filtered by role; `onStageEvent` of `stageBridge.ts`) */
   onStageEvent: (listener: (e: StageEvent) => void) => () => void;
-  /** 更急的后台活来了(单飞队列 abort 了这个活):节点当前帧做完就放回 */
+  /** A more urgent background job has come (the single-flight queue aborted this job): the node releases it after finishing the current frame */
   onUrgent: () => void;
-  /** 还闲着吗:闲着才先发下一帧 */
+  /** Whether idle: send the next frame first only when idle */
   isIdle: () => boolean;
-  /** 推帧口径 */
+  /** Frame push basis */
   mode: "batch4" | "seq";
-  /** 要不要出预渲染小尺寸(缺省要) */
+  /** Whether to produce the small prerender size (default yes) */
   small?: boolean;
   now?: () => number;
-  /** 每帧的时间构成(开活与灌工程 `lease`、舞台往返 `rpc`) */
+  /** Time breakdown per frame (opening the job and reseeding the project `lease`, stage round trip `rpc`) */
   notePhase?: (k: "lease" | "rpc", ms: number) => void;
-  /** 舞台回了不成的原因(诊断计数) */
+  /** Reasons the stage replied "not ok" (diagnostic counts) */
   noteError?: (reason: string) => void;
 }
 
 export interface StageBakeResult {
   reply: BakeFrameOk;
   event: BakeFrameEvent;
-  /** 这一帧实际出自哪台舞台 */
+  /** Which stage this frame actually came from */
   stage: StageRpcClient;
 }
 
 export interface StageBakerDiag {
-  /** 这一段的活换过几次舞台(每帧前核到换了人、或一帧中途换了人) */
+  /** How many times this segment's job switched stages (found changed when checking before a frame, or changed mid-frame) */
   restages: number;
-  /** 一帧中途换了人、在新舞台上重做的次数 */
+  /** Number of times a frame was redone on the new stage after someone swapped in mid-frame */
   redos: number;
-  /** 灌了几次隔离单卡工程 */
+  /** Number of times the isolated single-card project was reseeded */
   pushes: number;
 }
 
 export interface StageBaker {
-  /** `ahead`:这一帧做完后先发给舞台的那一帧(本地帧号);不给是下一帧,null 是不先发 */
+  /** `ahead`: the frame sent to the stage first after this frame is done (local frame number); if not given it is the next frame, null means do not send ahead */
   bakeFrame(job: { task: NodeTask; project: unknown; localFrame: number; signal: AbortSignal; ahead?: number | null }): Promise<StageBakeResult>;
-  /** 交还这一段的活(停掉在推的帧、清掉顺推的接续点) */
+  /** Hand back this segment's job (stop the frame being pushed, clear the continuation point of sequential push) */
   close(): void;
-  /** 退订舞台事件(宿主卸载时) */
+  /** Unsubscribe from stage events (when the host unmounts) */
   dispose(): void;
   readonly leaseTaskId: string | null;
   diag(): StageBakerDiag;
 }
 
-/** 这一段的「活」:单飞队列里那个 `bake` 活,段收尾时交还 */
+/** The "job" of this segment: the `bake` job in the single-flight queue, handed back when the segment ends */
 interface Lease {
   taskId: string;
   isolated: Project;
   input: BakeInput;
-  /** 剪辑段里的卡:本地帧 0 是项目的第几帧(`bakeFrameBase`,〔裁〕R02);顶层的卡是 null */
+  /** For a card inside a cut segment: which project frame local frame 0 is (`bakeFrameBase`, [ruling] R02); null for a top-level card */
   frameBase: number | null;
   stage: StageRpcClient;
-  /** 这台舞台灌过这一段的隔离单卡工程没有 */
+  /** Whether this stage has been reseeded with this segment's isolated single-card project */
   pushedTo: StageRpcClient | null;
-  /** 已经先发给舞台的下一帧 */
+  /** The next frame already sent to the stage ahead of time */
   ahead: { frame: number; stage: StageRpcClient; reply: Promise<BakeFrameReply> } | null;
   close: () => void;
 }
@@ -108,7 +125,7 @@ export function createStageBaker(deps: StageBakerDeps): StageBaker {
   const small = deps.small !== false;
   let lease: Lease | null = null;
   const stats: StageBakerDiag = { restages: 0, redos: 0, pushes: 0 };
-  /** 舞台发来的 `bake-frame`:会话号 + 本地帧 → 事件 */
+  /** `bake-frame` sent by the stage: session id + local frame → event */
   const bakeEvents = new Map<string, BakeFrameEvent>();
   const off = deps.onStageEvent((e) => {
     if (e.type !== "bake-frame") return;
@@ -120,16 +137,16 @@ export function createStageBaker(deps: StageBakerDeps): StageBaker {
     const l = lease;
     lease = null;
     if (!l) return;
-    try { void l.stage.bakeCancel().catch(() => {}); } catch { /* 舞台换了 */ }
+    try { void l.stage.bakeCancel().catch(() => {}); } catch { /* Stage swapped */ }
     l.close();
   };
 
-  /** 开这一段的活:排进单飞队列(最不急),拿到后台舞台才回 */
+  /** Open this segment's job: queue it in the single-flight queue (least urgent), and return only after getting the background stage */
   const openLease = (task: NodeTask, project: unknown): Promise<Lease> => {
     const input = bakeInputOf(task);
     if (!input) return Promise.reject(retryable(tr("Task has no input.bake / clipId (the splitter didn't pass the browser its share of the parameters)"), false));
     let isolated: Project;
-    // 顶层的卡:隔离单卡工程;剪辑段里的卡:带着剪辑段链的隔离工程(`isolatedBakeProject`)
+    // Top-level card: isolated single-card project; card inside a cut segment: isolated project carrying the cut segment chain (`isolatedBakeProject`)
     try { isolated = isolatedBakeProject(project as Project, input) as Project; } catch (e) { return Promise.reject(Object.assign(e as Error, { retryable: false })); }
     const frameBase = bakeFrameBase(input);
     return new Promise<Lease>((resolve, reject) => {
@@ -138,7 +155,7 @@ export function createStageBaker(deps: StageBakerDeps): StageBaker {
         let release!: () => void;
         const done = new Promise<void>((r) => { release = r; });
         const l: Lease = { taskId: task.id, isolated, input, frameBase, stage: ctx.stage, pushedTo: null, ahead: null, close: () => release() };
-        // 更急的活来了(补跑、测量、探针):当前帧做完就放回(D8)
+        // A more urgent job has come (rerun, measurement, probe): release after the current frame is done (D8)
         ctx.signal.addEventListener("abort", () => { deps.onUrgent(); }, { once: true });
         got = true;
         resolve(l);
@@ -147,7 +164,7 @@ export function createStageBaker(deps: StageBakerDeps): StageBaker {
     });
   };
 
-  /** 每帧前核后台位置:换了人就改用新的后台舞台(隔离单卡工程要重灌,先发的下一帧作废) */
+  /** Check the background position before each frame: if someone else is there, switch to the new background stage (the isolated single-card project must be reseeded, and the frame sent ahead is void) */
   const followBack = (l: Lease) => {
     const cur = deps.backStage();
     if (cur && cur !== l.stage) { l.stage = cur; l.pushedTo = null; l.ahead = null; stats.restages++; }
@@ -164,7 +181,7 @@ export function createStageBaker(deps: StageBakerDeps): StageBaker {
     const l = lease;
     const session = task.id;
     for (let redo = 0; ; redo++) {
-      // 舞台互换或 iframe 重载之后,后台位置上换了人:在新的后台舞台上重开(做到哪一帧记在节点里)
+      // After a stage swap or iframe reload, someone else is in the background position: reopen on the new background stage (which frame was done is recorded in the node)
       followBack(l);
       const stage = l.stage;
       if (l.pushedTo !== stage) {
@@ -176,7 +193,7 @@ export function createStageBaker(deps: StageBakerDeps): StageBaker {
       if (redo === 0) deps.notePhase?.("lease", tRpc - t0);
       const onAbort = () => { void stage.bakeCancel().catch(() => {}); };
       signal.addEventListener("abort", onAbort, { once: true });
-      // 上一帧推两档时已经先发给舞台的这一帧:直接等它的回包;对不上(跳了帧、换了舞台)就照常发,新的一帧作废在飞的那一帧
+      // The frame already sent to the stage ahead of time when the previous frame pushed both tiers: just wait for its reply; if it does not match (frame skipped, stage changed), send as usual, and the new frame voids the one in flight
       const ahead = l.ahead;
       l.ahead = null;
       let reply: BakeFrameReply;
@@ -188,17 +205,20 @@ export function createStageBaker(deps: StageBakerDeps): StageBaker {
         signal.removeEventListener("abort", onAbort);
       }
       deps.notePhase?.("rpc", now() - tRpc);
-      // 一帧中途后台位置换了人:旧舞台回 cancelled / role,或者做完了但事件被按角色滤掉 —— 在新舞台上重做,不算失败
+      // Background position changed hands mid-frame: the old stage replies cancelled / role, or it finished but the event was filtered out by role: redo on the new stage, not counted as a failure
       const moved = () => { const cur = deps.backStage(); return !!cur && cur !== stage && lease === l && !signal.aborted; };
       if (!reply.ok && SWAPPED_REASONS.has(reply.reason) && redo < SWAP_REDO_MAX && moved()) { stats.redos++; continue; }
       /*
-       * 先发下一帧(顺推时):推素材服务是网络往返(在线站点上每块至少一次 `GET chunks`),舞台在另一个进程里,
-       * 两件事并行,每帧的耗时从「舞台 + 往返」降到两者取大。这一帧仍然两档都推成功才回(c10a 第 9 节);
-       * 下一帧的回包只在节点真来要它时才用。让路、放回、丢认领时 `close` 的 `bakeCancel` 把它停在帧边界。
-       * 不闲(要让路)或已中止时不先发。
+       * Send the next frame first (when pushing sequentially): pushing to the asset service is a network round trip
+       * (on online sites at least one `GET chunks` per chunk), and the stage is in another process;
+       * the two run in parallel, so the time per frame drops from "stage + round trip" to the larger of the two.
+       * This frame still returns only after both tiers are pushed successfully (c10a section 9);
+       * the reply of the next frame is used only when the node really asks for it. On yielding, releasing or losing
+       * the claim, the `bakeCancel` of `close` stops it at a frame boundary.
+       * Do not send ahead when not idle (must yield) or already aborted.
        */
       const range = task.range;
-      // 先发哪一帧:缺省是下一帧;调用方给了 `ahead` 就照它(稀疏的一趟每个分段只取第一帧,先发的是下一个分段的第一帧;null = 不先发)
+      // Which frame to send first: by default the next frame; if the caller gives `ahead`, follow it (a sparse pass takes only the first frame of each segment, so what is sent first is the first frame of the next segment; null = do not send ahead)
       const next = aheadFrame === undefined ? localFrame + 1 : aheadFrame;
       if (reply.ok && deps.mode === "seq" && range && next !== null && Number.isInteger(next) && next > localFrame && next <= range.to && !signal.aborted && deps.isIdle() && lease === l && !moved()) {
         const p = stage.bakeFrame({ session, clipId: l.input.clipId, localFrame: next, mode: deps.mode, small, ...(l.frameBase !== null ? { frameBase: l.frameBase } : {}) })
@@ -207,7 +227,7 @@ export function createStageBaker(deps: StageBakerDeps): StageBaker {
       }
       if (!reply.ok) {
         deps.noteError?.(reply.reason);
-        // 不可重试:再做一遍结果一样。`not-ready`(就绪闸超时)按可重试交回,同桌面 waitFrameReady 抛错的处理
+        // Not retryable: doing it again gives the same result. `not-ready` (readiness gate timeout) is handed back as retryable, same as how desktop waitFrameReady handles a thrown error
         if (reply.reason === "role" || reply.reason === "no-project") l.pushedTo = null;
         throw retryable(tr("Generate snapshots failed: {0}{1}", reply.reason, reply.detail ? `(${reply.detail})` : ""), !FINAL_REASONS.has(reply.reason));
       }

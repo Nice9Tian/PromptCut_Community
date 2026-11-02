@@ -1,10 +1,11 @@
 /**
- * kernel/parts.ts 的单测。跑:node --test src/kernel/parts.test.mjs
+ * Unit tests for kernel/parts.ts. Run: node --test src/kernel/parts.test.mjs
  *
- * 部件实例树是组合卡的全部内容,Agent 的 add_part / set_part / remove_part / move_part 都落在这里:
- *   - 增删改移返回新树、原树不动;
- *   - 校验一处不过整棵不写,错误说人话;
- *   - 世界坐标按父框逐级合成;时序按 enterMs 逐级累加。
+ * The part instance tree is the entirety of a composite card; Agent's add_part / set_part /
+ * remove_part / move_part all land here:
+ *   - Add, delete, update, and move return a new tree without mutating the original tree;
+ *   - If any validation fails, the entire tree is not written, and errors are human-readable;
+ *   - World coordinates compose hierarchically by parent box; timing accumulates via enterMs.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -72,7 +73,7 @@ test("Validation: plain-language errors, and if one spot fails the whole tree is
   assert.throws(() => addPart(tree, { partId: "text-title", id: "a" }, lookup), /already exists/);
   assert.throws(() => movePart(tree, "a", { parentId: "a" }), /its own subtree/);
   assert.throws(() => removePart(tree, "zzz"), /Part instance zzz not found/);
-  // 整棵校验:第二个坏了第一个也不算
+  // Whole-tree validation: if the second is invalid, the first doesn't count either
   assert.throws(() => validatePartTree([{ id: "a", partId: "text-title", params: { text: "x" } }, { id: "a", partId: "text-title", params: { text: "y" } }], lookup), /Duplicate/);
   assert.throws(() => validatePartTree("nope", lookup), /must be an array/);
   const ok = validatePartTree([{ id: "a", partId: "text-title", params: { text: "x" }, frame: { x: 1, y: 2 }, enterMs: 0, children: [{ id: "b", partId: "list-pins", params: {} }] }], lookup);
@@ -94,7 +95,7 @@ test("placeParts: local frames are composed level by level relative to the paren
   const s = placed.get("s").world;
   assert.deepEqual([s.left, s.top, s.width, s.height], [100 + 300 - 100, 50 + 150 - 50, 400, 200], "Anchor centered, scaled up 2x: the center stays put and each side extends outward by half");
   assert.deepEqual(placed.get("full").world, { left: 0, top: 0, width: 1920, height: 1080 }, "No frame = fills the parent frame");
-  // 组合卡本身缩到一半、挪到 (200,100)
+  // The composite card itself is scaled to half and moved to (200,100)
   const half = placeParts(tree, { box: { left: 200, top: 100, width: 960, height: 540 }, scale: 0.5 });
   assert.deepEqual(half.get("g").world, { left: 250, top: 125, width: 400, height: 200 });
   assert.deepEqual(half.get("t").world, { left: 255, top: 135, width: 100, height: 50 });
@@ -124,13 +125,14 @@ test("The tree has a node limit; frame is rebuilt with a fixed key order when wr
 });
 
 /*
- * 部件级三维:**拒绝**,不是支持。
+ * Part-level 3D: **reject**, not support.
  *
- * clip 级的 FRAME_KEYS 补三维是为了修 set_clip(见 envelope.test.mjs);部件这一层
- * 一并放行过一版,但渲染接不住 —— CSS 的 perspective 只作用于直接子元素,传不到部件那一格,
- * 实测部件 rotateY(40°) 的外接框高度在卡片没有 preserve-3d 时是 300.00(纯仿射)、
- * 有 preserve-3d 时才是 336.44(真透视),而卡片一带 opacity/filter 又回到 300.00。
- * 三种情况三个结果,所以当场拒掉,理由说清楚。
+ * Adding 3D to clip-level FRAME_KEYS was to fix set_clip (see envelope.test.mjs); one version
+ * allowed it at the part level too, but rendering could not handle it: CSS perspective only
+ * applies to direct children and does not propagate to the part cell. In testing, the bounding box
+ * height of a part rotateY(40°) without preserve-3d on the card is 300.00 (pure affine), but with
+ * preserve-3d it becomes 336.44 (true perspective), and once the card has opacity/filter it reverts
+ * to 300.00. Three cases, three results: so reject immediately with a clear explanation.
  */
 test("A part's frame rejects 3D and tells the caller what to do instead", () => {
   for (const k of ["rotateX", "rotateY", "translateZ"]) {
@@ -140,7 +142,7 @@ test("A part's frame rejects 3D and tells the caller what to do instead", () => 
       `${k} should be rejected`,
     );
   }
-  // 报错要指路,不能只说「不认识」
+  // Error messages must provide guidance, not just say "unrecognized"
   assert.throws(() => validatePartFrame({ x: 0, y: 0, rotateY: 30 }, "Part a"), /set_position/);
 });
 

@@ -3,12 +3,12 @@ import { VOLUME_KEY, state, set } from "../core";
 
 export const playback = {
 
-  /* ---------- 播放 ---------- */
+  /* ---------- Playback ---------- */
   seek(t: number) {
     const clamped = Math.max(0, Math.min(state.project.duration, t));
     set({ t: clamped, playToken: state.playToken + 1 });
   },
-  /** 播放中每帧推进,不重挂卡片 */
+  /** Advances each frame during playback without remounting cards */
   tick(t: number) {
     set({ t });
   },
@@ -22,26 +22,28 @@ export const playback = {
     set({ playing: !state.playing });
   },
   /**
-   * 重播:回到最早那张卡片,从头播一遍。
+   * Replay: returns to the earliest card and plays from the beginning.
    *
-   * 以前这里只加 playToken —— 那只是让「当前时刻活跃的卡片」重新挂载一次,
-   * 用来重看入场动画。可播放到头时循环会 pause 并把 t 停在 duration,
-   * 而 Stage 取的是 t >= start && t < end,末尾一个活跃 clip 都没有,
-   * 于是「播完按重播」= 让零个卡片重新挂载 = 画面纹丝不动,按钮像是坏的。
+   * Previously, this only incremented playToken: that merely remounted "cards active at the
+   * current moment" once to re-watch entrance animations. But when playback reaches the end, the
+   * loop pauses and parks t at duration, while Stage checks t >= start && t < end, leaving zero
+   * active clips at the end. Thus "replay after playback ends" = remounting zero cards = visual output
+   * completely still, and the button feels broken.
    *
-   * 有时间轴时用户会顺手把播放头拖回去所以不容易撞上;当时的对话式布局(已去掉)没有时间轴,
-   * 只有一条细的迷你进度条,播完就只能按这个按钮 —— 于是问题就显出来了。
+   * With a timeline, users naturally scrub the playhead back, making this hard to encounter;
+   * the chat layout at the time (now removed) had no timeline, only a thin mini progress bar, so
+   * pressing this button was the only option once playback ended: thus the issue surfaced.
    *
-   * 「在当前位置重看一遍入场动画」这个能力没丢:seek 本身就会加 playToken,
-   * 点一下进度条即可。
+   * The ability to "re-watch entrance animations at the current position" is not lost: seek itself
+   * increments playToken, so clicking the progress bar is sufficient.
    */
   replay() {
-    // 播放范围从最早的卡片开始(和 Preview 的播放循环一致)
+    // Playback range starts from the earliest card (consistent with Preview's playback loop)
     let start = Infinity;
     for (const tr of state.project.tracks) for (const c of tr.clips) start = Math.min(start, c.start);
     set({ t: Number.isFinite(start) ? Math.max(0, start) : 0, playing: true, playToken: state.playToken + 1 });
   },
-  /** 预览音量 0–1;调到非 0 顺手取消静音,和播放器习惯一致 */
+  /** Preview volume 0–1; setting to non-zero automatically unmutes, matching player conventions */
   setVolume(v: number) {
     const volume = Math.max(0, Math.min(1, v));
     try {
@@ -53,7 +55,7 @@ export const playback = {
     set({ muted: !state.muted });
   },
 
-  /* ---------- 选择 ---------- */
+  /* ---------- Selection ---------- */
   select(ids: string[]) {
     set({ selection: ids });
   },

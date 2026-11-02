@@ -1,7 +1,9 @@
 /**
- * 把一次 sound_generate 的参数变成「合成什么、放到哪」的计划。纯函数:只读传进来的项目,不碰 store、不碰页面。
- * 桌面版(`src/editor/io/soundGeneration.ts`)与云端 Agent(`server/agent/service/hosted-sound.mjs`,经 `ssr-host.mjs`)
- * 用的是同一份,所以同一组参数在两边得到同一份配方,合成出的 WAV 逐样本相同。
+ * Turns the parameters of a sound_generate call into a plan of "what to synthesize and where to put
+ * it". A pure function: it only reads the project passed in and touches neither the store nor the page.
+ * The desktop app (`src/editor/io/soundGeneration.ts`) and the Cloud Agent
+ * (`server/agent/service/hosted-sound.mjs`, via `ssr-host.mjs`) use the same copy, so the same
+ * parameters get the same recipe on both sides, and the synthesized WAV is identical sample by sample.
  */
 import { findClip, type Project, type TrackClip, type Track } from "../kernel/project";
 import { createNotificationRecipe, createTypingSoundRecipe, validateSoundEffectRecipe, type SoundEffectRecipe, type TypingScheduleOptions } from "../kernel/soundEffects";
@@ -25,18 +27,21 @@ export interface GenerateSoundOptions {
 
 export interface SoundGenerationPlan {
   recipe: SoundEffectRecipe;
-  /** 要重生成的音效片段(给了 clipId 时) */
+  /** The sound effect clip to regenerate (when clipId is given) */
   target: { clip: TrackClip; track: Track } | null;
-  /** 提供文字与节奏的打字机卡片片段 */
+  /** The typewriter card clip that provides text and rhythm */
   source: { clip: TrackClip; track: Track } | null;
   sourceClipId?: string;
-  /** 新片段的起点;重生成或只进素材库时是 undefined */
+  /** The start of the new clip; undefined when regenerating or when only going into the media library */
   start?: number;
   duration: number;
   mediaOffset: number;
-  /** 素材名(带 .wav) */
+  /** Media name (with .wav) */
   name: string;
-  /** 计划时目标片段、来源片段的整段取值:提交前再比一次,变了就不应用 */
+  /**
+   * The full values of the target clip and the source clip at planning time: compared once more
+   * before committing, and not applied if they changed
+   */
   expectedClip?: string;
   expectedSource?: string;
 }

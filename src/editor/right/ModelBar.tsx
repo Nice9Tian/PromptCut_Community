@@ -24,31 +24,37 @@ import "./ModelBar.css";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 输入区底部工具条上的一组:模型下拉 + 「⋯」运行选项(推理强度 / 加速 / 深度自主 / 参数兼容)。
+ * The group on the toolbar at the bottom of the input area: model dropdown + the "⋯" run options (reasoning
+ * effort / acceleration / deep autonomy / parameter compatibility).
  *
- * 这几样都是「这一次要怎么跑」,所以贴着输入框放,不进 AI 设置 —— 设置里管的是
- * 「有哪些可选」,这里管的是「现在用哪个」。选择按 provider 分开记在本地,
- * 从 Claude 切到 Codex 不会把对面不存在的模型名带过去。
+ * All of these are "how to run this time", so they sit next to the input box and are not in the AI
+ * settings: settings manage "what is available to choose", and this manages "which one to use now". The
+ * choice is stored locally per provider, so switching from Claude to Codex does not carry over a model name
+ * that does not exist on the other side.
  *
- * 模型常换,留在工具条上;其余几样不常动,收进「⋯」弹层,有非默认值时按钮上挂个点。
- * 两块读写同一份 choice,所以写在同一个组件里,渲染成工具条上的两个兄弟节点。
+ * Models change often and stay on the toolbar; the rest rarely change and are tucked into the "⋯" popup,
+ * with a dot on the button when there is a non-default value. Both parts read and write the same choice,
+ * so they are written in one component, rendered as two sibling nodes on the toolbar.
  *
- * 某一家不支持的就灰掉并说明原因,不做点了没反应的假开关:
- * 加速只有 Claude Code 有(设置项 fastMode),推理强度 API 直连还没接。
+ * If a provider does not support something, grey it out and explain why, with no fake switches that do
+ * nothing when clicked: acceleration exists only in Claude Code (setting fastMode), and reasoning effort is
+ * not yet wired up for direct API.
  */
 export function ModelBar(props: {
   provider: AiProvider | null;
   config: PublicAiConfig | null;
   disabled?: boolean;
-  /** 这一页的 id:创造力等级按页存(不传 = 主页) */
+  /** The id of this page: the creativity level is stored per page (not passed = home page) */
   tabId?: string;
 }): JSX.Element | null {
   const { provider, config, disabled } = props;
   const tabId = props.tabId ?? MAIN_TAB;
   /*
-   * 创造力等级(user-workflow.md「创造力等级」):这个对话默认跟项目,可以单独改。
-   * 覆盖值存在本机页签里(agentTabs.ts),随每条消息带给服务端,服务端的闸门按它判越级调用。
-   * 和模型、思考档不同,它按页存、不按驱动存:换驱动不改变这个对话能改到多深。
+   * Creativity level (user-workflow.md "Creativity level"): this chat follows the project by default and can be
+   * changed on its own. The override is stored in the local tab (agentTabs.ts) and sent to the server with every
+   * message, and the server's gate uses it to judge out-of-level calls.
+   * Unlike the model and thinking tier, it is stored per page, not per driver: switching drivers does not
+   * change how deep this chat can edit.
    */
   const { tabs } = useAgentTabs();
   const tabCreativity = tabs.find((t) => t.id === tabId)?.creativity ?? null;
@@ -56,7 +62,7 @@ export function ModelBar(props: {
   const [choice, setChoice] = useState(() => ({ model: "", effort: "" as EffortLevel, fast: false, deepAuto: false, schemaCompat: "auto" as SchemaCompat }));
   const pop = usePopover();
 
-  // 换 provider 就把那一家自己的选择读出来
+  // When the provider changes, read out that provider's own choice
   useEffect(() => {
     if (provider) setChoice(readChoice(provider));
   }, [provider]);
@@ -64,34 +70,38 @@ export function ModelBar(props: {
   if (!provider) return null;
   const cap = capabilityOf(provider);
 
-  // 和 useAiChat 发请求时用的是同一个函数 —— 下拉框显示什么,请求里就得是什么
+  // The same function useAiChat uses when sending requests: whatever the dropdown shows is what the request must have
   const models = modelsFor(provider, config);
 
   /*
-   * 设置里把某个模型删掉之后,别再拿一个已经不存在的名字去跑。
-   * agy 还要多一道:清单已经折成基名了(见 agyGroups),而 localStorage 里可能存着
-   * 早先那种带 -low 后缀的写法 —— 先折回基名再对清单,否则用户明明选过,
-   * 下拉框却显示成「默认」。
+   * After a model is deleted in settings, do not keep running with a name that no longer exists.
+   * agy needs one more step: the manifest has already been folded to base names (see agyGroups), while
+   * localStorage may hold the earlier form with a -low suffix: fold back to the base name first and then
+   * check against the manifest, otherwise the user clearly chose one but the dropdown shows "Default".
    */
   const paired = pairModelEffort(provider, choice.model, choice.effort, config);
   const model = normalizeModel(paired.model, models);
 
   /*
-   * 这个模型支持哪几档思考。agy 是**按模型算**的:gemini-3.1-pro 只有低 / 高(没有中),
-   * claude-sonnet-4-6 一档都没有。别的驱动还是各家那张固定表。
+   * Which thinking tiers this model supports. For agy it is **computed per model**: gemini-3.1-pro only has
+   * low / high (no medium), and claude-sonnet-4-6 has no tier at all. Other drivers still use each vendor's
+   * fixed table.
    */
   const efforts = effortsFor(provider, model, config);
   /*
-   * 存着的档位这个模型没有时,下拉框直接显示实际会发出去的那一档,别让屏幕和请求对不上。
+   * When the stored tier does not exist for this model, the dropdown directly shows the tier that will
+   * actually be sent, so the screen and the request do not disagree.
    *
-   * 认不出来时降级成 `""`(默认),**不能回退到存着的那个值** —— 原来没选模型时就是那样,
-   * 于是浏览器里存的旧档位照样发出去。用户诊断报告里那个 400 就有这一层:
-   * codex 的清单里去掉了 `minimal`,可存着 `minimal` 的人没选模型时还是会把它发出去。
-   * 清单里没有的值一律不发,让上游用自己的默认 —— 宁可少一档,不要发一个必然被拒的值。
+   * When it cannot be recognized, downgrade to `""` (default), **do not fall back to the stored value**: that
+   * is how it used to work when no model was selected, so the old tier stored in the browser was sent anyway.
+   * The 400 in the user's diagnostic report had this layer: `minimal` was removed from codex's manifest, but
+   * someone with `minimal` stored would still send it when no model was selected.
+   * Any value not in the manifest is never sent, so upstream uses its own default: better to have one tier
+   * fewer than to send a value that is bound to be rejected.
    */
   const effort = efforts.includes(choice.effort) ? choice.effort
-    // paired.effort 也可能是清单里没有的(存着 codex 的 minimal 之类),
-    // 受控 select 的 value 找不到对应 option 时 selectedIndex 变 -1,框里**显示空白**
+    // paired.effort may also be something not in the manifest (a stored codex minimal, for example);
+    // when a controlled select's value finds no matching option, selectedIndex becomes -1 and the box **shows blank**
     : (model && efforts.includes(paired.effort) ? paired.effort : "");
 
   const update = (patch: Partial<typeof choice>) => {
@@ -99,18 +109,18 @@ export function ModelBar(props: {
     setChoice((prev) => ({ ...prev, ...patch }));
   };
 
-  // 参数兼容:Claude / GPT 锁关、Gemini 锁开,别家让用户点
+  // Parameter compatibility: locked off for Claude / GPT, locked on for Gemini, other vendors let the user click
   const compat = compatPolicy(provider, model, config?.api?.vendor, choice.schemaCompat);
   const compatHint = compat.locked
     ? compat.reason
     : tr("Parameter compatibility mode ({0}): sanitizes tool parameter schemas down to the narrowest Gemini-compatible subset. {1}", compat.on ? tr("on") : tr("off"), compat.reason);
 
   /*
-   * 深度自主:轮次上限换成设置里的「自主轮次」(默认 300,填 0 就是不限),
-   * 并且不再往模型手里塞任何关于轮次的话。
+   * Deep autonomy: the round limit is replaced by the "Autonomy rounds" setting (default 300, 0 means
+   * unlimited), and nothing about rounds is stuffed into the model's prompt any more.
    *
-   * 每家驱动都支持 —— 这道闸是 PromptCut 自己的循环在管的,不是各家 CLI 的能力,
-   * 所以不进 CAPABILITIES,也不会因为换了驱动就灰掉。
+   * Every driver supports it: this gate is enforced by PromptCut's own loop, not a capability of each
+   * CLI, so it is not in CAPABILITIES and does not get greyed out when the driver changes.
    */
   const rounds = config?.deepAutoRounds;
   const deepHint = choice.deepAuto
@@ -125,7 +135,8 @@ export function ModelBar(props: {
       : provider === "agy" ? tr("Antigravity has no speed-up tier")
       : tr("Direct API has no speed-up tier");
 
-  // 「⋯」收起来之后看不见里面开了什么:思考档、加速、深度自主有一样不是默认,按钮上就挂个点
+  // Once "⋯" is collapsed you can't see what is switched on inside: if any of thinking tier, speed-up
+  // or deep autonomy is not at its default, the button gets a dot
   const tuned = effort !== "" || (cap.fast && choice.fast) || choice.deepAuto || tabCreativity !== null;
   const creativityNow: CreativityLevel = tabCreativity ?? projectLevel;
   const optionsTitle = [
@@ -233,8 +244,8 @@ export function ModelBar(props: {
               {tr("Deep autonomy")}
             </button>
 
-            {/* 这条路上这个开关不经手(比如 agy 走 MCP,压根不过 sanitizeSchema)就别显示 ——
-                摆一个按下去什么也不会发生的按钮,比没有这个按钮更误导 */}
+            {/* If this switch is not handled on this path (e.g. agy uses MCP and bypasses sanitizeSchema entirely),
+                don't show it: having a button where clicking does nothing is more misleading than having no button */}
             {compat.applies && (
               <button
                 type="button"

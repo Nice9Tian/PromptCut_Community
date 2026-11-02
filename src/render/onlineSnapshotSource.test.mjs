@@ -1,7 +1,9 @@
 /**
- * 在线页面的快照来源(`snapshotSource.ts` 的 `OnlineSnapshotSource`;`docs/plan/c10a-contract.md` 第 8、9 节):
- * 按层表与清单拉预渲染小尺寸,只拉小尺寸、只拉播放头前后 2 秒、内存 LRU 64 MiB。
- * 跑:node --test src/render/onlineSnapshotSource.test.mjs
+ * Snapshot source for online page (`OnlineSnapshotSource` in `snapshotSource.ts`;
+ * `docs/plan/c10a-contract.md` sections 8 and 9): pulls prerendered small sizes based on layer
+ * table and manifest; only pulls small size, only pulls 2 seconds around playhead, in-memory
+ * LRU 64 MiB.
+ * Run: node --test src/render/onlineSnapshotSource.test.mjs
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,7 +15,7 @@ import { pickLayerSnapshot } from './snapshotPick.mjs';
 
 const H = (n) => n.toString(16).padStart(64, '0');
 
-/** 一台假内容库 + 假素材服务 */
+/** Mock content store + mock asset service */
 function world({ fps = 30 } = {}) {
   const content = new Map();
   const requests = [];
@@ -39,7 +41,7 @@ function world({ fps = 30 } = {}) {
     clearTimer: () => {},
   };
   const layerMap = (layers) => content.set(`${LAYER_MAP_PREFIX}p1`, { v: 1, kind: 'layer-map', projectId: 'p1', fps, span: 60, at: 1, layers });
-  /** 一段清单:frames 覆盖 [from,to],small 列给出的帧 */
+  /** A manifest segment: frames cover [from,to], frames given in small column */
   const manifest = (resultKey, from, to, smallFrames, salt = 0) => {
     const frames = [];
     for (let f = from; f <= to; f++) frames.push([f, H(1000 + f), 10]);
@@ -59,7 +61,7 @@ test('OS1 pure functions: layer table parsing, segments in the window, merging f
   assert.deepEqual(map.layers.map((l) => l.clipId), ['a'], 'streams and bad entries are not accepted');
   assert.equal(parseLayerMap({ kind: 'snapshot' }), null);
   const layer = map.layers[0];
-  // 全局帧 60～120 → 本地 30～90 → 段 [0,59] 与 [60,119]
+  // Global frames 60-120 → local 30-90 → segments [0,59] and [60,119]
   assert.deepEqual(segmentsInWindow(layer, 60, 60, 120), [[0, 59], [60, 119]]);
   assert.deepEqual(segmentsInWindow(layer, 60, 0, 10), [], 'this layer has not been reached yet');
   assert.deepEqual(segmentsInWindow(layer, 60, 170, 400), [[120, 149]], 'the last segment goes up to count - 1');
@@ -87,7 +89,7 @@ test('OS2 ready: per the layer table, fetch only the manifests of the segments w
   const keys = w.requests.filter((r) => r.key !== `${LAYER_MAP_PREFIX}p1`).map((r) => r.key).sort();
   assert.deepEqual(keys, ['R:0-59', 'R:60-119'], 'fetch only segments in the window (playhead at 1 s → global frames 0-90)');
   assert.deepEqual(layerOf(index, 'a', 'html'), { clipId: 'a', kind: 'html', key: 'K', ranges: [[0, 3], [10, 10], [60, 61]] });
-  // 选帧:本地帧 5 回溯到 3(同区间内),和本地模式同一条路
+  // Frame selection: local frame 5 backtracks to 3 (within same interval), same path as local mode
   const pick = pickLayerSnapshot({ layer: layerOf(index, 'a', 'html'), globalFrame: 5, firstFrame: 0, count: 600, anchors: [] });
   assert.equal(pick.localFrame, 3);
   assert.equal(seen[0].type, 'reset');
@@ -101,7 +103,8 @@ test('OS3 fetch bytes: pull only px/<hash> (small size), with a read-only ticket
   src.subscribeReady('s', 0, () => {});
   src.setProject('p1');
   src.focus(0, 30);
-  // 快照预取已退役：refresh 不再预取小尺寸，按需 fetchSnapshot 时才拉
+  // Snapshot prefetching retired: refresh no longer prefetches small size, only pulled on demand
+  // during fetchSnapshot
   await new Promise((r) => setTimeout(r, 5));
   assert.equal(w.fetches.length, 0, 'does not prefetch snapshot small sizes');
   const html = await src.fetchSnapshot('html', 'K', 1);
@@ -132,13 +135,13 @@ test('OS4 key change (after a render node re-renders): the layer table changed, 
   src.setProject('p1');
   await src.tickNow();
   assert.deepEqual(layerOf(index, 'a', 'html').ranges, [[0, 2]]);
-  // 改了卡 a:渲染节点换了键,新键的清单还没有
+  // Modified card a: render node changed key, manifest for the new key does not exist yet
   w.layerMap([{ clipId: 'a', kind: 'html', key: 'K2', resultKey: 'R2', firstFrame: 0, count: 60 }]);
   now += 10_000;
   await src.tickNow();
   assert.deepEqual(layerOf(index, 'a', 'html'), { clipId: 'a', kind: 'html', key: 'K2', ranges: [] }, 'new key has no data yet: ranges empty (page shows a placeholder)');
   assert.deepEqual(layerOf(index, 'b', 'html').ranges, [], 'b is no longer in the layer table: empty layer removes it');
-  // 新的小尺寸回来了
+  // New small size has returned
   w.manifest('R2', 0, 59, [0, 1]);
   now += 10_000;
   await src.tickNow();
@@ -250,7 +253,8 @@ test('OS10 manifest is missing a few small-size frames (Aliyun 2026-09-27: 295/3
   assert.equal(pick(90), 90);
   assert.match(await src.fetchSnapshot('html', 'K', 5), /data:image\/webp;base64,/);
   await assert.rejects(src.fetchSnapshot('html', 'K', 0), /No small-size prerender for this frame/);
-  // 渲染节点补上那几张之后(清单换成满的),下一轮就绪区间补齐,段首也贴得上
+  // After render node fills in those frames (manifest replaced with full one), next round ready
+  // interval is filled out, and segment start can also be pasted
   w.manifest('R', 0, 59, all(0, 59));
   src.stop();
   const later = new OnlineSnapshotSource({ ...w.deps });
@@ -290,14 +294,14 @@ test('C10 section 9: layers of user cards and media effect cards fetch manifests
   assert.equal(src.coverage('a'), 'unknown', 'A layer that is not named fetches only the window: the manifest of the segment outside the window was never fetched → still unknown');
   assert.equal(src.coverage('nobody'), 'none', 'This layer is not in the layer map');
   assert.ok(notified > 0, 'Coverage change is notified when a manifest arrives');
-  // 补齐最后一段:过了 COVERAGE_POLL_MS 再取,整段覆盖
+  // Fill out the last segment: fetch again after COVERAGE_POLL_MS, covering the whole segment
   w.manifest('RU', 120, 179, all(120, 179), 7);
   T += 5_001;
   const before = notified;
   await src.tickNow();
   assert.equal(src.coverage('u'), 'full');
   assert.ok(notified > before);
-  // 齐了的段不再取
+  // Completed segments are not fetched again
   const n = w.requests.filter((r) => r.key === 'RU:0-59').length;
   T += 60_000;
   await src.tickNow();
@@ -311,7 +315,7 @@ test('C10 section 9: no flicker right after opening the page: while the layer ma
   const all = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
   w.layerMap([{ clipId: 'u', kind: 'html', key: 'KU', resultKey: 'RU', firstFrame: 0, count: 120 }]);
   w.manifest('RU', 0, 59, all(0, 50));
-  // 第二段的清单不存在(内容库回「没有这一项」)
+  // Manifest for the second segment does not exist (content store returns "no such item")
   let gate = null;
   const deps = { ...w.deps, now: () => T, coverageLayer: () => true,
     async request(msg) { if (gate) await gate; return w.deps.request(msg); } };
@@ -321,7 +325,7 @@ test('C10 section 9: no flicker right after opening the page: while the layer ma
   src.subscribeReady('s', 0, () => {});
   src.setProject('p1');
   src.focus(0, 30);
-  // 层表还在路上
+  // Layer table is still on the way
   assert.equal(src.coverage('u'), 'unknown', 'Layer map not fetched: still unknown');
   assert.equal(src.coverage('s2'), 'unknown', 'A clip with no layer is still unknown too');
   assert.equal(src.frameConfirmedMissing('u', 0), false, 'Layer map not fetched: not counted as confirmed missing');

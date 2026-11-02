@@ -1,6 +1,8 @@
 /**
- * 越权探测素材效果卡(夹具):`card()` 求值时把探测跑一遍(多一组「凭 cookie 读素材、进 GPU」),`audio()` 在声音线程里跑 Worker 那一组。
- * 探测代码本体在 `probe-boundary-attempts.ts`。经真实加载路径用,办法同 `probe-boundary-card.tsx`;结果在 `globalThis.__pcBoundary["graph-card"]`。
+ * Overreach probe media effect card (fixture): runs probe when `card()` is evaluated (has extra
+ * group: "read assets into GPU via cookies"), `audio()` runs Worker group in sound thread. Probe
+ * code itself is in `probe-boundary-attempts.ts`. Used via real loading path, same as
+ * `probe-boundary-card.tsx`; results in `globalThis.__pcBoundary["graph-card"]`.
  */
 import { glsl } from "../../render/cards/graphValues";
 import { runAll, workerAttempts } from "./probe-boundary-attempts";

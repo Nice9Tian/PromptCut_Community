@@ -1,28 +1,46 @@
 /**
- * WebSocket 握手鉴权（契约 `docs/plan/auth-contract.md` 第 5、6、9、10 节）。
+ * WebSocket handshake authentication (contract `docs/plan/auth-contract.md` sections 5, 6, 9, 10).
  *
- * 客户端在 `Sec-WebSocket-Protocol` 里给 `promptcut.v1`，再加下面至多一项（给了多项一律 401）：
- * - 证明 `promptcut.auth.<base64url(JSON)>` → 该项目的成员身份；
- * - 连接票据 `promptcut.ticket.<票据>` → 签发票据的那个身份，角色按票据；
- * - 本机声明 `promptcut.tenant.<projectId>`（可再加 `promptcut.role.<角色>`），只在回环来源上认 → 本机信任的该项目身份；
- * - 集群令牌 `promptcut.token.<令牌>` → 管理身份，只能用管理接口（只在调用方允许时认，挂载模式一律不认）；
- * - 服务身份 `promptcut.service.<base64url(JSON)>`（`docs/plan/hosted-render-contract.md` 第 1.2 节）→ 托管方服务的控制身份，
- *   不进任何项目，只能看目录、要票据。只在调用方给了登记表（托管端）、且请求真正从本机发起时认。
- * 带 `sv` 的连接票据（目录模块签给服务的，同上第 1.4 节）按登记表里这个服务的 `actsFor` 分两种，都查登记表与项目的开关：
- * - `'self'`（渲染服务）→ 服务在那个项目里的身份 `scope: 'service'`：不是成员，不查名单与禁入表；
- * - `'member'`（云端 Agent 服务）→ 票据里那位成员的身份（`scope: 'member'`）再带上 `service`：照成员查名单、禁入表、踢人。
- * 带 `service` 字段的连接一律走消息白名单（`../docservice/service-gate.mjs`）。
- * 回环来源什么都不带 → 本机身份 `{ userId: 'local', tenantId: 'local', scope: 'local', role: 'page' }`。
- * 回环来源连 `promptcut.v1` 都不带的旧客户端，也按本机身份放行（M5 的行为）。
+ * The client provides `promptcut.v1` in `Sec-WebSocket-Protocol`, plus at most one of the following
+ * (multiple items always result in 401):
+ * - Proof `promptcut.auth.<base64url(JSON)>` → Member identity for that project;
+ * - Connection ticket `promptcut.ticket.<ticket>` → The identity that issued the ticket, with role
+ *   from the ticket;
+ * - Local claim `promptcut.tenant.<projectId>` (may also add `promptcut.role.<role>`), accepted only
+ *   from loopback sources → Local-trusted identity for that project;
+ * - Cluster token `promptcut.token.<token>` → Admin identity, restricted to admin interfaces
+ *   (accepted only when caller permits; never accepted in attached mode);
+ * - Service identity `promptcut.service.<base64url(JSON)>` (`docs/plan/hosted-render-contract.md`
+ *   section 1.2) → Control identity for host services, not entering any project, only allowed to
+ *   view the directory and request tickets. Accepted only when caller provides a registry (hosted
+ *   side) and the request genuinely originates from this machine.
+ * Connection tickets with `sv` (issued to services by the directory module, section 1.4 as above)
+ * are divided into two types based on `actsFor` of the service in the registry; both check the
+ * registry and project switches:
+ * - `'self'` (render service) → Service identity in that project `scope: 'service'`: not a member,
+ *   does not check list or ban table;
+ * - `'member'` (Cloud Agent service) → Identity of the member from the ticket (`scope: 'member'`)
+ *   plus `service`: checks list, ban table, and kicks like a regular member.
+ * Connections with a `service` field always go through the message whitelist
+ * (`../docservice/service-gate.mjs`).
+ * Loopback source providing nothing → Local identity
+ * `{ userId: 'local', tenantId: 'local', scope: 'local', role: 'page' }`.
+ * Legacy clients from loopback sources that do not even provide `promptcut.v1` are also admitted
+ * as local identity (M5 behavior).
  *
- * 失败一律回 null（组装层回 401，响应体不说原因），日志记 `auth.reject { remote, reason }`，
- * `reason` ∈ `no-credential`、`bad-proof`、`nonce`、`banned`、`not-listed`、`no-project`、`rate-limited`、
- * `bad-format`、`multiple`，服务身份另有 `bad-service`、`service-origin`、`service-revoked`、`service-disabled`。不记任何口令、`K`、证明、票据、令牌的原文。
+ * On failure, always returns null (assembly layer returns 401 with no reason in the response body),
+ * logs `auth.reject { remote, reason }`, `reason` ∈ `no-credential`, `bad-proof`, `nonce`, `banned`,
+ * `not-listed`, `no-project`, `rate-limited`, `bad-format`, `multiple`; service identity also includes
+ * `bad-service`, `service-origin`, `service-revoked`, `service-disabled`. Never logs the raw plaintext
+ * of any passphrase, `K`, proof, ticket, or token.
  *
- * 本机声明的角色项可以写 `promptcut.role.agent.<对话号>`，把对话号一起带上（契约只写了 `promptcut.role.<角色>`，
- * 而 `agent` 连接必须有对话号，这是本实现的补充）。
- * 回环来源只带 `promptcut.role.agent.<对话号>`（不带本机声明）：本机 `local` 空间里的 Agent 连接，
- * 得到 `{ ...本机身份, role: 'agent', conversation: 对话号 }`（C6.5 第 5 节；`c65-agent` 补）。
+ * The role entry in a local claim can be written as `promptcut.role.agent.<chatNumber>` to include
+ * the chat number (the contract only specifies `promptcut.role.<role>`, but `agent` connections
+ * require a chat number, which is an extension of this implementation).
+ * Loopback source providing only `promptcut.role.agent.<chatNumber>` (without a local claim): Agent
+ * connection in the local `local` space, yielding
+ * `{ ...localIdentity, role: 'agent', conversation: chatNumber }` (C6.5 section 5; added in
+ * `c65-agent`).
  */
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import {
@@ -41,12 +59,12 @@ const TOKEN_RE = /^[A-Za-z0-9_-]{32,256}$/;
 export const LOCAL_PRINCIPAL = Object.freeze({ userId: 'local', tenantId: 'local', scope: 'local', role: 'page' });
 export const ADMIN_PRINCIPAL = Object.freeze({ userId: 'admin', tenantId: null, scope: 'admin' });
 
-/** 托管方服务的控制身份（不进任何项目的空间）；`serviceRole` 是登记表里这个服务的连接角色 */
+/** Host service control identity (not entering any project space); `serviceRole` is the service's connection role in the registry */
 export function serviceControlPrincipal({ service, kid, role, deviceId, deviceName }) {
   return { userId: serviceUsername(service), tenantId: null, scope: 'service', service, serviceKid: kid, serviceRole: role, deviceId, deviceName };
 }
 
-/** 托管方服务在一个项目里的身份：不是成员（`scope: 'service'`），角色取票据 */
+/** Identity of a host service in a project: not a member (`scope: 'service'`), role is taken from the ticket */
 export function serviceDataPrincipal({ service, kid, projectId, deviceId, deviceName, role }) {
   return {
     userId: serviceUserId(service, deviceId), tenantId: projectId, scope: 'service', service, serviceKid: kid,
@@ -54,10 +72,10 @@ export function serviceDataPrincipal({ service, kid, projectId, deviceId, device
   };
 }
 
-/** 集群令牌格式：base64url 字符，32～256 个 */
+/** Cluster token format: 32-256 base64url characters */
 export const checkTokenFormat = (token) => typeof token === 'string' && TOKEN_RE.test(token);
 
-/** 握手请求里客户端给的子协议列表（多个头、逗号分隔都拆开） */
+/** Subprotocol list provided by the client in the handshake request (split across multiple headers and commas) */
 export function offeredProtocols(req) {
   const raw = req?.headers?.['sec-websocket-protocol'];
   if (raw === undefined) return [];
@@ -65,7 +83,7 @@ export function offeredProtocols(req) {
   return text.split(',').map((s) => s.trim()).filter((s) => s !== '');
 }
 
-/** 回环地址（含 IPv4 映射的 IPv6） */
+/** Loopback address (including IPv4-mapped IPv6) */
 export function isLoopbackAddress(address) {
   const a = String(address ?? '').toLowerCase();
   return a === '::1' || /^127\./.test(a) || /^::ffff:127\./.test(a);
@@ -74,7 +92,7 @@ export function isLoopbackAddress(address) {
 const digest = (text) => createHash('sha256').update(text, 'utf8').digest();
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-/** 一个成员（或创建者）身份的 principal */
+/** Principal of a member (or creator) identity */
 function memberPrincipal({ projectId, username, deviceId, deviceName, creator, role, conversation, owner }) {
   return {
     userId: `${username}@${deviceId}`,
@@ -91,8 +109,10 @@ function memberPrincipal({ projectId, username, deviceId, deviceName, creator, r
 }
 
 /**
- * 按模式与用户名找这次进入该对的 `K`（base64url）；找不到回 null（名单外、不是创建者）。
- * 限定进入下创建者自动算名单的一员：`as: 'member'` 而用户名是创建者的，用创建者的 `K`。
+ * Finds the `K` (base64url) for this entry based on mode and username; returns null if not found
+ * (not on the list, not the creator).
+ * Under restricted entry, the creator is automatically considered a member of the list: if
+ * `as: 'member'` and the username is the creator's, uses the creator's `K`.
  */
 export function credentialFor(rec, username, as) {
   if (as === 'creator') return rec.creator.username === username ? rec.creator : null;
@@ -101,7 +121,7 @@ export function credentialFor(rec, username, as) {
   return (rec.list ?? []).find((e) => e.username === username) ?? null;
 }
 
-/** 这个身份现在还能不能在这个项目里（禁入表、限定进入的名单）；能回 null，不能回原因 */
+/** Whether this identity may currently access the project (ban table, restricted entry list); returns null if allowed, reason if not */
 export function admissionOf(rec, { username, deviceId, creator }) {
   if ((rec.bans ?? []).some((b) => b.username === username && b.deviceId === deviceId)) return 'banned';
   if (rec.mode === 'restricted' && !creator && rec.creator.username !== username && !(rec.list ?? []).some((e) => e.username === username)) {
@@ -112,18 +132,23 @@ export function admissionOf(rec, { username, deviceId, creator }) {
 
 /**
  * @param {object} options
- * @param {() => object | null} options.store 取凭证存储（可以是 null：存储没加载时只认本机身份与令牌）
+ * @param {() => object | null} options.store Fetches credential store (can be null: accepts only
+ *   local identity and token when store is not loaded)
  * @param {ReturnType<import('./challenges.mjs').createChallenges>} options.challenges
  * @param {ReturnType<import('./rate-limit.mjs').createRateLimiter>} options.limiter
- * @param {string} [options.clusterToken] 集群令牌；不给或 `acceptToken` 为 false 时令牌项一律 401
- * @param {boolean} [options.acceptToken] 认不认集群令牌（挂载模式 false）
- * @param {(req) => boolean} options.isLoopback 这条请求是不是本机回环来的
- * @param {(req) => string | null} [options.remoteOf] 日志与限速用的来源地址
- * @param {() => object | null} [options.services] 取服务登记表（`service-identity.mjs` 的 `createServiceRegistry`）；
- *   不给或回 null 时服务握手项与带 `sv` 的票据一律 401（局域网主机）
- * @param {(req) => boolean} [options.isDirectLocal] 请求是不是真正从本机发起的（服务握手只认这种，不看本机信任开关）；
- *   缺省 `origin.mjs` 的 `isLocalOrigin`
- * @param {{ deviceId: string, deviceName: string }} [options.localDevice] 本机声明用的本机设备信息
+ * @param {string} [options.clusterToken] Cluster token; token entries always return 401 if omitted
+ *   or `acceptToken` is false
+ * @param {boolean} [options.acceptToken] Whether to accept cluster tokens (false in attached mode)
+ * @param {(req) => boolean} options.isLoopback Whether this request comes from local loopback
+ * @param {(req) => string | null} [options.remoteOf] Source address for logging and rate limiting
+ * @param {() => object | null} [options.services] Fetches service registry (`createServiceRegistry`
+ *   from `service-identity.mjs`); service handshake entries and tickets with `sv` always return
+ *   401 if omitted or null (LAN host)
+ * @param {(req) => boolean} [options.isDirectLocal] Whether the request genuinely originates from
+ *   this machine (service handshakes accept only this, ignoring local trust switch); defaults to
+ *   `isLocalOrigin` from `origin.mjs`
+ * @param {{ deviceId: string, deviceName: string }} [options.localDevice] Local device information
+ *   used for local claims
  * @param {() => number} [options.now]
  * @param {(event: string, fields: object) => void} [options.log]
  */
@@ -168,8 +193,10 @@ export function createHandshakeAuth({
     if (kinds.length > 1) return reject('multiple');
     if (kinds.length === 0) {
       if (roleItems.length > 0) {
-        // 本机 `local` 空间的 Agent 连接（C6.5 第 5 节）：回环来源只带 `promptcut.role.agent.<对话号>`，
-        // 得到本机身份加 agent 角色与对话号，写入身份据此记成「哪个 Agent 的哪个对话」。别的角色项不单独认
+        // Agent connection in local `local` space (C6.5 section 5): loopback source provides only
+        // `promptcut.role.agent.<chatNumber>`, yielding local identity plus agent role and chat number;
+        // write identity records this as "which chat of which Agent". Other role entries are not
+        // accepted on their own
         if (!loopback) return reject('bad-format');
         if (roleItems.length > 1) return reject('multiple');
         if (!offered.includes(PROTOCOL)) return reject('bad-format');
@@ -182,7 +209,7 @@ export function createHandshakeAuth({
     if (!offered.includes(PROTOCOL)) return reject('bad-format');
     const item = kinds[0];
 
-    // ---------- 集群令牌 ----------
+    // ---------- Cluster token ----------
     if (item.startsWith(TOKEN_PREFIX)) {
       if (roleItems.length > 0) return reject('bad-format');
       if (!tokenDigest) return reject('no-credential');
@@ -190,7 +217,7 @@ export function createHandshakeAuth({
       return ok ? { ...ADMIN_PRINCIPAL } : reject('bad-proof');
     }
 
-    // ---------- 本机声明 ----------
+    // ---------- Local claim ----------
     if (item.startsWith(TENANT_PREFIX)) {
       if (!loopback) return reject('no-credential');
       if (roleItems.length > 1) return reject('multiple');
@@ -220,10 +247,10 @@ export function createHandshakeAuth({
     }
 
     if (roleItems.length > 0) return reject('bad-format');
-    // 冷却期内：非回环来源凭证明、票据一律拒（口令对也拒）
+    // During cooldown period: non-loopback sources with proof or ticket are rejected (even with correct passphrase)
     if (!loopback && limiter.blocked(remote)) return reject('rate-limited');
 
-    // ---------- 服务身份（控制连接） ----------
+    // ---------- Service identity (control connection) ----------
     if (item.startsWith(SERVICE_PREFIX)) {
       const registry = registryOf();
       if (!registry) return reject('no-credential');
@@ -244,11 +271,13 @@ export function createHandshakeAuth({
       const { s: service, kid, d: deviceId, dn: deviceName, nonce, m } = j;
       if (!isServiceName(service) || typeof kid !== 'string' || kid === '' || kid.length > 16 || !isDeviceId(deviceId) || !isDeviceName(deviceName)
         || typeof nonce !== 'string' || typeof m !== 'string') return reject('bad-format');
-      // nonce 先核对：不论后面成败都已作废；重放用过的不计入限速（同证明）
+      // Verify nonce first: invalidated regardless of subsequent success or failure; replayed used nonces
+      // do not count toward rate limiting (same as proof)
       const nonceState = challenges.check(nonce, ['service', service, deviceId]);
       if (nonceState === 'used') return reject('nonce');
       if (nonceState !== 'ok') return failService('nonce');
-      // 只认真正从本机发起的连接：私钥即使外泄，也只能在节点本机上用（契约第 1.2 节〔裁〕）
+      // Only accept connections genuinely initiated from this machine: even if the private key leaks, it
+      // can only be used on the node itself (contract section 1.2 [ruling])
       let direct = false;
       try { direct = !!isDirectLocal(req); } catch { direct = false; }
       if (!direct) return reject('service-origin');
@@ -260,7 +289,7 @@ export function createHandshakeAuth({
       return serviceControlPrincipal({ service, kid, role: entry.role, deviceId, deviceName });
     }
 
-    // ---------- 连接票据 ----------
+    // ---------- Connection ticket ----------
     if (item.startsWith(TICKET_PREFIX)) {
       const st = storeOf();
       if (!st) return reject('no-project');
@@ -269,16 +298,19 @@ export function createHandshakeAuth({
       const p = v.payload;
       const who = splitUserId(p.u);
       if (p.sv !== undefined) {
-        // 服务身份的票据：先查登记表与这个项目的开关
+        // Tickets with service identity: check registry and switches for this project first
         const registry = registryOf();
         const refused = serviceAdmission({ registry, record: v.record, service: p.sv, kid: p.sk, role: p.r });
         if (refused) return reject(refused);
         const own = who.username === serviceUsername(p.sv);
         if (registry.get(p.sv).actsFor === 'member') {
-          // 代成员进项目（云端 Agent 服务）：票据的 `u`、`ug` 是成员的，名单、禁入表照成员查
+          // Enter project on behalf of a member (Cloud Agent service): ticket's `u` and `ug` belong to the
+          // member, check list and ban table as a member
           if (own) {
-            // 这种服务自己的身份只有一种用法：只用来发布预渲染重试计划的连接（`cloud-agent-contract.md` 第 16 节）。
-            // 不是成员：不查名单与禁入表，也不带任何成员的权限；白名单只放发布那几种消息
+            // This service's own identity has only one use: connections used solely to publish prerender retry
+            // plans (`cloud-agent-contract.md` section 16).
+            // Not a member: does not check list or ban table, and carries no member permissions; whitelist only
+            // allows publishing those few message types
             if (p.pu !== 'publish') return reject('bad-format');
             return {
               ...serviceDataPrincipal({ service: p.sv, kid: p.sk, projectId: p.p, deviceId: who.deviceId, deviceName: p.dn ?? who.deviceId, role: p.r }),
@@ -294,11 +326,13 @@ export function createHandshakeAuth({
               creator: asCreator, role: p.r, conversation: p.c, owner: p.o,
             }),
             service: p.sv, serviceKid: p.sk,
-            // 权限取票据里的与此刻的里小的那个；票据没写的按只读（失败即关）
+            // Permissions take the lesser of what is in the ticket and current; if not specified in the ticket,
+            // defaults to read-only (fail-closed)
             access: narrowAccess(p.acc === 'rw' ? 'rw' : 'r', memberAccess(v.record, who.username, asCreator)),
           };
         }
-        // 以服务自己的身份进项目（渲染服务）：不是成员，不查名单与禁入表
+        // Enter project with the service's own identity (render service): not a member, does not check list
+        // or ban table
         if (!own || p.pu !== undefined || p.acc !== undefined) return reject('bad-format');
         return serviceDataPrincipal({ service: p.sv, kid: p.sk, projectId: p.p, deviceId: who.deviceId, deviceName: p.dn ?? who.deviceId, role: p.r });
       }
@@ -311,7 +345,7 @@ export function createHandshakeAuth({
       });
     }
 
-    // ---------- 证明 ----------
+    // ---------- Proof ----------
     const fail = (reason) => {
       if (!loopback) limiter.fail(remote);
       return reject(reason);
@@ -328,10 +362,12 @@ export function createHandshakeAuth({
     if (!isObj(j) || j.v !== 1) return reject('bad-format');
     const { p: projectId, u: username, d: deviceId, dn: deviceName, as, nonce, m, r: role, c, o } = j;
     if (!isProjectId(projectId) || !isUsername(username) || !isDeviceId(deviceId) || !isDeviceName(deviceName)) return reject('bad-format');
-    // `service:` 开头的用户名留给服务身份，成员进不来（契约 hosted-render 第 1.4 节）
+    // Usernames starting with `service:` are reserved for service identities; members cannot enter
+    // with them (contract hosted-render section 1.4)
     if (isReservedUsername(username)) return reject('bad-format');
     if ((as !== 'member' && as !== 'creator') || typeof nonce !== 'string' || typeof m !== 'string') return reject('bad-format');
-    // nonce 先核对：不论后面成败都已作废。重放用过的（Node 的 WebSocket 在 401 后会原样重试一次）不计入限速
+    // Verify nonce first: invalidated regardless of subsequent success or failure. Replays of used
+    // nonces (Node's WebSocket retries once as-is after 401) do not count toward rate limiting
     const nonceState = challenges.check(nonce, ['join', projectId, username, deviceId, as]);
     if (nonceState === 'used') return reject('nonce');
     if (nonceState !== 'ok') return fail('nonce');
@@ -364,7 +400,7 @@ export function createHandshakeAuth({
 
   return {
     authenticate,
-    /** 握手成功时要回显的子协议：只回 `promptcut.v1` */
+    /** Subprotocol to echo on successful handshake: returns only `promptcut.v1` */
     protocolFor(req) {
       return offeredProtocols(req).includes(PROTOCOL) ? PROTOCOL : null;
     },

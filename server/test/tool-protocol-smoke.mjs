@@ -34,7 +34,7 @@ async function main() {
     }
   });
   
-  // 断言
+  // Assertions
   let passed = true;
   const statusEvents = events.filter(e => e.type === 'status');
   if (statusEvents.some(e => e.text === 'Text protocol reached the 8-round limit')) {

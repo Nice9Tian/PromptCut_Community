@@ -1,9 +1,10 @@
 /**
  * node --test server/test/wait-tool.test.mjs
  *
- * `wait` 工具。它存在的理由见 mcp-tools.mjs 里那段说明:
- * 十来个工具让模型「隔几秒问一次」,但在这之前模型没有等待的手段,只能借 shell 去睡 ——
- * 而无人值守的 agy 会把 run_command 自动拒掉,一拒整轮就废。
+ * `wait` tool. The reason for its existence is explained in that description in mcp-tools.mjs:
+ * a dozen tools tell the model to "ask again every few seconds", but before this the model had
+ * no way to wait and could only borrow the shell to sleep, while unattended agy automatically
+ * rejects run_command, ruining the entire round once rejected.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,9 +32,10 @@ test('Tools that make the caller poll must point to wait in their description', 
 });
 
 /*
- * 服务端那段执行逻辑目前长在 vite-plugin-ai.ts 的 callToolInternal 里(它要用到
- * SKILL 闸门和工具表,搬出来代价更大)。这里把同一段逻辑照抄一份验行为契约:
- * 夹取范围、默认值、非法输入。改那边的时候这两条会提醒你同步。
+ * The server-side execution logic currently lives in callToolInternal in vite-plugin-ai.ts (it
+ * needs the SKILL gate and tool table; moving it out carries a higher cost). Here the same logic
+ * is duplicated to verify the behavioral contract: clamp range, default values, illegal inputs.
+ * When modifying that side, these two tests will remind you to sync.
  */
 function waitSeconds(args) {
   const raw = args?.seconds;

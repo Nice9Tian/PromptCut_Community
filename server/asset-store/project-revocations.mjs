@@ -1,4 +1,7 @@
-/** 可信 asset 服务事件消费者；doc 是权限权威。仅存连续 cursor 和已完成 receipt，绝不落 token/principal 引用。 */
+/**
+ * Trusted asset service event consumer; doc is the permission authority. Only stores contiguous
+ * cursors and completed receipts; never persists token/principal references.
+ */
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -21,7 +24,8 @@ export function createAssetRevocationConsumer({ authority, file, serviceId = 'as
   }
   function deliver(event) {
     if (deliveries.has(event.eventId)) return deliveries.get(event.eventId);
-    // callback 同步执行到第一次 await；lease 在这里同步 abort/destroy，追齐持久日志不能延迟此 fence。
+    // callback runs synchronously up to the first await; lease aborts/destroys synchronously here;
+    // catching up persistent logs must not delay this fence.
     const pending = [...listeners].map(([id, entry]) => {
       try { return Promise.resolve(entry.callback(event)).then(value => value?.closed ? id : null); }
       catch (error) { return Promise.reject(error); }
@@ -49,7 +53,7 @@ export function createAssetRevocationConsumer({ authority, file, serviceId = 'as
   }
   async function ackPending() {
     if (!state.pending) return;
-    await persist(); // 即使上次落盘失败后重试，也绝不把仅在 RAM 的 receipt 先 ACK。
+    await persist(); // Even when retrying after a failed disk write last time, never ACK a receipt that exists only in RAM.
     await authority.ackAccessEvent(state.pending.eventId, serviceId, state.pending.receipt);
     state = { v: 1, cursor: state.pending.receipt.cursor, pending: null };
     await persist();
@@ -69,7 +73,8 @@ export function createAssetRevocationConsumer({ authority, file, serviceId = 'as
         if (event.seq !== state.cursor + 1 || !event.eventId) throw new Error('revocation-gap');
         const resources = await deliver(event);
         state.pending = { eventId: event.eventId, receipt: { receiptId: crypto.randomUUID(), cursor: event.seq, complete: true, ...resources } };
-        // 先持久已完成凭据再 ACK；ACK丢失/崩溃后重复完全相同 receipt，不虚构未关闭完成。
+        // Persist completed receipts before ACKing; repeat the exact same receipt after lost ACK/crash;
+        // do not fabricate unclosed completions.
         await persist();
         await ackPending();
         deliveries.delete(event.eventId);
@@ -91,7 +96,8 @@ export function createAssetRevocationConsumer({ authority, file, serviceId = 'as
       catch (error) { if (error.code !== 'ENOENT') throw error; }
       if (state.pending && (state.pending.receipt?.complete !== true || state.pending.receipt.cursor !== state.cursor + 1 || !state.pending.eventId || !state.pending.receipt.receiptId)) throw new Error('invalid-revocation-state');
       unsubscribe = authority.subscribeRevocations({}, event => {
-        // 不把异步通知当完整日志。闭流同步启动，随后从 cursor 连续重放补乱序/重复/丢失。
+        // Do not treat async notifications as a complete log. Stream closure starts synchronously, then
+        // contiguously replays from cursor to handle out-of-order/duplicate/lost events.
         if (event.seq > state.cursor) void deliver(event).catch(() => { ready = false; });
         void sync().catch(() => { ready = false; });
       });

@@ -1,15 +1,19 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { BUBBLE_SHOW_MS, BUBBLE_WAIT_MS, TIER_BUBBLE_TEXT, subscribeTier, tierName, tierState } from "../online/onlineTier";
 
-/** 一个页面会话只出一次 */
+/** Shown only once per page session */
 let shownThisSession = false;
 
 /**
- * 档位气泡(语义 `product/platforms.md`「在线浏览器」的「名词」,2026-10-08 用户定):舞台闸门走完、正式进入编辑界面后,
- * 在预览窗口上方用气泡告诉用户这台设备处在哪一档,几秒后自动消失。四档都提示,文字照用户定的(`onlineTier.ts` 的 `TIER_BUBBLE_TEXT`)。
+ * Tier bubble (semantics: the "Nouns" part of "Online browser" in `product/platforms.md`, user decision,
+ * 2026-10-08): after the stage gate has passed and the editor is formally entered, a bubble above the
+ * preview window tells the user which tier this device is in, and disappears by itself after a few
+ * seconds. All four tiers show it, with the text set by the user (`TIER_BUBBLE_TEXT` in `onlineTier.ts`).
  *
- * 等即时渲染闸门的基准卡有了结论再出(基准卡跑不动就是低配模式),最多等 `BUBBLE_WAIT_MS`;出了之后档位再变(运行中握手容错退回单舞台)不再出。
- * 只用主题变量,不引入新的固定配色。只在在线页面挂。
+ * It appears once the benchmark card of the on-demand render gate has a verdict (if the benchmark card
+ * cannot run, it is low-spec mode), waiting at most `BUBBLE_WAIT_MS`. After it has appeared, later tier
+ * changes (the runtime handshake fault tolerance falling back to a single stage) do not show it again.
+ * Uses theme variables only, no new fixed colors. Mounted only on online pages.
  */
 export function TierBubble({ ready }: { ready: boolean }) {
   const t = useSyncExternalStore(subscribeTier, tierState, tierState);
@@ -51,7 +55,7 @@ export function TierBubble({ ready }: { ready: boolean }) {
   );
 }
 
-/** 测试用 */
+/** For tests */
 export function resetTierBubbleForTest(): void {
   shownThisSession = false;
 }

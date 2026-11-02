@@ -1,10 +1,10 @@
 /**
- * C4 的服务端消费侧(4 帧批次边界读 `wanted`、把含它的批提前)和预渲染集合的
- * 窄接口。跑:node --test server/test/prerender-schedule.test.mjs
+ * Server consumer side of C4 (reads `wanted` at 4-frame batch boundaries, moves the batch containing
+ * it forward) and narrow interface of prerender set. Run: node --test server/test/prerender-schedule.test.mjs
  *
- * `nextBatchStart` 只在批与批之间被调 —— 它**不打断正在跑的那一批**,只决定
- * 下一批从哪儿开始。直接拿 `FramePipeline.prototype` 上的那两个方法配一个最小
- * 假对象跑:这一段不碰 Chrome。
+ * `nextBatchStart` is only called between batches: it **does not interrupt the running batch**,
+ * only decides where the next batch starts. Run directly with those two methods on
+ * `FramePipeline.prototype` and a minimal fake object: this section does not touch Chrome.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -29,21 +29,21 @@ test('without wanted, the batches are sequential', () => {
 });
 
 test('whichever batch wanted falls in moves earlier (local frame = global frame - firstFrame)', () => {
-  // 片段从全局第 100 帧开始;播放头想要全局第 1000 帧 → 本地 900 → 第 900 批
+  // Clip starts at global frame 100; playhead wants global frame 1000 → local 900 → batch 900
   const pipeline = scheduler([{ clipId: 'a', frame: 1000 }]);
   const pending = new Set(Array.from({ length: 250 }, (_, i) => i * 4));
   assert.equal(pipeline.nextBatchStart(pending, control('a', 1000, 100)), 900);
-  // 901 / 902 / 903 都落在同一批里
+  // 901 / 902 / 903 all fall into the same batch
   assert.equal(scheduler([{ clipId: 'a', frame: 1003 }]).nextBatchStart(pending, control('a', 1000, 100)), 900);
-  // 别的片段的 wanted 不动这张卡的顺序
+  // wanted from other clips does not change this card's order
   assert.equal(scheduler([{ clipId: 'other', frame: 1000 }]).nextBatchStart(pending, control('a', 1000, 100)), 0);
-  // 已经产过的那一批不在 pending 里 —— 不重排,回到顺序批
+  // The batch already produced is not in pending: no reordering, returns to sequential batch
   const done = new Set([0, 4, 8]);
   assert.equal(pipeline.nextBatchStart(done, control('a', 1000, 100)), 0);
-  // 片段还没挂载 / 已经退场的帧号丢掉
+  // Drop frame numbers where clip is not yet mounted / already exited
   assert.equal(scheduler([{ clipId: 'a', frame: 50 }]).nextBatchStart(pending, control('a', 1000, 100)), 0);
   assert.equal(scheduler([{ clipId: 'a', frame: 99999 }]).nextBatchStart(pending, control('a', 1000, 100)), 0);
-  // 读不到播放头(编辑器还没推过)时不抛
+  // Does not throw when playhead cannot be read (editor has not pushed yet)
   const blind = { playhead: () => { throw new Error('no mirror'); }, playheadWanted: FramePipeline.prototype.playheadWanted,
     notePromotion: FramePipeline.prototype.notePromotion, nextBatchStart: FramePipeline.prototype.nextBatchStart };
   assert.equal(blind.nextBatchStart(pending, control('a', 1000, 100)), 0);
@@ -57,7 +57,7 @@ test('queue jumps are recorded in diagnostics (the prerender process\'s stdout i
   assert.equal(pipeline.promotions[0].clipId, 'a');
   assert.equal(pipeline.promotions[0].start, 900);
   assert.equal(pipeline.promotions[0].instead, 0);
-  // 留最近 32 条,不无限长
+  // Keep latest 32 entries, do not grow indefinitely
   for (let n = 0; n < 40; n++) pipeline.nextBatchStart(pending, control('a', 1000, 100));
   assert.equal(pipeline.promotions.length, 32);
 });
@@ -71,7 +71,7 @@ test('no reordering when wanted points exactly at the sequential batch (so the l
 test('prerenderSetOf fallback rule: direct is not produced, all others are (TODO(R4a) wire up the real one)', () => {
   assert.equal(declaredHeavy({ frameMode: 'direct' }), false);
   assert.equal(declaredHeavy({ frameMode: 'stateful' }), true);
-  // unknown 也照测照产(计划 3.1(2):按下层依赖卡处理)
+  // unknown is also tested and produced as usual (plan 3.1(2): treated as below-dependent card)
   assert.equal(declaredHeavy({ frameMode: 'stateful', compositing: 'unknown' }), true);
   assert.equal(declaredHeavy({ need_prerendering: true }), true);
   assert.equal(declaredHeavy({ needPrerendering: true }), true);
@@ -94,8 +94,10 @@ test('prerenderSetOf fallback rule: direct is not produced, all others are (TODO
 });
 
 /* ------------------------------------------------------------------------ *
- * pinned 渲染 9:预渲染集合是**消费方** —— 在所有位置都判轻的卡不产快照、
- * 不进就绪索引。集合压根没算过(没走过 `adoptCardPlan`)时不过滤。
+ * pinned render 9: Prerender set is the **consumer**: cards classified as
+ * light at all positions do not produce snapshots and do not enter the ready
+ * index. No filtering occurs when the set was never calculated (never went
+ * through `adoptCardPlan`).
  * ------------------------------------------------------------------------ */
 
 const statefulControl = (clipId, count = 8) => ({
@@ -135,7 +137,7 @@ test('Render 9: after the set changes, the snapshotTargets cache is replaced alo
   const entry = { key: 'E', project: { fps: 30 }, cardPlan: plan, prerenderSet: new Set(['a', 'b']) };
   const pipeline = picker(entry);
   assert.equal(pipeline.snapshotTargets(entry).size, 2);
-  entry.prerenderSet = new Set(['a']);            // K6 降级 / 重算之后集合变了,cardPlan 没变
+  entry.prerenderSet = new Set(['a']);            // After K6 downgrade / recalculation, set changed but cardPlan remained unchanged
   assert.deepEqual([...pipeline.snapshotTargets(entry).keys()], ['a']);
 });
 
@@ -162,13 +164,13 @@ test('R6-7: when a session switches to a new project version, the page is first 
   assert.deepEqual(messages.map(m => m.type), ['reset', 'layer'], 'reset first when the version changes');
   assert.equal(messages[0].localRev, 3, 'reset carries the preload\'s localRev');
 
-  // 同一版项目再来一次(比如重新 preload):不重复 reset
+  // Same project version again (e.g. re-preload): do not reset repeatedly
   messages.length = 0;
   pipeline.adoptSession('s', entryA, 4);
   pipeline.adoptCardPlan(entryA, plan);
   assert.deepEqual(messages.map(m => m.type), []);
 
-  // 换一版项目(entry.key 是内容寻址的):再 reset 一次
+  // Switch to a new project version (entry.key is content-addressed): reset once again
   messages.length = 0;
   const entryB = { key: 'E2', project: { fps: 30 } };
   pipeline.adoptSession('s', entryB, 5);
@@ -182,10 +184,10 @@ test('R6-7: when a session switches to a new project version, the page is first 
 test('R6-14: frames dropped for exceeding the limit no longer count as "missing", so the next pass does not re-render them', async () => {
   const entry = { key: 'E', project: { fps: 30, duration: 1 },
     cardPlan: [statefulControl('heavy', 3)], prerenderSet: new Set(['heavy']) };
-  // 第 1 帧上一趟判了超限:剩下第 0、2 帧才算缺
+  // Frame 1 exceeded budget in previous pass: only remaining frames 0 and 2 count as missing
   const index = { count: 0, frames: [], oversize: [[1, 1]] };
   assert.deepEqual(await picker(entry, index).missingSnapshotFrames(entry, { tiers: ['shared'] }), [0, 2]);
-  // 三帧全判过(一帧就绪、两帧超限)= 这张卡处理完了,一帧都不用再渲
+  // All three frames evaluated (one ready, two exceeded budget) = card is done, no frames to re-render
   const done = { count: 1, frames: [[0, 0]], oversize: [[1, 2]] };
   assert.deepEqual(await picker(entry, done).missingSnapshotFrames(entry, { tiers: ['shared'] }), []);
 });

@@ -1,7 +1,8 @@
 /**
- * 时间轴顶部工具行(配色诊断与修正 v2 整屏)。
- * 行高分段(小/中/大,选中格实心强调色)· 「行高 44px」等宽小字 · 分隔 ·
- * 右侧「缩放」+ 96px 滑条(对数刻度,10–1000 px/s)。
+ * Toolbar row at the top of the timeline (color diagnosis and fix v2, full screen).
+ * Row height segments (small / medium / large, the selected cell filled with the accent color) · monospace
+ * small text "Row height 44px" · divider ·
+ * on the right "Zoom" + a 96px slider (log scale, 10–1000 px/s).
  */
 import { useTimelineContext } from "./TimelineContext";
 import { type RowSize, ROW_SIZE_H } from "./utils";
@@ -9,7 +10,7 @@ import { tr } from "../../i18n/index.ts";
 
 const ZOOM_MIN = 10;
 const ZOOM_MAX = 1000;
-/** 滑条 0–100 ↔ px/s 对数映射:缩放感受是等比的,线性滑条会前紧后松 */
+/** Slider 0–100 ↔ px/s log mapping: zoom is perceived proportionally, and a linear slider would feel tight at the start and loose at the end */
 const toSlider = (pxPerSec: number) =>
   Math.round((Math.log(pxPerSec / ZOOM_MIN) / Math.log(ZOOM_MAX / ZOOM_MIN)) * 100);
 const fromSlider = (v: number) => ZOOM_MIN * Math.pow(ZOOM_MAX / ZOOM_MIN, v / 100);

@@ -1,11 +1,13 @@
 /**
- * legacy 整帧通道方案 B(AGENT-maint-3 第 1 项):只删没人用的产物。
+ * Legacy full-frame channel Plan B (item 1 of AGENT-maint-3): only delete unused artifacts.
  *
- * - 整场景的 `mov/full.mov`(`fillMov` / `writeMov` 编的)不再产:整场景的 `MovFrameStore` 以 `movie: false` 建,
- *   `start()` 不起 ffmpeg,载入时删掉旧版本留下的 `full.mov`,逐帧 PNG 表照旧。
- * - `prerender()` 不再编 `tracks/<前缀>/preview.mp4` 与 `<键>/preview.mp4`,旧的顺手删;
- *   按前缀栅格化的 PNG 与抄进 `<键>/frames/` 的那一份照旧(它们有消费方)。
- * - 独立卡的那一份(`card-cache.mjs`,缺省 `movie: true`)不变。
+ * - Whole-scene `mov/full.mov` (encoded by `fillMov` / `writeMov`) is no longer produced:
+ *   whole-scene `MovFrameStore` is created with `movie: false`, `start()` does not launch ffmpeg,
+ *   deletes `full.mov` left by older versions on load, frame-by-frame PNG table remains as before.
+ * - `prerender()` no longer encodes `tracks/<prefix>/preview.mp4` and `<key>/preview.mp4`, deleting
+ *   old ones in passing; PNGs rasterized by prefix and copies in `<key>/frames/` remain as before
+ *   (they have consumers).
+ * - Standalone card copy (`card-cache.mjs`, default `movie: true`) remains unchanged.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -57,7 +59,7 @@ test('MNT3-B-2 movie:false deletes the full.mov left by older versions on load; 
   const written = [];
   await fresh.start('fake', () => ({ write: async b => { written.push(b); }, finish: async () => {}, abort: async () => {} }));
   await fs.mkdir(path.join(dir, 'card2', 'mov'), { recursive: true });
-  // 模拟编码器把临时文件写出来:finish 时改名成 full.mov
+  // Mock encoder writes temp file out: renames to full.mov on finish
   const origFinish = fresh.writer.finish;
   fresh.writer.finish = async () => { await origFinish(); await fs.writeFile(fresh.tempMovie, 'movie'); };
   await fresh.put(0, png());
@@ -89,7 +91,7 @@ test('MNT3-B-4 fillMov no longer judges "already done" by full.mov: every pass i
   const project = { id: 'mnt3-fill', width: 2, height: 2, fps: 30, duration: 3 / 30, tracks: [] };
   const entry = await service.entry(project);
   await entry.mov.ready;
-  // 旧版本在磁盘上留过 full.mov:以前这里就直接返回了
+  // Older versions left full.mov on disk: previously returned directly here
   await fs.mkdir(path.join(entry.dir, 'mov'), { recursive: true });
   await fs.writeFile(path.join(entry.dir, 'mov', 'full.mov'), 'stale');
   const calls = [];

@@ -2,33 +2,35 @@ import type { AiProvider } from "./types";
 import { tr } from "../i18n/index.ts";
 
 /**
- * 每家驱动到底支持哪几样,以及当前这次运行选了什么。
+ * What each driver actually supports, and what the current run has selected.
  *
- * 能力表不是拍脑袋写的,是在本机逐个问过 CLI 的 --help 得来的:
- *   claude  --model / --effort low|medium|high|xhigh|max / fastMode(经 --settings 传)
- *   codex   -m --model / 推理档只能走 -c model_reasoning_effort= / 没有加速档
- *   agy     --model / --effort low|medium|high / 没有加速档
- * 不支持的就在界面上灰掉,不做假开关 —— 点了没反应比没有这个开关更糟。
+ * The capability table was not guessed; it comes from asking each CLI for --help on this machine:
+ *   claude  --model / --effort low|medium|high|xhigh|max / fastMode (passed via --settings)
+ *   codex   -m --model / reasoning tier only via -c model_reasoning_effort= / no fast mode
+ *   agy     --model / --effort low|medium|high / no fast mode
+ * What is unsupported is grayed out in the UI; no fake switches: a switch that does nothing when
+ * clicked is worse than no switch.
  */
 
 /**
- * 推理强度。空字符串 = 跟随各家自己的默认,不传标志。
+ * Reasoning effort. Empty string = follow each provider's own default, no flag is passed.
  *
- * `minimal` 现在**没有任何驱动提供**(它曾在 codex 的清单里,而上游不认,选中就是 400)。
- * 类型里留着它只为一件事:用户浏览器里可能还存着这个旧值,留着类型才对得上;
- * 界面那边会把不在清单里的值降级成默认(见 ModelBar),所以它发不出去。
- * 别因为「类型里有」就把它加回某家的 efforts。
+ * `minimal` is now **offered by no driver** (it used to be in codex's list, but upstream does not
+ * recognize it, and selecting it gives a 400). It stays in the type for one reason only: the user's
+ * browser may still hold this old value, and keeping it in the type is what makes that line up;
+ * the UI downgrades values not in the list to the default (see ModelBar), so it cannot be sent.
+ * Do not add it back to some provider's efforts just because "the type has it".
  */
 export type EffortLevel = "" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface ProviderCapability {
-  /** 支持哪几档推理强度;空数组 = 这家不支持,界面上灰掉 */
+  /** Supported reasoning-effort tiers; empty array = unsupported by this provider, grayed out in the UI */
   efforts: EffortLevel[];
-  /** 支不支持「加速」。只有 Claude Code 有(settings 里的 fastMode) */
+  /** Whether "fast mode" is supported. Only Claude Code has it (fastMode in settings) */
   fast: boolean;
-  /** 没配模型清单时的兜底建议,用户可以在 AI 设置里改 */
+  /** Fallback suggestions when no model list is configured; the user can change them in the AI settings */
   suggestedModels: string;
-  /** 这家的模型清单从哪来 */
+  /** Where this provider's model list comes from */
   modelsHint: string;
 }
 
@@ -41,14 +43,16 @@ export const CAPABILITIES: Record<AiProvider, ProviderCapability> = {
   },
   codex: {
     /*
-     * codex 没有 --effort,只能用 -c model_reasoning_effort= 覆盖配置项。
+     * codex has no --effort, and can only override the config item with -c model_reasoning_effort=.
      *
-     * 这份清单必须和上游认的值一致 —— 用户诊断报告里就撞过一次:他从这个下拉框里选了
-     * `minimal`,请求直接 400:
+     * This list must match the values upstream recognizes. A user's diagnostic report hit this once: the
+     * user picked `minimal` from this dropdown and the request got a 400 right away:
      *   Unsupported value: 'minimal' is not supported with the 'gpt-5.6-terra' model.
      *   Supported values are: 'none', 'low', 'medium', 'high', 'xhigh', and 'max'.
-     * 两头都错了:`minimal` 我们给了、上游不认;`none` 和 `max` 上游认、我们没给。
-     * 摆一个必然 400 的选项在菜单里,用户不可能猜到是我们的错。
+     * It was wrong at both ends: we offered `minimal`, which upstream does not recognize; and upstream
+     * recognizes `none` and `max`, which we did not offer.
+     * With an option in the menu that is bound to return a 400, there is no way the user could guess
+     * the fault is ours.
      */
     efforts: ["", "none", "low", "medium", "high", "xhigh", "max"],
     fast: false,
@@ -63,13 +67,15 @@ export const CAPABILITIES: Record<AiProvider, ProviderCapability> = {
   },
   api: {
     /*
-     * low / medium / high 是 OpenAI 兼容口径 `reasoning_effort` 的取值,中转站也照收
-     * (openlux 文档：「Inference model strength (such as low / medium / high)」)。
-     * 不给 minimal / xhigh / max：那几档是 CLI 各自的扩展，OpenAI 兼容接口不认，
-     * 列出来只会让用户选一个上游会 400 的值。
+     * low / medium / high are the values of `reasoning_effort` in the OpenAI-compatible convention, and
+     * relay services accept them as well (openlux docs: "Inference model strength (such as low / medium /
+     * high)").
+     * minimal / xhigh / max are not offered: those tiers are each CLI's own extensions that the
+     * OpenAI-compatible interface does not recognize, and listing them would only let the user pick a
+     * value upstream would answer with a 400.
      *
-     * 选「默认」(空)时一个字段都不发 —— 有些模型名自带 `-thinking` 后缀，网关会自己
-     * 注入档位，这时候硬塞一个反而把它覆盖掉。
+     * When "Default" (empty) is selected, no field is sent at all: some model names carry a `-thinking`
+     * suffix and the gateway injects the tier itself, so forcing one in would overwrite it.
      */
     efforts: ["", "low", "medium", "high"],
     fast: false,
@@ -80,7 +86,8 @@ export const CAPABILITIES: Record<AiProvider, ProviderCapability> = {
 
 export const EFFORT_LABEL: Record<EffortLevel, string> = {
   "": tr("default"),
-  // codex 的 none 是「明确关掉思考」,和 ""(不传这个参数、随它自己的默认)不是一回事
+  // codex's none means "explicitly turn thinking off", which is not the same as "" (do not send the
+  // parameter, let it use its own default)
   none: tr("Close"),
   minimal: tr("Minimal"),
   low: tr("Low"),
@@ -90,7 +97,10 @@ export const EFFORT_LABEL: Record<EffortLevel, string> = {
   max: tr("Max"),
 };
 
-/** `a|b|c` → ["a","b","c"]。空段和首尾空格都去掉,允许用户随手写成 `a | b` */
+/**
+ * `a|b|c` → ["a","b","c"]. Empty segments and surrounding spaces are removed, so the user may write
+ * it casually as `a | b`
+ */
 export function parseModelList(raw: string | undefined | null): string[] {
   return String(raw ?? "")
     .split("|")
@@ -98,10 +108,11 @@ export function parseModelList(raw: string | undefined | null): string[] {
     .filter(Boolean);
 }
 
-/* ── 这一次运行选了什么 ──────────────────────────────────
- * 存 localStorage 而不是 ai.json:这是「这台机器上我现在想用哪个」,
- * 换个模型不该算改配置,也不该跟着项目文件走。按 provider 分开记,
- * 从 Claude 切到 Codex 不会把模型名带过去(那个名字在对面根本不存在)。
+/* ── What this run has selected ──────────────────────────────────
+ * Stored in localStorage rather than ai.json: this is "which one I want to use right now on this
+ * machine", so switching model should not count as changing the configuration, and it should not
+ * travel with the project files either. It is recorded per provider, so switching from Claude to
+ * Codex does not carry the model name over (that name does not exist on the other side at all).
  */
 
 const KEY = (kind: string, provider: AiProvider) => `pc.ai.${kind}.${provider}`;
@@ -119,24 +130,27 @@ function write(kind: string, provider: AiProvider, value: string): void {
     if (value) localStorage.setItem(KEY(kind, provider), value);
     else localStorage.removeItem(KEY(kind, provider));
   } catch {
-    /* 无痕模式记不住就算了,本次会话内仍然生效 */
+    /* If incognito mode cannot remember it, so be it; it still takes effect within this session */
   }
 }
 
 export interface RunChoice {
-  /** 空 = 用该驱动自己的默认模型 */
+  /** Empty = use that driver's own default model */
   model: string;
   effort: EffortLevel;
   fast: boolean;
   /**
-   * 参数兼容模式:工具 schema 按 Gemini 那套最窄子集清洗。auto = 按模型名推(有 gemini 就开);
-   * on / off 是用户手动定的。Claude / GPT 系列锁死 off、Gemini 锁死 on,别的厂商才让用户调(见 compatPolicy)。
+   * Parameter compatibility mode: the tool schema is sanitized down to Gemini's narrowest subset.
+   * auto = inferred from the model name (on if it contains gemini); on / off are set manually by the
+   * user. Claude / GPT series are locked off and Gemini is locked on; only other vendors let the user
+   * adjust it (see compatPolicy).
    */
   schemaCompat: SchemaCompat;
   /**
-   * 深度自主:把一次运行的轮次上限从常规的几十轮放宽到 300,并且**不再往模型手里
-   * 塞任何关于轮次的话**。默认关着 —— 常规上限的作用是把跑偏的运行拦下来,
-   * 开着它等于把这道闸交给用户自己判断,只在明确要它长时间自己跑时才开。
+   * Deep autonomy: raises the round limit of a run from the usual few dozen rounds to 300, and **no
+   * longer puts anything about rounds into the model's hands**. Off by default: the usual limit exists
+   * to stop runs that have gone astray, and turning this on hands that gate over to the user's own
+   * judgment, so turn it on only when you explicitly want it to run on its own for a long time.
    */
   deepAuto: boolean;
 }
@@ -163,17 +177,23 @@ export function writeChoice(provider: AiProvider, patch: Partial<RunChoice>): vo
 }
 
 /**
- * 参数兼容开关在这个驱动 / 模型下该是什么样。
- *   - Claude Code / Codex 这两条 CLI 路,以及 API 直连里模型名带 claude / gpt / o1~o9 / codex 的:锁死关(它们吃完整 schema);
- *   - API 直连里模型名带 gemini 的:锁死开;
- *   - agy 这条 CLI 路:**这个开关根本不经手**(见 applies);
- *   - 其余(API 直连接的别家模型、模型名看不出来的):用户自己调,默认按厂商字段推。
- * 模型名不带厂商信息时按 vendor 兜底 —— Router 可能把 Gemini 挂在 openai 兼容接口后面,所以看模型名优先。
+ * What the parameter compatibility switch should look like under this driver / model.
+ *   - The two CLI routes Claude Code / Codex, and direct-API models whose name contains claude / gpt /
+ *     o1~o9 / codex: locked off (they take the full schema);
+ *   - Direct-API models whose name contains gemini: locked on;
+ *   - The agy CLI route: **this switch is not handled at all** (see applies);
+ *   - Everything else (other vendors' models reached via direct API, models whose name reveals
+ *     nothing): the user adjusts it, defaulting to an inference from the vendor field.
+ * When the model name carries no vendor information, fall back to vendor; a Router may put Gemini
+ * behind an openai-compatible interface, so the model name takes priority.
  *
- * `applies = false` 表示**这条路上这个开关不起任何作用**,界面上不该显示它。
- * agy 就是这种:它的工具是 `agy mcp add promptcut` 注册的 MCP 服务暴露的,走 mcp-server.mjs,
- * 根本不经过 sanitizeSchema —— `schemaCompat` 全仓库只有 runners/api.mjs 会读。
- * 以前这里给 agy 返回「锁死开启」,面板上于是亮着一个按下去什么也不会发生的按钮。
+ * `applies = false` means **this switch has no effect at all on this route** and the UI should not
+ * show it.
+ * agy is exactly this case: its tools are exposed by the MCP service registered with
+ * `agy mcp add promptcut` and go through mcp-server.mjs, never passing sanitizeSchema; in the whole
+ * repository only runners/api.mjs reads `schemaCompat`.
+ * It used to return "locked on" for agy here, so the panel showed a button that did nothing when
+ * pressed.
  */
 export function compatPolicy(provider: AiProvider, model: string, vendor: string | undefined, pref: SchemaCompat): { on: boolean; locked: boolean; reason: string; applies: boolean } {
   const m = (model || "").toLowerCase();
@@ -181,10 +201,12 @@ export function compatPolicy(provider: AiProvider, model: string, vendor: string
   if (provider === "agy") return { on: true, locked: true, applies: false, reason: "Antigravity tools are registered through MCP and don't go through the schema cleanup here, so this switch has no effect on it" };
   if (/claude/.test(m) || /(^|[^a-z])(gpt|o[1-9]|codex)/.test(m)) return { on: false, locked: true, applies: true, reason: "Claude / GPT models take the full tool schema, no compatibility mode needed" };
   /*
-   * Gemini 仍然锁开,但**理由变了**,别再说成「只认最窄的子集」。
-   * 按 v1beta 的 discovery 契约,它的 Schema 认 title / default / minItems / maxItems / format 等等;
-   * 真正不认的只有 additionalProperties / $schema / exclusiveMinimum / exclusiveMaximum(见 harness/schema.mjs)。
-   * 所以关掉这个开关会把 additionalProperties 原样发过去 —— 那是真的会 400,因此仍然锁死。
+   * Gemini is still locked on, but **the reason has changed**; stop describing it as "only accepts the
+   * narrowest subset". Per the v1beta discovery contract, its Schema accepts title / default /
+   * minItems / maxItems / format and so on; what it truly does not accept is only additionalProperties
+   * / $schema / exclusiveMinimum / exclusiveMaximum (see harness/schema.mjs).
+   * So turning this switch off would send additionalProperties as is, which really does give a 400,
+   * hence it stays locked.
    */
   if (/gemini/.test(m)) return { on: true, locked: true, applies: true, reason: "Gemini doesn't recognize these additionalProperties fields and sending them returns a 400, so this tier is locked on" };
   const auto = vendor === "gemini";
@@ -192,7 +214,11 @@ export function compatPolicy(provider: AiProvider, model: string, vendor: string
   return { on, locked: false, applies: true, reason: `Can't tell the vendor from the model name: ${auto ? tr("On by default per the vendor field") : tr("Off by default")}; turn it on if tool calls fail with a schema-related 400` };
 }
 
-/** 发请求时带的值:锁死的直接给定论,可调的把用户偏好交给服务端(auto 由服务端按模型名再推一次) */
+/**
+ * The value sent with the request: a locked switch gives its fixed answer outright, an adjustable
+ * one hands the user's preference to the server (auto is inferred once more by the server from the
+ * model name)
+ */
 export function compatToSend(provider: AiProvider, model: string, vendor: string | undefined, pref: SchemaCompat): SchemaCompat {
   const pol = compatPolicy(provider, model, vendor, pref);
   if (pol.locked) return pol.on ? "on" : "off";
@@ -200,21 +226,24 @@ export function compatToSend(provider: AiProvider, model: string, vendor: string
 }
 
 /**
- * 选中的模型不在清单里就退回「默认」。
- * 用户在设置里把某个模型删掉之后,面板不该继续拿一个已经没有的名字去跑。
+ * If the selected model is not in the list, fall back to "Default".
+ * After the user deletes a model in the settings, the panel must not keep running with a name that
+ * no longer exists.
  */
 export function normalizeModel(model: string, available: string[]): string {
   return model && available.includes(model) ? model : "";
 }
 
 /**
- * 这一家现在有哪些模型可选。面板的下拉框和**真正发请求那一刻**都得用这一份,
- * 不能各算各的。
+ * Which models this provider currently offers. The panel's dropdown and **the moment the request is
+ * actually sent** must both use this one, and not each compute their own.
  *
- * 以前只有 ModelBar 算了一次,拿去填下拉框;发请求走的是 readChoice 的原值。
- * 结果是:清单里已经没有的名字(改过设置、或者当初手打错了一个字)在下拉框里
- * 早就退回「默认」了,请求里却还带着它 —— 界面显示「默认」,CLI 收到的是个
- * 不存在的模型名,当场退出。用户看着一切正常,只是永远得不到回复。
+ * Previously only ModelBar computed it once, to fill the dropdown; sending a request used the raw
+ * value from readChoice. The result: a name no longer in the list (settings were changed, or a
+ * character was mistyped by hand at the time) had long since fallen back to "Default" in the
+ * dropdown, yet the request still carried it. The UI showed "Default" while the CLI received a
+ * model name that does not exist and exited on the spot. The user saw everything looking normal,
+ * and simply never got a reply.
  */
 export function modelsFor(
   provider: AiProvider,
@@ -223,43 +252,51 @@ export function modelsFor(
   const raw = provider === "api"
     ? parseModelList(config?.api?.model)
     : parseModelList(config?.cliModels?.[provider]);
-  // agy 把思考档编在模型名里,面板上只列基名(见 agyGroups)
+  // agy encodes the thinking tier in the model name; the panel lists only the base name (see agyGroups)
   return provider === "agy" ? agyGroups(raw).map((g) => g.base) : raw;
 }
 
-/* ── agy:模型名里编着思考档 ─────────────────────────────────
+/* ── agy: the thinking tier is encoded in the model name ─────────────────────────────────
  *
- * `agy models` 给出来的是 gemini-3.8-flash-low / -medium / -high 这种,思考档是**名字的一部分**。
- * 而 agy 同时又收 --effort,两者**必须配对**,配不上它直接拒:
+ * `agy models` gives names like gemini-3.8-flash-low / -medium / -high, where the thinking tier is
+ * **part of the name**. And agy also accepts --effort; the two **must be paired**, and it refuses
+ * outright when they do not match:
  *
  *   --model gemini-3.8-flash-low  --effort low    ✓
  *   --model gemini-3.8-flash-low  --effort high   ✗ invalid model selection
- *   --model gemini-3.8-flash      --effort low    ✓ 基名 + 档位,和上面第一条等价
+ *   --model gemini-3.8-flash      --effort low    ✓ base name + tier, same as the first line
  *   --model gemini-3.8-flash                      ✗ requires --effort (available: low, medium, high)
  *   --model gemini-3.1-pro        --effort medium ✗ has no "medium" effort (available: low, high)
  *   --model claude-sonnet-4-6     --effort low    ✗ --effort is not supported for this model
  *
- * 所以档位不能是一张固定的表:**每个模型自己有哪几档,得从清单里数出来**
- * (gemini-3.1-pro 只有 low / high,没有 medium;claude-sonnet-4-6 一档都没有)。
- * 面板上把带后缀的名字折成一个基名,选哪一档交给「思考」那个下拉框,
- * 发请求时再拼回成 agy 认的那一对。
+ * So the tiers cannot be a fixed table: **which tiers each model has must be counted from the list**
+ * (gemini-3.1-pro has only low / high and no medium; claude-sonnet-4-6 has no tier at all).
+ * The panel folds a suffixed name into one base name, leaves the choice of tier to the "Thinking"
+ * dropdown, and puts the pair back together in the form agy accepts when the request is sent.
  */
 
-/** 一个 agy 模型,以及它到底支持哪几档思考(空数组 = 这个模型不吃 --effort) */
+/**
+ * An agy model and which thinking tiers it actually supports (empty array = this model does not
+ * take --effort)
+ */
 export interface AgyModelGroup {
   base: string;
   efforts: EffortLevel[];
 }
 
-/** 名字末尾的思考档。只认这三个 —— claude-opus-4-6-**thinking** 那种后缀不是档位 */
+/**
+ * The thinking tier at the end of the name. Only these three are recognized: a suffix like
+ * claude-opus-4-6-**thinking** is not a tier
+ */
 const AGY_EFFORT_SUFFIX = /^(.+)-(low|medium|high)$/;
 
-/** 从低到高。用来在存着的档位对不上这个模型时往下取一档 */
+/** From low to high. Used to step down one tier when the stored tier does not match this model */
 const AGY_EFFORT_ORDER: EffortLevel[] = ["low", "medium", "high"];
 
 /**
- * 把 `agy models` 那串名字折成「基名 + 它支持的档位」。
- * 顺序按清单里第一次出现的先后,档位按 low → medium → high 排(界面上从轻到重才顺)。
+ * Folds the list of names from `agy models` into "base name + the tiers it supports".
+ * The order follows first appearance in the list, and the tiers are sorted low → medium → high (in
+ * the UI it reads naturally only from light to heavy).
  */
 export function agyGroups(models: string[]): AgyModelGroup[] {
   const byBase = new Map<string, Set<string>>();
@@ -276,8 +313,10 @@ export function agyGroups(models: string[]): AgyModelGroup[] {
 }
 
 /**
- * 这家的能力表;不认识的驱动名(比如拉起的子 Agent 页签沿用了一个本机没有的驱动,A3)给一张「什么都不支持」的表,
- * 界面照常画、控件灰掉,不因为查不到而整页报错。
+ * This provider's capability table; for an unrecognized driver name (for example, a spawned subagent
+ * tab that reuses a driver this machine does not have, A3) it returns a table that supports
+ * nothing, so the UI is drawn as usual with the controls grayed out, instead of the whole page
+ * erroring because the lookup failed.
  */
 const UNKNOWN_CAPABILITY: ProviderCapability = { efforts: [], fast: false, suggestedModels: "", modelsHint: "" };
 export function capabilityOf(provider: string): ProviderCapability {
@@ -285,12 +324,14 @@ export function capabilityOf(provider: string): ProviderCapability {
 }
 
 /**
- * 选中这个模型之后,「思考」下拉框该给哪几档。
+ * Which tiers the "Thinking" dropdown should offer once this model is selected.
  *
- * agy 之外还是各家那张固定表。agy 这边:
- *   - 没选模型(默认):给固定表,agy 自己那个默认模型配什么档都收;
- *   - 选了带档位的模型:**只给它有的那几档,而且没有「默认」** —— 基名不带 --effort 是会被拒的;
- *   - 选了不吃档位的模型(claude-sonnet-4-6):空数组,界面上灰掉写「不支持」。
+ * Outside agy it is still each provider's fixed table. On the agy side:
+ *   - No model selected (default): give the fixed table; agy's own default model accepts any tier;
+ *   - A model with tiers selected: **give only the tiers it has, and no "Default"**, because a base
+ *     name without --effort gets refused;
+ *   - A model that takes no tiers selected (claude-sonnet-4-6): an empty array, grayed out in the UI
+ *     with the text "Not supported".
  */
 export function effortsFor(
   provider: AiProvider,
@@ -304,15 +345,17 @@ export function effortsFor(
 }
 
 /**
- * 把一个可能过期的档位收进当前清单里,收不进就退回「默认」。
+ * Fits a possibly stale tier into the current list, and falls back to "Default" if it does not fit.
  *
- * 档位存在 localStorage,而清单是会变的 —— 0ae554b 把 codex 的 `minimal` 去掉了
- * (上游根本不认,选中必 400)。老用户浏览器里那个值还在,面板只把它降级成「默认」**显示**,
- * 发请求那条路读的是 localStorage 原值,于是界面写着「默认」、请求里照旧带着 minimal,
- * 还是那条 400。
+ * The tier is stored in localStorage, while the list changes: 0ae554b removed codex's `minimal`
+ * (upstream does not recognize it at all, and selecting it always gives a 400). That value is still
+ * in old users' browsers, and the panel only downgrades it to "Default" for **display**, while the
+ * request path reads the raw localStorage value, so the UI says "Default" and the request still
+ * carries minimal, and gets the same 400.
  *
- * 抽成纯函数是为了**能测发送路径本身** —— 只测 CAPABILITIES 清单是同义反复,
- * 清单对了而发送路径没接上,线上照样 400(这次评审抓到的正是这个形状)。
+ * It is extracted as a pure function so that **the send path itself can be tested**: testing only
+ * the CAPABILITIES list is tautological, and if the list is right but the send path is not wired up,
+ * production still gets a 400 (this review caught exactly that shape).
  */
 export function sanitizeEffort(
   provider: AiProvider,
@@ -324,14 +367,17 @@ export function sanitizeEffort(
 }
 
 /**
- * 真正发出去的那一对 (model, effort)。
+ * The (model, effort) pair that is actually sent.
  *
- * agy 之外原样返回。agy 这边负责把面板上的「基名 + 档位」拼成它认的组合,并且**保证配得上**:
- * 存着的档位这个模型没有(换了模型、或者是早先版本留下的),就往下取一档,
- * 一档都没有就取它最低的那档;模型压根不吃档位就把档位清掉。
+ * Outside agy it is returned as is. On the agy side it assembles the panel's "base name + tier" into
+ * a combination agy accepts, and **guarantees the pair matches**: if the stored tier does not exist
+ * for this model (the model was switched, or it was left over from an earlier version), step down
+ * one tier, and if there is nothing lower, take its lowest tier; if the model takes no tiers at all,
+ * clear the tier.
  *
- * 还兼容早先直接存了带后缀名字的情况:先把后缀剥掉当基名,剥下来的那档在
- * 存着的档位对不上时充当兜底 —— 用户当初选的就是它。
+ * It also handles the earlier case where a suffixed name was stored directly: the suffix is stripped
+ * off to make the base name, and the tier stripped off serves as the fallback when the stored tier
+ * does not match, since that is what the user chose back then.
  */
 export function pairModelEffort(
   provider: AiProvider,
@@ -351,7 +397,8 @@ export function pairModelEffort(
 
   if (available.includes(effort)) return { model: base, effort };
   if (fromName && available.includes(fromName)) return { model: base, effort: fromName };
-  // 往下取一档:宁可比用户要的轻,也不要背着他更贵更慢地跑
+  // Step down one tier: better to be lighter than the user asked for than to run, behind their back,
+  // at a higher cost and slower
   const wanted = AGY_EFFORT_ORDER.indexOf(effort);
   const lower = wanted < 0 ? [] : AGY_EFFORT_ORDER.slice(0, wanted).filter((e) => available.includes(e));
   return { model: base, effort: lower.length ? lower[lower.length - 1] : available[0] };

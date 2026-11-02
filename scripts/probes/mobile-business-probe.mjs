@@ -1,15 +1,21 @@
 /**
- * 手机版接业务层的验收探针(任务书 `docs/plan/mobile-online-task.md` 的 M3)。
- * 全程在本机:本机托管组合(文档服务 + 素材服务)+ 仿 nginx 的代理(`lib/mobile-env.mjs`),在线构建当页面。
+ * Acceptance check probe for mobile app connecting to business layer (M3 in task brief
+ * `docs/plan/mobile-online-task.md`).
+ * Runs entirely on this machine: local hosted suite (document service + asset service) + simulated
+ * nginx proxy (`lib/mobile-env.mjs`), with online build serving as page.
  *
  *   npx vite build --mode online
- *   node scripts/probes/mobile-business-probe.mjs [--dist dist-online] [--out <目录>] [--base-port 5840] [--base2-port 5845] [--doc-port 5848] [--asset-port 5849]
+ *   node scripts/probes/mobile-business-probe.mjs [--dist dist-online] [--out <dir>] [--base-port 5840] [--base2-port 5845] [--doc-port 5848] [--asset-port 5849]
  *
- * 用手机界面(安卓仿真、触屏)对一个真项目逐项操作,每一项都看 store 里的项目变没变对:
- *   选中、seek、播放;换序、改时长、分割、复制、删除;撤销 / 重做;加素材(经素材库导入)、加卡片、加文字、加 / 换转场;
- *   切 / 建剪辑;引用进 Agent(输入框上方的引用标记条);导出(手机没有「另存为」,攒成文件下载)。
- * 然后用桌面界面(桌面仿真)打开同一个项目,项目内容和手机这边一致;手机页刷新后内容仍在。
- * 手机界面里不出现演示稿的假数据(示例名字)。结果最后一行是一行 JSON。
+ * Perform actions step by step on a real project using mobile UI (Android emulation, touchscreen),
+ * verifying after each whether project in store changed correctly:
+ *   select, seek, play; reorder, change duration, split, duplicate, delete; undo / redo;
+ *   add media (imported via media library), add card, add text, add / change transition;
+ *   switch / create cut; quote into Agent (quote bar above input box); export (mobile has no
+ *   "Save as", gathers into a file download).
+ * Then open the same project in desktop UI (desktop emulation); project content matches mobile
+ * side; content persists after refreshing mobile page.
+ * No demo mock data (sample names) appears in mobile UI. Last line of result is a line of JSON.
  */
 import puppeteer from 'puppeteer';
 import fs from 'node:fs';
@@ -52,7 +58,7 @@ const tapText = async (page, scope, label) => {
   await page.touchscreen.tap(r.x, r.y);
   await sleep(300);
 };
-/** 关掉最上面那个底部面板(点它头部的 ✕;遮罩中心常被面板自己盖住) */
+/** Close the topmost bottom sheet (click ✕ in its header; overlay center is often covered by the sheet itself) */
 const closeSheet = async (page) => {
   const r = await page.evaluate(() => { const bs = [...document.querySelectorAll('.sheet-head button[aria-label="Close"]')]; const b = bs[bs.length - 1]; if (!b) return null; const q = b.getBoundingClientRect(); return { x: q.x + q.width / 2, y: q.y + q.height / 2 }; });
   if (r) { await page.touchscreen.tap(r.x, r.y); await sleep(400); }
@@ -67,7 +73,7 @@ async function touch(page, steps, { holdMs = 0, stepMs = 16 } = {}) {
   await sleep(300);
 }
 const lerp = (a, b, n) => Array.from({ length: n + 1 }, (_, i) => [{ x: a.x + (b.x - a.x) * i / n, y: a.y + (b.y - a.y) * i / n }]);
-/** 项目里和内容有关的部分(比对手机与桌面、刷新前后用) */
+/** Content-related parts of the project (used to compare mobile vs. desktop, and before vs. after refresh) */
 const digest = (page) => store(page, `
   const p = S.getState().project;
   const tracks = (p.tracks ?? []).map((t) => ({ id: t.id, clips: t.clips.map((c) => ({ id: c.id, start: +c.start.toFixed(3), end: +c.end.toFixed(3), cardId: c.cardId || null, mediaId: c.mediaId || null, cutId: c.cutId || null })) }));
@@ -86,15 +92,15 @@ check(!/error|reject/i.test(`${seeded.opened}${seeded.seeded}`), 'Written into t
 const browser = await puppeteer.launch({ headless: true, protocolTimeout: 600_000, args: [...PROBE_CHROME_ARGS, '--no-first-run', '--autoplay-policy=no-user-gesture-required'] });
 try {
   const A = await env.newPage(browser, 'phone');
-  // 手机浏览器没有「另存为」(showSaveFilePicker):导出攒成文件下载
+  // Mobile browsers lack "Save as" (showSaveFilePicker): export gathers into a file download
   await A.evaluateOnNewDocument(() => { try { delete window.showSaveFilePicker; } catch { /* */ } window.showSaveFilePicker = undefined; });
-  // 下载落到 DL:浏览器级会话按这个页面所在的上下文设(页面级的设置对新开的上下文不生效)
+  // Downloads land in DL: browser-level session is set by this page's context (page-level settings do not take effect for newly opened contexts)
   const bcdp = await browser.target().createCDPSession();
   await bcdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: DL, browserContextId: A.browserContext().id, eventsEnabled: true });
   await env.enter(A, { username: 'jia' });
   await A.waitForSelector('[data-pcm="editor"]', { visible: true });
 
-  /* ---------------- 加素材:素材库导入三张图,点一下接到主要内容末尾 ---------------- */
+  /* ---------------- Add media: import three images from media library, click to append to the end of main content ---------------- */
   const imgs = [];
   for (const [i, rgb] of [[1, [200, 60, 50]], [2, [40, 160, 90]], [3, [50, 90, 200]]]) imgs.push(await solidPng(path.join(OUT, `img-${i}.png`), rgb));
   await tap(A, '[data-pcm="sub-image"]');
@@ -111,7 +117,7 @@ try {
   check(media0.length === 3 && media0.every((m) => m.kind === 'image' && m.hash), 'Add media: imported into the project (with content hash)', media0);
   check(ids0?.length === 3, 'Add media: the three clips are attached to main content');
 
-  /* ---------------- 选中、seek、播放 ---------------- */
+  /* ---------------- Select, seek, play ---------------- */
   await tap(A, `[data-pcm="mblock"][data-id="${ids0[0]}"]`);
   const sel = await store(A, 'return S.getState().selection;');
   step('select', sel);
@@ -131,7 +137,7 @@ try {
   step('play', { playing, after });
   check(!!playing && after.playing === false, 'Play / pause', { playing, after });
 
-  /* ---------------- 换序 ---------------- */
+  /* ---------------- Reorder ---------------- */
   await store(A, 'const c = S.getState().project.tracks.flatMap((t) => t.clips).find((x) => x.id === args[0]); S.actions.seek((c.start + c.end) / 2); return true;', ids0[1]);
   await sleep(400);
   await tap(A, `[data-pcm="mblock"][data-id="${ids0[2]}"]`);
@@ -143,7 +149,7 @@ try {
   const undoReorder = await store(A, 'S.actions.undo(); return true;');
   const idsUndo = await until('undo of the reorder completes in one step', async () => { const ids = await mainIds(A); return ids[0] === ids0[0] ? ids : null; }, 5000);
   check(JSON.stringify(idsUndo) === JSON.stringify(ids0), 'Undo: the whole reorder is undone in one step', idsUndo);
-  // 撤销之后按钮要等下一次渲染才可点,点早了什么都不发生
+  // After undo, button is clickable only after next render; clicking too early does nothing
   await A.waitForSelector('[data-pcm="redo"]:not([disabled])', { timeout: 5000 });
   await sleep(300);
   await tap(A, '[data-pcm="redo"]');
@@ -151,11 +157,11 @@ try {
   step('reorderUndoRedo', { undo: idsUndo, redo: idsRedo, undoReorder });
   check(JSON.stringify(idsRedo) === JSON.stringify(ids1), 'Redo: the reorder is back', idsRedo);
 
-  /* ---------------- 时间轴分页:改时长(拖右手柄)、分割、复制、删除 ---------------- */
+  /* ---------------- Timeline tab: change duration (drag right handle), split, duplicate, delete ---------------- */
   await tap(A, '[data-pcm="pg-timeline"]');
   await A.waitForSelector('[data-pcm="full-timeline"]', { visible: true });
   await sleep(400);
-  const target = ids1[2]; // 主轨最后一段:往回拖右手柄
+  const target = ids1[2]; // Last clip on main track: drag right handle back
   const before = (await allClips(A)).find((c) => c.id === target);
   await tap(A, `[data-pcm="clip"][data-id="${target}"]`);
   const hr = await A.evaluate((id) => { const h = document.querySelector(`[data-pcm="clip"][data-id="${id}"] .h.r`).getBoundingClientRect(); return { x: h.x + h.width / 2, y: h.y + h.height / 2 }; }, target);
@@ -164,7 +170,7 @@ try {
   const trimmed = await until('duration change takes effect', async () => { const c = (await allClips(A)).find((x) => x.id === target); return c && Math.abs((c.end - c.start) - (before.end - before.start - 2)) < 0.26 ? c : null; }, 5000);
   step('trim', { before, after: trimmed, px });
   check(!!trimmed, 'Change duration: drag the right handle to shorten by 2 seconds (snap 0.5 seconds)', { before, trimmed });
-  // 分割:播放头放到这段中间
+  // Split: place playhead in the middle of this clip
   await store(A, 'const c = S.getState().project.tracks.flatMap((t) => t.clips).find((x) => x.id === args[0]); S.actions.seek((c.start + c.end) / 2); return true;', target);
   await sleep(300);
   const n0 = (await allClips(A)).length;
@@ -186,7 +192,7 @@ try {
   check(n4 === n3 + 1 && n5 === n3, 'Undo / redo delete', { n3, n4, n5 });
   await shot(A, 'm3-timeline-edits');
 
-  /* ---------------- 加卡片、加文字 ---------------- */
+  /* ---------------- Add card, add text ---------------- */
   await tap(A, '[data-pcm="tl-done"]');
   await store(A, 'S.actions.seek(1); return true;');
   const cardsBefore = (await allClips(A)).filter((c) => c.cardId).length;
@@ -207,7 +213,7 @@ try {
   check(!!afterCard && afterCard.some((c) => c.cardId === cardId && Math.abs(c.start - 1) < 0.05), 'Add card: lands at the playhead position', afterCard);
   check(pageAfterCard === 'timeline', 'After adding a card, go to the timeline tab and select it', pageAfterCard);
   check(!!afterText && afterText.some((c) => c.cardId === textId), 'Add text: a text card is added to the timeline', afterText);
-  // 改文字:调整面板里改「文字」参数
+  // Edit text: change "Text" parameter in adjustments panel
   await tapText(A, '[data-pcm="subnav-timeline"]', 'Style');
   const textInput = await A.waitForSelector('[data-pcm="param-text"]', { visible: true, timeout: 5000 }).catch(() => null);
   let textValue = null;
@@ -223,7 +229,7 @@ try {
   await closeSheet(A);
   await tap(A, '[data-pcm="tl-done"]');
 
-  /* ---------------- 加 / 换转场 ---------------- */
+  /* ---------------- Add / change transition ---------------- */
   await A.evaluate(() => { document.querySelector('.strip-scroll').scrollLeft = 0; });
   await sleep(200);
   await tap(A, '[data-pcm="mark-add"]');
@@ -238,7 +244,7 @@ try {
   check(tr2?.[0]?.kind === 'fadeOut', 'Change transition: crossfade changed to fade out (in one place)', tr2);
   await tap(A, '.mainhead');
 
-  /* ---------------- 切 / 建剪辑 ---------------- */
+  /* ---------------- Switch / create cut ---------------- */
   const cut0 = await store(A, 'return S.getState().project.activeCutId;');
   await tap(A, '[data-pcm="sub-cut"]');
   await tap(A, '[data-pcm="cut-new"]');
@@ -252,13 +258,13 @@ try {
   check(cut1.active !== cut0 && cut1.cuts.includes(cut1.active) && emptyMain === 0, 'Create cut: create a new one and switch to it, the mini timeline becomes empty', cut1);
   check(cut2 === cut0 && backMain >= 3, 'Switch cut: switch back to "Cut 1", main content returns', { cut2, backMain });
 
-  /* ---------------- 引用进 Agent ---------------- */
+  /* ---------------- Quote into Agent ---------------- */
   await A.evaluate(() => { window.__quotes = []; window.addEventListener('pc-quote-clip', (e) => window.__quotes.push(e.detail)); });
   const refId = (await mainIds(A))[0];
   await tap(A, `[data-pcm="mblock"][data-id="${refId}"]`);
   await tapText(A, '[data-pcm="subnav-preview"]', 'Quote');
   const quotes = await until('quote event', async () => { const q = await A.evaluate(() => window.__quotes); return q.length ? q : null; }, 5000);
-  // 引用不再往输入框里插字(2026-10-22 起):放进输入框上方的引用标记条,发送时才带上
+  // Quoting no longer inserts text into input box (since 2026-10-22): placed in quote bar above input box, attached only on send
   await until('quote chip bar appears', () => A.$('[data-pcm="refbar"]'), 5000);
   const composer = await A.evaluate(() => ({ input: document.querySelector('[data-pcm="pane-agent"] textarea')?.value ?? null, chip: document.querySelector('[data-pcm="refbar"] [data-pcm="ref-chip"]')?.textContent?.replace(/✕$/, '').trim() ?? null }));
   step('quote', { page: await page_(A), quotes, composer });
@@ -267,7 +273,7 @@ try {
   await shot(A, 'm3-agent-quote');
   await tap(A, '[data-pcm="top-back"]');
 
-  /* ---------------- 导出 ---------------- */
+  /* ---------------- Export ---------------- */
   await tap(A, '[data-pcm="top-export"]');
   await tap(A, '[data-pcm="export-start"][data-mode="full"]');
   const done = await until('export finished', () => A.evaluate(() => { const e = document.querySelector('[data-pcm="export-progress"]'); const ph = e?.getAttribute('data-phase'); return ph && ph !== 'running' ? { phase: ph, text: e.textContent } : null; }), 420_000, 1000);
@@ -279,12 +285,12 @@ try {
   await shot(A, 'm3-export');
   await closeSheet(A);
 
-  /* ---------------- 没有假数据 ---------------- */
+  /* ---------------- No mock data ---------------- */
   const fake = await A.evaluate(() => { const t = document.body.innerText; return ['Waves wide shot', 'Beach run', 'Xiao Lin', 'Relaxed guitar', 'Summer seaside', 'Demo', 'Fake'].filter((w) => t.includes(w)); });
   step('noFake', fake);
   check(fake.length === 0, 'No fake demo prototype data in the mobile UI', fake);
 
-  /* ---------------- 桌面界面打开同一个项目:内容一致 ---------------- */
+  /* ---------------- Open same project in desktop UI: content matches ---------------- */
   await sleep(1500);
   const dA = await digest(A);
   const D = await env.newPage(browser, 'desktop');
@@ -297,7 +303,7 @@ try {
   await shot(D, 'm3-desktop');
   await D.browserContext().close();
 
-  /* ---------------- 刷新后仍在 ---------------- */
+  /* ---------------- Still present after refresh ---------------- */
   await A.reload({ waitUntil: 'domcontentloaded' });
   await A.waitForSelector('[data-pcm="editor"]', { visible: true, timeout: 90_000 });
   const dR = await until('content returns after refresh', async () => { const d = await digest(A); return d === dA ? d : null; }, 30_000, 500);

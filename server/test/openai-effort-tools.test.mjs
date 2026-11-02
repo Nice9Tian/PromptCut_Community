@@ -1,18 +1,21 @@
 /**
  * node --test server/test/openai-effort-tools.test.mjs
  *
- * 「Function tools with reasoning_effort are not supported for gpt-5.6-terra」这条 400。
+ * The 400 error "Function tools with reasoning_effort are not supported for gpt-5.6-terra".
  *
- * **它是路由问题,不是模型能力问题。**中转站的账单页把这一点说死了:
+ * **It is a routing problem, not a model capability problem.** The billing page of the relay
+ * service makes this completely clear:
  *
- *   01:00:04  分组 Openai-Gpt-2  gpt-5.6-terra  错误  0 tokens  $0.000000
- *   01:00:43  分组 Codex-Gpt-1   gpt-5.6-terra  成功  18s       $0.001894
+ *   01:00:04  Group Openai-Gpt-2  gpt-5.6-terra  Error    0 tokens  $0.000000
+ *   01:00:43  Group Codex-Gpt-1   gpt-5.6-terra  Success  18s       $0.001894
  *
- * 同一个模型名、同一个请求(后一次是用户手动重发的,内容一个字没改),落到不同上游,
- * 一个不吃一个吃。所以对策是**原样重发去碰另一条路由** —— 而不是改请求、更不是
- * 记住「这个模型不支持」(那等于凭一次坏运气把思考档永久关掉)。
+ * The same model name, the same request (the second was resent manually by the user with unchanged
+ * content), routed to different upstreams: one rejects it while the other accepts it. Therefore,
+ * the strategy is to **resend as is to try another route**, rather than modifying the request, let
+ * alone remembering "this model is not supported" (which permanently turns off the thinking tier
+ * based on one stroke of bad luck).
  *
- * 重发几乎免费:被拒那次是 0 tokens、$0.000000、1 秒返回。
+ * Resending is practically free: the rejected attempt had 0 tokens, $0.000000, and returned in 1s.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -41,7 +44,7 @@ const errRes = (status, payload) => ({ ok: false, status, headers: { get: () => 
 
 const TOOLS = [{ name: 'get_project', description: 'x', inputSchema: { type: 'object', properties: {} } }];
 
-/** 跑一次;`responses` 是每次请求依次返回什么(不够就一直用最后一个) */
+/** Run once; `responses` is what each request returns in order (repeats the last if not enough) */
 async function run({ effort = 'high', tools = TOOLS, responses }) {
   const sent = [];
   let n = 0;

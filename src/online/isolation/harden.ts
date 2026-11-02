@@ -1,23 +1,30 @@
-/** 舞台文档边界加固。只在跨源stage安装，不修改WebRTC或网络API，不强制Trusted Types。
- * frame/object插入保护和cookie只读保留；是否能执行由分源/响应头策略与票据交接决定。
- * 这些钩子不能证明或声称阻止外发；外链图片、字体、样式和脚本照常加载。
+/**
+ * Stage document boundary hardening. Installed only on cross-origin stage, does not modify WebRTC
+ * or network APIs, does not enforce Trusted Types.
+ * Retains frame/object insertion protection and read-only cookies; execution capability is
+ * determined by origin separation, response header policies, and ticket handoff.
+ * These hooks cannot prove or claim to block outbound traffic; external images, fonts, styles,
+ * and scripts load as usual.
  */
 
 import { installScopeGuard } from "./scopeGuard.ts";
 
-/** 会开出新脚本环境的元素(小写本地名) */
+/** Elements that spawn a new script environment (lowercase local name) */
 export const FRAME_TAGS: readonly string[] = Object.freeze(["iframe", "frame", "frameset", "object", "embed", "portal", "fencedframe"]);
 
 const FRAME_HTML = /<\s*(?:[A-Za-z_][\w.-]*:)?(?:iframe|frame|frameset|object|embed|portal|fencedframe)(?![\w-])/i;
 const ENTITY_DECL = /<!ENTITY/i;
 
-/** 一段 HTML / XML 串里有没有会造出子框架的标签(或能绕过字面检查的实体声明)。纯函数,单测逐条核 */
+/**
+ * Whether an HTML/XML string contains tags that create subframes (or entity declarations that can
+ * bypass literal checks). Pure function, verified item by item in unit tests.
+ */
 export function htmlHasFrame(html: unknown): boolean {
   const s = typeof html === "string" ? html : String(html ?? "");
   return FRAME_HTML.test(s) || ENTITY_DECL.test(s);
 }
 
-/** 一个元素名(可带前缀、大小写不限)是不是子框架类元素。纯函数 */
+/** Whether an element name (optional prefix, case-insensitive) is a subframe element. Pure function */
 export function isFrameName(name: unknown): boolean {
   const s = String(name ?? "");
   const i = s.lastIndexOf(":");
@@ -28,32 +35,37 @@ export function isFrameName(name: unknown): boolean {
 
 export interface HardenReport {
   installed: boolean;
-  /** 兼容诊断字段；本版本不移除WebRTC。 */
+  /** Compatibility diagnostic field; this version does not remove WebRTC. */
   webrtcRemoved: boolean;
-  /** 兼容诊断字段；本阶段不安装或要求Trusted Types策略。 */
+  /** Compatibility diagnostic field; this phase does not install or require Trusted Types policies. */
   trustedTypes: "enforced" | "created" | "unsupported" | "failed";
-  /** 装上的钩子数 */
+  /** Number of installed hooks */
   hooks: number;
-  /** 没装上的项(诊断) */
+  /** Items not installed (diagnostics) */
   errors: string[];
-  /** 收走的持久存储入口(`denyPersistentStorage`;诊断) */
+  /** Revoked persistent storage entry points (`denyPersistentStorage`; diagnostics) */
   storageDenied?: string[];
-  /** 跨文档通道守卫收走或改掉的入口(`scopeGuard.ts`;诊断) */
+  /** Entry points revoked or modified by cross-document channel guard (`scopeGuard.ts`; diagnostics) */
   scopeGuarded?: string[];
 }
 
 /* ------------------------------------------------------------------ *
- * 舞台源上的持久存储
+ * Persistent storage on the stage origin
  * ------------------------------------------------------------------ */
 
 /**
- * 舞台源上唯一还写进真实 `localStorage` 的键:取档的「这台浏览器能不能放这份内容」(`render/playability.ts`)。
- * 键里只有浏览器主版本与内容哈希,值只有 `"0"` / `"1"`;别的键、别的值一律只留在本文档的内存里。
+ * The only key on the stage origin still written to real `localStorage`: tier selection's
+ * "can this browser play this content" (`render/playability.ts`).
+ * The key contains only browser major version and content hash; values are only `"0"` / `"1"`.
+ * All other keys and values remain solely in this document's memory.
  */
 export const STAGE_STORAGE_PASSTHROUGH_KEY = /^pc\.playable\.\d{1,6}:[0-9a-f]{64}$/;
 const PASSTHROUGH_VALUE = /^[01]$/;
 
-/** 只在本文档内存里的 `Storage`:卡片代码与运行时照常读写,文档一换就没了。真实存储只在闭包里,不对外给 */
+/**
+ * In-memory `Storage` for this document only: card code and runtime read and write as usual,
+ * discarded once the document changes. Real storage remains only in closure, not exposed externally.
+ */
 function memoryStorage(real: Storage | null, passthrough: boolean): Storage {
   const map = new Map<string, string>();
   const pass = (k: string) => passthrough && real !== null && STAGE_STORAGE_PASSTHROUGH_KEY.test(k);
@@ -66,13 +78,15 @@ function memoryStorage(real: Storage | null, passthrough: boolean): Storage {
     },
     setItem(key: string, value: string) {
       const k = String(key), v = String(value);
-      if (pass(k)) { if (PASSTHROUGH_VALUE.test(v)) { try { real!.setItem(k, v); } catch { /* 写不进就算了 */ } } return; }
+      if (pass(k)) { if (PASSTHROUGH_VALUE.test(v)) { try { real!.setItem(k, v); } catch { /* Ignore if write fails */ } } return; }
       map.set(k, v);
     },
     removeItem(key: string) { map.delete(String(key)); },
     clear() { map.clear(); },
   };
-  // 方法与 length 锁死(别的代码换不掉,也就截不到运行时写的东西);对象本身不冻结:`localStorage.x = 1` 这种属性写法照常,只在内存
+  // Methods and `length` are locked (other code cannot replace them, thus cannot intercept runtime
+  // writes); the object itself is not frozen: property syntax like `localStorage.x = 1` works as
+  // usual, in-memory only
   const store = {};
   for (const [k, fn] of Object.entries(methods)) Object.defineProperty(store, k, { value: fn, writable: false, configurable: false, enumerable: false });
   Object.defineProperty(store, "length", { get: () => map.size, configurable: false, enumerable: false });
@@ -80,18 +94,28 @@ function memoryStorage(real: Storage | null, passthrough: boolean): Storage {
 }
 
 /**
- * 收走舞台源上能「活过本文档」的存储,让同步来的卡片代码写进去的东西留不到下一个舞台文档
- * (`docs/semantics/mechanism/platforms.md`「路径号按账号加项目固定」:路径号与素材地址不得留在舞台源的任何存储里;
- * 卡片参数里带着 `/media-s/<路径号>/media/<哈希>`,卡片要是把参数存下来,换了项目的舞台就能拿它去读浏览器缓存)。
+ * Revokes storage on the stage origin that can "survive this document", ensuring data written by
+ * synced card code cannot persist to the next stage document
+ * (`docs/semantics/mechanism/platforms.md` "Path ID is fixed per account plus project": path ids
+ * and asset URLs must not remain in any storage on the stage origin; card parameters carry
+ * `/media-s/<path-id>/media/<hash>`, and if a card persists parameters, a stage switching projects
+ * could use them to read browser cache).
  *
- * - `localStorage`、`sessionStorage`:换成只在本文档内存里的一份(运行时与卡片照常能用,不报错);
- *   只有 `STAGE_STORAGE_PASSTHROUGH_KEY` 那种键、值为 `"0"`/`"1"` 的写进真实存储,而且列不出、删不掉真实存储里的键;
- * - `indexedDB`、`caches`、旧的 `webkitRequestFileSystem*`、`openDatabase`:沿原型链整条改成 `undefined`(锁死,改不回来);
- * - 源私有文件系统 `navigator.storage.getDirectory()`、存储桶 `navigator.storageBuckets.open()`:一律拒绝。
+ * - `localStorage`, `sessionStorage`: replaced with an in-memory copy for this document only
+ *   (runtime and cards work normally without errors); only keys like
+ *   `STAGE_STORAGE_PASSTHROUGH_KEY` with values `"0"`/`"1"` are written to real storage, and keys
+ *   in real storage cannot be enumerated or deleted;
+ * - `indexedDB`, `caches`, legacy `webkitRequestFileSystem*`, `openDatabase`: set to `undefined`
+ *   along the entire prototype chain (locked, cannot be reverted);
+ * - Origin Private File System `navigator.storage.getDirectory()`, storage buckets
+ *   `navigator.storageBuckets.open()`: always rejected.
  *
- * 窗口与 Worker 的全局对象都能用(舞台文档、声音线程)。卡片代码自己起的 Worker、`BroadcastChannel` 等跨文档通道由
- * `scopeGuard.ts` 管(舞台加固第 6c 步与声音线程入口都装上,卡片自己起后台线程直接拒绝)。同一个全局对象先后装过两边不报错。
- * `cookie` 另在 `installStageHardening` 里只读。回收走了哪些、哪些没装上。
+ * Works for both window and Worker global objects (stage document, sound thread). Cross-document
+ * channels like card-spawned Workers and `BroadcastChannel` are handled by `scopeGuard.ts` (installed
+ * in stage hardening step 6c and sound thread entry points; card-spawned background threads are
+ * directly rejected). Installing on the same global object across both sides does not throw.
+ * `cookie` is separately made read-only in `installStageHardening`. Returns which were revoked and
+ * which were not installed.
  */
 export function denyPersistentStorage(scope: object, opts: { passthrough?: boolean } = {}): { denied: string[]; errors: string[] } {
   const denied: string[] = [];
@@ -122,7 +146,8 @@ export function denyPersistentStorage(scope: object, opts: { passthrough?: boole
     try {
       const proto = (g[ctor] as { prototype?: object } | undefined)?.prototype;
       if (!proto || typeof (proto as Record<string, unknown>)[method] !== "function") return;
-      // 线程里先装了 `scopeGuard.ts` 的引导(它排在任何卡片代码之前):已经锁死的认作已拒绝,不重复装、不报错
+      // Thread previously installed bootstrap for `scopeGuard.ts` (runs before any card code): already
+      // locked items are treated as rejected, without re-installing or throwing
       const d = Object.getOwnPropertyDescriptor(proto, method);
       if (d && !d.configurable && !d.writable) { denied.push(`${ctor}.${method}`); return; }
       Object.defineProperty(proto, method, {
@@ -138,16 +163,24 @@ export function denyPersistentStorage(scope: object, opts: { passthrough?: boole
 }
 
 /**
- * 只属于舞台文档(窗口)的两样跨文档状态:
+ * Two cross-document states specific to stage documents (windows):
  *
- * - `window.name`:跟着浏览上下文走(原地换项目时 `Preview.tsx` 已重建 iframe 浏览上下文;同一个浏览上下文里重载时仍作为纵深防御):
- *   上一个项目的卡片写进去的东西下一个项目的卡片读得到。装加固时先清空真实的 `window.name`,
- *   之后的读写只在本文档内存里(真实的一直是空串)。
- * - `storage` 事件:同源别的文档写真实 `localStorage` 时本文档收得到(键与新旧值)。舞台源上写进真实存储的只有取档结论
- *   (键里是内容哈希),没有路径号;仍在捕获阶段最先截住、不往下传,别的文档在写什么一律看不到。
- * - 会话历史:`history.pushState` / `replaceState` 的状态只留在本文档内存里、不改地址(真实条目里一律是 null),
- *   `history.back` / `forward` / `go` 不动;Navigation API(`navigation`)整个不给 —— 它的 `activation.from`、`entries()`
- *   能读到同一个 iframe 里上一个文档的条目地址与状态。载入时地址带 `#…` 的(只可能是退回到上一个文档自己加的条目)先去掉。
+ * - `window.name`: follows the browsing context (when switching projects in place, `Preview.tsx`
+ *   has already rebuilt the iframe browsing context; serves as defense in depth when reloaded in
+ *   the same browsing context): data written by cards in a previous project could be read by cards
+ *   in the next project. When installing hardening, first clear real `window.name`; subsequent
+ *   reads and writes stay solely in this document's memory (real one is always an empty string).
+ * - `storage` event: received by this document when other same-origin documents write to real
+ *   `localStorage` (key, old and new values). The only thing written to real storage on the stage
+ *   origin is tier selection conclusions (key contains content hash), without path ids; still
+ *   intercepted first during capturing phase without propagating down, so writes by other documents
+ *   cannot be seen at all.
+ * - Session history: state for `history.pushState` / `replaceState` stays only in this document's
+ *   memory without changing URL (real entries are always null); `history.back` / `forward` / `go`
+ *   are untouched; Navigation API (`navigation`) is denied completely: its `activation.from` and
+ *   `entries()` can read entry URLs and state from the previous document in the same iframe. Any
+ *   `#…` in URL on load (can only come from navigating back to entries added by previous document)
+ *   is stripped first.
  */
 export function isolateWindowState(w: object): { denied: string[]; errors: string[] } {
   const denied: string[] = [];
@@ -173,18 +206,21 @@ export function isolateWindowState(w: object): { denied: string[]; errors: strin
       denied.push("storage-event");
     }
   } catch (e) { errors.push(`storage-event:${(e as Error).message}`); }
-  // 会话历史:条目(地址、`history.state`、Navigation API 的状态)跟着 iframe 走,下一个文档能经 `navigation.activation.from`、
-  // `navigation.entries()`、`history.back()` 读到上一个文档留下的条目
+  // Session history: entries (URL, `history.state`, Navigation API state) follow the iframe; the next
+  // document can read entries left by the previous document via `navigation.activation.from`,
+  // `navigation.entries()`, or `history.back()`
   try {
     const H = (g.History as { prototype?: object } | undefined)?.prototype as Record<string, unknown> | undefined;
     const hist = g.history as History | undefined;
     if (H && hist) {
       const realReplace = H.replaceState as (data: unknown, unused: string, url?: string | URL | null) => void;
-      // 本文档载入时地址上带着 `#…`(只可能是退回到上一个文档自己加的条目;编辑页给的舞台地址没有):先去掉,卡片代码看不到
+      // URL carries `#…` when this document loads (can only be navigating back to an entry added by
+      // the previous document; stage URL given by editor page does not have it): strip first so card
+      // code cannot see it
       try {
         const loc = g.location as Location | undefined;
         if (loc && loc.hash) Reflect.apply(realReplace, hist, [null, "", `${loc.pathname}${loc.search}`]);
-      } catch { /* 去不掉就算了 */ }
+      } catch { /* Ignore if stripping fails */ }
       const clone = (g.structuredClone as ((v: unknown) => unknown) | undefined) ?? ((v: unknown) => v);
       let state: unknown = null;
       const lockH = (key: string, value: unknown) => {
@@ -192,10 +228,11 @@ export function isolateWindowState(w: object): { denied: string[]; errors: strin
         Object.defineProperty(H, key, { value, writable: false, configurable: false, enumerable: true });
         denied.push(`History.${key}`);
       };
-      // 状态只在本文档内存里(照浏览器的规矩先做结构化克隆,克隆不了照样抛错);地址不改,真实条目里一律是 null
+      // State stays only in this document's memory (structured clone performed first per browser rules;
+      // throws if unclonable); URL unchanged, real entries are always null
       lockH("pushState", function pushState(data: unknown) { state = clone(data); });
       lockH("replaceState", function replaceState(data: unknown) { state = clone(data); });
-      for (const k of ["back", "forward", "go"]) lockH(k, function () { /* 舞台不在会话历史里走动 */ });
+      for (const k of ["back", "forward", "go"]) lockH(k, function () { /* Stage does not navigate through session history */ });
       const sd = Object.getOwnPropertyDescriptor(H, "state");
       if (sd?.get) { Object.defineProperty(H, "state", { configurable: false, enumerable: !!sd.enumerable, get() { return state; } }); denied.push("History.state"); }
     }
@@ -216,7 +253,7 @@ export type BreachKind = "html" | "create" | "insert" | "observed" | "define";
 
 let report: HardenReport | null = null;
 
-/** 上一次安装的结果;没装过给 null */
+/** Result of previous installation; null if never installed */
 export function hardenReport(): HardenReport | null {
   return report;
 }
@@ -224,7 +261,8 @@ export function hardenReport(): HardenReport | null {
 const BLOCKED = "PromptCut stage: subframe-type elements are not allowed";
 
 /**
- * 装加固。`onBreach`:有代码试图造子框架(被哪一层拦下的)—— 调用方据此向父页上报。同一个文档只装一次。
+ * Install hardening. `onBreach`: code attempted to create subframes (which layer intercepted it):
+ * caller reports to parent page accordingly. Installed only once per document.
  */
 export function installStageHardening(opts: { onBreach?: (kind: BreachKind) => void; win?: Window & typeof globalThis } = {}): HardenReport {
   if (report) return report;
@@ -232,7 +270,7 @@ export function installStageHardening(opts: { onBreach?: (kind: BreachKind) => v
   const errors: string[] = [];
   let hooks = 0;
 
-  /* ---------- 先把要用的内置方法取下来 ---------- */
+  /* ---------- Fetch built-in methods to use first ---------- */
   const apply = Reflect.apply;
   const defineProperty = Object.defineProperty;
   const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -250,14 +288,15 @@ export function installStageHardening(opts: { onBreach?: (kind: BreachKind) => v
   const qsEl = ElementP.querySelector, qsFrag = FragmentP.querySelector, qsDoc = DocumentP.querySelector;
   const removeEl = ElementP.remove;
   const SELECTOR = FRAME_TAGS.join(",");
-  // 自己的正则不经原型上的 exec(卡片代码改 `RegExp.prototype.exec` 不影响判定)
+  // Own regex does not go through prototype exec (card code modifying `RegExp.prototype.exec`
+  // does not affect checks)
 
 
   let reporting = false;
   const breach = (kind: BreachKind) => {
     if (reporting) return;
     reporting = true;
-    try { opts.onBreach?.(kind); } catch { /* 上报失败不影响拦截 */ } finally { reporting = false; }
+    try { opts.onBreach?.(kind); } catch { /* Reporting failure does not affect interception */ } finally { reporting = false; }
   };
 
   const frameName = (name: unknown): boolean => {
@@ -268,11 +307,11 @@ export function installStageHardening(opts: { onBreach?: (kind: BreachKind) => v
     return false;
   };
 
-  /** 这个节点自己是、或它的子树里有子框架类元素 */
+  /** This node itself is or its subtree contains a subframe-like element */
   const carriesFrame = (node: unknown): boolean => {
     if (node === null || (typeof node !== "object" && typeof node !== "function")) return false;
     let type: unknown;
-    try { type = apply(nodeTypeOf, node, []); } catch { return false; } // 不是节点:让原方法自己报错
+    try { type = apply(nodeTypeOf, node, []); } catch { return false; } // Not a node: let original method throw its own error
     try {
       if (type === 1) {
         if (frameName(apply(localNameOf, node, []))) return true;
@@ -280,7 +319,7 @@ export function installStageHardening(opts: { onBreach?: (kind: BreachKind) => v
       }
       if (type === 11) return apply(firstElementChildOfFrag, node, []) !== null && apply(qsFrag, node, [SELECTOR]) !== null;
       if (type === 9) return apply(firstElementChildOfDoc, node, []) !== null && apply(qsDoc, node, [SELECTOR]) !== null;
-    } catch { return true; } // 查不了就当有:宁可拦错
+    } catch { return true; } // Assume present if uncheckable: prefer false positives
     return false;
   };
 
@@ -288,11 +327,12 @@ export function installStageHardening(opts: { onBreach?: (kind: BreachKind) => v
     defineProperty(target, key, { value, writable: false, configurable: false, enumerable: false });
   };
 
-  /* 不移除WebRTC，也不建立强制Trusted Types策略：卡片出口护栏本三个版本不做。 */
+  /* Do not remove WebRTC, nor enforce Trusted Types policies: card egress guards are not done in
+   * these three versions. */
   const webrtcRemoved = false;
   const trustedTypes: HardenReport["trustedTypes"] = "unsupported";
 
-  /* ---------- 3. 不给造子框架类元素 ---------- */
+  /* ---------- 3. Disallow creating subframe elements ---------- */
   const wrapCreate = (key: "createElement" | "createElementNS", nameIndex: number) => {
     try {
       const orig = DocumentP[key] as (...a: unknown[]) => unknown;
@@ -322,12 +362,15 @@ export function installStageHardening(opts: { onBreach?: (kind: BreachKind) => v
     hooks++;
   } catch (e) { errors.push(`customElements.define:${(e as Error).message}`); }
 
-  /* ---------- 4. 插入入口 ---------- */
-  /** `which`:第几个实参是要插进去的新节点;`"all"` = 每个实参都是(可变参数的那几个)。参照节点、被换下的旧节点不查 */
+  /* ---------- 4. Insertion entry points ---------- */
+  /**
+   * `which`: which argument index is the new node to insert; `"all"` = every argument (variadic
+   * ones). Reference nodes and replaced old nodes are not checked.
+   */
   const wrapInsert = (proto: object | undefined, key: string, which: number | "all" = "all") => {
     if (!proto) return;
     const d = getOwnPropertyDescriptor(proto, key);
-    if (!d || typeof d.value !== "function") return; // 这个浏览器没有这个方法
+    if (!d || typeof d.value !== "function") return; // This browser does not have this method
     const orig = d.value as (...a: unknown[]) => unknown;
     try {
       lock(proto, key, function (this: unknown) {
@@ -349,7 +392,8 @@ export function installStageHardening(opts: { onBreach?: (kind: BreachKind) => v
   for (const k of ["before", "after", "replaceWith"]) { wrapInsert(w.CharacterData?.prototype, k); wrapInsert(w.DocumentType?.prototype, k); }
   for (const k of ["insertNode", "surroundContents"]) wrapInsert(w.Range?.prototype, k, 0);
 
-  /* HTML解析的结构边界独立于Trusted Types；普通HTML/外链script/style不受影响。 */
+  /* Structural boundaries of HTML parsing are independent of Trusted Types; regular HTML and external
+   * script/style are unaffected. */
   const checkHtml = (value: unknown) => {
     const text = typeof value === "string" ? value : String(value ?? "");
     if (apply(regexpExec, FRAME_HTML, [text]) || apply(regexpExec, ENTITY_DECL, [text])) {
@@ -390,7 +434,7 @@ export function installStageHardening(opts: { onBreach?: (kind: BreachKind) => v
   wrapHtmlMethod(w.Range?.prototype, "createContextualFragment", 0);
   wrapHtmlMethod(w.DOMParser?.prototype, "parseFromString", 0);
 
-  /* ---------- 5. 不经 Trusted Types 的解析入口 ---------- */
+  /* ---------- 5. Parsing entry points bypassing Trusted Types ---------- */
   try { defineProperty(w, "XSLTProcessor", { value: undefined, writable: false, configurable: false, enumerable: false }); hooks++; } catch (e) { errors.push(`XSLTProcessor:${(e as Error).message}`); }
   try {
     const XP = w.XMLHttpRequest.prototype;
@@ -412,12 +456,12 @@ export function installStageHardening(opts: { onBreach?: (kind: BreachKind) => v
   } catch (e) { errors.push(`XMLHttpRequest:${(e as Error).message}`); }
   try { lock(DocumentP, "execCommand", function () { return false; }); hooks++; } catch (e) { errors.push(`execCommand:${(e as Error).message}`); }
 
-  /* ---------- 6. cookie 只读 ---------- */
+  /* ---------- 6. Read-only cookies ---------- */
   try {
     const cd = getOwnPropertyDescriptor(DocumentP, "cookie");
     if (cd?.get) {
       const get = cd.get;
-      defineProperty(DocumentP, "cookie", { configurable: false, enumerable: cd.enumerable, get(this: Document) { return apply(get, this, []); }, set() { /* 舞台不写 cookie */ } });
+      defineProperty(DocumentP, "cookie", { configurable: false, enumerable: cd.enumerable, get(this: Document) { return apply(get, this, []); }, set() { /* Stage does not write cookies */ } });
       hooks++;
     }
     const CS = (w as unknown as { CookieStore?: { prototype: object } }).CookieStore?.prototype;
@@ -426,22 +470,22 @@ export function installStageHardening(opts: { onBreach?: (kind: BreachKind) => v
     }
   } catch (e) { errors.push(`cookie:${(e as Error).message}`); }
 
-  /* ---------- 6b. 不给能活过本文档的存储(路径号与素材地址留不到下一个舞台文档) ---------- */
+  /* ---------- 6b. Disallow storage surviving this document (path id and asset URL do not persist to next stage document) ---------- */
   const storage = denyPersistentStorage(w);
   hooks += storage.denied.length;
   for (const e of storage.errors) errors.push(`storage:${e}`);
 
-  /* ---------- 6c. 跨文档通道:卡片起的后台线程、BroadcastChannel、SharedWorker、锁名、cookieStore 写入(`scopeGuard.ts`) ---------- */
+  /* ---------- 6c. Cross-document channels: card-spawned background threads, BroadcastChannel, SharedWorker, lock names, cookieStore writes (`scopeGuard.ts`) ---------- */
   const scoped = installScopeGuard(w);
   hooks += scoped.denied.length;
   for (const e of scoped.errors) errors.push(`scope:${e}`);
 
-  /* ---------- 6d. 本文档自己的 window.name、storage 事件 ---------- */
+  /* ---------- 6d. This document's own window.name and storage events ---------- */
   const own = isolateWindowState(w);
   hooks += own.denied.length;
   for (const e of own.errors) errors.push(`window:${e}`);
 
-  /* ---------- 7. 兜底:真出现了就摘掉并上报 ---------- */
+  /* ---------- 7. Fallback: remove and report if one actually appears ---------- */
   try {
     const sweep = (node: Node) => {
       let type: unknown;
@@ -454,7 +498,7 @@ export function installStageHardening(opts: { onBreach?: (kind: BreachKind) => v
         const list = apply(ElementP.querySelectorAll, el, [SELECTOR]) as NodeListOf<Element>;
         for (let i = 0; i < list.length; i++) found.push(list[i]);
       }
-      for (let i = 0; i < found.length; i++) { try { apply(removeEl, found[i], []); } catch { /* 已经不在了 */ } }
+      for (let i = 0; i < found.length; i++) { try { apply(removeEl, found[i], []); } catch { /* Already gone */ } }
       if (found.length) breach("observed");
     };
     new w.MutationObserver((list) => {
@@ -470,7 +514,7 @@ export function installStageHardening(opts: { onBreach?: (kind: BreachKind) => v
   return report;
 }
 
-/** 单测用:忘掉「装过了」(不撤钩子) */
+/** For unit tests: forget "already installed" (does not remove hooks) */
 export function resetHardenReportForTest(): void {
   report = null;
 }

@@ -1,14 +1,22 @@
 /**
- * 写入身份（`actor`）：项目版本日志、内容库都记它（语义 `docs/semantics/product/document-service.md`
- * 「版本与身份」：哪个用户的哪个页面，或哪个 Agent 的哪个对话）。
+ * Write identity (`actor`): recorded by both project version log and content store
+ * (semantics `docs/semantics/product/document-service.md` "Versions and Identities":
+ * which page of which user, or which chat of which Agent).
  *
- * 契约 `docs/plan/auth-contract.md` 第 6 节：记 `{ userId, deviceId, role, conversation, session }`，全部取自连接的
- * principal，消息里自报的一律不认；`session` 是页面自报的会话标识，只作记录。
- * 不带连接角色的旧式 principal（测试注入的 `authenticate`、M5 的身份）只记 `{ userId, session }`，与 M5 相同。
+ * Contract `docs/plan/auth-contract.md` Section 6: records
+ * `{ userId, deviceId, role, conversation, session }`, all taken from connection principal;
+ * self-reported values in messages are never accepted; `session` is the page-reported session
+ * identifier, kept for logging only.
+ * Legacy principals without a connection role (test-injected `authenticate`, M5 identities)
+ * record only `{ userId, session }`, same as M5.
  *
- * 代成员进项目的托管方服务连接（云端 Agent，`docs/plan/cloud-agent-contract.md` 第 5 节）另带 `service: '<服务名>'`：
- * `userId` 仍是发起成员的，所以覆盖通知、撤销冲突这些按身份判的逻辑不变；界面据这个字段显示「〈成员名〉的云端 Agent」。
- * 以服务自己的身份进来的连接（渲染服务）不带：它的 `userId` 本身就是 `service:<服务名>@…`。
+ * Hosted service connections entering a project on behalf of a member (Cloud Agent,
+ * `docs/plan/cloud-agent-contract.md` Section 5) additionally carry `service: '<service-name>'`:
+ * `userId` is still that of the initiating member, so identity-based logic like overwrite
+ * notifications and undo conflicts remains unchanged; UI displays "<member-name>'s Cloud Agent"
+ * based on this field.
+ * Connections entering with the service's own identity (render service) do not carry this:
+ * their `userId` is itself `service:<service-name>@...`.
  */
 export function actorOf(principal, session) {
   if (principal?.realm === 'account' || principal?.identityVersion === 2) {

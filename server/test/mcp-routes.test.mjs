@@ -1,12 +1,14 @@
 /**
- * 路由表(src/mcp/routes.mjs)和工具表(server/mcp-tools.mjs)的对账。
+ * Reconciliation between route table (src/mcp/routes.mjs) and tools table (server/mcp-tools.mjs).
  *
- * 加一个 MCP 工具要在三处登记:工具表的 schema、这张路由表、src/mcp/handlers 的实现。
- * 后两处缺了会编译失败(EditorApi 拼不齐 / 方法名对不上),**工具表和路由表对不上却不会** ——
- * 它只在模型真的去调那个工具时报一句「未知工具」,那时候一次任务已经跑废了。
- * 上一次重构就是这样丢过两个工具。这里两边都钉死:多一个少一个当场失败。
+ * Adding an MCP tool requires registration in three places: tools table schema, this route table,
+ * and src/mcp/handlers implementation. Missing the latter two causes compilation failure (EditorApi
+ * cannot be assembled / method names do not match), but **a mismatch between tools table and route
+ * table does not**: it only reports "Unknown tool" when model actually calls that tool, by which
+ * time a task has already been ruined. Two tools were lost this way during the last refactor.
+ * Both sides are locked down here: any extra or missing tool fails immediately.
  *
- * 跑法:node --test server/test/mcp-routes.test.mjs
+ * How to run: node --test server/test/mcp-routes.test.mjs
  */
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
@@ -15,7 +17,8 @@ import { tools as mcpTools } from '../mcp-tools.mjs';
 import { TOOL_ROUTES, SPECIAL_TOOLS } from '../../src/mcp/routes.mjs';
 
 const EXECUTOR = readFileSync(new URL('../../src/ai/mcpExecutor.ts', import.meta.url), 'utf8');
-// 页面执行器接得住的工具:side 为 page(只在页面)与 agent(有项目副本时在 Agent 服务端执行,没有时照旧经页面;C6.5 D1)
+// Tools handled by page executor: side is page (page only) and agent (executed on Agent server
+// when project replica exists, through page as usual when absent; C6.5 D1)
 const browserTools = mcpTools.filter((t) => t.side === 'page' || t.side === 'agent').map((t) => t.name);
 const routed = Object.keys(TOOL_ROUTES);
 
@@ -45,9 +48,10 @@ test('The route table and the special branches do not overlap, and both hold onl
 });
 
 /**
- * 路由表里的方法名必须真的在 EditorApi 上。routes.mjs 是纯数据的 .mjs(为了让本测试能
- * 直接 import),TypeScript 只看得到它的 .d.mts 声明,看不到里面写了什么字符串 ——
- * 方法名打错了编译不会报。所以这一条直接读 EditorApi 的声明来核。
+ * Method names in route table must actually exist on EditorApi. routes.mjs is a pure data .mjs (so
+ * this test can directly import it), and TypeScript only sees its .d.mts declaration, not what
+ * strings are written inside: mistyped method names will not report compilation errors. So this
+ * test checks directly against EditorApi declarations.
  */
 test('Every method name in the route table exists on EditorApi', () => {
   const start = EXECUTOR.indexOf('export interface EditorApi {');
@@ -64,7 +68,10 @@ test('passArgs / awaited of every entry are booleans', () => {
   assert.deepEqual(bad, []);
 });
 
-/** 特殊分支是「有意留在表外」的,不是「忘了登记」。它们必须在执行器里真有自己的分支。 */
+/**
+ * Special branches are "deliberately left off the table", not "forgotten to register". They must
+ * have real branches in the executor.
+ */
 test('Every special branch outside the table has a place in the executor that actually handles it', () => {
   const missing = SPECIAL_TOOLS.filter((n) =>
     n.startsWith('web_')

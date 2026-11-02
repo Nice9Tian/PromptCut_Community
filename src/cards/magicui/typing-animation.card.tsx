@@ -35,7 +35,8 @@ export const typingAnimationCard: CardDef<Params> = {
   useWhen: "Types out a line of plain text character by character. **The default playback duration equals the number of visible graphemes times milliseconds per character** (default 120ms, so 20 characters take 2.4 seconds), with optional delay, pauses and seeded rhythm variation; if the clip is too short the typing will not finish. It must cover the whole local time range. This card makes no sound; when keyboard sound is needed, explicitly generate a separate audio clip. For terminal/code style use terminal-3d.",
   tags: ["Typewriter","character by character","Text"],
   source: "magicui",
-  // 保留原有 stateful 能力审阅；有舞台 t 时按共享事件随机访问，无 t 的独立预览沿 rAF 时钟。
+  // Keep the original stateful capability review; with a stage t, random access goes by the shared
+  // events, and a standalone preview without t follows the rAF clock.
   frameMode: "stateful",
   defaults: { text: "这是一段打字机测试文字", duration: 120 },
   controls: [

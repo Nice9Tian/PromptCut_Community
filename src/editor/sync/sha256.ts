@@ -1,6 +1,7 @@
 /**
- * 同步的 SHA-256(UTF-8 文本 → 64 位小写十六进制)。`.proc` 另存是同步的(`serializeProc`),浏览器的 `crypto.subtle` 只有异步,
- * 所以「非本机内容确定快照的哈希」用这一份。纯函数,Node 单测可载入。
+ * Synchronous SHA-256 (UTF-8 text → 64-character lowercase hex). Saving `.proc` separately is synchronous
+ * (`serializeProc`), while the browser's `crypto.subtle` is async only, so "the hash of a non-local
+ * content-determined snapshot" uses this one. Pure function, loadable in Node unit tests.
  */
 const K = new Uint32Array([
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,

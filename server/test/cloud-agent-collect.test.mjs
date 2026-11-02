@@ -1,22 +1,38 @@
 /**
- * 云端 Agent 的网页采集(`server/agent/service/hosted-collect.mjs`;契约 `docs/plan/cloud-agent-contract.md` 第 9.4d 节)。
- * 跑:node scripts/test-suite.mjs server/test/cloud-agent-collect.test.mjs
+ * Web collection for Cloud Agent (`server/agent/service/hosted-collect.mjs`; contract
+ * `docs/plan/cloud-agent-contract.md` Section 9.4d).
+ * Run: node scripts/test-suite.mjs server/test/cloud-agent-collect.test.mjs
  *
- * 下载器用替身(`scripts/probes/fixtures/cloud-collect/fake-collect.mjs`:说同一份命令行与 JSONL,只按环境里的代理出网);
- * 出网闸与它的代理、工作区与受限子进程都是真的。「外部地址」是本机回环上的替身,经出网闸的测试例外放行。
+ * Downloader uses a mock (`scripts/probes/fixtures/cloud-collect/fake-collect.mjs`: speaks the same
+ * CLI and JSONL, egresses only via the proxy in the environment); egress gate and its proxy,
+ * workspace, and restricted child processes are all real. "External address" is a mock on local
+ * loopback, allowed via the egress gate's test exception.
  *
- *   CA-COL-01  整条链:查状态 → 探测 → 下载 → 入库。子进程的工作目录是对话目录、环境里没有任何 `PROMPTCUT_*`、只有指向出网闸代理的代理变量;
- *              下载物落在对话的 `collect/<作业号>/` 下,入库走调用方给的那条路(字节与源站相同),入库后作业目录删掉;
- *              每次调用记一行用量(次数与字节);作业表随对话落盘
- *   CA-COL-02  出网只经出网闸的代理:本机回环、内网、云厂商元数据地址、`localhost`——探测与下载都被代理拒掉,替身一次也没被连到;
- *              不是 http(s) 的地址(`file:`、`ftp:`、以 `-` 开头的)在起子进程之前就被拒
- *   CA-COL-03  上限与取消:下载物超过体积上限、片子超过时长上限、超过墙钟时限——停下、不入库、不留文件;一位成员同时只跑一个;
- *              取消(对话结束)停掉在跑的下载
- *   CA-COL-04  节点上没装:`collect_status` 回 `ready: false` 与明确的原因,`collect_install` 不装东西,`collect_download` 回「没有装采集工具」,
- *              一个子进程也不起;装了时 `collect_install` 也不起安装的子进程
- *   CA-COL-05  只读成员:下载之前就被拒,不起子进程、不连源站
- *   CA-COL-06  作业表按实例分(别的实例查不到);服务重启后查得到「中断了」;下载器报的作业目录以外的文件不认
- *   CA-COL-07  读部署配置:没配回 null;路径不存在、测试参数不是数组——报配置错
+ *   CA-COL-01  Entire chain: check status → probe → download → store. Child process working
+ *              directory is the chat directory, environment contains no `PROMPTCUT_*`, only proxy
+ *              variables pointing to the egress gate proxy; downloads land under the chat's
+ *              `collect/<job id>/`, storing uses the path given by the caller (bytes identical to
+ *              origin), and the job directory is deleted after storing; each call records a line of
+ *              usage (count and bytes); job table is persisted to disk with the chat
+ *   CA-COL-02  Egress only via egress gate proxy: local loopback, intranet, cloud vendor metadata
+ *              addresses, `localhost`: both probe and download are rejected by the proxy, mock was
+ *              never connected to; non-http(s) addresses (`file:`, `ftp:`, starting with `-`) are
+ *              rejected before spawning child processes
+ *   CA-COL-03  Limits and cancellation: downloaded files exceed size limit, video exceeds duration
+ *              limit, wall-clock time limit exceeded: stops, does not store, leaves no files; a
+ *              single member runs only one concurrently; cancellation (chat ends) stops running
+ *              downloads
+ *   CA-COL-04  Not installed on node: `collect_status` returns `ready: false` and a clear reason,
+ *              `collect_install` installs nothing, `collect_download` returns "Collection tool not
+ *              installed", spawning no child processes; when installed, `collect_install` also
+ *              spawns no installation child processes
+ *   CA-COL-05  Read-only member: rejected before download, spawns no child processes, does not
+ *              connect to origin
+ *   CA-COL-06  Job table is partitioned by instance (other instances cannot query it);
+ *              "Interrupted" can be queried after service restart; files reported by downloader
+ *              outside the job directory are ignored
+ *   CA-COL-07  Read deployment config: returns null when unconfigured; path does not exist, test
+ *              arguments not an array: reports configuration error
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -110,7 +126,7 @@ test('CA-COL-01 the whole chain: check status → probe → download → import;
   assert.equal(st.ready, true, JSON.stringify(st));
   assert.deepEqual([st.cloud, st.ffmpeg, st.cookies], [true, true, {}]);
   assert.equal(st.pylibs, undefined);
-  // 子进程自己看到的环境(替身只读、只报告)
+  // Environment seen by child process itself (mock is read-only, reports only)
   const dir = a.ws.dir();
   assert.equal(fs.realpathSync(st.seen.cwd), fs.realpathSync(dir), 'The working directory is this chat\'s working directory');
   assert.deepEqual(st.seen.promptcutEnv, [], 'The environment has no PROMPTCUT_* at all');
@@ -146,12 +162,12 @@ test('CA-COL-01 the whole chain: check status → probe → download → import;
   assert.equal(dl.args.includes('--cookies'), false, 'The cloud carries no cookies file');
   assert.ok(path.resolve(dl.args[dl.args.indexOf('--out-dir') + 1]).startsWith(dir + path.sep), 'Downloads land in the chat\'s working directory');
   assert.equal(fs.existsSync(path.join(dir, 'collect', started.jobId)), false, 'The job directory is deleted after import');
-  // 用量:按次数与字节
+  // Usage: by count and bytes
   assert.deepEqual(a.usage.map((u) => [u.service, u.vendor, u.model, u.unit, u.ok]), [
     ['collect', 'yt-dlp', 'status', 'bytes', true], ['collect', 'yt-dlp', 'probe', 'bytes', true], ['collect', 'yt-dlp', 'search', 'bytes', true], ['collect', 'yt-dlp', 'download', 'bytes', true],
   ]);
   assert.equal(a.usage[3].units, k.clip.length);
-  // 作业表随对话落盘
+  // Job table is persisted to disk with the chat
   const saved = JSON.parse(fs.readFileSync(path.join(dir, 'collect', 'jobs.json'), 'utf8'));
   assert.deepEqual(saved.map((j) => [j.id, j.status]), [[started.jobId, 'done']]);
   assert.deepEqual(await a.tools.collect_logout({}), { ok: true, loggedOut: false, note: 'The cloud stores no login state for any site, so there is nothing to log out of.' });
@@ -186,7 +202,7 @@ test('CA-COL-03 limits and cancellation: size, duration, wall clock; one member 
   const big = await setup(t, { limits: { maxDownloadBytes: 64 * 1024 } });
   const a = big.conversation('p-col', 'c3');
   const j1 = await a.tools.collect_download({ url: `${big.src}/slow` });
-  // 同时只跑一个
+  // Runs only one concurrently
   await assert.rejects(a.tools.collect_download({ url: `${big.src}/clip.mp4` }), /1 downloads are already running/);
   const r1 = await waitJob(a.tools, j1.jobId);
   assert.equal(r1.status, 'error');
@@ -249,7 +265,7 @@ test('CA-COL-06 / 07 the job table is split per instance; after a restart, "inte
   const j = await a.tools.collect_download({ url: `${k.src}/clip.mp4` });
   await assert.rejects(other.tools.collect_job({ jobId: j.jobId }), /This download job was not found/, 'Another project\'s instance cannot look it up');
   assert.equal((await waitJob(a.tools, j.jobId)).status, 'done');
-  // 下载器报了作业目录以外的文件:不认、不入库
+  // Downloader reported files outside the job directory: ignored, not stored
   fs.mkdirSync(path.join(a.ws.dir(), 'attachments'), { recursive: true });
   fs.writeFileSync(path.join(a.ws.dir(), 'attachments', 'not-mine.mp4'), 'someone else');
   const out = await a.tools.collect_download({ url: `${k.src}/outside` });
@@ -257,7 +273,8 @@ test('CA-COL-06 / 07 the job table is split per instance; after a restart, "inte
   assert.equal(r.status, 'error');
   assert.match(r.message, /but it is not in the job directory/);
   assert.equal(a.imported.length, 1, 'Only the first one was imported');
-  // 服务重启:内存里的作业表没了,同一个对话从盘上读到;上次还在跑的现在是「中断了」
+  // Service restart: in-memory job table is gone, read from disk for the same chat; what was
+  // running last time is now "Interrupted"
   const file = path.join(a.ws.dir(), 'collect', 'jobs.json');
   const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
   saved.push({ id: 'collect-aaaaaaaaaaaa', conversationId: 'c8', url: 'http://x/', quality: 1080, site: 'auto', status: 'running', stage: 'video', percent: 40, notes: [], items: [], startedAt: 1 });

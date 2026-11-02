@@ -1,7 +1,10 @@
 /**
- * 「用户正在编辑」的接线(src/editor/userEditing.ts,计划 docs/plan/agent-workflow-plan.md A2)。用例 UE-W1～UE-W2。
- * 旁听 store:选中的片段被本页面改了算「刚动过」;没选中的、Agent 让页面执行的工具期间的修改不算;推送走 /api/agent/editing。
- * 跑:node --test src/editor/userEditing.test.mjs
+ * Wiring for "user is editing" (src/editor/userEditing.ts, plan docs/plan/agent-workflow-plan.md A2).
+ * Test cases UE-W1~UE-W2.
+ * Listen to store: modifications to selected clips by this page count as "recently modified";
+ * unselected clips and modifications during tools executed by the page for the Agent do not count;
+ * push via /api/agent/editing.
+ * Run: node --test src/editor/userEditing.test.mjs
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import test from "node:test";
@@ -16,7 +19,7 @@ globalThis.fetch = async (url, init) => {
 const { actions, getState } = await import(srcUrl("store/project.ts"));
 const { createEmptyProject } = await import(srcUrl("kernel/project.ts"));
 const ue = await import(srcUrl("editor/userEditing.ts"));
-/** 一个两段片段的项目(不依赖卡片注册表) */
+/** A project with two clips (not dependent on card registry) */
 function load(name) {
   const p = createEmptyProject(name);
   p.tracks = [{ id: "t1", name: "Video", clips: [

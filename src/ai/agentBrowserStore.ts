@@ -1,24 +1,24 @@
 /**
- * 「Agent 浏览器」页签与面板的状态(桌面壳模式)。
+ * State of the "Agent browser" tab and panel (desktop shell mode).
  *
- * agent 撞上登录 / 验证码调 web_handoff 时,壳模式下 Node 那边只回一个 shell 标记;
- * 这边**不弹窗打断用户**,只把 pending 点亮:顶栏的「浏览器」页签开始闪、冒一个
- * 「有待操作」的气泡,用户自己决定什么时候点过去。点了才把子 webview 摆进面板。
+ * When an agent encounters login/captcha and calls web_handoff, Node only returns a shell flag in shell mode;
+ * here we **do not interrupt the user with popups**, but only light up pending: the "Browser" tab in the top bar starts blinking and pops up
+ * a "Pending action" bubble, letting the user decide when to click over. Only after clicking is the sub-webview placed into the panel.
  *
- * 和 collectLoginStore 一样放在模块级:执行器(mcpExecutor)里没有组件上下文。
+ * Placed at module level like collectLoginStore: there is no component context inside the executor (mcpExecutor).
  */
 import { useSyncExternalStore } from "react";
 
 export interface AgentBrowserState {
-  /** 壳里有没有 agent webview(浏览器里跑 npm run dev 时没有,页签整个不显示) */
+  /** Whether the agent webview exists in the shell (not present when running npm run dev in a browser; the tab is completely hidden) */
   available: boolean;
-  /** 面板开着(子 webview 摆在编辑区上) */
+  /** Panel is open (sub-webview placed over the editing area) */
   open: boolean;
-  /** agent 在等人:页签闪烁 + 气泡 */
+  /** Agent is waiting for user: blinking tab + bubble */
   pending: boolean;
-  /** 显示给用户看的原因,例如「B 站扫码登录」 */
+  /** Reason displayed to the user, for example "Bilibili QR code login" */
   reason: string;
-  /** 面板打开的序号,每开一次加一,组件用它重置内部状态 */
+  /** Sequence number of panel openings, incremented on each open, used by components to reset internal state */
   seq: number;
 }
 
@@ -31,12 +31,12 @@ export function setAgentBrowserAvailable(available: boolean): void {
   if (state.available !== available) set({ available });
 }
 
-/** agent 把浏览器交给用户:点亮页签,不打开面板。面板已经开着就只更新原因 */
+/** Agent hands the browser to the user: lights up the tab without opening the panel. If the panel is already open, only updates the reason */
 export function requestAgentBrowser(reason = ""): void {
   set({ reason, pending: !state.open });
 }
 
-/** 用户点了页签(或别处要求直接看):打开面板,pending 清掉 */
+/** User clicked the tab (or requested to view directly from elsewhere): opens the panel and clears pending */
 export function openAgentBrowser(reason?: string): void {
   set({ open: true, pending: false, reason: reason ?? state.reason, seq: state.seq + 1 });
 }

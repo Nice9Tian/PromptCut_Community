@@ -9,8 +9,9 @@ const resolve = (from, specifier, files) => {
   return candidates.find(x => Object.hasOwn(files, x)) ?? null;
 };
 /**
- * 换行统一成 LF 再参与身份:同一提交在 Windows(autocrlf 检出为 CRLF)和 LF 检出上必须算出同一个键,
- * 口径同服务端的代码版本(`server/frame-code.mjs` 的 textOf)。
+ * Newlines are normalized to LF before factoring into identity: the same commit must compute
+ * the same key on Windows (checked out as CRLF via autocrlf) and LF checkouts, matching the criteria
+ * for server-side code version (`server/frame-code.mjs` textOf).
  */
 export const normalizeEol = text => String(text).replace(/\r\n/g, '\n');
 export function cardSourceVersion(card, files, entryPath) {

@@ -1,16 +1,22 @@
 /**
- * 卡片源码同步走会话层（M8 计划 D9 / L14；HT-a 契约 `docs/plan/http-transport-contract.md` 第 9 节、第 17.1 节第 3 条；
- * 语义 `docs/semantics/product/document-service.md`「会话与传输」）。
+ * Card source sync goes through the session layer (M8 plan D9 / L14; HT-a contract
+ * `docs/plan/http-transport-contract.md` Section 9, Section 17.1 item 3;
+ * semantics `docs/semantics/product/document-service.md` "Session and transport").
  *
- * `server/card-sync.mjs` 缺省的连接是 `createDocEndpoint`（会话）。这里经一个可控的 TCP 代理（`fake-ws-kit.mjs` 的
- * `createTcpProxy`）掐断一方的传输，核对：
- *   CS-1 看的一方传输断一次：会话脱开后接续（不建新会话、不重订阅、不重对账），断开期间别人的改卡通知接续后补到，
- *        装卡恰好一次；
- *   CS-2 写的一方传输断一次：断开期间的保存（`content.put`）留在会话里，接续后补发，服务上的版本号只加一，
- *        另一方恰好装一次；
- *   CS-3 旧服务端（没有会话层，`session-gateway-kit.mjs` 的 `startLegacyFront`）：端点退化，断一次就是会话结束，
- *        重连后按对账补上，照样恰好装一次。
- * 两端的文件操作与 `card-sync.test.mjs` 同一套（真实装卡路径 `installSyncedFile`、备份 `backupBeforeEdit`）。
+ * The default connection in `server/card-sync.mjs` is `createDocEndpoint` (session). Here, a
+ * controllable TCP proxy (`createTcpProxy` in `fake-ws-kit.mjs`) severs transport on one side to
+ * verify:
+ *   CS-1 The reading side has transport severed once: session resumes after detach (does not create
+ *        a new session, does not resubscribe, does not re-reconcile); card edit notifications from
+ *        others during disconnection catch up after resume, installing the card exactly once;
+ *   CS-2 The writing side has transport severed once: saves (`content.put`) during disconnection
+ *        stay in the session and are resent after resume; version number on service increments only
+ *        by one, and the other side installs exactly once;
+ *   CS-3 Legacy server (no session layer, `startLegacyFront` in `session-gateway-kit.mjs`): endpoint
+ *        degrades, disconnecting once ends the session; after reconnection, catches up via
+ *        reconciliation and still installs exactly once.
+ * File operations on both ends use the same set as `card-sync.test.mjs` (real card installation
+ * path `installSyncedFile`, backup `backupBeforeEdit`).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -57,7 +63,7 @@ export const priceTag: CardDef<Params> = {
 };
 `;
 
-/** 文档服务（内容库一个模块，自带会话层）；身份按查询串给 */
+/** Document service (a content store module, with session layer); identity given via query string */
 async function startDoc(t) {
   const service = createDocService({
     log: () => {},
@@ -72,7 +78,7 @@ async function startDoc(t) {
   return { port, url: `ws://127.0.0.1:${port}` };
 }
 
-/** 一个「编辑器进程」；`port` 是它连的端口（直连文档服务，或经代理） */
+/** An "editor process"; `port` is its connected port (direct to document service, or via proxy) */
 function editor(t, name, port, { defaultConnect = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `pc-cs-${name}-`));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -97,7 +103,8 @@ function editor(t, name, port, { defaultConnect = false } = {}) {
         return { ok: r.ok, error: r.error };
       },
     },
-    // 与缺省同一个端点（createDocEndpoint），只把退避调短；defaultConnect 时用模块缺省的连接
+    // Same endpoint as default (createDocEndpoint), only with shorter backoff; uses module default
+    // connection on defaultConnect
     connect: defaultConnect ? null : ({ url, protocols }) => createDocEndpoint({ url, protocols, transport: 'ws', backoff: { baseMs: 30, maxMs: 120, jitter: 0 }, log: (event) => logs.push(event) }),
     notify: (e) => notices.push(e),
     log: (event) => logs.push(event),
@@ -132,7 +139,7 @@ async function peek(doc, key) {
 
 const installsOf = (ed, rev) => ed.notices.filter((n) => n.type === 'installed' && (rev === undefined || n.rev === rev));
 
-/** A 直连、B 经代理，A 带着 v1 进共享项目，B 装上 v1 */
+/** A connects directly, B via proxy; A enters the shared project with v1, B installs v1 */
 async function pair(t, projectId, { front = null } = {}) {
   const doc = await startDoc(t);
   const target = front ? (await front(doc)).port : doc.port;
@@ -176,7 +183,7 @@ test('CS-1 the transport of the viewing side drops once: the session resumes, ca
   const callsBefore = B.protocolCalls;
   const changesBefore = B.changes.length;
 
-  // 掐断 B 的传输，并且在 A 改卡落地之前不让它接回来
+  // Sever B's transport, and do not let it reconnect until A's card edit is persisted
   proxy.mode = 'reject';
   proxy.cutAll();
   await waitFor(() => B.sync.status().link.detached, 3000, 'the session of B is detached');
@@ -189,7 +196,7 @@ test('CS-1 the transport of the viewing side drops once: the session resumes, ca
   proxy.mode = 'pass';
   await waitFor(() => /v2-while-cut/.test(B.read(USER_KEY) ?? ''), 5000, 'B installs v2 after resuming');
   await B.sync.idle();
-  await sleep(300); // 给可能的重复通知留时间
+  await sleep(300); // Leave time for possible duplicate notifications
   const st = B.sync.status();
   console.log(JSON.stringify({ case: 'CS-1', opens: st.opens, resumes: st.resumes, link: st.link, installsRev2: installsOf(B, 2).length, changes: B.changes.length - changesBefore }));
   assert.equal(st.opens, 1, 'no new session was created (onOpen was called only once)');

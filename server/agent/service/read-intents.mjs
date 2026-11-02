@@ -84,7 +84,7 @@ export function openReadIntents({ file, failpoint = () => {}, now = Date.now } =
     transaction('read-finished', () => { const current = row(readIntentId); current.state = 'finished'; current.finishedAt = now(); save(current); return current; });
     return result;
   }
-  /** 对话被删：这个对话的已读意向(含提示词原文)全部删掉 */
+  /** Chat deleted: delete all read intents for this chat (including original prompt text) */
   function purgeConversation({ projectId, conversationId }) {
     return transaction('read-intent-purge', () => ({ rows: db.prepare(
       "DELETE FROM read_intents WHERE json_extract(payload,'$.projectId')=? AND json_extract(payload,'$.conversationId')=?").run(projectId, conversationId).changes }));

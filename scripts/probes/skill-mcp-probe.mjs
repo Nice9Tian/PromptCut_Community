@@ -1,26 +1,39 @@
 /**
- * SKILL 经 MCP 直连探针(计划 docs/plan/agent-workflow-plan.md A4)。全程本机,**不调用模型、不花额度、不写任何用户配置**:
- * 桌面 APP 由两个真的 stdio MCP 客户端模拟(起 `server/mcp-server.mjs`,`initialize` 的 `clientInfo` 分别报成
- * Claude Code 与 Codex 的样子),端口按一个临时的端口文件找到本探针自己起的编辑器(`PROMPTCUT_PORT_FILE`),
- * SKILL 状态与登记配置都指到临时目录(`PROMPTCUT_SKILL_DIR`、`PROMPTCUT_CLAUDE_CONFIG`、`PROMPTCUT_CODEX_CONFIG`)。
+ * SKILL probe via direct MCP connection (plan docs/plan/agent-workflow-plan.md A4). Entirely local,
+ * **does not call models, does not spend quota, does not write any user config**:
+ * Desktop app is simulated by two real stdio MCP clients (launches `server/mcp-server.mjs`, with
+ * `clientInfo` in `initialize` reported as Claude Code and Codex respectively), locating the editor
+ * launched by this probe itself via a temporary port file (`PROMPTCUT_PORT_FILE`), with SKILL status
+ * and registration config both pointing to temporary directories (`PROMPTCUT_SKILL_DIR`,
+ * `PROMPTCUT_CLAUDE_CONFIG`, `PROMPTCUT_CODEX_CONFIG`).
  *
- *   node scripts/probes/skill-mcp-probe.mjs [--port 5880] [--shots <目录>] [--keep]
+ *   node scripts/probes/skill-mcp-probe.mjs [--port 5880] [--shots <dir>] [--keep]
  *
- * 自己起一台 dev server(端口 5880,舞台 5881/5882;只许用 5880～5899;带 PROMPTCUT_NO_PORT_FILE=1,不碰公共的 port.json),
- * 真的打开编辑台(?editor),新项目放三张卡,然后:
- *   K1 两个桌面会话 initialize:拿到 SKILL 提示词(instructions)与 get_skill_guide;传统式下它们的调用被 SKILL 闸拦下,项目没动;
- *   K2 在顶栏点「SKILL」→ 对话框(登记状态读的是临时目录里的配置,显示「未登记」)→ 点「进入 SKILL 模式」;
- *   K3 两个会话各改一张卡:写入都落到页面、各记各的身份(公告板的改动记录、登记表里两个 desktop 会话、厂商认得出);
- *   K4 AI 栏出现两个分组,标着厂商(Claude Code / Codex)与当前操作;一个会话跑 wait 时它那组显示「正在等待」;
- *      report_progress 交的进度按 AI 栏的报告卡显示;
- *   K5 A2:页面报的「用户正在编辑」出现在桌面会话读写的结果里;
- *   K6 A3:一个会话声明范围、另一个写进去,双方结果里都有提示(带厂商名);覆盖别人刚写的,结果带 overwrote;
- *   K7 创造力等级跟项目:项目改成「低」后桌面会话新建卡被拒;
- *   K8 SKILL 悬浮窗预览:SKILL 模式下桌面会话做成一次时间轴操作,临时 SKILL 目录里出现 last-action.png;
- *   K9 顶栏点回「传统式」:桌面会话的调用再次被拒。
- * 截图(缺省存到系统临时目录下的 skill-mcp-probe-shots):skill-dialog.png、ai-bar-groups.png、ai-bar-busy.png。
+ * Launches a dev server itself (port 5880, stages 5881/5882; only 5880-5899 allowed; with
+ * PROMPTCUT_NO_PORT_FILE=1, does not touch public port.json), actually opens the editor (?editor),
+ * places three cards in a new project, and then:
+ *   K1 Two desktop sessions initialize: obtain SKILL instructions and get_skill_guide; under
+ *      Classic mode, their calls are blocked by the SKILL gate, project is untouched;
+ *   K2 Click "SKILL" in top bar → dialog (registration status reads config in temporary directory,
+ *      showing "Not registered") → click "Enter SKILL mode";
+ *   K3 Both sessions modify one card each: writes land on page, each records its own identity
+ *      (change records on bulletin board, two desktop sessions in registry, vendor recognized);
+ *   K4 AI panel shows two groups, labeled with vendor (Claude Code / Codex) and current operation;
+ *      when a session runs wait, its group shows "Waiting"; progress submitted by report_progress
+ *      is displayed as a report card in AI panel;
+ *   K5 A2: "User is editing" reported by page appears in desktop session read/write results;
+ *   K6 A3: One session declares scope, the other writes into it, both receive notices in results
+ *      (with vendor name); overwriting what another just wrote includes overwrote in result;
+ *   K7 Creativity level follows project: after project changed to "Low", desktop session creating
+ *      card is rejected;
+ *   K8 SKILL floating window preview: when desktop session completes a timeline operation in SKILL
+ *      mode, last-action.png appears in temporary SKILL directory;
+ *   K9 Switch back to "Classic mode" in top bar: desktop session calls are rejected again.
+ * Screenshots (saved by default to skill-mcp-probe-shots under system temporary directory):
+ * skill-dialog.png, ai-bar-groups.png, ai-bar-busy.png.
  *
- * 只结束本探针自己起的进程(dev server、两个 MCP 子进程、puppeteer 的 Chrome)。结果最后一行是一行 JSON(ok、fails、passes 数)。
+ * Only terminates processes launched by this probe itself (dev server, two MCP child processes,
+ * Puppeteer's Chrome). Last line of output is a single line of JSON (counts of ok, fails, passes).
  */
 import '../lib/no-user-dirs.mjs';
 import fs from 'node:fs';
@@ -60,7 +73,7 @@ async function waitFor(fn, ms, step = 250) {
   }
 }
 
-/** 模拟桌面 APP 的一个会话:一份 stdio MCP 服务 + JSON-RPC */
+/** Simulates a desktop app session: one stdio MCP server + JSON-RPC */
 function desktopSession(label) {
   const env = { ...process.env, PROMPTCUT_PORT_FILE: PORT_FILE };
   for (const k of ['PROMPTCUT_AGENT', 'PROMPTCUT_CALLER', 'PROMPTCUT_PORT']) delete env[k];
@@ -82,14 +95,14 @@ function desktopSession(label) {
     };
     tick();
   });
-  /** 调一个工具,回解析过的结果对象(isError 时回 { __error }) */
+  /** Calls a tool, returns parsed result object (returns { __error } when isError) */
   const tool = async (name, args = {}, meta) => {
     const r = await rpc('tools/call', { name, arguments: args, ...(meta ? { _meta: meta } : {}) });
     const text = r.result?.content?.[0]?.text ?? '';
     if (r.result?.isError) return { __error: text };
     try { return JSON.parse(text); } catch { return { __text: text }; }
   };
-  return { rpc, tool, kill: () => { try { child.kill(); } catch { /* 已经退了 */ } } };
+  return { rpc, tool, kill: () => { try { child.kill(); } catch { /* Already exited */ } } };
 }
 
 const own = [];
@@ -104,14 +117,15 @@ try {
       PROMPTCUT_DATA_DIR: path.join(TMP, 'data'),
       PROMPTCUT_EXPORT_DIR: path.join(TMP, 'export'),
       PROMPTCUT_SKILL_DIR: SKILL_DIR,
-      // 登记对话框会读这两份配置:指到临时目录,真的点了登记也只写这里
+      // Registration dialog reads these two configs: point to temporary directory, writes only here
+      // even if register is actually clicked
       PROMPTCUT_CLAUDE_CONFIG: path.join(FAKE_HOME, '.claude.json'),
       PROMPTCUT_CODEX_CONFIG: path.join(FAKE_HOME, '.codex', 'config.toml'),
     },
   });
   own.push(server);
   const origin = server.origin;
-  // 端口文件:和编辑器写公共 port.json 同样的形状,只是放在临时目录
+  // Port file: same shape as public port.json written by editor, just placed in temporary directory
   fs.writeFileSync(PORT_FILE, JSON.stringify({ port: server.port, host: '127.0.0.1', pid: server.pid, startedAt: Date.now() }));
   const getJson = async (p) => (await fetch(origin + p)).json();
 
@@ -139,7 +153,7 @@ try {
   const bound = await waitFor(async () => { const s = await getJson('/api/agent/status'); return s.bound ? s : null; }, 60000, 500);
   check(!!bound, 'K0 Agent server is bound to the project copy (desktop session writes go through the document service)', bound && { mode: bound.mode });
 
-  /* K1 两个桌面会话 */
+  /* K1 Two desktop sessions */
   const A = desktopSession('Claude Code');
   const B = desktopSession('Codex');
   own.push({ stop: A.kill }, { stop: B.kill });
@@ -157,7 +171,7 @@ try {
   const opacityA0 = await page.evaluate(async (id) => (await import('/src/store/project.ts')).getState().project.tracks.flatMap((t) => t.clips).find((c) => c.id === id)?.opacity ?? null, ids.a);
   check(opacityA0 !== 0.5, 'K1 the blocked call did not change the project', opacityA0);
 
-  /* K2 顶栏点 SKILL → 对话框 → 进入 */
+  /* K2 Click SKILL in top bar → dialog → enter */
   await page.click('[data-pc="mode-skill"]');
   await page.waitForSelector('[data-pc="skill-dialog"]', { timeout: 10000 });
   await waitFor(() => page.$('[data-pc="skill-target-claude-code"]'), 10000);
@@ -171,7 +185,7 @@ try {
   check(fs.existsSync(path.join(SKILL_DIR, 'skill-state.json')), 'K2 the state file is written to the temp SKILL directory');
   check(!fs.existsSync(path.join(FAKE_HOME, '.claude.json')) && !fs.existsSync(path.join(FAKE_HOME, '.codex')), 'K2 no config is written without clicking Register (not even in the temp directory)');
 
-  /* K3 两个会话各改一张卡 */
+  /* K3 Both sessions modify one card each */
   const writeWithReread = async (s, clipId, args, meta) => {
     let out = null;
     for (let i = 0; i < 10; i += 1) {
@@ -203,7 +217,7 @@ try {
   const writers = board.changes.filter((c) => c.kind === 'change' && c.by?.kind === 'agent').map((c) => c.by.agent);
   check(writers.includes(sA?.id) && writers.includes(sB?.id), 'K3 in the bulletin board\'s change log (fed by the document service\'s commit stream), each side records its own identity', board.changes.slice(-6));
 
-  /* K4 AI 栏的分组 */
+  /* K4 Groups in AI panel */
   await A.tool('report_progress', { stage: 'Rough cut', done: ['Set the first card to 80% opacity'], todo: ['Add one more caption'] });
   await B.tool('report_progress', { done: ['Set the second card to 70% opacity'], problems: ['Probe: no real model'], final: true }, metaB);
   const groups = await waitFor(async () => {
@@ -226,7 +240,7 @@ try {
   const panel = aiBox ? await aiBox.evaluateHandle((el) => el.closest('[data-pc="right"]') ?? el) : null;
   if (panel) await panel.asElement().screenshot({ path: path.join(shots, 'ai-bar-groups.png') });
   else await page.screenshot({ path: path.join(shots, 'ai-bar-groups.png') });
-  // 正在进行的操作:A 跑一次 wait(3 秒),这期间它那组显示「正在等待」
+  // Ongoing operation: A runs wait(3 seconds) once, during which its group displays "Waiting"
   const waiting = A.tool('wait', { seconds: 3 });
   const busyOp = await waitFor(async () => {
     const op = await page.$eval(`[data-session="${sA?.id}"] [data-pc="desktop-op"]`, (el) => el.textContent).catch(() => '');
@@ -263,7 +277,7 @@ try {
   check(Array.isArray(aNext?.scopeChanges) && aNext.scopeChanges.some((c) => c.who.includes(sB?.id)), 'K6 the Claude Code session\'s next result tells it that someone else changed the scope it declared', aNext?.scopeChanges ?? aNext);
   check(Array.isArray(aNext?.overwrittenBy) && aNext.overwrittenBy.length > 0 && /Codex/.test(JSON.stringify(aNext.overwrittenBy)), 'K6 it also learns that what it wrote was overwritten by the Codex session', aNext?.overwrittenBy);
 
-  /* K7 创造力等级跟项目 */
+  /* K7 Creativity level follows project */
   await page.evaluate(async () => { (await import('/src/store/project.ts')).actions.setProjectMeta({ creativity: 'low' }); });
   const lowSeen = await waitFor(async () => {
     const d = await getJson('/api/agent/desktop');
@@ -274,11 +288,11 @@ try {
   check(newCard?.ok === false && newCard.creativity?.current === 'low', 'K7 at the low tier, creating a new card from a desktop session is rejected', newCard);
   await page.evaluate(async () => { (await import('/src/store/project.ts')).actions.setProjectMeta({ creativity: 'high' }); });
 
-  /* K8 悬浮窗预览 */
+  /* K8 Floating window preview */
   const png = await waitFor(async () => (fs.existsSync(path.join(SKILL_DIR, 'last-action.png')) ? fs.statSync(path.join(SKILL_DIR, 'last-action.png')).size : null), 30000, 500);
   check(!!png, 'K8 after a desktop session\'s timeline operation in SKILL mode, last-action.png appears in the temp SKILL directory (rendered by the page per skill.preview)', png);
 
-  /* K9 点回传统式 */
+  /* K9 Click back to Classic mode */
   await page.click('[data-pc="mode-classic"]');
   const off = await waitFor(async () => ((await getJson('/api/skill-mode')).state?.active === false ? true : null), 10000);
   check(!!off, 'K9 clicking "Classic mode" in the top bar exits SKILL mode');
@@ -288,9 +302,9 @@ try {
 } catch (e) {
   check(false, `Probe error: ${e?.stack ?? e}`);
 } finally {
-  try { await browser?.close(); } catch { /* 已经关了 */ }
-  for (const p of own.reverse()) { try { p.stop(); } catch { /* 已经停了 */ } }
-  if (!KEEP) { try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* 还有句柄没放 */ } }
+  try { await browser?.close(); } catch { /* Already closed */ }
+  for (const p of own.reverse()) { try { p.stop(); } catch { /* Already stopped */ } }
+  if (!KEEP) { try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* Handles still not released */ } }
 }
 console.log(`Screenshots: ${shots}`);
 console.log(JSON.stringify({ ok: fails.length === 0, fails, passes: passes.length }));

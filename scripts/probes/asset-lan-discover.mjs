@@ -1,22 +1,29 @@
 /**
- * `asset-lan-probe.mjs` 找素材服务地址的那一段，拆出来好单测（`server/test/asset-lan-discover.test.mjs`）。
+ * The part of `asset-lan-probe.mjs` that finds the asset service address, split out for unit testing
+ * (`server/test/asset-lan-discover.test.mjs`).
  *
- * 放本机的项目：素材服务地址经局域网发现带回（`server/lan/discovery.mjs` 的应答里 `asset` 字段），
- * 不进控制面的 `service.endpoints`（`vite-plugin-media.ts` 只在设了 `PROMPTCUT_DOCSERVICE_URL` 时登记）。
- * 探针以前一律等 `service.endpoints`，对放本机的项目会超时。现在先按局域网发现找这个项目，找到就用应答里的地址；
- * 找不到（放云端的项目，或者不在同一网段）再照旧等 `service.endpoints`。
+ * Local projects: the asset service address is returned via LAN discovery (`asset` field in
+ * `server/lan/discovery.mjs` response), and does not enter the control plane's `service.endpoints`
+ * (`vite-plugin-media.ts` registers only when `PROMPTCUT_DOCSERVICE_URL` is set).
+ * The probe previously always waited for `service.endpoints`, which timed out for local projects.
+ * Now it first searches for this project via LAN discovery, using the address in the response if
+ * found; if not found (cloud projects, or not on the same subnet), it waits for `service.endpoints`
+ * as before.
  *
- * 只用 Node 内置模块和仓库里不依赖 `node_modules` 的模块（探针要在没装依赖的笔记本上跑）。
+ * Uses only Node built-in modules and repository modules that do not depend on `node_modules` (the
+ * probe needs to run on laptops without installed dependencies).
  */
 
-/** 局域网发现的时限（同 `server/auth/route.mjs` 的 `ROUTE_DEFAULTS.LAN_TIMEOUT_MS`） */
+/** LAN discovery timeout (matches `ROUTE_DEFAULTS.LAN_TIMEOUT_MS` in `server/auth/route.mjs`) */
 export const LAN_DISCOVER_TIMEOUT_MS = 3_000;
 
 const nameKey = (name) => String(name).normalize('NFC').toLowerCase();
 
 /**
- * 发现结果里属于这个项目的主机 → 候选（按首次见到的先后，按素材地址去重）。
- * 有 projectId 按 projectId 认；只有名字时按名字认（不分大小写，同 `discovery.mjs` 的 `nameKey`）。
+ * Hosts belonging to this project in discovery results → candidates (ordered by first seen,
+ * deduplicated by asset address).
+ * Matched by projectId when projectId is present; matched by name when only name is present
+ * (case-insensitive, matching `nameKey` in `discovery.mjs`).
  * @param {Array<{ projectId: string, name: string, asset: string, docservice: string, hostDeviceName?: string, firstSeenMs?: number }>} hosts
  * @param {{ projectId?: string | null, name?: string | null }} want
  * @returns {{ asset: string, docservice: string, hostDeviceName: string | null, firstSeenMs: number | null }[]}
@@ -40,17 +47,20 @@ export function lanCandidates(hosts, { projectId = null, name = null } = {}) {
 }
 
 /**
- * 按局域网发现找这个项目。回 `{ candidates, ms, errors }`，不抛（套接字打不开、没有网卡都进 errors）。
+ * Finds this project via LAN discovery. Returns `{ candidates, ms, errors }`, does not throw
+ * (socket open failures and missing network interfaces all go into errors).
  * @param {{ projectId?: string | null, name?: string | null }} want
  * @param {{ discover?: Function, timeoutMs?: number, discoverOptions?: object }} [opts]
- *   `discover` 缺省是 `server/lan/discovery.mjs` 的 `discoverLan`；单测注入回环网卡与端口走 `discoverOptions`
+ *   `discover` defaults to `discoverLan` in `server/lan/discovery.mjs`; unit tests inject loopback
+ *   interface and port via `discoverOptions`
  */
 export async function discoverLanAsset(want, { discover, timeoutMs = LAN_DISCOVER_TIMEOUT_MS, discoverOptions = {} } = {}) {
   const t0 = Date.now();
   let fn = discover;
   try {
     fn ??= (await import(new URL('../../server/lan/discovery.mjs', import.meta.url))).discoverLan;
-    // 只有名字时让发现按名字过滤；有 projectId 时不传名字（名字可能改过），收回来再按 projectId 认
+    // When only name is present, let discovery filter by name; when projectId is present, do not pass
+    // name (name might have changed), matching by projectId after receiving results
     const r = await fn({ ...(want?.projectId ? {} : want?.name ? { name: want.name } : {}), timeoutMs, ...discoverOptions });
     const hosts = Array.isArray(r) ? r : r?.hosts ?? [];
     const errors = Array.isArray(r?.errors) ? r.errors.slice(0, 3) : [];
@@ -61,7 +71,8 @@ export async function discoverLanAsset(want, { discover, timeoutMs = LAN_DISCOVE
 }
 
 /**
- * 按顺序试候选地址：带票据 `GET <base>/media/<不存在的哈希>/chunks` 回 200 的第一个。都不通回 null。
+ * Tries candidate addresses in order: first one where `GET <base>/media/<nonexistent hash>/chunks`
+ * with ticket returns 200. Returns null if none succeed.
  * @param {string[]} bases
  * @param {{ ticket: string, missingHash: string, fetch?: typeof fetch, timeoutMs?: number }} o
  */
@@ -72,7 +83,7 @@ export async function firstReachableAsset(bases, { ticket, missingHash, fetch: f
       const r = await f(`${base}/media/${missingHash}/chunks`, { headers: { Authorization: `Bearer ${ticket}` }, signal: AbortSignal.timeout(timeoutMs) });
       await r.arrayBuffer().catch(() => {});
       if (r.status === 200) return base;
-    } catch { /* 下一个 */ }
+    } catch { /* Next */ }
   }
   return null;
 }

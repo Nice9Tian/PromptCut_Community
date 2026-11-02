@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
- * 分区底部那条一闪而过的提示(「已加 0.5s 交叉溶解」「先在时间轴上选中一个片段」之类)。
- * 挂在分区这一级、常驻渲染:不管用户停在总览、组详情还是搜索结果里,提示都看得见。
- * 新提示顶掉旧的,计时从头算。
+ * The brief notice at the bottom of a section ("Added 0.5s crossfade", "Select a clip on the
+ * timeline first" and the like).
+ * Mounted at the section level and always rendered: whether the user is on the overview, a group's
+ * detail or search results, the notice is visible.
+ * A new notice replaces the old one, and the timer restarts.
  */
 export function useFlash(): [string | null, (text: string, ms?: number) => void] {
   const [msg, setMsg] = useState<string | null>(null);

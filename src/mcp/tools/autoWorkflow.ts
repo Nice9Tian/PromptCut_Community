@@ -9,14 +9,14 @@ const autoWorkflowJobs = new Map<string, any>();
 async function pipeline(args: { mediaId: string; style?: string; maxCards?: number }, job: any) {
   const { mediaId, style, maxCards = 12 } = args;
 
-  // 1. 找素材
+  // 1. Find media
   const state = getState();
   const media = state.project.media.find(m => m.id === mediaId);
   if (!media) {
     throw new Error("Media not found, you can look it up with list_media");
   }
 
-  // 2. 拿文字稿
+  // 2. Get transcript
   let transcribed = false;
   if (!media.transcript || media.transcript.segments.length === 0) {
     job.phase = "Transcribing";
@@ -36,14 +36,14 @@ async function pipeline(args: { mediaId: string; style?: string; maxCards?: numb
   
   job.phase = "Composing cards";
   
-  // 重新读取
+  // Re-read
   const newMedia = getState().project.media.find(m => m.id === mediaId);
   if (!newMedia || !newMedia.transcript || newMedia.transcript.segments.length === 0) {
     throw new Error("The transcript is empty");
   }
   const transcript = newMedia.transcript;
 
-  // 3. 算时间轴映射
+  // 3. Compute timeline mapping
   let clipStart = 0;
   let mediaOffset = 0;
   let clipEnd = Infinity;
@@ -60,7 +60,7 @@ async function pipeline(args: { mediaId: string; style?: string; maxCards?: numb
     }
   }
 
-  // 素材秒 → 时间轴秒:kernel/clipTime.mjs 的统一换算(含片段速度)
+  // Media seconds → timeline seconds: unified conversion in kernel/clipTime.mjs (including clip speed)
   const toTl = (s: number) => timelineTimeAt({ start: clipStart, mediaOffset, speed }, s);
   
   const mappedSegments: { start: number; end: number; text: string }[] = [];
@@ -76,7 +76,7 @@ async function pipeline(args: { mediaId: string; style?: string; maxCards?: numb
     }
   }
 
-  // 4. 分组
+  // 4. Group
   const groups: { start: number; end: number; text: string }[] = [];
   let currentGroup: typeof mappedSegments = [];
 
@@ -123,7 +123,7 @@ async function pipeline(args: { mediaId: string; style?: string; maxCards?: numb
     }
   }
 
-  // 5. 选卡
+  // 5. Select cards
   function selectCard(text: string): string | null {
     if (/(增长|提升|上涨|翻倍|翻了|下降|降低|减少|涨|\b(?:growth|grew|increase[sd]?|rise|rose|doubled|decline[sd]?|decrease[sd]?|drop(?:ped)?|reduce[sd]?|fell)\b)/i.test(text) && (/[0-9]+(\.[0-9]+)?\s*(%|个|倍|万|亿|次|人|分|点|(?:percent|x|times|thousand|million|billion|people|points|items)\b)/i.test(text) || /[一二三四五六七八九十百千万亿]+\s*(倍|次|个|人|万|亿|成)|\b(one|two|three|four|five|six|seven|eight|nine|ten|hundred|thousand|million|billion)\s+(times|items|people|thousand|million|billion|percent)\b/i.test(text))) return "odometer"; // i18n-allow
     if (/[0-9]+(\.[0-9]+)?\s*(%|百分|倍|万|亿|次|个|人|(?:percent|x|times|thousand|million|billion|people|items)\b)/i.test(text)) return "stat-proof"; // i18n-allow
@@ -147,7 +147,7 @@ async function pipeline(args: { mediaId: string; style?: string; maxCards?: numb
 
   const cardsToPlace = selectedCards.slice(0, maxCards);
 
-  // 6. 填参数
+  // 6. Fill in parameters
   function paramsFor(cardId: string, rawText: string) {
     const text = rawText.trim();
     const short = text.slice(0, 24);
@@ -215,7 +215,7 @@ async function pipeline(args: { mediaId: string; style?: string; maxCards?: numb
     return filtered;
   }
 
-  // 7. 落卡
+  // 7. Place cards
   let skipped = groups.length - cardsToPlace.length;
   const clipsOut: any[] = [];
   
@@ -240,7 +240,8 @@ async function pipeline(args: { mediaId: string; style?: string; maxCards?: numb
 
   let captionClipId: string | null = null;
   if (mappedSegments.length > 0) {
-    // 字幕单独一条序列,而且建在最上层 —— 字幕得压在画面之上,追加到末尾等于埋在底下
+    // Captions get their own separate track, built on the topmost layer: captions must sit above the
+    // visuals; appending to the end means burying them underneath
     const captionTrack = actions.ensureCaptionTrack();
     
     const globalStart = Math.min(...mappedSegments.map(s => s.start));
@@ -269,7 +270,7 @@ async function pipeline(args: { mediaId: string; style?: string; maxCards?: numb
     actions.setProjectMeta({ duration: maxClipEnd });
   }
 
-  // 8. 返回
+  // 8. Return
   return {
     mediaId,
     style,

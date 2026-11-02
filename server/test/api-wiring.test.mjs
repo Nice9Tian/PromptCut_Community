@@ -1,17 +1,19 @@
 /**
  * node --test server/test/api-wiring.test.mjs
  *
- * **走真实接线**的集成测试。
+ * Integration tests **using real wiring**.
  *
- * 评审抓到的两条阻断有同一个形状:单元测试测的是被绕过的那一段。
- *   - idle-timeout 的单测里,假 fetchImpl 老老实实监听 init.signal;而 api.mjs 里那个
- *     箭头函数 `{ ...options, signal: abortController.signal }` 把组合信号覆盖掉了,
- *     于是整层是死的 —— 单测照样全绿。
- * 所以这一档只从 startRun 进去,只用「真 fetch 会看到什么」来判断。
+ * The two blockers caught during review share the same shape: unit tests were testing the
+ * bypassed section.
+ *   - In the unit test for idle-timeout, fake fetchImpl dutifully listens to init.signal; but the
+ *     arrow function `{ ...options, signal: abortController.signal }` in api.mjs overwrote the
+ *     composed signal, leaving the entire layer dead: yet unit tests were all green.
+ * Therefore, this tier only enters from startRun, judging solely by "what a real fetch would see".
  *
- * 另外:这里的用例都往**真实的** %TEMP%/promptcut/harness-sessions 写文件
- * (startRun 的目录不可注入)。断言失败时如果不清,残留会被诊断报告的会话文件柜
- * 数进去 —— 我们自己的测试污染我们自己的排查工具。所以清理一律放 finally。
+ * In addition: test cases here write files to the **real** %TEMP%/promptcut/harness-sessions
+ * (the startRun directory is not injectable). If not cleaned up on assertion failure, leftovers
+ * will be counted into the session filing cabinet of the diagnostic report: our own tests would
+ * pollute our own troubleshooting tools. Therefore, cleanup is always placed in finally.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -42,11 +44,12 @@ function run(sessionId, fetchImpl, extra = {}) {
 
 test('Idle timeout is really wired up: if upstream sends not a single byte, it must eventually be cut off and report a timeout', async () => {
   const sid = `w-idle-${Math.random().toString(36).slice(2, 8)}`;
-  try { fs.unlinkSync(historyFileOf(sid)); } catch { /* 本来就没有 */ }
+  try { fs.unlinkSync(historyFileOf(sid)); } catch { /* Did not exist in the first place */ }
 
   /*
-   * 这个假 fetch **只认 init.signal** —— 和真 fetch 一样。
-   * 接线断了的话它永远不 reject,这条测试就会超时失败(而不是悄悄通过)。
+   * This fake fetch **only recognizes init.signal**: just like real fetch.
+   * If the wiring is broken, it will never reject, and this test will fail by timing out (instead of
+   * quietly passing).
    */
   let sawSignal = null;
   const fetchImpl = (url, init) => {
@@ -64,7 +67,7 @@ test('Idle timeout is really wired up: if upstream sends not a single byte, it m
     assert.match(err.message, /timeout|timed out/i);
     assert.equal(err.retryable, true, 'A timeout should be automatically resumable');
   } finally {
-    try { fs.unlinkSync(historyFileOf(sid)); } catch { /* 清理 */ }
+    try { fs.unlinkSync(historyFileOf(sid)); } catch { /* Cleanup */ }
   }
 });
 
@@ -89,7 +92,7 @@ test('Stop from the user still works: the merged signal must not lose the stop p
   try {
     assert.ok(events.some((e) => e.type === 'status' && e.text === 'Aborted'));
   } finally {
-    try { fs.unlinkSync(historyFileOf(sid)); } catch { /* 清理 */ }
+    try { fs.unlinkSync(historyFileOf(sid)); } catch { /* Cleanup */ }
   }
 });
 
@@ -97,7 +100,7 @@ test('The history saved on interruption must not contain a dangling tool_use, ot
   const sid = `w-heal-${Math.random().toString(36).slice(2, 8)}`;
   const file = historyFileOf(sid);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  // 先埋一份「有 tool_use、没有 tool_result」的历史,模拟上一次在工具执行途中被停掉
+  // Seed a history with "tool_use but no tool_result" to simulate being stopped during tool execution last time
   fs.writeFileSync(file, JSON.stringify([
     { role: 'user', content: [{ type: 'text', text: 'Start' }] },
     { role: 'assistant', content: [{ type: 'tool_use', id: 'call_1', name: 'get_project', input: {} }] },
@@ -120,7 +123,7 @@ test('The history saved on interruption must not contain a dangling tool_use, ot
     assert.ok(paired, 'A dangling tool_use must be given a paired tool_result');
     assert.equal(paired.is_error, true, 'The added one must be marked as failed, so the model knows that step was interrupted');
   } finally {
-    try { fs.unlinkSync(file); } catch { /* 清理 */ }
+    try { fs.unlinkSync(file); } catch { /* Cleanup */ }
   }
 });
 
@@ -129,9 +132,11 @@ test('A history already corrupted on disk must be repaired when read back: it mu
   const file = historyFileOf(sid);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   /*
-   * 埋一份带悬空 tool_use 的历史。这种文件是真实存在的:「中断也落盘」是后来才加的,
-   * 在那之前 / 在那个改动的中间态里,盘上留下过一批只有 tool_use 没有 tool_result 的会话。
-   * 只在写的时候治,这种会话第一句必然 400,靠 catch 里的 saveHistory 才自愈。
+   * Seed a history with dangling tool_use. Such files exist in reality: "write to disk even on abort"
+   * was added later; before that / during the intermediate state of that change, a batch of sessions
+   * with only tool_use and no tool_result was left on disk. If cured only when writing, the first
+   * message of such a session will inevitably return 400, self-healing only via saveHistory in
+   * catch.
    */
   fs.writeFileSync(file, JSON.stringify([
     { role: 'user', content: [{ type: 'text', text: 'Start' }] },
@@ -146,9 +151,10 @@ test('A history already corrupted on disk must be repaired when read back: it mu
   await run(sid, fetchImpl);
 
   /*
-   * 这两条用例往**真实的** harness-sessions 写文件(startRun 的目录不可注入)。
-   * 断言失败时如果不清,残留会被诊断报告的会话文件柜数进去 —— 我们自己的测试
-   * 污染我们自己的排查工具。所以清理放 finally。
+   * These two test cases write files to the **real** harness-sessions (the directory of startRun is
+   * not injectable). If not cleaned up on assertion failure, leftovers will be counted into the
+   * session filing cabinet of the diagnostic report: our own tests pollute our own troubleshooting
+   * tools. Therefore, cleanup is put in finally.
    */
   try {
     assert.ok(sent, 'The first request must be able to go out');
@@ -157,7 +163,7 @@ test('A history already corrupted on disk must be repaired when read back: it mu
     const tool = sent.messages.find((m) => m.role === 'tool');
     assert.equal(tool.tool_call_id, 'call_1');
   } finally {
-    try { fs.unlinkSync(file); } catch { /* 清理 */ }
+    try { fs.unlinkSync(file); } catch { /* Cleanup */ }
   }
 });
 
@@ -165,7 +171,8 @@ test('When continuing from old history, the messages sent out must not contain t
   const sid = `w-dupuser-${Math.random().toString(36).slice(2, 8)}`;
   const file = historyFileOf(sid);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  // 末尾是一条 user(中断落盘补的那种形状),再进来一句话就会拼出两条连着的 user
+  // The end is a user message (the shape patched when writing to disk on abort); another
+  // incoming message would piece together two consecutive user messages
   fs.writeFileSync(file, JSON.stringify([
     { role: 'user', content: [{ type: 'text', text: 'Start' }] },
     { role: 'assistant', content: [{ type: 'text', text: 'OK' }] },
@@ -187,6 +194,6 @@ test('When continuing from old history, the messages sent out must not contain t
     }
     assert.ok(JSON.stringify(sent.messages).includes('Hello'), 'The newly spoken sentence must actually be included');
   } finally {
-    try { fs.unlinkSync(file); } catch { /* 清理 */ }
+    try { fs.unlinkSync(file); } catch { /* Cleanup */ }
   }
 });

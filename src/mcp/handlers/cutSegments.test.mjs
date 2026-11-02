@@ -1,12 +1,14 @@
 /**
- * 剪辑段的 Agent 工具:list_cuts 带引用关系、add_cut_segment 放置与拒绝循环、set_cut_segment、
- * remove_cut 对被引用剪辑要 force + reason、get_clip 带 cutSegment。跑:npm test -- src/mcp/handlers/cutSegments.test.mjs
+ * Agent tools for cut segments: list_cuts includes reference relationships, add_cut_segment
+ * placement and cycle rejection, set_cut_segment, remove_cut requires force + reason for
+ * referenced cuts, get_clip includes cutSegment. Run: npm test -- src/mcp/handlers/cutSegments.test.mjs
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 
-// handlers 里 `import { EditorApi } from "../../ai/mcpExecutor"` 只是类型;node 里把那个模块换成空壳
+// In handlers, `import { EditorApi } from "../../ai/mcpExecutor"` is type-only; in node, replace
+// that module with a stub
 mock.module(srcUrl("ai/mcpExecutor.ts"), { exports: { EditorApi: undefined } });
 
 const { actions, getState } = await import(srcUrl("store/project.ts"));

@@ -1,4 +1,7 @@
-/** 违规样例（测试夹具，不进卡片库）：CSS 动画与过渡。建卡时应当被拒绝并指出行号。 */
+/**
+ * Violation example (test fixture, not added to the card library): CSS animations and transitions.
+ * Should be rejected during card creation, pointing to the line number.
+ */
 import "../../kernel/remotionStyle";
 import type { CardDef, CardProps } from "../../kernel/types";
 interface Params { text: string }

@@ -1,8 +1,9 @@
 /**
- * 实例内一轮会话的公开侧转接入口。
+ * Public forwarding entrypoint for an in-instance session round.
  *
- * 云端实现已迁至 `cloud/agent/agent-instance-session.mjs`，通过 `./extensions.mjs` 挂载；
- * 社区版（无 `cloud/` 目录）不加载任何 `server/account/` 或 `cloud/` 模块。
+ * Cloud implementation has moved to `cloud/agent/agent-instance-session.mjs`, mounted via
+ * `./extensions.mjs`; community edition (without `cloud/` directory) does not load any
+ * `server/account/` or `cloud/` modules.
  */
 import { findAgentExtension } from './extensions.mjs';
 

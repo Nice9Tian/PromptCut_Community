@@ -1,69 +1,91 @@
 /**
- * 轨道流的分段换算 —— **唯一出处**。产流的一侧(预渲染进程、渲染服务、任务队列的切分与认领、浏览器节点、本页产流)和
- * 读流的一侧(舞台播放、父页选流平面、在线页面取清单和字节)都从这里算「这一帧在第几个分段、第几个样本」,不各算各的。
+ * Track stream segment calculation: **sole source of truth**. Both the stream producer side
+ * (prerender process, render service, task queue splitting and claiming, browser nodes, local page
+ * stream generation) and the stream consumer side (stage playback, parent page selecting stream planes,
+ * online page fetching manifests and bytes) calculate "which segment and which sample this frame
+ * is in" from here, without computing separately.
  *
- * # 规则(2026-10-13 用户定:`docs/plan/html-snapshot-removal-dryrun.md` 第 10.5 节)
+ * # Rules (user decision, 2026-10-13: `docs/plan/html-snapshot-removal-dryrun.md` Section 10.5)
  *
- * 分段从**这条流自己的第一帧**(`originFrame`,项目帧号)起每 `STREAM_SEGMENT_FRAMES` 帧一段,不再从项目的第 0 帧起:
+ * Segments start from **the stream's own first frame** (`originFrame`, project frame number),
+ * with one segment every `STREAM_SEGMENT_FRAMES` frames, no longer starting from project frame 0:
  *
- *   - 单卡流:第一帧是片段在时间轴上的第一帧(卡的本地帧 0);
- *   - 组流:第一帧是成员里最早的那个第一帧;
- *   - 依赖下层的流:第一帧是目标卡的第一帧。
+ *   - Single-card stream: first frame is the clip's first frame on the timeline (card local frame 0);
+ *   - Group stream: first frame is the earliest first frame among its members;
+ *   - Below-dependent stream: first frame is the target card's first frame.
  *
- * 片段从第 100 帧开始:第 0 段是第 100～114 帧,第 1 段是第 115～129 帧……分段号恒从 0 起。
- * 最后一个分段到**这条流自己的最后一帧**为止(不是项目的最后一帧),可以不满 15 帧。
- * 早于第一帧的帧没有分段(`streamSegmentOf` 回负数,就绪区间里不会有它)。
+ * A clip starting at frame 100: segment 0 is frames 100-114, segment 1 is frames 115-129...
+ * segment numbers always start from 0.
+ * The last segment extends to **the stream's own last frame** (not the project's last frame),
+ * and may contain fewer than 15 frames.
+ * Frames earlier than the first frame have no segment (`streamSegmentOf` returns negative,
+ * excluded from the ready range).
  *
- * 所以「分段号、每段几帧」只由这条流有多少帧决定,和它摆在时间轴的哪里无关;它在时间轴上的位置只剩 `originFrame` 这一个数,
- * 由计划的一侧按当前项目给出(流的计划 → 就绪消息 / 层表的行 → 读的一侧)。
+ * Therefore, "segment number and frames per segment" depend only on how many frames this stream has,
+ * independent of where it sits on the timeline; its position on the timeline is reduced to just
+ * `originFrame`, provided by the planning side according to the current project (stream planning →
+ * ready message / layer table row → consumer side).
  *
- * 纯函数,不依赖别的模块;服务端与页面共用这一份。
+ * Pure function, does not depend on other modules; shared between server and page.
  */
 
-/** 一个分段的帧数(G2);`server/bakery/ffmpeg.mjs` 的 `STREAM_SEGMENT_FRAMES` 与它同值(守门单测核对) */
+/**
+ * Number of frames per segment (G2); matches `STREAM_SEGMENT_FRAMES` in `server/bakery/ffmpeg.mjs`
+ * (checked by gatekeeper unit tests).
+ */
 export const STREAM_SEGMENT_FRAMES = 15;
 
-/** 能不能当一条流的第一帧:非负整数 */
+/** Whether it can serve as the first frame of a stream: non-negative integer */
 export function isStreamOrigin(value) {
   return Number.isInteger(value) && value >= 0;
 }
 
-/** 项目帧号 → 这条流的分段号;早于第一帧的回负数 */
+/** Project frame number → segment number of this stream; returns negative for frames before the first frame */
 export function streamSegmentOf(frame, originFrame) {
   return Math.floor((frame - originFrame) / STREAM_SEGMENT_FRAMES);
 }
 
-/** 这个分段的第一帧(项目帧号) */
+/** First frame of this segment (project frame number) */
 export function streamSegmentFirstFrame(segment, originFrame) {
   return originFrame + segment * STREAM_SEGMENT_FRAMES;
 }
 
-/** 这个分段的最后一帧(项目帧号),截到这条流自己的最后一帧 `lastFrame`;不给 `lastFrame` 就是满的一段 */
+/**
+ * Last frame of this segment (project frame number), clamped to the stream's own `lastFrame`;
+ * full segment if `lastFrame` is omitted.
+ */
 export function streamSegmentLastFrame(segment, originFrame, lastFrame = Infinity) {
   return Math.min(streamSegmentFirstFrame(segment, originFrame) + STREAM_SEGMENT_FRAMES - 1, lastFrame);
 }
 
-/** 这个分段有几帧(也就是它的样本数);整段都在流的最后一帧之后回 0 */
+/**
+ * Number of frames in this segment (i.e. its sample count); returns 0 if the entire segment is
+ * after the stream's last frame.
+ */
 export function streamSegmentFrameCount(segment, originFrame, lastFrame = Infinity) {
   return Math.max(0, streamSegmentLastFrame(segment, originFrame, lastFrame) - streamSegmentFirstFrame(segment, originFrame) + 1);
 }
 
 /**
- * 这一帧所在分段的第一帧(项目帧号)。稀疏版每个分段只截这一张、其余帧重复它;最低一档
- * 不管那一段是稀疏还是满密度,都只解这一张来贴(`streamPlayer.ts` 的 `presentFirst`)。早于流的第一帧的帧回的也早于第一帧。
+ * First frame of the segment containing this frame (project frame number). The sparse version
+ * captures only this frame for each segment and repeats it for the rest; the lowest tier,
+ * whether that segment is sparse or full density, only decodes and pastes this frame
+ * (`streamPlayer.ts`'s `presentFirst`). Frames earlier than the stream's first frame also return
+ * earlier than the first frame.
  */
 export function streamFirstFrameOf(frame, originFrame) {
   return streamSegmentFirstFrame(streamSegmentOf(frame, originFrame), originFrame);
 }
 
-/** 这一帧在它所在分段里是第几个样本(0 起) */
+/** 0-based sample index of this frame within its segment */
 export function streamSampleOf(frame, originFrame) {
   return frame - streamSegmentFirstFrame(streamSegmentOf(frame, originFrame), originFrame);
 }
 
 /**
- * 一条盖住项目帧 `firstFrame .. lastFrame` 的流怎么分段:`{ originFrame, firstSegment, lastSegment }`。
- * `firstSegment` 恒为 0(留着这个字段是因为流的计划、切分、推送都按「从 firstSegment 到 lastSegment」走)。
+ * How to segment a stream covering project frames `firstFrame .. lastFrame`:
+ * `{ originFrame, firstSegment, lastSegment }`. `firstSegment` is always 0 (this field is kept
+ * because stream planning, splitting, and pushing follow "from firstSegment to lastSegment").
  */
 export function streamSegmentSpan(firstFrame, lastFrame) {
   const originFrame = Math.max(0, Math.floor(Number(firstFrame) || 0));

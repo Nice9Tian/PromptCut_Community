@@ -1,11 +1,13 @@
 /**
- * 网页操作模块的真机自检。**要联网,会起一个真的 Chrome**,所以不进 npm test
- * (那套跑 6 秒,加进去就是分钟级)。改过 server/web/ 之后手动跑一次:
+ * Real-device self-check for the web operation module. **Requires network, launches a real Chrome**,
+ * so it is not included in npm test (that suite runs in 6s; adding this makes it take minutes). Run
+ * manually after modifying server/web/:
  *
  *     node scripts/web-check.mjs [url]
  *
- * 它验的是单元测试验不了的那半:随包 Chrome 能不能起、离屏窗口在不在屏幕外、
- * 截图和清单出不出得来、命中检测在真页面上准不准、窗口能不能挪出来再藏回去。
+ * It verifies the half that unit tests cannot: whether bundled Chrome can start, whether the
+ * offscreen window stays off screen, whether screenshots and manifests are generated, whether hit
+ * testing is accurate on real pages, and whether the window can be moved out and hidden back.
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,11 +25,11 @@ const ok = (cond, label, detail = '') => {
   else { fail++; console.log(`  ✗ ${label}${detail ? ` — ${detail}` : ''}`); }
 };
 
-/** 和 vite-plugin-web.ts 里那份保持一致:显式给路径,别靠 PUPPETEER_CACHE_DIR 继承 */
+/** Keep consistent with vite-plugin-web.ts: pass paths explicitly, do not rely on PUPPETEER_CACHE_DIR inheritance */
 async function bundledChrome() {
   const { findBundledChrome } = await import('../server/vite-plugin-web.ts').catch(() => ({}));
   if (findBundledChrome) return findBundledChrome(ROOT);
-  // .ts 直接 import 不了时自己找一遍
+  // Search manually when .ts cannot be imported directly
   const fs = await import('node:fs');
   const root = process.env.PUPPETEER_CACHE_DIR
     ?? path.join(ROOT, 'desktop', 'src-tauri', 'runtime', 'chrome');
@@ -45,8 +47,9 @@ try {
   console.log(`
 ── 1. Launch browser ──`);
   console.log(`  Chrome: ${exe || '(bundled copy not found, using puppeteer\'s own cache)'}`);
-  // 用临时 profile,不碰 out/web-profile —— 那份是用户的登录态,自检不该占用它
-  // (占用了会让正在跑的 dev server 起不来浏览器,而且自检产生的 cookie 也不该留下)
+  // Use a temporary profile, do not touch out/web-profile: that copy is the user's login state,
+  // and the self-check should not occupy it (occupying it prevents a running dev server from launching
+  // the browser, and cookies produced by the self-check should not be left behind)
   const inst = await getBrowser({ dataDir: null, executablePath: exe });
   ok(!!inst.page, 'instance is up', await inst.browser.version());
 

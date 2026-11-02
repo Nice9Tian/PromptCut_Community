@@ -1,5 +1,6 @@
-// 卡片参数校验 + 建卡源码校验。两个模块都是纯逻辑,这里转译后直接跑,
-// 不需要 React、浏览器或 dev server。跑法:node --test server/test/cards.test.mjs
+// Card parameter validation + card creation source validation. Both modules are pure logic and run
+// directly here after transpilation, without requiring React, a browser, or a dev server. How to
+// run: node --test server/test/cards.test.mjs
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -11,7 +12,7 @@ import { createRequire } from 'node:module';
 const require_ = createRequire(import.meta.url);
 const ts = require_('typescript');
 
-/** assert.throws 不把错误还给你,但这里要断言报错文案本身 */
+/** assert.throws does not return the error to you, but here we need to assert the error message itself */
 const caught = (fn) => { try { fn(); } catch (e) { return e; } throw new Error('Should have thrown but did not'); };
 
 const ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
@@ -21,8 +22,9 @@ fs.mkdirSync(OUT, { recursive: true });
 function compile(srcRel, outName, rewrites = []) {
   let src = fs.readFileSync(path.join(ROOT, srcRel), 'utf8');
   for (const [from, to] of rewrites) src = src.split(from).join(to);
-  // 源文件里真实存在的相对 .mjs(`./frameMode.mjs`、`../xxx.mjs`)指回原地;
-  // 上面 rewrites 刚造出来的 `./registry.mjs` 这种只存在于临时目录,原地找不到,原样留着
+  // Relative .mjs that actually exist in source files (`./frameMode.mjs`, `../xxx.mjs`) point back to
+  // original locations; those just created by rewrites above like `./registry.mjs` only exist in the
+  // temporary directory and cannot be found in place, so keep them as is
   src = src.replace(/from (["'])(\.\.?\/[^"']+\.mjs)\1/g, (m, _q, f) => {
     const abs = path.resolve(ROOT, path.dirname(srcRel), f);
     return fs.existsSync(abs) ? `from '${pathToFileURL(abs).href}'` : m;
@@ -37,9 +39,11 @@ function compile(srcRel, outName, rewrites = []) {
 
 const registryUrl = compile('src/kernel/registry.ts', 'registry.mjs');
 const cardParamsUrl = compile('src/kernel/cardParams.ts', 'cardParams.mjs', [['./registry.ts', './registry.mjs']]);
-// 转译产物落在临时目录里,解析不到 node_modules,所以把 typescript 换成绝对 URL
+// Transpilation artifacts land in temporary directory and cannot resolve node_modules, so replace
+// typescript with an absolute URL
 const tsUrl = pathToFileURL(require_.resolve('typescript')).href;
-// 插件里同目录的 .mjs(http-guard、card-overrides、prerender-client……)也一样:转译到临时目录后要指回 server/ 下的原文件
+// Same for .mjs in same plugin directory (http-guard, card-overrides, prerender-client...): point
+// back to original files under server/ after transpiling to temporary directory
 const localMjs = [...new Set([...fs.readFileSync(path.join(ROOT, 'server/vite-plugin-cards.ts'), 'utf8').matchAll(/from '\.\/([\w-]+\.mjs)'/g)].map((m) => m[1]))]
   .map((f) => [`from './${f}'`, `from '${pathToFileURL(path.join(ROOT, 'server', f)).href}'`]);
 const pluginUrl = compile('server/vite-plugin-cards.ts', 'cards-plugin.mjs', [["from 'typescript'", `from '${tsUrl}'`], ...localMjs]);
@@ -48,7 +52,7 @@ const { registerCards } = await import(registryUrl);
 const { validateCardParams, findCard } = await import(cardParamsUrl);
 const { checkCardSource, checkSourceEdit, applyCardPatch, translateCardSource, reviewCardSource, suggestControls, installBundledCards } = await import(pluginUrl);
 
-// 一张最小的假卡,形状和真卡一致
+// A minimal mock card, matching the shape of a real card
 registerCards([{
   id: 'demo-card', name: 'Demo', description: 'd', source: 'native',
   defaults: { lines: '', mode: 'a', size: 10, accent: '#fff' },
@@ -66,7 +70,7 @@ test('Required field empty → reject, and include the hint', () => {
   const e = caught(() => validateCardParams('demo-card', { size: 20 }));
   assert.match(e.message, /lines/);
   assert.match(e.message, /required/);
-  assert.match(e.message, /One per line/);      // hint 要透出去
+  assert.match(e.message, /One per line/);      // hint must be passed through
 });
 
 test('Required field with only whitespace → still counts as not filled', () => {
@@ -76,7 +80,7 @@ test('Required field with only whitespace → still counts as not filled', () =>
 test('Required field filled → pass, and return the merged result', () => {
   const merged = validateCardParams('demo-card', { lines: '0|1|Hello|' });
   assert.equal(merged.lines, '0|1|Hello|');
-  assert.equal(merged.mode, 'a');          // 没传的用 defaults
+  assert.equal(merged.mode, 'a');          // Use defaults when not passed
   assert.equal(merged.size, 10);
 });
 
@@ -84,7 +88,7 @@ test('Wrong key name → reject, and list the real parameter names', () => {
   const e = caught(() => validateCardParams('demo-card', { lines: 'x', linez: 'y' }));
   assert.match(e.message, /linez/);
   assert.match(e.message, /is not a parameter of demo-card/);
-  assert.match(e.message, /mode/);          // 要告诉它有哪些合法参数
+  assert.match(e.message, /mode/);          // Tell it which parameters are valid
 });
 
 test('select value not among the options → reject and list the allowed values', () => {
@@ -179,9 +183,11 @@ test('Missing controls field → reject', () => {
   assert.match(checkCardSource('price-tag', src, [], { mode: 'author' }).errors.join('\n'), /missing the controls field/);
 });
 
-// ── A0:审阅表是 independent 的唯一权威 + frameMode 必填 ──────────────
-// 这两条错了不报错,只会让一张毛玻璃卡拿到「独立卡」的待遇:死素材单独存、上云共享,
-// 换个下层就糊着别人的画面。所以三条路(内置卡 edit、用户卡 edit、create)各钉一条。
+// ── A0: review table is the sole authority for independent + frameMode required ──────────────
+// Getting these two wrong throws no error; it just gives a frosted-glass card the
+// "standalone card" treatment: dead assets are stored separately and shared to the cloud,
+// smearing someone else's video when switching the lower layer. So pin down one for each of the
+// three paths (built-in card edit, user card edit, create).
 const INDEPENDENT = '  compositing: "independent",\n';
 
 test("A0: user card edit_card adds compositing: independent → reject", () => {
@@ -239,9 +245,10 @@ test("A0: a CardDef<any>[] aggregate file can be edited even without frameMode",
   assert.equal(r.ok, true, r.errors.join('\n'));
 });
 
-// ── 翻译器:机械翻译 + 审查门 + controls 建议 ─────────────────────────
-// 审查的分档来自 11 张卡在导出管线上的逐字节比对;这里钉住的是「哪一类代码会被
-// 挡在哪一档」,别让以后放宽规则的人不知不觉把接不住的机制放进来。
+// ── Translator: mechanical translation + review gate + controls suggestions ──────────────────
+// The review tiers come from byte-for-byte comparisons of 11 cards on the export pipeline;
+// what is pinned down here is "which class of code gets blocked at which tier", so that anyone
+// relaxing the rules later does not inadvertently let in mechanisms that cannot be supported.
 
 test('translate: strip use client, point @/lib/utils to the local copy, and report what changed', () => {
   const r = translateCardSource('"use client"\nimport { cn } from "@/lib/utils"\nexport const x = 1');
@@ -252,31 +259,35 @@ test('translate: strip use client, point @/lib/utils to the local copy, and repo
 
 test('review tier 2: blocks the card\'s own frame loop, and no longer blocks WebGL / three itself', () => {
   const tiers = (src) => reviewCardSource(src).map((f) => f.tier);
-  // 导出页把 Math.random 钉成带种子的、截图期间关脚本 —— 粒子卡实测逐字节一致,所以这两条不再拒
+  // The export page pinned Math.random to be seeded and disabled scripts during screenshots:
+  // particle cards tested byte-for-byte identical, so these two rules no longer reject them
   assert.deepEqual(tiers('const c = ref.current.getContext("2d")'), []);
   assert.deepEqual(tiers('const x = Math.random()'), []);
-  // WebGL 本身放行:导出加了 --enable-unsafe-swiftshader 之后,three 卡实测两趟 20/20 帧逐字节相同
+  // WebGL itself is allowed: after adding --enable-unsafe-swiftshader to export, three cards
+  // tested byte-for-byte identical across two passes of 20/20 frames
   assert.deepEqual(tiers('const gl = c.getContext("webgl")'), []);
   assert.deepEqual(tiers('import * as THREE from "three"'), []);
   assert.deepEqual(tiers('import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js"'), []);
-  // 真正接不住的是「三维场景 + 自己跑帧循环」这个组合
+  // What truly cannot be supported is the combination of "3D scene + running its own frame loop"
   assert.deepEqual(tiers('renderer.setAnimationLoop((t) => draw(t))'), [2]);
-  // 裸 rAF 驱动一个 three 场景:以前从这儿溜过去
+  // Bare rAF driving a three scene: previously slipped through here
   assert.deepEqual(tiers('import * as THREE from "three"\nrequestAnimationFrame(function l(){ mesh.rotation.y += 0.01; requestAnimationFrame(l) })'), [2]);
   assert.deepEqual(tiers('const gl = c.getContext("webgl")\nrequestAnimationFrame(loop)'), [2]);
-  // 变量名绕过 setAnimationLoop 也拦得住(它同时用了 three)
+  // Bypassing setAnimationLoop via variable names is also caught (it also uses three)
   assert.deepEqual(tiers('import * as THREE from "three"\nconst fn = "setAnimationLoop"; renderer[fn](cb)'), [2]);
-  // 注释里提到不算用了:这条规则的报错文案让人「照 scene-3d.tsx 的写法」,
-  // 而那张卡的注释里正好在解释为什么不能用 setAnimationLoop —— 连注释一起匹配就成了自相矛盾
+  // Mentions in comments do not count as usage: this rule's error message tells people to
+  // "follow how scene-3d.tsx is written", and the comments in that card happen to explain why
+  // setAnimationLoop cannot be used: matching comments too would create a contradiction
   assert.deepEqual(tiers('// Do not use setAnimationLoop, it accumulates by delta\nimport * as THREE from "three"\nrenderer.render(s, c)'), []);
   assert.deepEqual(tiers('/* three\'s setAnimationLoop cannot be supported on this pipeline */\nconst x = 1'), []);
-  // 字符串里的 // 不该被当成注释,后面的代码照样要看得见
+  // A // inside a string should not be treated as a comment; subsequent code must still be visible
   assert.deepEqual(tiers('const url = "http://x"; renderer.setAnimationLoop(cb)'), [2]);
-  // 但**不能**见 rAF 就拦:二维卡用 rAF 是这条管线上验证过的,一刀切会误伤一大片
+  // But we **cannot** block every rAF on sight: using rAF in 2D cards has been verified on this
+  // pipeline, and a blanket ban would cause massive collateral damage
   assert.deepEqual(tiers('requestAnimationFrame(() => setX(1))'), []);
-  // 自带帧循环的三维框架:既是第二档,也没装
+  // 3D frameworks with their own frame loops: belong to tier 2 and are not installed
   assert.deepEqual(tiers('import { Canvas } from "@react-three/fiber"').sort(), [2, 'deps']);
-  // 装好的粒子 / Lottie 库是允许的依赖
+  // Installed particle / Lottie libraries are permitted dependencies
   assert.deepEqual(tiers('import { tsParticles } from "@tsparticles/engine"\nimport lottie from "lottie-web"'), []);
 });
 
@@ -305,11 +316,12 @@ test('review animation classes: the 22 MagicUI groups are vendored and pass, und
 
 test('review source/license: copied-in code with no declaration → reject; Commons Clause → reject; MIT → pass', () => {
   const body = 'export const A = () => null';
-  // 直接把 MagicUI 代码贴过来:有 @/lib/utils 的痕迹但没写来源
+  // Pasting MagicUI code directly: contains traces of @/lib/utils but does not state the source
   const undeclared = reviewCardSource('import { cn } from "@/lib/utils"\n' + body).filter((f) => f.tier === 'license');
   assert.equal(undeclared.length, 1);
   assert.match(undeclared[0].rule, /not declared/);
-  // 翻译器已经改掉了 @/lib/utils 这个痕迹,靠 hints.vendored 仍然要求声明
+  // The translator has already removed the trace of @/lib/utils, but hints.vendored still requires
+  // a declaration
   assert.equal(reviewCardSource(body, { vendored: true }).filter((f) => f.tier === 'license').length, 1);
   const bad = reviewCardSource('/**\n * Source: https://reactbits.dev/x\n * MIT + Commons Clause\n */\n' + body);
   assert.match(bad.find((f) => f.tier === 'license').rule, /does not allow distribution/);
@@ -341,9 +353,10 @@ test('suggestControls: infer controls from the *Props interface, skipping classN
   assert.match(s.find((x) => x.key === 'words').hint, /\|/);
 });
 
-// ── applyCardPatch:局部改卡 ────────────────────────────────────────
-// 下面这几种情形出错时都不会报错,只会静静地把文件改成别的样子 ——
-// 而「改卡时别处莫名其妙也变了」正是这个功能要根治的毛病,所以逐条钉住。
+// ── applyCardPatch: partial card edits ───────────────────────────────────────────────
+// None of the following cases throw errors when failing; they just quietly alter the file into
+// something else: and "other parts mysteriously changing when editing a card" is precisely the
+// flaw this feature is meant to eliminate, so pin down each one.
 
 test('When there is exactly one match, replace only that one', () => {
   const r = applyCardPatch('a\nsize: 120\nb', 'size: 120', 'size: 64');
@@ -353,8 +366,8 @@ test('When there is exactly one match, replace only that one', () => {
 });
 
 test('$& in replace must not be expanded as a replacement token', () => {
-  // String.replace(str, str) 会把 $& 换成刚匹配到的内容;split/join 不会。
-  // 这里的 replace 是模型逐字写好的源码,必须原样落盘。
+  // String.replace(str, str) replaces $& with the matched content; split/join does not.
+  // The replacement here is verbatim source code written by the model and must be written to disk as is.
   const r = applyCardPatch('x AAA y', 'AAA', 'cost = "$&"');
   assert.equal(r.after, 'x cost = "$&" y');
 });
@@ -395,7 +408,7 @@ test('Empty find → error (otherwise it would match every position)', () => {
   assert.equal(applyCardPatch('abc', '', 'x').ok, false);
 });
 
-// ── installBundledCards:打开 .proc 时把项目里带的定制卡装回本机 ─────────
+// ── installBundledCards: install bundled custom cards back to this machine on .proc open ───
 function tmpRoot() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-install-test-'));
   return { root, history: path.join(root, '.pc-work', 'card-history'), user: path.join(root, 'src', 'cards', 'user') };
@@ -419,7 +432,7 @@ test('install: same on this machine → leave alone; different → the project w
   assert.match(fs.readFileSync(path.join(user, 'price-tag.tsx'), 'utf8'), /¥2/);
   assert.match(fs.readFileSync(path.join(root, r.backup), 'utf8'), /¥1/, 'The backup holds the replaced old local version');
 
-  // 两个项目来回打开:同一份旧版只备一次,不会越积越多
+  // Opening two projects back and forth: the same old version is backed up once and does not accumulate
   installBundledCards({ root, historyDir: history, cards: [{ id: 'price-tag', source: GOOD }], existingIds: [] });
   installBundledCards({ root, historyDir: history, cards: [{ id: 'price-tag', source: V2 }], existingIds: [] });
   assert.equal(fs.readdirSync(history).length, 2);

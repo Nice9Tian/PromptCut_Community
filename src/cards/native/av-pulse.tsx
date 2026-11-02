@@ -11,16 +11,16 @@ function Pulse({ params, t = 0 }: CardProps<Params>) {
   </div>;
 }
 export const audiovisualPulse: CardDef<Params> = {
-  id: "av-pulse", name: "Audio-visual cue pulse", source: "native",
-  description: "A ring expands with a short notification sound; the visual and the sound belong to the same clip and can be muted independently.",
-  useWhen: "Use when a short confirmation motion graphic needs to sync precisely with a notification sound; the card sound is generated after adding.",
+  id: "av-pulse", name: "声画提示脉冲", source: "native",
+  description: "圆环随短提示音扩散；画面与声音属于同一片段，可独立静音。",
+  useWhen: "需要短促的确认动效与提示音精确同步时；添加后生成卡片声音。",
   frameMode: "direct", kind: "animation", inputs: {},
   defaults: { color: "#60a5fa", frequency: 880, gain: 0.3, duration: 0.3 },
   controls: [
-    { key: "color", label: "Color", type: "color" },
-    { key: "frequency", label: "Frequency", type: "number", min: 80, max: 3000 },
-    { key: "gain", label: "Sound level", type: "number", min: 0, max: 1, step: 0.05 },
-    { key: "duration", label: "Pulse duration", type: "number", min: 0.08, max: 2, step: 0.01 },
+    { key: "color", label: "颜色", type: "color" },
+    { key: "frequency", label: "频率", type: "number", min: 80, max: 3000 },
+    { key: "gain", label: "声音强度", type: "number", min: 0, max: 1, step: 0.05 },
+    { key: "duration", label: "脉冲时长", type: "number", min: 0.08, max: 2, step: 0.01 },
   ],
   Component: Pulse,
   audio: (_sources, range, params) => cardSoundBlock(createNotificationRecipe({ frequency: params.frequency, gain: params.gain, duration: params.duration }), range),

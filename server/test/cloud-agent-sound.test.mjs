@@ -1,17 +1,26 @@
 /**
- * 云端 Agent 的音效合成(`server/agent/service/hosted-sound.mjs`;契约 `docs/plan/cloud-agent-contract.md` 第 9.4a 节)。
- * 跑:node scripts/test-suite.mjs server/test/cloud-agent-sound.test.mjs
+ * Sound effect synthesis for Cloud Agent (`server/agent/service/hosted-sound.mjs`; contract
+ * `docs/plan/cloud-agent-contract.md` section 9.4a).
+ * Run: node scripts/test-suite.mjs server/test/cloud-agent-sound.test.mjs
  *
- *   CA-SND-01  提示音与键盘声:云端合成出的 WAV 与桌面版入口(`renderSoundEffectWavInWorker`)同一份配方合成的**逐样本相同**,
- *              内容哈希与钉死的值相同;项目里多了素材(带配方与内容哈希)与片段(带配方、requestId、落点);
- *              键盘声给 sourceClipId 时复用打字机卡片的文字与节奏,落在同一个起点
- *   CA-SND-02  幂等、取消、过期、只读、上限:同一个 requestId 重试不再合成、不多出片段;同一个 requestId 换配方被拒;
- *              只读成员在合成之前就被拒(不合成、不上传);取消后不上传、不提交;合成期间片段被改,旧结果不应用;
- *              队列满了拒;失败原因带回
- *   CA-SND-03  作业表按实例分:另一个实例(别的项目或别的成员)看不到、取消不了这边的作业;作业号不是顺序号
- *   CA-SND-04  进程级的合成名额:两个实例同时合成时不重叠;排队时取消不占名额
+ *   CA-SND-01  Notification and keyboard sounds: WAV synthesized in cloud is **sample-identical**
+ *              to the synthesis from the same recipe at desktop app entry point
+ *              (`renderSoundEffectWavInWorker`), with content hash matching pinned value;
+ *              project gains assets (with recipe and content hash) and clips (with recipe,
+ *              requestId, drop target); when sourceClipId is provided for keyboard sound,
+ *              reuses typing card text and rhythm, landing at the same start point
+ *   CA-SND-02  Idempotency, cancellation, expiration, read-only, limit: retrying same requestId
+ *              does not re-synthesize or create extra clips; changing recipe for same requestId
+ *              is rejected; read-only members rejected before synthesis (no synthesis, no upload);
+ *              after cancellation, no upload or commit; if clip is modified during synthesis,
+ *              old results are not applied; rejects when queue full; returns failure reason
+ *   CA-SND-03  Job table per instance: another instance (other project or other member) cannot
+ *              see or cancel jobs here; job id is not sequential
+ *   CA-SND-04  Process-level synthesis quota: two instances synthesizing simultaneously do not
+ *              overlap; cancellation while queued does not take quota
  *
- * 不出网;素材服务与文档服务是替身(真的链路由 `scripts/probes/cloud-agent-sound-probe.mjs` 对着托管组合验)。
+ * No egress; asset service and document service are stubs (the real chain is verified by
+ * `scripts/probes/cloud-agent-sound-probe.mjs` against the hosted suite).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -36,7 +45,7 @@ async function setup(t) {
   const host = await loadSsrHost((id) => vite.ssrLoadModule(id));
   const desktop = await vite.ssrLoadModule('/src/audio/soundGenerationWorkerClient.ts');
   const slot = createSlot();
-  /** 一个实例的替身:项目副本、素材服务、文档服务的提交 */
+  /** Stub for an instance: project replica, asset service, document service commit */
   function instance(projectId, { readOnly = false, putDelayMs = 0, renderHook = null } = {}) {
     const st = { project: baseProject(projectId), puts: [], commits: 0, usage: [], state: newSoundState(), beforeCommit: null };
     const h = renderHook ? { ...host, sound: { ...host.sound, renderWav: (recipe, o) => renderHook(recipe, o, host.sound.renderWav) } } : host;
@@ -70,7 +79,7 @@ test('CA-SND-01 WAV synthesized in the cloud is sample-for-sample identical to t
   const { host, desktop, instance } = await setup(t);
   const a = instance('p-snd');
 
-  // 提示音:放在 1 秒处
+  // Notification sound: placed at 1 second
   const chime = await a.tools.sound_generate({ preset: 'notification', start: 1, requestId: 'chime-1', name: '叮', params: { frequency: 660, notes: [0, 4, 7] }, seed: 3 });
   assert.equal(chime.ok, true, JSON.stringify(chime));
   assert.equal(chime.state, 'succeeded');
@@ -91,11 +100,12 @@ test('CA-SND-01 WAV synthesized in the cloud is sample-for-sample identical to t
   assert.match(clip1.soundEffect.reuseKey, /^sound-effect-sha256:[a-f0-9]{64}$/);
   assert.equal(media1.duration, media1.soundEffect.recipe.frames / media1.soundEffect.recipe.sampleRate);
 
-  // 与桌面版的入口同一份配方:逐样本相同(桌面版在 Worker 里跑的是同一个函数;这里是它在没有 Worker 的环境下的同一条路)
+  // Same recipe as the desktop app entry point: sample-identical (desktop app runs the same function
+  // in a Worker; here is the same path in an environment without Worker)
   const desk1 = Buffer.from(await desktop.renderSoundEffectWavInWorker(structuredClone(media1.soundEffect.recipe)));
   assert.equal(desk1.length, a.puts[0].length);
   assert.ok(desk1.equals(a.puts[0]), 'Notification sound: cloud and desktop app are byte-for-byte identical');
-  // 配方本身也与桌面版从同一组参数算出来的相同
+  // The recipe itself is also identical to the one computed from the same parameters in desktop app
   const planned = host.sound.plan(baseProject('p-snd'), { preset: 'notification', start: 1, requestId: 'x', params: { frequency: 660, notes: [0, 4, 7] }, seed: 3 });
   assert.deepEqual(planned.recipe, media1.soundEffect.recipe);
   assert.equal(a.puts[0].toString('latin1', 0, 4), 'RIFF');
@@ -105,7 +115,7 @@ test('CA-SND-01 WAV synthesized in the cloud is sample-for-sample identical to t
   for (let i = 44; i < a.puts[0].length; i += 2) if (a.puts[0].readInt16LE(i) !== 0) nonzero += 1;
   assert.ok(nonzero > 1000, 'Not silence');
 
-  // 键盘声:复用打字机卡片的文字与节奏,落在它的起点
+  // Keyboard sound: reuses typing card text and rhythm, landing at its start point
   const keys = await a.tools.sound_generate({ preset: 'keyboard', sourceClipId: 'typing', requestId: 'keys-1' });
   assert.equal(keys.ok, true, JSON.stringify(keys));
   const media2 = a.project.media.find((m) => m.id === keys.result.mediaId);
@@ -118,25 +128,29 @@ test('CA-SND-01 WAV synthesized in the cloud is sample-for-sample identical to t
   const desk2 = Buffer.from(await desktop.renderSoundEffectWavInWorker(structuredClone(media2.soundEffect.recipe)));
   assert.ok(desk2.equals(a.puts[1]), 'Keyboard sound: cloud and desktop app are byte-for-byte identical');
 
-  // 钉死的内容哈希:Node 或合成内核变了、与已经入库的旧素材不再相同时,这里先红
+  // Pinned content hash: turns red first if Node or synthesis kernel changes and no longer matches
+  // old stored assets
   const pinned = { chime: sha256(a.puts[0]), keys: sha256(a.puts[1]) };
   console.log('CA-SND-01', JSON.stringify({ ...pinned, chimeBytes: a.puts[0].length, keysBytes: a.puts[1].length }));
   assert.deepEqual(pinned, PINNED);
 
-  // 只进素材库(不传 start):有素材、没有片段
+  // Only enters media library (start not passed): has asset, no clip
   const lib = await a.tools.sound_generate({ preset: 'notification', requestId: 'lib-1' });
   assert.equal(lib.ok, true);
   assert.equal(lib.result.clipId, undefined);
   assert.ok(a.project.media.some((m) => m.id === lib.result.mediaId));
 
-  // 用量:每次合成一行,按字节
+  // Usage: one row per synthesis, in bytes
   assert.deepEqual(a.usage.map((u) => [u.service, u.vendor, u.model, u.unit, u.ok]), [
     ['sound', 'builtin', 'notification', 'bytes', true], ['sound', 'builtin', 'keyboard', 'bytes', true], ['sound', 'builtin', 'notification', 'bytes', true],
   ]);
   assert.equal(a.usage[0].units, a.puts[0].length);
 });
 
-/** CA-SND-01 钉死的内容哈希(同一份配方在桌面版的浏览器里合成出来也是它:`cloud-agent-sound-probe` 的 S4 对着真浏览器比) */
+/**
+ * CA-SND-01 Pinned content hash (the same recipe synthesized in the desktop app browser matches
+ * this too: S4 of `cloud-agent-sound-probe` compares against a real browser)
+ */
 const PINNED = { chime: '9af90898ad856b9a7a04f92d1e7dcdd01630af09b6b1e2d9bb1736de02321772', keys: '649e4ac2176e651b3dce41d41a2b57732ea96c58a0877154a698b4701db4d078' };
 
 test('CA-SND-02 idempotency, cancel, stale, read-only, limit', { timeout: 120_000 }, async (t) => {
@@ -184,7 +198,7 @@ test('CA-SND-02 idempotency, cancel, stale, read-only, limit', { timeout: 120_00
     assert.equal(a.puts.length, 0);
     assert.equal(a.commits, 0);
     assert.equal(a.project.media.length, 0);
-    // 取消过的 requestId 可以重来
+    // A canceled requestId can be retried
     const redo = await a.tools.sound_generate({ preset: 'notification', start: 1, requestId: 'c1' });
     assert.equal(redo.ok, true);
     await assert.rejects(a.tools.sound_cancel({ jobId: 'sound-nope' }), /Sound effect job not found/);
@@ -198,7 +212,8 @@ test('CA-SND-02 idempotency, cancel, stale, read-only, limit', { timeout: 120_00
       a.beforeCommit = null;
     };
     const out = await a.tools.sound_generate({ preset: 'keyboard', sourceClipId: 'typing', requestId: 's1' });
-    // 状态是否为 stale 见下面标 todo 的用例:服务端靠 /已改变|已切换/ 认旧结果过期,src 的错误现在是英文
+    // For whether the status is stale, see the test case marked todo below: the server relies on
+    // /changed|switched/ to identify expired old results, but errors in src are now in English.
     assert.equal(out.ok, false, JSON.stringify(out));
     assert.match(out.error, /original typing clip has changed/);
     assert.equal(a.project.media.length, 0, 'The asset was uploaded but not registered in the project');
@@ -214,7 +229,7 @@ test('CA-SND-02 idempotency, cancel, stale, read-only, limit', { timeout: 120_00
     assert.equal(regen.ok, false, JSON.stringify(regen));
     const kept = clipsOf(a.project).find((c) => c.id === ok.result.clipId);
     assert.equal(kept.mediaId, ok.result.mediaId, 'The old sound effect stays unchanged');
-    // 没有被改时重生成:同一个片段换了素材,位置不变
+    // Regenerate when unmodified: the same clip swaps asset, position unchanged
     const regen2 = await a.tools.sound_generate({ clipId: ok.result.clipId, params: { frequency: 440 }, requestId: 's4' });
     assert.equal(regen2.ok, true, JSON.stringify(regen2));
     assert.equal(regen2.result.clipId, ok.result.clipId);
@@ -223,9 +238,11 @@ test('CA-SND-02 idempotency, cancel, stale, read-only, limit', { timeout: 120_00
     assert.deepEqual([after.start, after.audioVolume, after.soundEffect.recipe.params.frequency], [8, 0.5, 440]);
   });
 
-  // 疑似产品问题:server/agent/service/hosted-sound.mjs 第 123 行用 /已改变|已切换/ 判断提交回调抛的是「旧结果过期」,
-  // 而 src/store/actions/sound.ts:30 抛的已是英文 "The original typing clip has changed, ..."(tr),认不出,状态落成 failed 而不是 stale。
-  // 修好后去掉 todo。
+  // Suspected product issue: server/agent/service/hosted-sound.mjs line 123 uses /changed|switched/ to
+  // check if the commit callback threw "old result expired", but src/store/actions/sound.ts:30
+  // already throws English "The original typing clip has changed, ..."(tr); unrecognized, so status
+  // ends up failed rather than stale.
+  // Remove todo once fixed.
   await t.test('An expired state is stale (the old result is not applied)', async () => {
     const a = instance('p-stale-state');
     a.beforeCommit = () => {
@@ -278,11 +295,11 @@ test('CA-SND-03 / CA-SND-04 the job table is split per instance; only one synthe
   assert.equal(ja.length, 1);
   assert.equal(jb.length, 2);
   assert.ok(ja.every((j) => /^sound-[a-f0-9]{12}$/.test(j.jobId)), 'Job IDs carry a random number, not a sequence number');
-  // 乙实例看不到、查不到、取消不了甲实例的作业
+  // Instance B cannot see, query, or cancel jobs of instance A
   assert.equal(jb.some((j) => j.jobId === ja[0].jobId), false);
   await assert.rejects(b.tools.sound_status({ jobId: ja[0].jobId }), /Sound effect job not found/);
   await assert.rejects(b.tools.sound_cancel({ jobId: ja[0].jobId }), /Sound effect job not found/);
-  // 排队中的取消:不占名额、不合成
+  // Cancellation while queued: does not take quota, does not synthesize
   const queued = jb.find((j) => j.state === 'queued');
   assert.ok(queued, 'B\'s second one is queued');
   assert.equal((await b.tools.sound_cancel({ jobId: queued.jobId })).state, 'cancelled');

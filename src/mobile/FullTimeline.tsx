@@ -1,8 +1,13 @@
 /**
- * 完整时间轴(语义 `workflow/editing.md`「手机版界面」;演示稿第四、十轮):按时间缩放、刻度、多轨、播放头,
- * 选中片段后两端有手柄。空白处按住左右拖 = 横向滑动(播放头不动),点空白处 = 取消选中,点或拖刻度尺 = 移动播放头。
- * 缩放:「−」「＋」以播放头为中心,「适应宽度」,双指捏合以两指中点为中心;捏合时不拖动、不选中、不移动播放头。
- * 拖片段在本地预览,松手才调一次 `moveClip`(一次拖动 = 一步撤销)。主轨上的段位置由顺序决定,只能拖两端改时长。
+ * Full timeline (semantics `workflow/editing.md` "Mobile app interface"; demo rounds 4 and 10): zoom by
+ * time, ticks, multiple tracks, playhead, handles at both ends after a clip is selected. Press and
+ * drag left or right on blank space = horizontal scroll (the playhead stays), tap on blank space =
+ * deselect, tap or drag the ruler = move the playhead.
+ * Zoom: "−" and "+" center on the playhead, "Fit width", and two-finger pinch centers on the midpoint
+ * of the two fingers; during a pinch there is no dragging, no selecting and no playhead moving.
+ * Dragging a clip previews locally, and `moveClip` is called once on release (one drag = one undo
+ * step). The position of a segment on the main track is determined by order, only dragging the two
+ * ends to change the duration is allowed.
  */
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import type { Project, Track, TrackClip } from "../kernel/project";
@@ -15,9 +20,9 @@ import { planOverlayBadge } from "./overlayBadge";
 import { Icon } from "./icons";
 import { tr as trText } from "../i18n/index.ts";
 
-/** 捏合松手后这么久内不把抬手当成点击 */
+/** For this long after a pinch is released, lifting the finger is not treated as a tap */
 const PINCH_GRACE_MS = 350;
-/** 拖动吸附到 0.5 秒 */
+/** Dragging snaps to 0.5 seconds */
 const SNAP = 0.5;
 
 export interface FullTimelineHandle { fit: () => void }
@@ -44,11 +49,11 @@ export const FullTimeline = forwardRef<FullTimelineHandle, {
   onScrub: (t: number) => void;
   onCommitMove: (clipId: string, patch: { start: number; end: number }) => void;
   onAlign: (which: "start" | "end") => void;
-  /** 点片段上的叠加卡角标:选中这一段并把「调整」开到叠加卡那一节 */
+  /** Tap the overlay card badge on a clip: select this segment and open "Adjust" at the overlay card section */
   onOverlays: (clipId: string) => void;
-  /** 只读项目(游客):拖动平移 / 改起止、对齐播放头都不接,点选、缩放、播放头照常 */
+  /** Read-only project (guest): dragging to pan / change start and end, and aligning to the playhead are not wired up; tap-select, zoom and playhead work as usual */
   locked?: boolean;
-  /** 置灰时的悬停说明(`viewOnlyText()` 那一句,由调用方给) */
+  /** Hover hint when greyed out (the `viewOnlyText()` sentence, supplied by the caller) */
   lockedWhy?: string;
 }>(function FullTimeline(props, ref) {
   const { project, selected } = props;
@@ -59,7 +64,7 @@ export const FullTimeline = forwardRef<FullTimelineHandle, {
   const [drag, setDrag] = useState<Drag>(null);
   const sc = useRef<HTMLDivElement>(null);
   const inner = useRef<HTMLDivElement>(null);
-  /** 捏合:两个手指的 pointerId → 位置;代号每次开始 / 结束捏合 +1,拖到一半被捏合打断的手势据此作废 */
+  /** Pinch: pointerId of the two fingers → position; the token is +1 each time a pinch starts / ends, and a gesture whose drag was interrupted by a pinch is invalidated by it */
   const pinch = useRef<{ d0: number; px0: number; tA: number } | null>(null);
   const pinchGen = useRef(0);
   const pinchUntil = useRef(0);
@@ -80,7 +85,7 @@ export const FullTimeline = forwardRef<FullTimelineHandle, {
     applyZoom(fitPx(el.clientWidth, total), 0);
   };
   useImperativeHandle(ref, () => ({ fit }));
-  // 进入时间轴默认「适应宽度」
+  // Entering the timeline defaults to "Fit width"
   useEffect(() => { requestAnimationFrame(fit); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
   const zoomBy = (f: number) => {
@@ -89,7 +94,7 @@ export const FullTimeline = forwardRef<FullTimelineHandle, {
     applyZoom(r.px, r.scrollLeft);
   };
 
-  // 播放时让播放头保持在可视范围
+  // While playing, keep the playhead within the visible range
   useEffect(() => {
     const el = sc.current;
     if (!el || !props.playing) return;
@@ -98,7 +103,7 @@ export const FullTimeline = forwardRef<FullTimelineHandle, {
     if (x < el.scrollLeft) el.scrollLeft = Math.max(0, x - 60);
   }, [props.t, props.playing, px]);
 
-  // 双指捏合:捕获阶段先拿到两个触点,第二根手指不再触发选中、拖空白等
+  // Two-finger pinch: get both touch points first in the capture phase, so the second finger no longer triggers selecting, dragging on blank space, etc.
   useEffect(() => {
     const el = sc.current!;
     const pts = () => [...ptrs.current.values()];
@@ -146,7 +151,7 @@ export const FullTimeline = forwardRef<FullTimelineHandle, {
     return Math.max(0, Math.min(total, (clientX - r.left - TL_PAD) / pxRef.current));
   };
 
-  /** 刻度尺:点或拖 = 移动播放头。触屏等手指动了或抬起再动,免得捏合起手时误动 */
+  /** Ruler: tap or drag = move the playhead. On touch screens wait until the finger has moved or been lifted and moved again, to avoid accidental moves at the start of a pinch */
   const onRulerDown = (e: React.PointerEvent) => {
     e.stopPropagation();
     const g = pinchGen.current, touch = e.pointerType !== "mouse";
@@ -162,7 +167,7 @@ export const FullTimeline = forwardRef<FullTimelineHandle, {
     window.addEventListener("pointerup", up);
   };
 
-  /** 空白处:按住左右拖 = 横向滑动;点一下 = 取消选中 */
+  /** Blank space: press and drag left or right = horizontal scroll; tap once = deselect */
   const onBlankDown = (e: React.PointerEvent) => {
     const el = sc.current!;
     const x0 = e.clientX, sl0 = el.scrollLeft, g = pinchGen.current;
@@ -181,13 +186,13 @@ export const FullTimeline = forwardRef<FullTimelineHandle, {
     window.addEventListener("pointerup", up);
   };
 
-  /** 片段:点选;选中后拖动平移,拖两端改起止;主轨只能拖两端 */
+  /** Clip: tap to select; once selected, drag to pan, drag the two ends to change start and end; on the main track only the two ends can be dragged */
   const onClipDown = (e: React.PointerEvent, c: TrackClip, onMain: boolean) => {
     e.stopPropagation();
     const g0 = pinchGen.current;
     if (selected !== c.id) {
       if (e.pointerType === "mouse") { props.onSelect(c.id); return; }
-      // 触屏:抬手时才算选中,这样双指捏合起手落在片段上也不会选中它
+      // Touch screen: only count as selected when the finger lifts, so a two-finger pinch starting on a clip does not select it either
       const x0 = e.clientX;
       let moved = false;
       const mv = (ev: PointerEvent) => { if (Math.abs(ev.clientX - x0) > 6) moved = true; };
@@ -221,7 +226,7 @@ export const FullTimeline = forwardRef<FullTimelineHandle, {
       window.removeEventListener("pointermove", mv);
       window.removeEventListener("pointerup", up);
       setDrag(null);
-      if (pinching(g) || !moved) return; // 捏合打断了拖动:还原,不记撤销
+      if (pinching(g) || !moved) return; // A pinch interrupted the drag: restore, no undo record
       if (Math.abs(cur.start - s0) > 1e-6 || Math.abs(cur.end - e0) > 1e-6) props.onCommitMove(c.id, { start: cur.start, end: cur.end });
     };
     window.addEventListener("pointermove", mv);
@@ -257,8 +262,9 @@ export const FullTimeline = forwardRef<FullTimelineHandle, {
                     >
                       <span className="h l" />
                       {clipName(project, c, props.cardName)}
-                      {/* 叠加卡:手机上不画带(带里的卡片低于能点中的尺寸),只留一个计数角标。
-                          最窄那一档不吃点击 —— 角标几乎就是整个片段,入口交给子导航的「叠加层」 */}
+                      {/* Overlay card: on mobile, strips are not drawn (cards in strips are smaller than clickable size),
+                          leaving only a count badge. The narrowest tier ignores clicks: the badge spans almost the entire
+                          clip, delegating the entry point to "Overlay layer" in sub-navigation */}
                       {(() => {
                         const plan = planOverlayBadge(
                           Math.max((d.end - d.start) * px - 2, 18),
@@ -273,7 +279,7 @@ export const FullTimeline = forwardRef<FullTimelineHandle, {
                           : <span className="ovm is-flat" data-pcm="clip-overlays" title={title}>{plan.text}</span>;
                       })()}
                       {c.audioMuted && <span className="mute"><Icon name="mute" />{trText("Muted")}</span>}
-                      {/* 变速段:写明倍数和「无原声」(〔裁〕第一版变速段不出原声,kernel/clipTime.mjs) */}
+                      {/* Speed-change segment: show the multiplier and "no original audio" ([ruling] the first version of speed-change segments outputs no original audio, kernel/clipTime.mjs) */}
                       {!c.audioMuted && clipMakesNoSound(project, c) && <span className="mute" data-pcm="clip-speed" title={trText("Speed-changed clips play no original audio")}><Icon name="mute" />{trText("{0} no original audio", speedLabel(clipSpeed(c)))}</span>}
                       <span className="h r" />
                     </div>

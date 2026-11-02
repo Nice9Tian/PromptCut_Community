@@ -8,20 +8,27 @@ import { localCollab } from "./sync/collab";
 import { tr } from "../i18n/index.ts";
 
 /**
- * 「在手机上打开」(语义 `workflow/editing.md`「局域网里的第二块屏」)。
+ * "Open on phone" (semantics `workflow/editing.md` "second screen on the LAN").
  *
- * 跨设备进同一个项目走的是**共享项目**那条路:项目设成「多用户协作 + 放本机」之后,主机在本网段广播,
- * 局域网里的设备凭**邀请链接**加入(`<主机局域网源>/editor#invite=<码>`,规则见 `server/auth/invite.mjs`)。
- * 这个窗口做的就是把那条链接连同二维码摆出来,手机扫一下就进 —— 界面跟身份走,手机拿到的是手机版界面。
+ * Cross-device entry into the same project takes the **shared project** path: once the project is set to
+ * "multi-user collaboration + keep on this machine", the host broadcasts on this network segment, and
+ * devices on the LAN join with an **invite link** (`<host LAN origin>/editor#invite=<code>`, rules in
+ * `server/auth/invite.mjs`). What this dialog does is lay out that link together with a QR code, so the
+ * phone scans it and gets in: the UI follows identity, and the phone gets the mobile app UI.
  *
- * 三种情况三种说法:
- *   1. 项目还不是「多用户协作 + 放本机」:说清去哪儿开(项目设置里的「多用户协作」),这里不替用户改项目;
- *   2. 是,但编辑器只绑在回环上:链接给了手机也连不上,先说怎么起(`npm run dev:lan`);
- *   3. 都齐了:给链接 + 二维码。链接的源是文档服务的 base(`collab.ts` 的 `linkOriginOf`),正常就是主机的
- *      局域网地址;主机有几块网卡时未必是用户要的那一块,所以拿 `/api/lan-open` 的地址表核对一下,不对就说明。
+ * Three cases, three messages:
+ *   1. The project is not yet "multi-user collaboration + keep on this machine": say where to turn it on
+ *      ("multi-user collaboration" in project settings); this dialog does not change the project for the user;
+ *   2. It is, but the editor is bound to loopback only: the phone could not connect with the link, so say
+ *      how to start it first (`npm run dev:lan`);
+ *   3. All set: give the link + QR code. The link origin is the document service base (`linkOriginOf` in
+ *      `collab.ts`), which is normally the host's LAN address; when the host has several network cards it
+ *      may not be the one the user wants, so check it against the address list from `/api/lan-open` and
+ *      explain if it does not match.
  *
- * 邀请码本身不在这里签:签发要当场的创建者密码,入口在项目设置的「多用户协作」里(`sync/CollabSection.tsx`
- * 的「作废并重新生成邀请码」)。这里只显示已经签好的那一张。
+ * The invite code itself is not signed here: signing needs the creator password on the spot, and the entry
+ * is in "multi-user collaboration" in project settings ("revoke and regenerate invite code" in
+ * `sync/CollabSection.tsx`). This only shows the one already signed.
  */
 
 interface LanOpenInfo {
@@ -61,7 +68,7 @@ export function LanOpenDialog({ onClose }: { onClose: () => void }): JSX.Element
         <div className="pc-dialog-body">
           {error && <p className="text-sm mb-3" style={{ color: "var(--ui-danger)" }} data-pc="lan-open-error">{tr("Could not get this machine's network info: {0}", error)}</p>}
 
-          {/* 1. 还不是「多用户协作 + 放本机」 */}
+          {/* 1. Not yet "multi-user collaboration + keep on this machine" */}
           {!onLan && (
             <div data-pc="lan-open-not-shared">
               <p className="text-neutral-300 text-sm mb-2">
@@ -73,7 +80,7 @@ export function LanOpenDialog({ onClose }: { onClose: () => void }): JSX.Element
             </div>
           )}
 
-          {/* 2. 是放本机，但编辑器只绑回环 */}
+          {/* 2. Kept on this machine, but the editor is bound to loopback only */}
           {onLan && info && !info.lanHost && (
             <div data-pc="lan-open-off">
               <p className="text-neutral-300 text-sm mb-2">{tr("The editor is currently bound only to the local loopback address, so the phone cannot connect.")}</p>
@@ -87,7 +94,7 @@ export function LanOpenDialog({ onClose }: { onClose: () => void }): JSX.Element
             </div>
           )}
 
-          {/* 3. 都齐了：给链接和二维码 */}
+          {/* 3. All set: give the link and the QR code */}
           {onLan && info?.lanHost && (
             invite ? (
               <div data-pc="lan-open-invite">

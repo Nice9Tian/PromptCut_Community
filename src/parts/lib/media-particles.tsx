@@ -3,9 +3,9 @@ import { ParticlesView } from "../../cards/native/particles";
 import { assetOptions } from "../../cards/catalogAssets";
 
 /**
- * 粒子背景。
- * 从 particles 卡片拆出的媒体部件，铺满整个画面。
- * 进场: 随机生成，实时漂浮。
+ * Particle background.
+ * Media part extracted from particles card, covering the entire frame.
+ * Entrance: randomly generated, floating in real time.
  */
 interface Params {
   config: string;

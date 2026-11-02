@@ -1,8 +1,10 @@
 /**
- * M7 层表 v 3 的页面读法（`docs/plan/m7-contract.md` D12：每层带候选；页面读 v 2 时当作一个候选）。
- * 跑：node --test src/render/m7-layer-candidates.test.mjs
+ * How the page reads M7 layer table v 3 (`docs/plan/m7-contract.md` D12: each layer includes
+ * candidates; when the page reads v 2 it is treated as a single candidate).
+ * Run: node --test src/render/m7-layer-candidates.test.mjs
  *
- * 只管解析与兼容；「哪一份活着」由页面节点分支按 task.done 与清单认定，不在这里。
+ * Only handles parsing and compatibility; "which one is alive" is determined by the page node
+ * branch based on task.done and the manifest, not here.
  */
 import test from "node:test";
 import assert from "node:assert/strict";

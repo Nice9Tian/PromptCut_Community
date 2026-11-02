@@ -3,8 +3,9 @@ import type { PartDef, PartProps } from "../../kernel/partTypes";
 import { fitOr } from "../fit";
 
 /**
- * 钉板要点:一列黑底圆角条,逐条「钉」上来(缩小弹入)。从 pin-board 的要点列表拆出来。
- * 每条的进场间隔由 stepMs 决定,所以落定时刻随条数变。
+ * Pin board key points: a column of black rounded bars, "pinned" on one by one (scale-down spring-in).
+ * Extracted from pin-board's key points list.
+ * Entrance interval for each item is determined by stepMs, so settling time varies with the number of items.
  */
 interface Params {
   items: string;
@@ -14,7 +15,7 @@ interface Params {
 
 function PinsPart({ params, width, height }: PartProps<Params>) {
   const items = params.items.split("|").filter(Boolean);
-  // size 0 = 按框算:每条一行,行高算上内边距(12px×2)和条间距(16px)
+  // size 0 = calculate from box: one line per item, line height includes padding (12px × 2) and bar spacing (16px)
   const size = fitOr(params.size, { width: width - 32 - 56, height: height - 16 * Math.max(0, items.length - 1), text: params.items, splitter: "|", lineHeight: 1.25 + 24 / 36, max: 120 });
   return (
     <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", gap: 16, alignItems: "flex-start", justifyContent: "center", padding: "0 16px" }}>

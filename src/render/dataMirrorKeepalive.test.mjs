@@ -1,10 +1,14 @@
 /**
- * 播放保活的页面一侧:播放中每隔 `PLAYHEAD_KEEPALIVE_MS` 向 `/api/data/playhead` 发一条 `{session, t, playing: true}`,
- * 免得预渲染进程在「播放头下没有缺口」时误判用户不在播放(`FramePipeline.streamBusy()` 只认 5 秒内有过音讯的「在播」)。
- * 跑:node --experimental-test-module-mocks --test src/render/dataMirrorKeepalive.test.mjs
+ * Page side of playback keepalive: during playback, sends `{session, t, playing: true}` to
+ * `/api/data/playhead` every `PLAYHEAD_KEEPALIVE_MS`, preventing the prerender process from
+ * misjudging that the user is not playing when there is "no gap under the playhead"
+ * (`FramePipeline.streamBusy()` only considers "playing" if there was activity within 5 seconds).
+ * Run: node --experimental-test-module-mocks --test src/render/dataMirrorKeepalive.test.mjs
  *
- * 保活走和 `wanted` 同一条轻路:`keepalive: true`、不读响应、失败静默。停下时原有的「停下推一次」不动。
- * 只读观看页、舞台页、导出页、在线页面不做镜像,所以也不发保活。
+ * Keepalive takes the same lightweight path as `wanted`: `keepalive: true`, does not read
+ * responses, and fails silently. On stop, the existing "push once on stop" remains untouched.
+ * Read-only watch pages, stage pages, export pages, and online pages do not mirror, so they
+ * do not send keepalive either.
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import { test, mock, beforeEach, afterEach } from "node:test";
@@ -12,7 +16,7 @@ import assert from "node:assert/strict";
 
 globalThis.window = globalThis;
 
-// 一个最小的 store:getState / subscribe / 手动 emit
+// A minimal store: getState / subscribe / manual emit
 const listeners = new Set();
 let storeState = { project: { id: "p", tracks: [], duration: 10, fps: 30, width: 1280, height: 720 }, t: 0, playing: false };
 const setStore = (patch) => { storeState = { ...storeState, ...patch }; for (const l of [...listeners]) l(); };
@@ -24,11 +28,14 @@ let online = false;
 mock.module(srcUrl("online/pageFlag.ts"), { namedExports: { onlinePage: () => online } });
 
 const mirror = await import(srcUrl("render/dataMirror.ts"));
-/** 每个用例起的镜像,用例结束(含断言失败)统一收掉,免得下一个用例看到上一个的状态 */
+/**
+ * Mirrors started by each test case are cleaned up when the case finishes (including assertion
+ * failures), so the next case does not see state from the previous one
+ */
 const disposers = [];
 const startMirror = () => { const d = mirror.startDataMirror(); disposers.push(d); return d; };
 
-/** 记下发出去的每一条 `/api/data/playhead` */
+/** Records every outgoing `/api/data/playhead` */
 let calls = [];
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 const heads = () => calls.filter((c) => c.url === "/api/data/playhead");
@@ -49,7 +56,10 @@ beforeEach(() => {
 });
 afterEach(() => { while (disposers.length) disposers.pop()(); mock.timers.reset(); });
 
-/** 推进 ms 毫秒,每 100 毫秒让出一次(播放中 store 每帧都变,这里也模拟 t 在走) */
+/**
+ * Advances ms milliseconds, yielding every 100 milliseconds (during playback the store changes
+ * every frame; here we also simulate t moving forward)
+ */
 async function run(ms) {
   for (let i = 0; i < ms / 100; i++) {
     mock.timers.tick(100);
@@ -83,7 +93,7 @@ test("during playback, send a {session, t, playing: true} at most every 2 second
   const gaps = list.slice(1).map((c, i) => c.at - list[i].at);
   assert.ok(Math.max(...gaps) <= 2000, `the interval between adjacent messages is at most 2 seconds, max ${Math.max(...gaps)}`);
   assert.ok(list[0].at - 1_000_500 <= 2000, "the first keepalive after playback starts also arrives within 2 seconds");
-  // t 是发的那一刻的播放头,不是起播时的
+  // t is the playhead at the moment of sending, not when playback started
   assert.ok(list.at(-1).body.t > list[0].body.t);
   stop();
 });

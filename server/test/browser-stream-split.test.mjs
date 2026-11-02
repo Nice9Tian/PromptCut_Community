@@ -1,12 +1,17 @@
 /**
- * 单卡轨道流多出浏览器那一份(`docs/plan/browser-stream-task.md` 第一、二处):切分与节点侧过滤。
+ * Single-card track streams produce an extra browser copy (`docs/plan/browser-stream-task.md`
+ * parts 1 and 2): splitting and node-side filtering.
  *
- *   BS-01～BS-09  切分:浏览器那一份的形状;只给单卡流;组流、画布卡、重度为「重」的卡、锁在别处的卡不出;
- *                 切分方自己的那一份一个字不变;锁、接手、用户卡与素材效果卡、`browserOnly`
- *   BS-10～BS-14  过滤:规则 2 只看任务自己写的 `requires.transcode`;切分方的流任务行为不变;规则 7 对浏览器流任务的形状闸
- *   BS-15         调用方:`queueStreamOf` 给切分的形状、清单计划只给浏览器出流(`local-node.mjs` 的 `listPlanOverrides`)
+ *   BS-01~BS-09  Splitting: shape of the browser copy; only for single-card streams; group streams,
+ *                canvas cards, cards with heaviness "heavy", cards locked elsewhere not emitted;
+ *                splitter's own copy unchanged word for word; locks, takeover, user cards and
+ *                media effect cards, `browserOnly`
+ *   BS-10~BS-14  Filtering: Rule 2 only checks `requires.transcode` written by task itself;
+ *                splitter stream task behavior unchanged; Rule 7 shape gate for browser stream tasks
+ *   BS-15        Callers: `queueStreamOf` provides shapes for splitting; manifest plan emits
+ *                streams only for the browser (`listPlanOverrides` in `local-node.mjs`)
  *
- * 跑:node --test server/test/browser-stream-split.test.mjs
+ * Run: node --test server/test/browser-stream-split.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,7 +26,7 @@ const BR = '2222222222222222';
 const THIRD = '3333333333333333';
 const CARD_FP = '4444444444444444';
 
-/** card plan 的一项。缺省是浏览器做得了的:共享档、独立、不是画布卡、内置卡 */
+/** One item of card plan. By default browser-capable: shared tier, standalone, not a canvas card, built-in card */
 function control(clipId, extra = {}) {
   return {
     clipId, cardId: `card-${clipId}`, snapshotKey: rk(`ck-${clipId}`, OWN), contentKey: `ck-${clipId}`, tier: 'shared',
@@ -29,13 +34,13 @@ function control(clipId, extra = {}) {
     compositing: 'independent', capabilities: { compositing: 'independent' }, ...extra,
   };
 }
-/** 切分方的 weightOf:照 `frame-pipeline.mjs` 的 queueWeightClass */
+/** Splitter's weightOf: follows queueWeightClass in `frame-pipeline.mjs` */
 function weightOf(c) {
   const comp = c.compositing ?? c.capabilities?.compositing;
   if (c.tier === 'local' || c.capabilities?.canvasHeavy === true || comp === 'belowDependent' || comp === 'unknown') return { class: 'heavy', estMs: null };
   return { class: 'medium', estMs: null };
 }
-/** `planStreams` 算出的一条单卡流,照 `queueStreamOf` 交给切分的形状(帧 45～164;分段从它自己的第一帧 45 起数,0～7) */
+/** Single-card stream calculated by `planStreams`, handed to splitting per `queueStreamOf` (frames 45~164; segments counted from its own first frame 45, 0~7) */
 function cardStream(clipId, extra = {}) {
   return {
     streamKey: rk(`sk-${clipId}`, OWN), contentKey: `sk-${clipId}`, topClipId: clipId, originFrame: 45, firstSegment: 0, lastSegment: 7,
@@ -43,7 +48,7 @@ function cardStream(clipId, extra = {}) {
     firstFrame: 45, lastFrame: 164, total: 300, ...extra,
   };
 }
-/** 旧调用方只给流键与分段范围(没有形状,也没有这条流的第一帧:不出浏览器那一份) */
+/** Legacy callers provide only stream key and segment range (no shape, nor first frame of this stream: browser copy not emitted) */
 const legacyStream = clipId => ({ streamKey: rk(`sk-${clipId}`, OWN), contentKey: `sk-${clipId}`, topClipId: clipId, firstSegment: 3, lastSegment: 10 });
 
 function split({ cardPlan, streams, browser = { nodeId: 'n-br', envFingerprint: BR }, ...rest }) {
@@ -54,7 +59,7 @@ function split({ cardPlan, streams, browser = { nodeId: 'n-br', envFingerprint: 
 }
 const ofFp = (tasks, fp) => tasks.filter(t => t.requires.envFingerprint === fp);
 
-/** 切分方自己那一份流任务原来的样子(改动前 `split.mjs` 的字面量):逐字段照抄,守「一个字不变」 */
+/** Original form of splitter's own stream task (`split.mjs` literal before changes): copied field by field, keeping "word-for-word unchanged" */
 function ownTaskBefore({ clipId, from, to, fingerprint = OWN, cardSources = {} }) {
   const resultKey = rk(`sk-${clipId}`, fingerprint);
   return {
@@ -80,7 +85,7 @@ test('BS-01 single-card stream the browser can handle: one copy from the splitte
     input: {
       clipId: 'a', cardId: 'card-a', entryKey: null, contentKey: 'sk-a', canvasHeavy: false, dual: true, compositing: 'independent',
       bake: { start: 1.5, end: 5.5, count: 120, sampling: { firstFrame: 45, phase: { numerator: 0, denominator: 1 } } },
-      // `originFrame` / `lastFrame`:这条流自己的第一帧和最后一帧,页面按它们把分段号换成帧
+      // `originFrame` / `lastFrame`: first and last frames of this stream; page uses them to convert segment numbers to frames
       stream: { kind: 'card', plane: 'local', clipIds: ['a'], fps: 30, bound: { x: -32, y: -32, w: 464, h: 304 }, offset: { x: 760, y: 420 }, firstFrame: 45, count: 120, total: 300, originFrame: 45, lastFrame: 164 },
     },
     weight: { class: 'medium', estMs: null, frames: 120 },
@@ -105,14 +110,15 @@ test('BS-02 the splitter\'s own copy is unchanged to the last character: identic
   const expected = ownTaskBefore({ clipId: 'a', from: 0, to: 7, cardSources: { 'user-x': 'user:abc' } });
   expected.input.dual = true;
   assert.deepEqual(withBrowser, [expected]);
-  // 分段多于一个任务时,两份的段一一对应
+  // When segments span more than one task, segments in both copies correspond one-to-one
   const long = split({ cardPlan, streams: [cardStream('a', { lastFrame: 45 + 20 * 15 - 1, lastSegment: 19, total: 400 })] });
   const seg = list => list.map(t => [t.range.from, t.range.to]);
   assert.deepEqual(seg(ofFp(long, OWN)), [[0, 7], [8, 15], [16, 19]]);
   assert.deepEqual(seg(ofFp(long, BR)), seg(ofFp(long, OWN)));
   assert.deepEqual(ofFp(long, BR).map(t => t.weight.frames), [120, 120, 60]);
   assert.deepEqual(ofFp(long, OWN).map(t => t.weight.frames), [120, 120, 60]);
-  // 流的末段不满 15 帧时,任务的帧数按实际算(这条流到第 337 帧为止:末段只有 8 帧),两份相同
+  // When stream's last segment is under 15 frames, task frame count uses actual frames
+  // (stream ends at frame 337: last segment has only 8 frames); both copies are identical
   const short = split({ cardPlan, streams: [cardStream('a', { lastFrame: 45 + 19 * 15 + 7, lastSegment: 19, total: 400 })] });
   assert.deepEqual(ofFp(short, OWN).map(t => t.weight.frames), [120, 120, 53]);
   assert.deepEqual(ofFp(short, BR).map(t => t.weight.frames), [120, 120, 53]);
@@ -152,11 +158,11 @@ test('BS-04 canvas cards, cards whose heaviness is "heavy", local tier, cards ma
     assert.deepEqual(tasks.map(t => t.requires.envFingerprint), [OWN], name);
     assert.equal('dual' in tasks[0].input, false, `${name}: only one copy, no dual`);
   }
-  // 只在发布方本机的素材(M6c X2)
+  // Assets only on the publisher's local machine (M6c X2)
   const local = split({ cardPlan: [control('a')], streams: [cardStream('a')], localMedia: 'node-pub', usesLocalMedia: () => true });
   assert.deepEqual(local.map(t => t.requires.envFingerprint), [OWN]);
   assert.equal(local[0].requires.localMedia, 'node-pub');
-  // 没有浏览器指纹、浏览器指纹与切分方相同:不另出
+  // No browser fingerprint, or browser fingerprint matches splitter: no separate copy emitted
   assert.equal(split({ cardPlan: [control('a')], streams: [cardStream('a')], browser: null }).length, 1);
   const same = split({ cardPlan: [control('a')], streams: [cardStream('a')], browser: { nodeId: 'n', envFingerprint: OWN } });
   assert.deepEqual(same, [ownTaskBefore({ clipId: 'a', from: 0, to: 7 })], 'Same fingerprint: only the splitter\'s copy, still the shape that needs local transcoding');
@@ -172,12 +178,12 @@ test('BS-05 a card locked elsewhere gets no browser copy: it follows the lock an
   assert.equal(br[0].requires.transcode, false);
   assert.ok(br[0].input.stream && br[0].input.bake, 'Locked on the browser fingerprint: the browser\'s shape');
   assert.equal('dual' in br[0].input, false);
-  // 接手:按自己的指纹出一份、带 takeover,不出浏览器那一份
+  // Takeover: emits one copy with its own fingerprint and takeover; does not emit browser copy
   const taken = split({ ...base, cardLocks: { 'stream:sk-a': BR }, takeover: true });
   const expected = ownTaskBefore({ clipId: 'a', from: 0, to: 7 });
   expected.takeover = true;
   assert.deepEqual(taken, [expected]);
-  // 快照的锁不影响流的锁(各是各的锁键)
+  // Snapshot locks do not affect stream locks (each has its own lock key)
   const snapLocked = split({ ...base, cardLocks: { 'snapshot:ck-a': THIRD } });
   assert.deepEqual(snapLocked.map(t => t.requires.envFingerprint), [OWN, BR]);
 });
@@ -195,11 +201,11 @@ test('BS-06 user cards and media effect cards: the browser copy uses the page\'s
   assert.equal(br.requires.userCards, true);
   assert.deepEqual(tasks[0].requires.cardSources, cardSourceVersions, 'The splitter\'s copy still lists all custom cards');
   assert.equal(tasks[0].requires.userCards, false, 'The splitter\'s copy stays as before');
-  // 文档服务没确认这个 cardEnvFingerprint、页面没声明能力、代码身份对不上:都不出
+  // Document service did not confirm this cardEnvFingerprint, page declared no capability, code identity mismatch: none emitted
   assert.equal(split({ ...args, browserCardEnvFingerprints: [] }).length, 1);
   assert.equal(split({ ...args, browserCards: { ...browserCards, userCards: false } }).length, 1);
   assert.equal(split({ ...args, browserCards: { ...browserCards, cardSources: { 'user-x': 'user:other' } } }).length, 1);
-  // 素材效果卡
+  // Media effect card
   const graph = split({ ...args, isUserCard: () => false, isGraphCard: () => true, browserCards: { ...browserCards, userCards: false, graphCards: true } });
   assert.deepEqual(graph.map(t => t.requires.envFingerprint), [OWN, CARD_FP]);
   assert.equal(graph[1].requires.graphCards, true);
@@ -238,7 +244,7 @@ test('BS-09 input.stream of the browser copy is a copy: changing it does not aff
   assert.deepEqual(stream.clipIds, ['a']);
 });
 
-/* ------------------------------------------------------------------ 过滤 */
+/* ------------------------------------------------------------------ Filtering */
 
 const nodeOf = (profile, capabilities, extra = {}) => ({ profile, nodeId: `n-${profile}`, userId: 'u@d', envFingerprint: OWN, codeVersions: ['cv-1'], capabilities, cardSourceVersions: {}, ...extra });
 const withUser = t => ({ ...t, source: { ...t.source, userId: 'u@d' } });
@@ -290,9 +296,9 @@ test('BS-13 rule 7: a pure browser takes only single-card streams in the browser
   assert.deepEqual(checkClaimable(tweak({ bake: undefined }), browser), { ok: false, rule: 7, reason: 'no-bake-input' });
   assert.deepEqual(checkClaimable(tweak({ compositing: 'belowDependent' }), browser), { ok: false, rule: 7, reason: 'not-independent' });
   assert.deepEqual(checkClaimable(tweak({ canvasHeavy: true }), browser), { ok: false, rule: 7, reason: 'canvas-heavy' });
-  // 重度照规则 4:浏览器不收「重」
+  // Heaviness per Rule 4: browser does not accept "heavy"
   assert.deepEqual(checkClaimable({ ...br, weight: { ...br.weight, class: 'heavy' } }, browser), { ok: false, rule: 4, reason: 'weight' });
-  // 用户卡的流任务没有代码身份
+  // Stream tasks for user cards have no code identity
   const card = { ...br, requires: { ...br.requires, userCards: true, cardSources: {} } };
   assert.deepEqual(checkClaimable(card, { ...browser, cardEnvFingerprint: BR, capabilities: { ...browser.capabilities, userCards: true } }), { ok: false, rule: 7, reason: 'card-source-missing' });
 });
@@ -303,9 +309,9 @@ test('BS-14 other nodes versus the browser copy: a different fingerprint is bloc
   assert.deepEqual(checkClaimable({ ...br, input: { ...br.input, stream: undefined } }, nodeOf('pc', { transcode: true, streams: true }, { envFingerprint: BR })), { ok: true });
 });
 
-/* ------------------------------------------------------------------ 调用方 */
+/* ------------------------------------------------------------------ Callers */
 
-/** 一个最小的 entry:一张独立卡(帧 45～164),`planStreams` 认得的形状 */
+/** A minimal entry: a standalone card (frames 45~164), in a shape recognized by `planStreams` */
 function entryOf() {
   const project = { id: 'p1', width: 1920, height: 1080, fps: 30, duration: 10, tracks: [
     { id: 't1', clips: [{ id: 'a', cardId: 'punch-pill', start: 1.5, end: 5.5, frame: { x: 960, y: 540, w: 400, h: 240, anchor: [0.5, 0.5] } }] },
@@ -339,7 +345,7 @@ test('BS-15 queueStreamOf passes the shape from planStreams to the split unchang
   assert.deepEqual([tasks[0].range.from, tasks[0].range.to], [0, 7]);
 });
 
-/** 只跑到发布:假端点把 node.hello 之后的 plan 认领塞给节点,收它发布的细任务 */
+/** Only runs to publish: fake endpoint pushes claimed plan after node.hello into node, receives its published fine-grained tasks */
 async function publishedBy({ planTask, plan }) {
   const sent = [];
   let handler = () => {};
@@ -369,7 +375,7 @@ test('BS-16 local-node: the manifest plan of the online page produces streams on
   const base = { entryKey: 'entry-1', cardPlan, weightOf, streams: [cardStream('a')] };
   const asked = [];
   const browserStreamsFor = clips => { asked.push([...clips]); return [cardStream('a')]; };
-  // 清单计划 + 执行器给了 browserStreamsFor:快照两份照旧;流只有浏览器那一份
+  // Manifest plan + executor provided browserStreamsFor: two snapshot copies as usual; stream has only the browser copy
   const clips = clipsPlan({ clips: ['a'] });
   const listed = await publishedBy({ planTask: clips, plan: { ...base, browserStreamsFor } });
   assert.ok(listed, 'Fine-grained tasks were published');
@@ -379,10 +385,10 @@ test('BS-16 local-node: the manifest plan of the online page produces streams on
   assert.equal(streams[0].requires.transcode, false);
   assert.equal('dual' in streams[0].input, false);
   assert.ok(listed.some(t => t.kind === 'snapshot' && t.requires.envFingerprint === OWN) && listed.some(t => t.kind === 'snapshot' && t.requires.envFingerprint === BR));
-  // 旧执行器(不给 browserStreamsFor):清单计划照旧不切流,哪怕上下文里带着 streams
+  // Legacy executor (no browserStreamsFor): manifest plan still does not split streams, even if context carries streams
   const old = await publishedBy({ planTask: clips, plan: base });
   assert.equal(old.filter(t => t.kind === 'stream').length, 0);
-  // 预渲染重试计划:照旧不切流
+  // Prerender retry plan: still does not split streams as usual
   const backfill = { ...clips, id: clips.id.replace('#clips:', '#backfill:'), resultKey: clips.resultKey.replace('#clips:', '#backfill:'), priority: 'backfill' };
   const filled = await publishedBy({ planTask: backfill, plan: { ...base, browserStreamsFor } });
   assert.equal(filled.filter(t => t.kind === 'stream').length, 0);

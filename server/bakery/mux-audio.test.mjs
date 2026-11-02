@@ -21,7 +21,8 @@ test("generated-only and video-backed card audio replace source entries without 
   assert.equal(plan.find(x => x.clipId === "video-backed").file, undefined, "video source must not double-play beside its generated node");
   assert.equal(plan.find(x => x.clipId === "ordinary").file, "/disk/audio");
   assert.throws(() => buildFfmpegArgs("video.mp4", plan, "out.mp4", 5), /cannot render card audio/);
-  // 只看节点:Node 侧读不到 TSX 定义,kind 是 H2 从定义抄进节点的那一份
+  // Only inspect node: Node side cannot read TSX definitions; kind is the copy H2 copied into the
+  // node from definition
   assert.equal(isCardAudioNode(project, "n1"), true);
   assert.equal(isCardAudioNode(project, "n3"), false, "a media effect card node whose kind is not audio makes no sound");
   assert.equal(isCardAudioNode(project, undefined), false);

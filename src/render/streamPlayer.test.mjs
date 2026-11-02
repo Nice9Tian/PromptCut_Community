@@ -1,8 +1,10 @@
 /**
- * 页面侧轨道流的纯函数单测。跑:node --test src/render/streamPlayer.test.mjs
+ * Pure function unit tests for page-side track streams.
+ * Run: node --test src/render/streamPlayer.test.mjs
  *
- * 解码、合成要浏览器(`VideoDecoder` / WebGL),端到端在 `scripts/probes/stream-play-probe.mjs`;
- * 这里钉住解封装、时间戳、平面合成和帧预算这几件纯算的事。
+ * Decoding and compositing require a browser (`VideoDecoder` / WebGL), end-to-end in
+ * `scripts/probes/stream-play-probe.mjs`; here we pin down pure computational aspects: demuxing,
+ * timestamps, plane compositing, and frame budget.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -51,7 +53,7 @@ test('parseSegment: sample offsets are relative to moof (default-base-is-moof), 
   assert.equal(samples.length, 3);
   assert.deepEqual(samples.map((s) => s.isSync), [true, false, false]);
   assert.deepEqual(samples.map((s) => s.size), [7, 3, 5]);
-  // 样本数据确实落在 mdat 里、按顺序排
+  // Sample data indeed lands in mdat, arranged in order
   for (let i = 0; i < samples.length; i++) assert.equal(buf[samples[i].offset], i + 1);
 });
 
@@ -59,7 +61,7 @@ test('timestamps are the global frame number × 1e6 / fps and round-trip at 24 /
   for (const fps of [24, 25, 30, 60]) {
     for (const frame of [0, 1, 14, 15, 29, 1234, 17999]) assert.equal(frameOfTimestamp(chunkTimestamp(frame, fps), fps), frame, `${fps}@${frame}`);
   }
-  // G5:(分段号 × 15 + 样本序号)× 1e6 / fps
+  // G5: (segment index × 15 + sample index) × 1e6 / fps
   assert.equal(chunkTimestamp(3 * SEGMENT_FRAMES + 4, 30), Math.round(49 * 1e6 / 30));
 });
 
@@ -81,7 +83,7 @@ test('streamPlanesFor: only suppressed cards whose current segment is ready; a g
 });
 
 test('streamPlanesFor / streamLayerHas: each layer converts the project frame number to a segment number by its own first frame; a layer without a first frame produces no stream plane', () => {
-  // a 从第 100 帧开始、d 从第 7 帧开始,两条流都只有第 1 段就绪
+  // a starts at frame 100, d starts at frame 7, both streams have only segment 1 ready
   const layers = [
     { clipId: 'a', key: 'KA', ranges: [[1, 1]], originFrame: 100 },
     { clipId: 'd', key: 'KD', ranges: [[1, 1]], originFrame: 7 },
@@ -107,13 +109,14 @@ test('streamPlanesFor / streamLayerHas: each layer converts the project frame nu
 test('capFor: bytes budget shared between streams, clamped to [3, 8] frames per decoder', () => {
   const player = new StreamPlayer({ root: () => null, source: { manifest: async () => { throw new Error('x'); }, init: async () => new ArrayBuffer(0), segment: async () => new ArrayBuffer(0) } });
   const full1080 = { bytesPerFrame: 1920 * 2176 * 1.5 };
-  // 一条:80 MB 够 12 帧,但单解码器硬上限 8
+  // One stream: 80 MB is enough for 12 frames, but single decoder hard limit is 8
   player.tracks = new Map([['a', full1080]]);
   assert.equal(player.capFor(full1080), MAX_FRAMES_PER_DECODER);
-  // 六条 1080p 全幅:每条 80/6 MB ≈ 2 帧,保底 3
+  // Six 1080p full-frame streams: each 80/6 MB ≈ 2 frames, minimum floor of 3
   player.tracks = new Map(Array.from({ length: 6 }, (_, i) => [String(i), full1080]));
   assert.equal(player.capFor(full1080), MIN_FRAMES_PER_STREAM);
-  // 裁剪很小的流:字节远没到预算也照样不超过 8(G0-b (4):卡死的是帧数,不是字节)
+  // Heavily cropped stream: does not exceed 8 even if bytes are far below budget (G0-b (4): what is
+  // strictly capped is frame count, not bytes)
   assert.equal(player.capFor({ bytesPerFrame: 612 * 916 * 1.5 }), MAX_FRAMES_PER_DECODER);
   assert.equal(DECODED_BYTES_BUDGET, 80 * 1024 * 1024);
 });

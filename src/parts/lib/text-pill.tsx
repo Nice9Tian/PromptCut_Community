@@ -5,8 +5,8 @@ import "../../cards/native/hud.css";
 import { fitOr } from "../fit";
 
 /**
- * 金句药丸:强调核心信息的胶囊设计。从 punch-pill 拆出。
- * 发光扩散并弹簧弹入。
+ * Punchline pill: pill design emphasizing core information. Extracted from punch-pill.
+ * Glows, diffuses, and springs into view.
  */
 interface Params {
   text: string;

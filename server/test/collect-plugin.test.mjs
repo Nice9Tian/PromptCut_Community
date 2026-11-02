@@ -1,8 +1,10 @@
-// 素材收集插件:接口形状、作业表、错误路径。用 fake-collect.cmd 冒充 Python,
-// 不联网、不装 yt-dlp。跑法:node --test server/test/collect-plugin.test.mjs
+// Media collection plugin: interface shape, job table, error paths. Uses fake-collect.cmd to mock
+// Python, without networking or installing yt-dlp. Run command:
+// node --test server/test/collect-plugin.test.mjs
 //
-// 插件是 .ts,这里用 typescript 转译到临时目录再 import(和 cards.test 一个路数),
-// 它依赖的 vite-plugin-stt / vite-plugin-media 也一起转,import 路径改成转译产物。
+// The plugin is .ts, transpiled here with typescript to a temp directory before import (same pattern
+// as cards.test); its dependencies vite-plugin-stt / vite-plugin-media are also transpiled together,
+// and import paths are updated to the transpiled output.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -52,30 +54,33 @@ const collectUrl = compile('server/vite-plugin-collect.ts', 'collect.mjs', [
   ['from "./collect-cookies.mjs"', `from "${cookiesUrl}"`],
   ['from "./collect-qr-login.mjs"', `from "${qrLoginUrl}"`],
   ['from "./http-guard.mjs"', `from "${guardUrl}"`],
-  // 登录那几条路动态 import 浏览器模块;转译产物在临时目录,相对路径找不到,改成绝对的
+  // Login paths dynamically import browser modules; transpiled output is in a temp directory where
+  // relative paths cannot find them, so change to absolute paths
   ['import("./web/browser.mjs")', `import("${pathToFileURL(path.join(ROOT, 'server', 'web', 'browser.mjs')).href}")`],
   ['import("./web/session.mjs")', `import("${pathToFileURL(path.join(ROOT, 'server', 'web', 'session.mjs')).href}")`],
 ]);
 const { saveCookies } = await import(cookiesUrl);
 
-// 假 Python:插件按 -m promptcut_collect <子命令> 调它,它按子命令回放固定 JSONL
+// Mock Python: the plugin invokes it as -m promptcut_collect <subcommand>, and it replays fixed
+// JSONL based on the subcommand
 process.env.PROMPTCUT_PYTHON = path.join(ROOT, 'server', 'test', 'fake-collect.cmd');
-// 项目根用临时目录:buildEnv 会在 <root>/out 下建 pylibs / models
+// Project root uses a temp directory: buildEnv creates pylibs / models under <root>/out
 const FAKE_ROOT = path.join(OUT, 'root');
 fs.mkdirSync(FAKE_ROOT, { recursive: true });
 
-// 下载结果经素材服务的入库接口进内容库(server/media-ingest.mjs):起一台真的素材服务(fs 内容库 + 媒体中间件),
-// 编辑器进程的素材服务地址指向它(asset-client.ts 的 assetServiceOrigin 先看 PROMPTCUT_EDITOR_URL)
+// Download results enter content store via the asset service store API (server/media-ingest.mjs):
+// start a real asset service (fs content store + media middleware); the editor process asset service
+// URL points to it (assetServiceOrigin in asset-client.ts first checks PROMPTCUT_EDITOR_URL)
 const harness = createAssetHarness();
 const assetSvc = await harness.serve({ stores: 'default' });
 process.env.PROMPTCUT_EDITOR_URL = assetSvc.origin;
 after(async () => { await harness.cleanup(); delete process.env.PROMPTCUT_EDITOR_URL; });
-/** fake-collect.cmd 写进 --out-dir 的那份内容(echo 带 CRLF) */
+/** Content written into --out-dir by fake-collect.cmd (echo includes CRLF) */
 const FAKE_BYTES = Buffer.from('fake video bytes\r\n');
 
 const { collectPlugin } = await import(collectUrl);
 
-/** 把插件的中间件拿出来 */
+/** Extract the plugin's middleware */
 function handlerOf() {
   const plugin = collectPlugin();
   let fn;
@@ -87,7 +92,7 @@ function handlerOf() {
   return fn;
 }
 
-/** 发一个请求,拿回 { status, json } */
+/** Send a request and get back { status, json } */
 function call(fn, method, url, body) {
   const req = Readable.from(body == null ? [] : [Buffer.from(JSON.stringify(body))]);
   req.url = url;
@@ -146,7 +151,8 @@ test('probe: a missing url gives 400; a normal run returns the fields of done an
   assert.equal(r.json.duration, 12.5);
   assert.deepEqual(r.json.heights, [1080, 720]);
   assert.equal(r.json.parts, null);
-  // notes 里除了 retry 还有一条「未登录」的说明(B 站链接会看登录态),所以不断言条数
+  // In addition to retry, notes contains a "Not logged in" explanation (Bilibili links check login
+  // state), so do not assert on the item count
   assert.ok(r.json.notes.some((n) => /412/.test(n)), 'The retry event must be recorded in notes:' + JSON.stringify(r.json.notes));
   assert.equal(r.json.cookiesUsed, false);
 });
@@ -187,11 +193,11 @@ test('MI-5 download: returns a jobId immediately; when polling reaches done, ite
   assert.equal(item.url, `/@media/${hash}`);
   assert.equal(item.media?.hash, hash, 'The ingest response is passed to the page unchanged');
   assert.equal(item.path, undefined, 'No longer gives the disk path of the temp file');
-  // 字节确实在素材服务的内容库里,经它的接口取得到
+  // Bytes are indeed in the asset service content store, accessible through its API
   const got = await fetch(`${assetSvc.origin}/@media/${hash}`);
   assert.equal(got.status, 200);
   assert.deepEqual(Buffer.from(await got.arrayBuffer()), FAKE_BYTES);
-  // 编辑器自己的素材目录里没有绕过入库落下的文件
+  // No files dropped by bypassing storage into the library exist in the editor's own asset catalog
   const own = path.join(FAKE_ROOT, 'out', 'media');
   assert.deepEqual(fs.existsSync(own) ? fs.readdirSync(own) : [], [], 'The asset catalog must not contain files written directly by the download');
   assert.equal(item.vcodec, 'h264');
@@ -304,7 +310,7 @@ test('Login state: status carries cookies for each site; when nothing is saved, 
   assert.equal(job.cookiesUsed, false);
   assert.ok(job.notes.some((n) => /Not logged in/.test(n)), JSON.stringify(job.notes));
 
-  // 不是有登录支持的站:一个字都不提
+  // Not a site with login support: do not mention a word
   const y = await call(fn, 'POST', '/api/collect/download', { url: 'https://www.youtube.com/watch?v=x' });
   const yj = await waitJob(fn, y.json.jobId);
   assert.equal(yj.cookiesUsed, false);
@@ -329,7 +335,7 @@ test('Login state: after saving, Bilibili links automatically carry the cookie, 
     const probe = await call(fn, 'POST', '/api/collect/probe', { url: 'BV1FAKE00011' });
     assert.equal(probe.json.cookiesUsed, true);
 
-    // 已登录时 login 不弹窗
+    // When already logged in, login does not pop up a window
     const login = await call(fn, 'POST', '/api/collect/login', { site: 'bilibili' });
     assert.equal(login.json.alreadyLoggedIn, true);
     assert.equal(login.json.userId, '42');
@@ -382,12 +388,12 @@ test('QR login route: start gives key and svgUrl, svg is an image, poll forwards
     assert.equal(p2.json.userId, '7');
     assert.ok(fs.existsSync(p2.json.path));
 
-    // 登录态已经在盘上:check 不碰浏览器,直接回 saved
+    // Login state is already on disk: check returns saved directly without touching the browser
     const chk = await call(fn, 'POST', '/api/collect/login/check', { site: 'bilibili' });
     assert.equal(chk.json.loggedIn, true);
     assert.equal(chk.json.source, 'saved');
     assert.equal(chk.json.userId, '7');
-    // status 里也看得到
+    // Also visible in status
     const st = await call(fn, 'GET', '/api/collect/status');
     assert.equal(st.json.cookies.bilibili.loggedIn, true);
     assert.equal((await call(fn, 'GET', '/api/collect/qr/poll')).status, 400);
@@ -425,7 +431,7 @@ test('search: a missing query gives 400; normally returns results, a single fail
 
 test('The cookies parameter only accepts files under <dataDir>/cookies/: paths elsewhere are ignored, so no arbitrary local file is sent to an external site', async () => {
   const fn = handlerOf();
-  // 造一个在范围外的真实文件,和一个在范围内的
+  // Create a real file outside the scope and one inside the scope
   const outside = path.join(OUT, 'secret.txt');
   fs.writeFileSync(outside, 'not a cookie');
   const insideDir = path.join(FAKE_ROOT, 'out', 'cookies');
@@ -441,7 +447,7 @@ test('The cookies parameter only accepts files under <dataDir>/cookies/: paths e
     const b = await call(fn, 'POST', '/api/collect/download', { url: 'BV1FAKE00021', cookies: inside });
     const jb = await waitJob(fn, b.json.jobId);
     assert.equal(jb.cookiesUsed, true, 'An explicit path within the allowed scope is used as is');
-    // 目录穿越也不行
+    // Directory traversal is not allowed either
     const c = await call(fn, 'POST', '/api/collect/download', { url: 'BV1FAKE00022', cookies: path.join(insideDir, '..', '..', 'x.txt') });
     const jc = await waitJob(fn, c.json.jobId);
     assert.equal(jc.cookiesUsed, false);

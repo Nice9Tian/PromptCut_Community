@@ -1,39 +1,50 @@
 /**
- * 两层 diff 与三级哈希缓存(A7)。
+ * Two-level diff and three-level hash cache (A7).
  *
- * # 为什么不整份推
+ * # Why not push the full project
  *
- * 编辑页每改一次就把整个 project 推给镜像插件,一个几十段的项目 JSON 有几百 KB;
- * 拖一个片段的 2 秒里会推十几次,带宽和 JSON.stringify 都顶不住。可真正变的通常只有
- * **一个片段**:store 是不可变更新,没动过的对象引用不变,所以「变了什么」可以靠引用比出来,
- * 一次推送只有那一段(实测 < 8 KB)。
+ * Every edit on the editor page pushes the entire project to the mirror plugin, and project JSON
+ * with dozens of clips is several hundred KB; dragging a clip over 2 seconds pushes dozens of
+ * times, which overwhelms both bandwidth and JSON.stringify. Yet what actually changes is usually
+ * only **a single clip**: the store uses immutable updates, so untouched object references remain
+ * unchanged, allowing "what changed" to be determined by reference comparison, with each push
+ * containing only that clip (< 8 KB in practice).
  *
- * # 两层
+ * # Two levels
  *
- * 1. **顶层**:按 `frameClient.ts` 的签名字段表逐个按引用比。`tracks` 以外任一个变了
- *    (换素材、改画幅、改主题、改卡片定义……)就整份推 —— 那些字段本来就不常动,
- *    为它们做增量不划算,而且漏一个就会让镜像和页面悄悄不一致。
- * 2. **轨道层**:`tracks` 变了才往下走。先按轨道引用比出轨道级变化(增删、顺序、
- *    `hidden` / `muted` 这些自身属性),再对**引用变了的轨道**逐片段按引用比
- *    (素材段和卡片段都比)。
+ * 1. **Top level**: Compare each field by reference following the signature field list in
+ *    `frameClient.ts`. If anything other than `tracks` changes (changing media, aspect ratio,
+ *    theme, card definitions...), push the full project: those fields rarely change anyway,
+ *    building deltas for them is not worth it, and missing even one would silently cause desync
+ *    between the mirror and the page.
+ * 2. **Track level**: Descend only when `tracks` changes. First compare track references to
+ *    identify track-level changes (additions/deletions, order, and own properties like `hidden` /
+ *    `muted`), then compare clips by reference for **tracks whose reference changed** (comparing
+ *    both media clips and card clips).
  *
- * # 三级哈希缓存
+ * # Three-level hash cache
  *
- * `projectHash` 是「服务端把补丁应用完之后,得到的项目和页面手里那份是不是同一个」的判据。
- * 它按 字段 → 轨道 → 片段 三级算,每一级都用 `WeakMap` 按**对象引用**缓存:
- * 拖一个片段只会重算 1 个片段 + 1 条轨道 + 顶层那一次拼接,其余全是缓存命中(实测 < 2 ms)。
- * 引用当键还顺带解决了失效问题 —— 对象没被换掉就一定没变,换掉了 WeakMap 里本来就没有它。
+ * `projectHash` is the criterion for determining "whether the project obtained after the server
+ * applies the patch is identical to the one on the page." It is computed across three levels:
+ * field → track → clip, with each level cached by **object reference** using a `WeakMap`: dragging
+ * a clip only recalculates 1 clip + 1 track + the top-level concatenation, while the rest are all
+ * cache hits (< 2 ms in practice). Using references as keys also solves invalidation: if an object
+ * hasn't been replaced, it definitely hasn't changed; if replaced, it isn't in the WeakMap to begin
+ * with.
  *
- * # 哈希为什么不是 sha256
+ * # Why the hash is not sha256
  *
- * 舞台 bundle 和 Node 都要能同步算(`crypto.subtle` 是异步的,`node:crypto` 页面里没有),
- * 而这里要的是「两边算出来一样吗」,不是抗碰撞。FNV-1a 变体,64 位十六进制,纯字符串运算。
+ * Both the stage bundle and Node need to compute synchronously (`crypto.subtle` is async, and
+ * `node:crypto` is unavailable in the page), and what is needed here is "do both sides compute the
+ * same result?", not collision resistance. An FNV-1a variant, 64-bit hex, pure string operations.
  */
 
 /**
- * 顶层按引用比的字段表:和 `src/render/frameClient.ts` 的 `signature()` **同一组、同一顺序**。
- * 那边加一个字段这边就得跟一个,不然镜像的哈希看不见它、409 那道也就白设了 ——
- * `changedClips.test.mjs` 会去读 frameClient 的源码逐字对这张表,改漏一边当场红。
+ * Top-level field list compared by reference: **same set and same order** as `signature()`
+ * in `src/render/frameClient.ts`. If a field is added there, one must be added here; otherwise
+ * the mirror hash won't see it, making the 409 gate useless: `changedClips.test.mjs` reads
+ * frameClient's source code to compare against this table verbatim, turning red immediately
+ * if either side is missed.
  */
 export const TOP_FIELDS = [
   "width", "height", "fps", "duration", "themeId", "camera3dFov",
@@ -43,14 +54,14 @@ export const TOP_FIELDS = [
 
 import { reachableCutContents } from "../kernel/cutIdentity.mjs";
 
-/** 重算次数(缓存未命中)。测试用它证明「同一批引用不会重算」 */
+/** Recalculation count (cache misses). Used by tests to prove "the same set of references will not recalculate" */
 const stats = { fields: 0, tracks: 0, clips: 0, values: 0 };
-/** 取一份重算计数的快照 */
+/** Takes a snapshot of the recalculation count */
 export function hashStats() { return { ...stats }; }
-/** 计数归零 */
+/** Resets the count to zero */
 export function resetHashStats() { stats.fields = 0; stats.tracks = 0; stats.clips = 0; stats.values = 0; }
 
-/** FNV-1a 的两路变体,拼成 16 个十六进制字符 */
+/** Two-way variant of FNV-1a, concatenated into 16 hex characters */
 export function hashString(s) {
   let h1 = 0x811c9dc5, h2 = 0xc2b2ae35;
   for (let i = 0; i < s.length; i++) {
@@ -62,13 +73,14 @@ export function hashString(s) {
   return (h1 >>> 0).toString(16).padStart(8, "0") + (h2 >>> 0).toString(16).padStart(8, "0");
 }
 
-/* 三级缓存。键都是对象引用,所以项目一换新对象,旧的自动被回收 */
+/* Three-level cache. Keys are object references, so when the project swaps
+ * in new objects, old ones are automatically collected */
 const fieldsCache = new WeakMap();
 const valueCache = new WeakMap();
 const trackCache = new WeakMap();
 const clipCache = new WeakMap();
 
-/** 第三级:一个片段 */
+/** Level 3: a clip */
 function clipHash(clip) {
   let h = clipCache.get(clip);
   if (h === undefined) { stats.clips++; h = hashString(JSON.stringify(clip)); clipCache.set(clip, h); }
@@ -76,9 +88,10 @@ function clipHash(clip) {
 }
 
 /**
- * 第二级:一条轨道。**片段和轨道自身属性分开算**,于是轨道对象的键顺序
- * (`clips` 排在第几个)不影响结果 —— 服务端应用补丁时重建的轨道键顺序和页面那份
- * 不一定一样,分开算才能让两边的哈希对得上。
+ * Level 2: a track. **Clips and track's own properties are computed separately**, so key order
+ * on the track object (which position `clips` appears at) does not affect the result: when the
+ * server applies the patch, the reconstructed track key order may not match the page's copy;
+ * computing them separately ensures hashes on both sides match.
  */
 function trackHash(track) {
   let h = trackCache.get(track);
@@ -97,7 +110,7 @@ function tracksHash(tracks) {
   return h;
 }
 
-/** 第一级里的非轨道字段:整块 stringify 一次就按引用记住(media 可能很大) */
+/** Non-track fields in level 1: stringified once as a block and cached by reference (media may be large) */
 function valueHash(v) {
   if (v === null || typeof v !== "object") return String(JSON.stringify(v));
   let h = valueCache.get(v);
@@ -105,7 +118,7 @@ function valueHash(v) {
   return h;
 }
 
-/** 项目的渲染身份哈希(只覆盖 `TOP_FIELDS`;`name` / `id` / 草稿元信息不进) */
+/** Project render identity hash (covers `TOP_FIELDS` only; `name` / `id` / draft metadata excluded) */
 export function projectHash(project) {
   let h = fieldsCache.get(project);
   if (h === undefined) {
@@ -115,7 +128,8 @@ export function projectHash(project) {
       const v = project[k];
       parts.push(k + ":" + (k === "tracks" ? tracksHash(Array.isArray(v) ? v : []) : valueHash(v)));
     }
-    // 剪辑段引用的剪辑(kernel/cutIdentity.mjs):有才加,没有剪辑段的项目哈希一个字节不变
+    // Cut referenced by cut segments (kernel/cutIdentity.mjs): added only if present;
+    // projects without cut segments do not change the hash by a single byte
     const cutRefs = reachableCutContents(project);
     if (cutRefs.length) parts.push("cutRefs:" + hashString(JSON.stringify(cutRefs)));
     h = hashString(parts.join("|"));
@@ -124,7 +138,7 @@ export function projectHash(project) {
   return h;
 }
 
-/** 除 `skip` 外的所有自有键都按引用相等? */
+/** Are all own keys other than `skip` equal by reference? */
 function sameByRef(a, b, skip) {
   for (const k of Object.keys(a)) if (k !== skip && a[k] !== b[k]) return false;
   for (const k of Object.keys(b)) if (k !== skip && !(k in a)) return false;
@@ -135,9 +149,9 @@ function idsOf(list) { return (list || []).map((x) => x.id); }
 function sameOrder(a, b) { return a.length === b.length && a.every((x, i) => x === b[i]); }
 
 /**
- * 两份项目之间的补丁。`prev` 为空、或 `tracks` 以外任何字段变了 → 整份。
+ * Patch between two projects. If `prev` is empty or any field other than `tracks` changed → full.
  *
- * 返回的形状就是将来舞台 RPC 的 `setProject(patch)` 参数(见 `ProjectPatch`)。
+ * The returned shape is the argument for future stage RPC `setProject(patch)` (see `ProjectPatch`).
  */
 export function changedClips(prev, next) {
   if (!prev) return { kind: "full", project: next };
@@ -153,14 +167,14 @@ export function changedClips(prev, next) {
   const tracks = [];
   for (const tr of nextTracks) {
     const before = prevById.get(tr.id);
-    // 新加的轨道整条给:没有基线可比,逐段算反而更大
+    // Newly added tracks are provided in full: no baseline to compare against, computing per clip is actually larger
     if (!before) { tracks.push({ id: tr.id, track: tr }); continue; }
     if (before === tr) continue;
 
     const patch = { id: tr.id };
     if (!sameByRef(before, tr, "clips")) {
-      // 自身属性**整组**给(就 id / name / hidden / muted / locked 几个),
-      // 这样「把 hidden 这个键删掉」也能表达,不用另记一张删除表
+      // Own properties are provided as a **whole group** (just id / name / hidden / muted / locked),
+      // so that "deleting the hidden key" can also be expressed without keeping a separate deletion table
       const { clips: _clips, ...props } = tr;
       patch.props = props;
     }
@@ -182,14 +196,15 @@ export function changedClips(prev, next) {
   return { kind: "tracks", order, tracks };
 }
 
-/** 补丁里有没有真东西(空补丁不用发) */
+/** Whether the patch contains actual changes (empty patches need not be sent) */
 export function isEmptyPatch(patch) {
   return !!patch && patch.kind === "tracks" && !patch.order && (!patch.tracks || patch.tracks.length === 0);
 }
 
 /**
- * 把补丁应用到一份项目上,返回**新的**项目对象(不改原对象:镜像要按版本号留住旧版)。
- * 补丁和基线对不上就抛 —— 调用方(镜像插件)把它翻成 409,让页面整份重推。
+ * Applies the patch to a project and returns a **new** project object (does not mutate original:
+ * mirror must retain old version by version number). Throws if patch mismatches baseline: caller
+ * (mirror plugin) translates it to 409, asking the page to repush in full.
  */
 export function applyProjectPatch(project, patch) {
   if (!patch) return project;

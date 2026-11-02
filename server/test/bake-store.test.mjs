@@ -1,19 +1,31 @@
 /**
- * `bake_card` 的卡片快照(预渲染的产物)经素材服务存取(`server/bake-store.mjs`;报告 `docs/reports/AGENT-bake-asset.md`;
- * 语义 `docs/semantics/product/asset-service.md`「预渲染的产物」「职责」、`product/agent.md`「素材与产物」)。
+ * Card snapshots of `bake_card` (prerender output) are accessed via asset service
+ * (`server/bake-store.mjs`; report `docs/reports/AGENT-bake-asset.md`; semantics
+ * `docs/semantics/product/asset-service.md` "Prerender output" "Responsibilities",
+ * `product/agent.md` "Assets and output").
  *
- * 用例(BKA = bake asset,卡片快照经素材服务):
- *   BKA-1  写入与读回:PNG 经素材服务写进 `px`,地址 `/api/asset/px/<sha256>`,经 HTTP 取回的字节相同;同一个键再查命中;
- *          素材目录里不出现它直接写的文件(没有 `bake-*.png`),索引目录里只有 `<键>.json`;
- *   BKA-2  命中要问素材服务:索引里有、素材服务上没有这一块 → 当没渲过,索引条目删掉;
- *   BKA-3  老地址:素材目录里以前落下的 `bake-<clip>-<键>.png` 经素材服务的老读路由照常能取;读时迁移把它推进 `px`
- *          (字节相同)、记进索引,旧文件不动;不是 PNG 的不迁;
- *   BKA-4  素材服务不可达 / 拒绝:取不到地址、连不上、HTTP 401 都抛 BakeStoreError,消息写明素材服务地址与原因;
- *   BKA-5  盘点与淘汰:盘点只报收全的;淘汰只删索引里对得上的键(路径样的键碰不到别的文件),字节留在素材服务里;
- *   BKA-6  共享项目:登记了远程素材服务时写入后再推一份过去,索引记 `pushed`;推失败的下次命中时补推;
- *   BKA-7  源码守门:bake.ts / bake-cache.ts 不再引素材目录(`mediaDir`)、不再直接读写文件系统(`node:fs/promises`)。
+ * Test cases (BKA = bake asset, card snapshots via asset service):
+ *   BKA-1  Write and read-back: PNG written to `px` via asset service, address
+ *          `/api/asset/px/<sha256>`, bytes retrieved via HTTP are identical; same key hits again on
+ *          lookup; files directly written by it do not appear in asset catalog (no `bake-*.png`),
+ *          only `<key>.json` in index directory;
+ *   BKA-2  Hits must query asset service: present in index, but chunk missing on asset service →
+ *          treat as never rendered, delete index entry;
+ *   BKA-3  Legacy address: `bake-<clip>-<key>.png` previously left in asset catalog can still be
+ *          fetched via legacy read route of asset service; read-time migration pushes it to `px`
+ *          (identical bytes) and records into index, old files untouched; non-PNG not migrated;
+ *   BKA-4  Asset service unreachable / rejected: cannot get address, connection failure, HTTP 401
+ *          all throw BakeStoreError, message states asset service address and reason;
+ *   BKA-5  Inventory and eviction: inventory only reports fully received items; eviction only deletes
+ *          matching keys in index (path-like keys do not touch other files), bytes stay in asset
+ *          service;
+ *   BKA-6  Shared project: when remote asset service is registered, push a copy over after writing,
+ *          record `pushed` in index; if push fails, catch-up push on next hit;
+ *   BKA-7  Source gatekeeper: bake.ts / bake-cache.ts no longer references asset catalog
+ *          (`mediaDir`), no longer directly reads/writes file system (`node:fs/promises`).
  *
- * 跑:node --test server/test/bake-store.test.mjs(起的是真 HTTP 的素材服务,fs 实现落在临时目录;不要 Chrome、不要 ffmpeg)
+ * Run: node --test server/test/bake-store.test.mjs (starts real HTTP asset service, fs
+ * implementation placed in temp directory; no Chrome, no ffmpeg needed)
  */
 import assert from 'node:assert/strict';
 import { test, after } from 'node:test';
@@ -39,7 +51,7 @@ const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let seq = 0;
 const indexDir = () => path.join(TMP, `index-${++seq}`);
-/** 一张像样的 PNG:8 字节签名 + 随机尾巴(素材服务不解码,只看字节) */
+/** A decent PNG: 8-byte signature + random trailer (asset service does not decode, only inspects bytes) */
 const png = (n = 2048) => Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), crypto.randomBytes(n)]);
 const listen = (handler) => new Promise((resolve) => {
   const s = http.createServer(handler);
@@ -55,7 +67,7 @@ async function until(fn, ms = 5000) {
     await sleep(25);
   }
 }
-/** 目录里递归列出的文件名 */
+/** File names recursively listed in the directory */
 function walk(dir) {
   const out = [];
   if (!fs.existsSync(dir)) return out;
@@ -67,7 +79,7 @@ function walk(dir) {
 }
 
 test('BKA-1 write and read back: the PNG goes into px through the asset service, the address is by content hash, the retrieved bytes are identical; the asset catalog has no file it wrote directly', async () => {
-  const srv = await harness.serve({ stores: 'default' }); // fs 实现:media → <root>/out/media,px → <root>/out/asset-store/px
+  const srv = await harness.serve({ stores: 'default' }); // fs implementation: media → <root>/out/media, px → <root>/out/asset-store/px
   const dir = indexDir();
   const store = createBakeStore({ indexDir: dir, origin: () => srv.origin, remote: () => null });
   const key = 'a1b2c3d4e5f6';
@@ -95,14 +107,14 @@ test('BKA-1 write and read back: the PNG goes into px through the asset service,
   const idx = JSON.parse(fs.readFileSync(path.join(dir, `${key}.json`), 'utf8'));
   assert.equal(idx.hash, e.hash);
   assert.equal(idx.clipId, 'c1');
-  // 素材服务那一侧确实收全了(对账是唯一事实来源)
+  // Asset service side indeed received completely (reconcile is the single source of truth)
   const st = await (await fetch(`${srv.base}/px/${e.hash}/chunks`)).json();
   assert.equal(st.complete, true);
   await srv.close();
 });
 
 test('BKA-2 a hit must be confirmed with the asset service: in the index but not on the asset service → treat as never rendered, delete the index entry', async () => {
-  const srv = await harness.serve(); // memory 实现
+  const srv = await harness.serve(); // Memory implementation
   const dir = indexDir();
   const store = createBakeStore({ indexDir: dir, origin: () => srv.origin, remote: () => null });
   fs.mkdirSync(dir, { recursive: true });
@@ -110,7 +122,7 @@ test('BKA-2 a hit must be confirmed with the asset service: in the index but not
   fs.writeFileSync(path.join(dir, `${key}.json`), JSON.stringify({ key, hash: 'cd'.repeat(32), bytes: 10 }));
   assert.equal(await store.lookup(key), null);
   assert.ok(!fs.existsSync(path.join(dir, `${key}.json`)), 'The stale index entry is deleted');
-  // 坏条目(不是 JSON / 键对不上)当没有
+  // Bad entries (not JSON / key mismatch) treated as non-existent
   fs.writeFileSync(path.join(dir, `${key}.json`), '{oops');
   assert.equal(await store.lookup(key), null);
   assert.equal(await store.lookup('../../etc/x'), null, 'An invalid key does not touch the file system');
@@ -123,9 +135,9 @@ test('BKA-3 old addresses can still be fetched as usual; migrate on read pushes 
   const key = 'c0ffee123456';
   const name = `bake-clip_1-${key}.png`;
   const old = png(4096);
-  fs.writeFileSync(path.join(media, name), old); // 以前的 bake_card 落下的文件(测试布置现场,不是被测代码写的)
+  fs.writeFileSync(path.join(media, name), old); // Files left behind by previous bake_card (test fixture setup, not written by code under test)
 
-  // 老项目参数里存着的 /@media/bake-….png:素材服务的老读路由照常答
+  // /@media/bake-….png stored in legacy project parameters: asset service legacy read route responds as usual
   const legacy = await fetch(`${srv.origin}/@media/${encodeURIComponent(name)}`);
   assert.equal(legacy.status, 200);
   assert.deepEqual(Buffer.from(await legacy.arrayBuffer()), old);
@@ -145,11 +157,11 @@ test('BKA-3 old addresses can still be fetched as usual; migrate on read pushes 
   const again = await fetch(`${srv.origin}/@media/${encodeURIComponent(name)}`);
   assert.equal(again.status, 200, 'The old address can still be fetched after migration');
 
-  // 没有旧文件:回 null;不是 PNG 的:不迁
+  // No old file: return null; not a PNG: do not migrate
   assert.equal(await store.migrateLegacy('dddddddddddd', 'bake-x-dddddddddddd.png'), null);
   fs.writeFileSync(path.join(media, 'bake-x-eeeeeeeeeeee.png'), 'not a png');
   assert.equal(await store.migrateLegacy('eeeeeeeeeeee', 'bake-x-eeeeeeeeeeee.png'), null);
-  // 名字不像老格式的不去取(不拿它当任意文件的读口)
+  // Do not fetch names that do not look like old format (do not treat it as arbitrary file read endpoint)
   assert.equal(await store.migrateLegacy('ffffffffffff', '../secret.png'), null);
   assert.equal(await store.migrateLegacy('ffffffffffff', 'foo.mp4'), null);
   await srv.close();
@@ -165,7 +177,8 @@ test('BKA-4 asset service unreachable / rejecting: return a clear error (stating
   const down = createBakeStore({ indexDir: indexDir(), origin: () => closed, remote: () => null, retries: 0, timeoutMs: 3000 });
   await assert.rejects(down.put('aaaaaaaaaaaa', png()), (e) => e instanceof BakeStoreError && e.message.includes(`Asset service unreachable (${closed}/api/asset)`) && /write/.test(e.message));
   await assert.rejects(down.migrateLegacy('aaaaaaaaaaaa', 'bake-a-aaaaaaaaaaaa.png'), (e) => e instanceof BakeStoreError && e.message.includes(closed));
-  // 索引里有的键,问对账时连不上:也是清楚的错,不当成「没渲过」
+  // Key exists in index, but connection fails when querying reconcile: clear error as well, do not
+  // treat as "never rendered"
   const dir = indexDir();
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'aaaaaaaaaaaa.json'), JSON.stringify({ key: 'aaaaaaaaaaaa', hash: 'ab'.repeat(32), bytes: 5 }));
@@ -173,7 +186,7 @@ test('BKA-4 asset service unreachable / rejecting: return a clear error (stating
   await assert.rejects(down2.lookup('aaaaaaaaaaaa'), (e) => e instanceof BakeStoreError && /Asset service unreachable/.test(e.message));
   assert.ok(fs.existsSync(path.join(dir, 'aaaaaaaaaaaa.json')), 'The index is not deleted when the connection fails');
 
-  // 拒绝(非本机、没票据 → 401)
+  // Reject (non-local, no ticket → 401)
   const srv = await harness.serve({ isTrusted: () => false, tickets: null });
   const denied = createBakeStore({ indexDir: indexDir(), origin: () => srv.origin, remote: () => null, retries: 0 });
   await assert.rejects(denied.put('aaaaaaaaaaaa', png()), (e) => e instanceof BakeStoreError && e.status === 401 && e.message.includes(`Asset service rejected the write (${srv.base}, HTTP 401)`));
@@ -203,7 +216,7 @@ test('BKA-5 the inventory reports only complete entries; eviction only deletes k
   assert.equal((await store.lookup('222222222222'))?.hash, b.hash);
   const still = await fetch(`${srv.origin}${a.url}`);
   assert.equal(still.status, 200, 'The bytes stay in the asset service (there is no delete endpoint)');
-  // 同一张图再写一次:只是一次对账,不重传
+  // Write the same image again: only one reconcile, do not retransmit
   const client = createAssetClient({ base: srv.base });
   assert.equal((await client.put('px', await (await fetch(`${srv.origin}${a.url}`)).arrayBuffer().then((x) => Buffer.from(x)))).uploaded, false);
   await srv.close();
@@ -226,7 +239,8 @@ test('BKA-6 shared project: when a remote asset service is registered, push a co
   assert.deepEqual(Buffer.from(await got.arrayBuffer()), bytes, 'The bytes retrieved from the remote are identical');
   assert.ok(await until(() => JSON.parse(fs.readFileSync(path.join(dir, '555555555555.json'), 'utf8')).pushed === remote.base), 'The index records which machine it was pushed to');
 
-  // 推失败(远程连不上):写入照常成功;换回能连的远程后,下次命中时补推
+  // Push failed (remote unreachable): write succeeds as usual; after switching back to reachable
+  // remote, catch-up push on next hit
   const s = await refusingPort();
   after(() => s.close());
   const closed = `http://127.0.0.1:${s.port}`;
@@ -264,7 +278,7 @@ test('BKA-8 another member of a shared project: when the local asset service doe
   const bytes = png(1500);
   const { hash } = await createAssetClient({ base: remote.base }).put('px', bytes, { ext: 'png' });
 
-  /** 本机素材服务:memory 数据层,pullArtifact 走缺省(media-pull 的当前远程) */
+  /** Local asset service: memory data layer, pullArtifact uses default (current remote of media-pull) */
   const stores = { media: await harness.memoryStore(), snap: await harness.memoryStore(), px: await harness.memoryStore() };
   const serveWith = async (opts) => {
     const mw = a.assetServiceMiddleware(path.join(TMP, `local-${++seq}`), { stores, ...opts });
@@ -274,7 +288,7 @@ test('BKA-8 another member of a shared project: when the local asset service doe
   const local = await serveWith({});
   try {
     pull.resetPullStateForTest();
-    // 没连远程:照旧 404
+    // Not connected to remote: 404 as usual
     assert.equal((await fetch(`${local.origin}/api/asset/px/${hash}`)).status, 404);
 
     pull.setRemoteAssetService({ base: remote.base });
@@ -287,20 +301,21 @@ test('BKA-8 another member of a shared project: when the local asset service doe
     assert.equal(pulls(), 1);
     assert.equal((await fetch(`${local.origin}/api/asset/px/${hash}`)).status, 200);
     assert.equal(pulls(), 1, 'The second time is a local hit and the remote is no longer asked');
-    // 远程也没有的:404(远程那台的 media-pull 也指着它自己 —— 按需拉取带的头让它不再往下拉,不成环、不等超时)
+    // Also missing on remote: 404 (media-pull on remote machine also points to itself: header carried
+    // by on-demand pull stops it from pulling further down, preventing loops and waiting for timeout)
     assert.equal((await fetch(`${local.origin}/api/asset/px/${'ab'.repeat(32)}`)).status, 404);
   } finally {
     pull.resetPullStateForTest();
     await closeServer(local.server);
   }
 
-  // 拉回来的字节不对(内容哈希对不上):不入库,404
+  // Retrieved bytes incorrect (content hash mismatch): not stored, 404
   const liar = await serveWith({ pullArtifact: async () => ({ bytes: png(10), contentType: 'image/png' }) });
   const other = 'cd'.repeat(32);
   assert.equal((await fetch(`${liar.origin}/api/asset/px/${other}`)).status, 404);
   assert.equal((await stores.px.chunks(other)).complete, false);
   await closeServer(liar.server);
-  // pullArtifact: null 关掉
+  // pullArtifact: null disabled
   let asked = 0;
   const off = await serveWith({ pullArtifact: null });
   pull.setRemoteAssetService({ base: remote.base });
@@ -309,7 +324,7 @@ test('BKA-8 another member of a shared project: when the local asset service doe
   assert.equal((await fetch(`${off.origin}/api/asset/px/${fh}`)).status, 404);
   pull.resetPullStateForTest();
   await closeServer(off.server);
-  // 非本机、没票据的读:先拒(401),不会替它去远程拉
+  // Read from non-local without ticket: reject first (401), will not pull from remote on its behalf
   const guarded = await serveWith({ isTrusted: () => false, tickets: null, pullArtifact: async () => { asked++; return null; } });
   assert.equal((await fetch(`${guarded.origin}/api/asset/px/${fh}`)).status, 401);
   assert.equal(asked, 0);
@@ -336,7 +351,7 @@ test('BKA-9 no push when the registered "remote" is the local asset service', as
   }
 });
 
-/* ------------------------------------------------------------------ px 的容量淘汰(asset-store/px-evict.mjs) */
+/* ------------------------------------------------------------------ px capacity eviction (asset-store/px-evict.mjs) */
 
 test('BKA-10 eviction plan: when over the cap, delete from oldest to newest by last use down to 90% of the cap; entries within the protection period are not deleted; nothing is deleted when not over the cap', async () => {
   const { planPxEviction, pxCapBytes, PX_EVICT_DEFAULTS } = await import('../asset-store/px-evict.mjs');
@@ -345,7 +360,7 @@ test('BKA-10 eviction plan: when over the cap, delete from oldest to newest by l
     { hash: 'a', size: 30, lastUsed: now - 5_000_000 },
     { hash: 'b', size: 30, lastUsed: now - 4_000_000 },
     { hash: 'c', size: 30, lastUsed: now - 3_000_000 },
-    { hash: 'd', size: 30, lastUsed: now - 10 }, // 刚用过
+    { hash: 'd', size: 30, lastUsed: now - 10 }, // Just used
   ];
   const p = planPxEviction(blobs, { capBytes: 100, now, protectMs: 60_000 });
   assert.equal(p.total, 120);
@@ -354,14 +369,14 @@ test('BKA-10 eviction plan: when over the cap, delete from oldest to newest by l
   const q = planPxEviction(blobs, { capBytes: 40, now, protectMs: 60_000 });
   assert.deepEqual(q.victims.map((v) => v.hash), ['a', 'b', 'c'], 'd is within the protection period and is not deleted even if over the cap');
   assert.deepEqual(planPxEviction(blobs, { capBytes: 120, now }).victims, [], 'Nothing is deleted when not over the cap');
-  // 上限:环境变量优先;磁盘小于 500 GiB 取 2%;否则 10 GiB
+  // Limit: environment variable takes precedence; if disk is under 500 GiB use 2%; otherwise 10 GiB
   assert.equal(pxCapBytes({ env: { PROMPTCUT_PX_CAP_BYTES: '1234' } }), 1234);
   assert.equal(pxCapBytes({ env: {}, diskTotal: 100 * 1024 ** 3 }), Math.floor(100 * 1024 ** 3 * 0.02));
   assert.equal(pxCapBytes({ env: {}, diskTotal: 2048 * 1024 ** 3 }), PX_EVICT_DEFAULTS.capBytes);
   assert.equal(pxCapBytes({ env: {}, diskTotal: null }), 10 * 1024 ** 3);
 });
 
-/** 真的素材服务(fs 数据层,px 带淘汰器,不自动起)挂在 http 上 */
+/** Real asset service (fs data layer, px with evictor, does not start automatically) mounted on http */
 async function serveWithEvict(pxEvict) {
   const a = await harness.asset();
   const root = path.join(TMP, `evict-${++seq}`);
@@ -381,13 +396,13 @@ test('BKA-11 when px on the local asset service exceeds the cap, delete by last 
   const srv = await serveWithEvict({ capBytes: 10_000, options: { protectMs: 0 } });
   assert.ok(srv.evictor, 'The evictor is on with the default fs data layer');
   const client = createAssetClient({ base: srv.base });
-  // 素材原件:比上限大得多,也不许被删
+  // Original asset: much larger than limit, never allowed to be deleted
   const movie = crypto.randomBytes(50_000);
   const { hash: mediaHash } = await client.put('media', movie, { ext: 'mp4' });
   const hashes = [];
   for (let i = 0; i < 5; i++) { hashes.push((await client.put('px', png(3000 - 8))).hash); await sleep(15); } // 5 × 3000 = 15000 > 10000
   await sleep(15);
-  // 最早写的那块刚被取过一次:它变成最近用的
+  // Earliest written chunk was just fetched once: it becomes the most recently used
   assert.equal((await fetch(`${srv.base}/px/${hashes[0]}`)).status, 200);
   const r = await srv.evictor.evictNow();
   assert.equal(r.ran, true);
@@ -405,19 +420,19 @@ test('BKA-11 when px on the local asset service exceeds the cap, delete by last 
 });
 
 test('BKA-12 entries used within the protection period are not deleted; at any moment only the one holding the lock evicts, and a stale lock is taken over after 3 minutes', async () => {
-  const srv = await serveWithEvict({ capBytes: 1000 }); // 缺省保护期 30 分钟
+  const srv = await serveWithEvict({ capBytes: 1000 }); // Default grace period 30 minutes
   const client = createAssetClient({ base: srv.base });
   const h = (await client.put('px', png(3000))).hash;
   let r = await srv.evictor.evictNow();
   assert.deepEqual(r.removed, [], 'Just-written entries (used within 30 minutes) are not deleted, even when over the cap');
   assert.equal((await fetch(`${srv.base}/px/${h}`)).status, 200);
-  // 锁:别的进程正拿着 → 这一轮跳过
+  // Lock: held by another process → skip this round
   const lock = path.join(srv.pxDir, '.evict-lock');
   fs.writeFileSync(lock, JSON.stringify({ pid: 1, at: Date.now() }));
   r = await srv.evictor.evictNow();
   assert.equal(r.ran, false, 'Skip when the lock cannot be obtained');
   assert.ok(fs.existsSync(lock), 'Someone else\'s lock is left alone');
-  // 锁超过 3 分钟没更新:算死锁,删掉接手
+  // Lock not updated for over 3 minutes: considered deadlock, delete and take over
   const old = new Date(Date.now() - 4 * 60_000);
   fs.utimesSync(lock, old, old);
   r = await srv.evictor.evictNow();
@@ -437,7 +452,7 @@ test('BKA-13 requesting a snapshot again after it was evicted: reconciling the i
   assert.deepEqual(r.removed, [e.hash]);
   assert.equal(await store.lookup('888888888888'), null, 'No longer hits after eviction (bakeOne gets null and goes to render)');
   assert.ok(!fs.existsSync(path.join(dir, '888888888888.json')), 'The index entry is deleted');
-  // 重渲之后再写回:又能命中
+  // Write back after re-render: hits again
   const again = await store.put('888888888888', png(500));
   assert.equal((await store.lookup('888888888888'))?.hash, again.hash);
   await srv.evictor.stop();

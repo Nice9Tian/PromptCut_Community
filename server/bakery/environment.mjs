@@ -1,31 +1,37 @@
 import { describeEnvironment } from '../render-node/fingerprint.mjs';
 
 /**
- * 预渲染用的 Chrome 是什么环境(设计 2.1,契约 E.1)。
+ * What environment the Chrome used for prerendering is (design 2.1, contract E.1).
  *
- * 不同环境渲出的像素有确定的差异(字体微调、抗锯齿),所以预渲染的结果键要乘上环境指纹
- * (`render-node/fingerprint.mjs`)。指纹的三项里,`os` 取自 Node 的 `process.platform`,
- * 另外两项只有真的 Chrome 答得出来:
+ * Pixels rendered in different environments have deterministic differences (font hinting,
+ * anti-aliasing), so the prerender result key must be multiplied by the environment fingerprint
+ * (`render-node/fingerprint.mjs`). Among the three fingerprint items, `os` comes from Node's
+ * `process.platform`, while the other two can only be answered by a real Chrome:
  *
- *   - `chromeVersion`:`browser.version()`,例如 `HeadlessChrome/138.0.7204.49`;
- *   - `renderer` / `vendor`:在页面里开一个 WebGL 上下文,读 `UNMASKED_RENDERER_WEBGL` /
- *     `UNMASKED_VENDOR_WEBGL`(没有调试扩展就读 `gl.RENDERER` / `gl.VENDOR`)。
+ *   - `chromeVersion`: `browser.version()`, e.g. `HeadlessChrome/138.0.7204.49`;
+ *   - `renderer` / `vendor`: open a WebGL context in the page and read `UNMASKED_RENDERER_WEBGL` /
+ *     `UNMASKED_VENDOR_WEBGL` (or `gl.RENDERER` / `gl.VENDOR` if there is no debug extension).
  *
- * 预渲染的 Chrome 带 `--disable-gpu` 和 `--enable-unsafe-swiftshader`(`chrome.mjs` 的 CHROME_ARGS),
- * WebGL 走 SwiftShader,所以本机预渲染进程的 `gpuClass` 预期是 `software`。这就是它真实的栅格化
- * 环境,不做特判:以后在带 GPU 的独立渲染主机上换了启动参数,指纹自然跟着变。
+ * Chrome for prerendering carries `--disable-gpu` and `--enable-unsafe-swiftshader` (CHROME_ARGS in
+ * `chrome.mjs`), with WebGL using SwiftShader, so `gpuClass` of the local prerender process is
+ * expected to be `software`. This is its true rasterization environment, without special-casing:
+ * when launch arguments change on a standalone render host with a GPU in the future, the
+ * fingerprint will naturally change accordingly.
  *
- * **从不抛出**:任何一步失败或超时,缺的那项按空值计,`detected: false`。调用方
- * (`FramePipeline.ensureEnvironment`)照样把它定为这个进程的指纹 —— 指纹宁可粗一点,
- * 也不能让预渲染因为探测失败停下来。
+ * **Never throws**: if any step fails or times out, the missing item is treated as empty, with
+ * `detected: false`. The caller (`FramePipeline.ensureEnvironment`) still adopts it as this
+ * process's fingerprint: it is better for the fingerprint to be slightly coarser than to halt
+ * prerendering because detection failed.
  */
 
 /**
- * 在页面里跑的探测函数。**必须自包含**:`page.evaluate` 把它序列化成源码送进页面,
- * 闭包里的东西带不过去。
+ * Probe function running inside the page. **Must be self-contained**: `page.evaluate` serializes
+ * it into source code to send into the page, and closed-over values cannot be carried over.
  *
- * 画布不挂进文档,用完立刻 `WEBGL_lose_context` 释放 —— 页面(预渲染间的导出页)同时能开的
- * WebGL 上下文有上限,探测不能占一个名额不还;也不能碰文档,免得改动页面的变更计数。
+ * The canvas is not attached to the document, and is released immediately via `WEBGL_lose_context`
+ * after use: there is an upper limit on WebGL contexts that can be opened concurrently on the page
+ * (the export page of the prerender room); probing cannot take up a slot without releasing it, nor
+ * can it touch the document, to avoid modifying the page's mutation count.
  */
 function readWebglIdentity() {
   const canvas = document.createElement('canvas');
@@ -36,13 +42,16 @@ function readWebglIdentity() {
     const debug = gl.getExtension('WEBGL_debug_renderer_info');
     const renderer = String((debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)) ?? '');
     const vendor = String((debug ? gl.getParameter(debug.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR)) ?? '');
-    try { gl.getExtension('WEBGL_lose_context')?.loseContext(); } catch { /* 释放失败不影响读到的值 */ }
+    try { gl.getExtension('WEBGL_lose_context')?.loseContext(); } catch { /* Failure to release does not affect the read values */ }
     return { renderer, vendor };
   }
   return { renderer: '', vendor: '' };
 }
 
-/** `work()` 在 `ms` 内完成就回 `{ ok: true, value }`,抛出或超时回 `{ ok: false }`。不抛。 */
+/**
+ * If `work()` completes within `ms`, returns `{ ok: true, value }`; if it throws or times out,
+ * returns `{ ok: false }`. Never throws.
+ */
 async function attempt(work, ms) {
   let timer;
   const timeout = new Promise(resolve => {
@@ -56,7 +65,8 @@ async function attempt(work, ms) {
     clearTimeout(timer);
     return { ok: false };
   }
-  // 超时之后原来那个承诺可能还会被拒绝:接住它,免得成为未处理的拒绝
+  // After timeout, the original promise may still be rejected: catch it to avoid an unhandled
+  // rejection
   pending.catch(() => {});
   try {
     return await Promise.race([pending.then(value => ({ ok: true, value }), () => ({ ok: false })), timeout]);
@@ -66,12 +76,13 @@ async function attempt(work, ms) {
 }
 
 /**
- * 探测 `browser` / `page` 所在的渲染环境。
+ * Probe the rendering environment where `browser` / `page` resides.
  * → `{ os, gpuClass, chromeMajor, fingerprint, renderer, vendor, chromeVersion, detected }`
  *
- * 两步并行做,各自受 `timeoutMs` 限制,所以整次探测最多约 `timeoutMs`。
- * 两步都成功才是 `detected: true`;拿不到 WebGL 上下文(两个空串)也算成功 —— 那就是
- * 这个环境的真实情况(`gpuClassOf` 把它归为 `software`)。
+ * The two steps run in parallel, each bounded by `timeoutMs`, so the entire probe takes at most
+ * ~`timeoutMs`. Only when both steps succeed is `detected: true`; failing to obtain a WebGL
+ * context (two empty strings) also counts as success: that is the true reality of this environment
+ * (`gpuClassOf` classifies it as `software`).
  */
 export async function probeBrowserEnvironment({ browser, page } = {}, { platform = process.platform, timeoutMs = 5000 } = {}) {
   const [version, webgl] = await Promise.all([

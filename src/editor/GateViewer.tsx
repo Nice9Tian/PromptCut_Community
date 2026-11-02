@@ -4,10 +4,11 @@ import { stageGate, stepText } from "../online/stageGate";
 import { tr } from "../i18n/index.ts";
 
 /**
- * 三道闸门的只读查看口(`docs/plan/online-browser-task.md` 第三步第 5 条):在线页面地址里带 `?gates=1` 时,在右上角显示当前各闸门的结果与
- * 崩溃记录,供在真机上核对(语义 `mechanism/platforms.md`「三道闸门」的「查看口」)。只读:不能改档位、不能清记录;不含任何凭证
- * (崩溃记录里只有时刻、软件版本、步骤、级别、测崩的卡的身份键)。每秒刷新一次。
- * 同样的内容经 `window.__pcGates()` 给探针读。
+ * Read-only viewer for the three gates (`docs/plan/online-browser-task.md` step 3, item 5): when the online page URL carries `?gates=1`,
+ * it shows the current result of each gate and the crash records in the top right corner, for checking on real devices
+ * (semantics `mechanism/platforms.md` "Three gates", "Viewer"). Read-only: it cannot change tiers or clear records; it contains no credentials
+ * (crash records only hold the time, software version, step, level, and the identity key of the card that was tested and crashed). Refreshes once per second.
+ * The same content is exposed through `window.__pcGates()` for probes to read.
  */
 export function gateViewerWanted(): boolean {
   try { return new URLSearchParams(location.search).get("gates") === "1"; } catch { return false; }

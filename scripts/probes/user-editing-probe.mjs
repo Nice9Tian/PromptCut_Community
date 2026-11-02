@@ -1,16 +1,21 @@
 /**
- * 「用户正在编辑」探针(计划 agent-workflow-plan.md A2):
+ * "User is editing" probe (plan agent-workflow-plan.md A2):
  *
- *   node scripts/probes/user-editing-probe.mjs [--origin http://127.0.0.1:5770] [--shots <目录>]
+ *   node scripts/probes/user-editing-probe.mjs [--origin http://127.0.0.1:5770] [--shots <dir>]
  *
- * 真的打开编辑台(?editor),新项目里放一张卡,依次:
- *   U1 页面接上文档服务、Agent 服务端绑上项目副本(/api/agent/status bound);
- *   U2 在时间轴上按住这张卡拖动(不松手):页面推给服务端的编辑状态里它是「拖动中」;
- *      经 /api/mcp/call 以 Agent 身份 get_clip 读它,结果带 userEditing(drag)和「用户正在编辑」那句;读别的片段不带;
- *   U3 松手(拖动落地 = 页面改了这张卡,且它选中着):状态变成「刚动过」;
- *   U4 Agent 随后 update_clip 写它:写入照常落地(只提示不拦),结果带 overwrote「用户刚改过」和 userEditing(recent);
- *   U5 取消选中:编辑状态清空,Agent 再读不带提示。
- * 截图(--shots 给了才存):dragging.png(按住拖动时)。
+ * Actually opens the editor (?editor), places a card in a new project, and in sequence:
+ *   U1 Page connects to document service, Agent server binds to project replica
+ *      (/api/agent/status bound);
+ *   U2 Hold and drag this card on the timeline (without releasing): in the editing state pushed
+ *      by the page to the server, it is "dragging";
+ *      read it as Agent via /api/mcp/call with get_clip; result includes userEditing(drag) and the
+ *      "User is editing" notice; reading other clips does not include them;
+ *   U3 Release (drag committed = page modified this card, and it remains selected): status
+ *      becomes "recently moved";
+ *   U4 Agent then writes it via update_clip: write commits as normal (warns only, does not block),
+ *      result includes overwrote "User just modified" and userEditing(recent);
+ *   U5 Deselect: editing state is cleared, Agent reads again without notice.
+ * Screenshot (saved only if --shots is provided): dragging.png (while holding and dragging).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -58,7 +63,7 @@ try {
   await page.waitForFunction(async () => { const m = await import('/src/store/project.ts'); return !!m.getState().project; }, { timeout: 180000, polling: 500 });
   await page.waitForFunction(() => !document.querySelector('[data-pc="probe-gate"]'), { timeout: 120000, polling: 500 }).catch(() => {});
 
-  /* 新项目 + 两张卡(c 被拖、d 作对照) */
+  /* New project + two cards (c is dragged, d as control) */
   const ids = await page.evaluate(async () => {
     const m = await import('/src/store/project.ts');
     const reg = await import('/src/kernel/registry.ts');
@@ -71,20 +76,20 @@ try {
   });
   check(!!ids.a && !!ids.b, 'U0 two cards placed in the new project', ids);
 
-  /* U1 绑上项目副本(overwrote 要经文档服务) */
+  /* U1 Bind to project replica (overwrote must go through document service) */
   const bound = await waitFor(async () => {
     const s = await (await fetch(`${origin}/api/agent/status`)).json();
     return s.bound ? s : null;
   }, 60000, 500);
   check(!!bound, 'U1 the Agent server bound the project copy', bound && { mode: bound.mode, projectId: bound.projectId });
-  // 副本里有这两张卡了(页面的写入进了文档服务)
+  // Replica now has these two cards (page writes entered document service)
   const seen = await waitFor(async () => {
     const r = await mcpCall('get_clip', { clipId: ids.a });
     return r && !r.__error ? r : null;
   }, 30000, 500);
   check(!!seen, 'U1 the Agent can read the newly placed card', seen?.__error);
 
-  /* U2 按住拖动(不松手) */
+  /* U2 Hold and drag (without releasing) */
   await page.evaluate((id) => document.querySelector(`[data-clip-id="${id}"]`)?.scrollIntoView({ block: 'center', inline: 'center' }), ids.a);
   await sleep(300);
   const box = await page.$eval(`[data-clip-id="${ids.a}"]`, (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
@@ -102,7 +107,7 @@ try {
   const readB = await mcpCall('get_clip', { clipId: ids.b });
   check(readB && !readB.__error && readB.userEditing === undefined && readB.notice === undefined, 'U2 reading another card carries no notice', readB?.notice ?? readB?.__error);
 
-  /* U3 松手 = 页面改了这张卡,选中着 → 「刚动过」 */
+  /* U3 Release = page modified this card, remaining selected → "recently moved" */
   await page.mouse.up();
   const recent = await waitFor(async () => (await editingNow()).find((e) => e.clipId === ids.a && e.kind === 'recent'), 3000);
   check(!!recent, 'U3 after release the state becomes "just moved" (moved within 30 seconds after selection)', await editingNow());
@@ -112,13 +117,13 @@ try {
   }, ids.a);
   check(typeof moved === 'number' && moved !== 1, 'U3 the drag really took effect (start changed)', moved);
 
-  /* U4 Agent 写它:照常落地,结果带 overwrote「用户刚改过」 */
+  /* U4 Agent writes it: commits as normal, result includes overwrote "User just modified" */
   let wrote = null;
   for (let i = 0; i < 10; i += 1) {
     await mcpCall('get_clip', { clipId: ids.a });
     wrote = await mcpCall('update_clip', { clipId: ids.a, opacity: 0.5 });
     if (!wrote?.__error) break;
-    await sleep(300); // 副本还没追上页面刚落地的那一版:stale,重读再写
+    await sleep(300); // Replica has not caught up with the version just committed by the page: stale, reread and rewrite
   }
   check(wrote?.ok === true, 'U4 the write takes effect as usual (only warns, does not block)', wrote?.__error ?? wrote?.ok);
   const ow = Array.isArray(wrote?.overwrote) ? wrote.overwrote.find((o) => o.clipId === ids.a) : null;
@@ -134,7 +139,7 @@ try {
   const stillRecent = (await editingNow()).find((e) => e.clipId === ids.a);
   check(stillRecent?.kind === 'recent', 'U4 the Agent\'s write does not count as "user moved it" (the timer is still the one from the moment of release)', stillRecent);
 
-  /* U5 取消选中 → 清空 */
+  /* U5 Deselect → clear */
   await page.evaluate(async () => { const m = await import('/src/store/project.ts'); m.actions.select([]); });
   const cleared = await waitFor(async () => ((await editingNow()).length === 0 ? true : null), 3000);
   check(!!cleared, 'U5 the editing state is cleared after deselection', await editingNow());

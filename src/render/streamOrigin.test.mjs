@@ -1,11 +1,16 @@
 /**
- * 轨道流的分段从这条流自己的第一帧起数(`streamSegments.mjs`)在播放器一侧(`streamPlayer.ts`)的单测:
- * 片段不从 15 的倍数帧开始、时长不是 15 的倍数时,**逐帧核对**「项目的第 F 帧取的是哪个分段的第几个样本」。
- * 跑:npm test -- src/render/streamOrigin.test.mjs
+ * Unit tests on the player side (`streamPlayer.ts`) for track stream segments counted from the
+ * stream's own first frame (`streamSegments.mjs`):
+ * When a clip does not start on a multiple of 15 frames and its duration is not a multiple of 15,
+ * **verifies frame-by-frame** "which sample of which segment is retrieved for project frame F".
+ * Run: npm test -- src/render/streamOrigin.test.mjs
  *
- * 分段是真的(`streamMux.ts` 封的 fMP4),每个样本的字节里写着「第几段、第几个样本」;解码器是假的,只记下喂给它的每一块
- * (时间戳、是不是关键帧、字节)并立刻吐一帧。合成要 WebGL,这里没有,所以只核到「喂进去的是哪一个样本、记在哪个项目帧号上」——
- * 画到画布上的那一步由浏览器里的探针(`scripts/probes/stream-origin-probe.mjs`)用像素核对。
+ * Segments are real (fMP4 muxed by `streamMux.ts`), with each sample's bytes writing "which
+ * segment, which sample"; the decoder is fake, only recording each chunk fed into it (timestamp,
+ * whether it is a keyframe, bytes) and immediately emitting a frame. Compositing requires WebGL,
+ * which is absent here, so it only verifies "which sample is fed in and recorded on which project
+ * frame number": the step of drawing onto the canvas is pixel-checked by the probe in the browser
+ * (`scripts/probes/stream-origin-probe.mjs`).
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,7 +22,7 @@ const FPS = 30;
 const AVCC = Uint8Array.from([1, 0x64, 0x00, 0x1f, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x64, 0x00, 0x1f, 0x01, 0x00, 0x03, 0x68, 0xee, 0x3c]);
 const INIT_ID = 'i'.repeat(16);
 
-/** 假的解码器:喂进来的每一块都记下,下一个微任务吐一帧(时间戳原样带回) */
+/** Fake decoder: records each chunk fed in, emits a frame in next microtask (timestamp as-is) */
 const decoders = [];
 class FakeDecoder {
   constructor(init) { this.init = init; this.state = 'unconfigured'; this.fed = []; this.resets = 0; decoders.push(this); }
@@ -39,8 +44,9 @@ const fakeRoot = (canvases) => ({ querySelector(sel) { const m = /^\[data-pc-cli
 const flush = async (n = 8) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
 
 /**
- * 一条盖住项目帧 `firstFrame .. lastFrame` 的流:清单 + 字节源。每个样本 4 个字节 `[0xAB, 分段号, 样本序号, 0xCD]`。
- * `asked` 记下向字节源要过哪些分段文件。
+ * A stream covering project frames `firstFrame .. lastFrame`: manifest + byte source. Each sample
+ * is 4 bytes `[0xAB, segment index, sample index, 0xCD]`.
+ * `asked` records which segment files were requested from the byte source.
  */
 function streamOf(firstFrame, lastFrame) {
   const { originFrame, lastSegment } = streamSegmentSpan(firstFrame, lastFrame);
@@ -71,7 +77,7 @@ function playerFor(stream, plane = stream.plane) {
   player.setPlanes([plane], FPS);
   return player;
 }
-/** 喂给解码器的每一块 → `[项目帧号, 分段号, 样本序号, 是不是关键帧]` */
+/** Each chunk fed to the decoder → `[project frame, segment index, sample index, isKeyframe]` */
 const fedOf = (decoder) => decoder.fed.map((c) => [frameOfTimestamp(c.timestamp, FPS), c.data[1], c.data[2], c.type === 'key']);
 
 beforeEach(() => { decoders.length = 0; });
@@ -89,10 +95,12 @@ test('frame-by-frame random access check: the clip starts at frame 100 and has 5
     assert.equal(stream.asked[0], `${seg}-seg.m4s`, `frame ${f} requests segment ${seg} first`);
     assert.equal(decoders.length, 1);
     const fed = fedOf(decoders[0]);
-    // 从这一段的关键帧起一路解到目标帧:每一块的时间戳都是它自己的项目帧号,字节是这一段里对应序号的那个样本
+    // Decodes all the way from this segment's keyframe to target frame: each chunk's timestamp is its
+    // own project frame number, and bytes are the sample at the corresponding index in this segment
     const upTo = fed.filter(([frame]) => frame <= f);
     assert.deepEqual(upTo, Array.from({ length: index + 1 }, (_, i) => [100 + seg * 15 + i, seg, i, i === 0]), `Frame ${f}`);
-    // 目标帧解出来以后记在它自己的项目帧号上,分段号是这条流自己的
+    // After target frame is decoded, it is recorded on its own project frame number; the segment
+    // number is this stream's own
     const track = [...player.tracks.values()][0];
     assert.equal(track.frames.get(f)?.segment, seg, `frame ${f} is recorded under segment ${seg}`);
     assert.ok([...track.frames.keys()].every((k) => k >= f), 'frames before the target are closed as soon as they come out');
@@ -123,7 +131,8 @@ test('frames earlier than the first frame of this stream have no segment: no byt
     assert.deepEqual([...player.showingClips()], []);
     player.stop();
   }
-  // 第 105 帧:原来是 floor(105 / 15) = 第 7 段(这条流没有第 7 段);现在是第 0 段的第 5 个样本
+  // Frame 105: originally floor(105 / 15) = segment 7 (this stream has no segment 7); now it is
+  // sample 5 of segment 0
   const player = playerFor(stream);
   player.present(105 / FPS);
   await flush();
@@ -157,7 +166,9 @@ test('the stream plane player does not accept a stream without a first frame (fr
   assert.deepEqual(stream.asked, []);
   none.stop();
 
-  // 同一个流键、同一份字节,第一帧从 100 换成 200(给「片段挪动以后流不失效」留的口子:读的一侧只认流平面带来的第一帧)
+  // Same stream key, same bytes, first frame changed from 100 to 200 (room left for "stream does not
+  // invalidate after clip is moved": read side only recognizes the first frame brought by stream
+  // plane)
   const player = playerFor(stream);
   player.present(105 / FPS);
   await flush();

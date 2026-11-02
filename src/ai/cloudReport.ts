@@ -1,17 +1,25 @@
 /**
- * 云端对话的诊断报告〔用户 2026-10-07 定〕:云端模式下「诊断报告」照常能用,内容是这段云端对话的过程、出错的原因、
- * 客户端与版本信息;**不含任何凭证**:委托票据、对话委托、模型 Key、请求头里的 Bearer 一概不进。
+ * Diagnostic report for cloud chats [user decision, 2026-10-07]: "diagnostic report" remains
+ * available in cloud mode, covering the cloud chat process, error causes, client and version
+ * info; **contains no credentials**: delegation tickets, chat delegations, model keys, and Bearer
+ * headers are completely excluded.
  *
- * 纯函数,不碰网络、不碰 store:对话消息(由云端事件重建的 `ChatMessage`)、会话状态、`info` 都由调用方传进来,Node 单测直接用。
- * 报告在页面里生成,不经任何 `/api/*`:在线页面用它就不违反「在线页面不请求编辑器进程的 `/api/*`」;桌面版同一份。
+ * Pure function, touches neither network nor store: chat messages (`ChatMessage` reconstructed
+ * from cloud events), session state, and `info` are passed in by the caller; directly usable by
+ * Node unit tests. The report is generated in the page without going through any `/api/*`: online
+ * pages using it do not violate "online pages do not request `/api/*` from the editor process";
+ * identical copy for desktop app.
  *
- * 脱敏分三道:
- *   1. 键名:`grant`、`ticket`、`delegation` 之类的字段整条抹掉(这一版的消息里本来就没有,留着防以后有人往里放);
- *   2. `redactDebug`(`../debug.ts`,本机诊断报告用的同一个):Bearer、`sk-` 开头的 Key、带 key/token/secret 的查询参数、家目录;
- *   3. 云端补的几种形状:委托票据与对话委托是 `v1.<段>.<段>`(`server/auth/tickets.mjs`),再加 `AIza…` 一类的 Key。
- *      最后对整份 JSON 文本再扫一遍,哪里溜进来的都挡得住。
+ * Three redaction passes:
+ *   1. Key names: entirely wipe fields like `grant`, `ticket`, `delegation` (not present in this
+ *      version's messages anyway, kept to prevent future additions);
+ *   2. `redactDebug` (`../debug.ts`, same one used by local diagnostic reports): Bearer, keys
+ *      starting with `sk-`, query params with key/token/secret, home directory;
+ *   3. Cloud additions: delegation tickets and chat delegations are `v1.<segment>.<segment>`
+ *      (`server/auth/tickets.mjs`), plus keys like `AIza…`.
+ *      Finally rescan the entire JSON text to catch anything that slipped in anywhere.
  *
- * （原在 `src/ai/cloud/report.ts`，上移至公开侧 `src/ai/cloudReport.ts`）
+ * (Originally in `src/ai/cloud/report.ts`, moved up to public side `src/ai/cloudReport.ts`)
  */
 import type { ChatMessage, MessagePart } from "./types.ts";
 import { redactDebug } from "./debug.ts";
@@ -27,18 +35,18 @@ export interface CloudReportSessionView {
 
 export const CLOUD_REPORT_FORMAT = "PromptCut cloud conversation debug v1";
 
-/** 单个字符串字段最长留多少字(工具入参里可能有整段文案);超了截断并写明 */
+/** Max length for a string field (tool args may contain full text); truncated with notice if exceeded */
 const FIELD_LIMIT = 4000;
 
-/** 键名一出现就整条抹掉的字段(不看值) */
+/** Fields wiped entirely once key name matches (regardless of value) */
 const SECRET_KEY = /^(grant|ticket|delegation|delegate|authorization|bearer|token|secret|key|apikey|api_key|password|cookie)$/i;
 
-/** 委托票据与对话委托的形状:`v1.<base64url>.<base64url>`(`server/auth/tickets.mjs`、`delegation.mjs`) */
+/** Delegation ticket and chat delegation shape: `v1.<base64url>.<base64url>` (`server/auth/tickets.mjs`, `delegation.mjs`) */
 const TICKET_SHAPE = /\bv1\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g;
-/** 模型 Key 的另几种常见形状(`sk-` 开头的 `redactDebug` 已处理) */
+/** Other common model key shapes (those starting with `sk-` are handled by `redactDebug`) */
 const KEY_SHAPES = [/\bAIza[0-9A-Za-z_-]{20,}/g, /\bsk-[A-Za-z0-9_-]{8,}/g, /\bxai-[A-Za-z0-9_-]{16,}/g, /\bgsk_[A-Za-z0-9]{16,}/g];
 
-/** 把一段文本里票据形状与 Key 形状的串换掉 */
+/** Replace strings matching ticket and key shapes in a text */
 export function scrubCloudSecrets(text: string): string {
   let out = text.replace(TICKET_SHAPE, "[TICKET-REDACTED]");
   for (const re of KEY_SHAPES) out = out.replace(re, "[KEY-REDACTED]");
@@ -64,7 +72,7 @@ export interface CloudReportClient {
   language?: string;
   platform?: string;
   viewport?: { width: number; height: number; dpr?: number } | null;
-  /** 在线构建嵌进页面的代码版本;桌面构建没有 */
+  /** Code version embedded in page by online build; absent in desktop build */
   codeVersion?: string | null;
 }
 
@@ -72,15 +80,15 @@ export interface CloudReportInput {
   messages: ChatMessage[];
   conversationId: string;
   projectId?: string | null;
-  /** Agent 服务的地址(页面打的那个);只留来源与路径 */
+  /** Agent service address (hit by the page); retains only origin and path */
   serviceUrl?: string | null;
   view?: Pick<CloudReportSessionView, "streaming" | "connection" | "problem" | "lastSeq"> | null;
   info?: CloudInfo | null;
-  /** 此刻选的模型(空 = 服务端缺省) */
+  /** Currently selected model (empty = server default) */
   model?: string;
-  /** 此刻选的思考强度(空 = 默认) */
+  /** Currently selected thinking effort (empty = default) */
   effort?: string;
-  /** 页面上此刻挂着的提示(发送失败、身份没就绪、开关被关等) */
+  /** Prompts currently displayed on the page (send failure, identity not ready, switch turned off, etc.) */
   notice?: string | null;
   client: CloudReportClient;
   now?: number;
@@ -99,7 +107,7 @@ function toolsOf(m: ChatMessage): ToolView[] {
   return (m.tools ?? []).map((t) => ({ name: t.name, callId: t.callId, input: t.input, ok: t.ok, summary: t.summary, durationMs: t.durationMs }));
 }
 
-/** 云端对话诊断报告的 JSON 文本(已脱敏)。每一轮 = 一条用户消息加紧随其后的那条回复 */
+/** JSON text of cloud chat diagnostic report (redacted). Each round = user message plus immediate reply */
 export function cloudConversationReport(input: CloudReportInput): string {
   const { messages } = input;
   const rounds: Record<string, unknown>[] = [];

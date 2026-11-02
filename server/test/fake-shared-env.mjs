@@ -1,15 +1,19 @@
 /**
- * 共享项目测试的公共件（M6a，契约 `docs/plan/auth-contract.md`）：起带凭证存储的文档服务、建项目、拼子协议。
+ * Shared test fixture for shared project tests (M6a, contract `docs/plan/auth-contract.md`):
+ * starts document service with credential store, creates projects, and builds subprotocols.
  *
  *   startSharedService({ mode, now, isLoopback, clusterToken, limits, dataDir })
  *       → { service, store, port, url, base, logs, dir, close() }
- *       独立模式（hosted）自建服务器监听 127.0.0.1:0；挂载模式（lan）自起一个 http 服务器挂上去，WS 路径 /docservice。
- *       `isLoopback` 缺省一律 false：测试都从 127.0.0.1 连，要测「局域网来源」就得把回环当远端。
+ *       Standalone mode (hosted) starts its own server listening on 127.0.0.1:0; attached mode
+ *       (lan) starts an http server and mounts onto it, WS path /docservice.
+ *       `isLoopback` defaults to false: all tests connect from 127.0.0.1; to test "LAN origin",
+ *       loopback must be treated as remote.
  *   createProject(base, { name, mode, creator, password, list, kdf })  → { projectId, name, mode }
  *   join(base, { projectId, username, deviceId, deviceName, password, as, role, conversation, owner })
- *       → 已打开的 wsClient（fake-ws-kit）
+ *       → an open wsClient (fake-ws-kit)
  *
- * kdf 缺省用最低的 10 万次，测试跑得快；派生本身另有对拍用例。
+ * kdf defaults to the lowest 100,000 iterations for fast test runs; key derivation itself has
+ * separate cross-check test cases.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -24,7 +28,7 @@ export const FAST_KDF = Object.freeze({ alg: 'pbkdf2-sha256', iter: 100000 });
 export const LOCAL_DEVICE = Object.freeze({ deviceId: 'pc-local-device-0001', deviceName: 'host-pc' });
 
 let devSeq = 0;
-/** 一个合法的 deviceId */
+/** A valid deviceId */
 export const deviceId = (tag = 'dev') => `${tag}-${String(++devSeq).padStart(4, '0')}-abcdefghij`.replace(/[^A-Za-z0-9_-]/g, '-');
 
 export function tempDir(prefix = 'pc-shared-') {
@@ -81,17 +85,20 @@ export function createProject(base, { name = `p-${Math.random().toString(36).sli
   return createSharedProject({ base, name, mode, creator, password, list, kdf });
 }
 
-/** 凭证明进入；回已打开的连接。握手失败时 `opened` 会 reject */
+/** Enters with credentials; returns an open connection. On handshake failure, `opened` rejects */
 export async function join(base, opts) {
   const protocols = await buildAuthProtocols({ base, deviceName: 'Test PC', role: 'page', as: 'member', ...opts });
   return wsClient(base, protocols);
 }
 
 /**
- * 素材票据的测试件：在临时目录（或给定的 `auth/` 目录）开一份凭证存储，建一个项目，按需签票据。
- *   issue(r = 'rw', at = Date.now(), userId?)  → 票据字符串
- *   tickets                                    → 交给 `assetServiceMiddleware(root, { tickets })` 的核对器
- *   bump(fn)                                   → 改项目记录（代数、禁入表）后照常签新的
+ * Test fixture for asset tickets: opens a credential store in a temporary directory (or the
+ * given `auth/` directory), creates a project, and issues tickets on demand.
+ *   issue(r = 'rw', at = Date.now(), userId?)  → ticket string
+ *   tickets                                    → verifier passed to
+ *                                                `assetServiceMiddleware(root, { tickets })`
+ *   bump(fn)                                   → updates project record (generation, ban list)
+ *                                                and issues new ones as usual
  */
 export async function assetTicketKit({ dir = path.join(tempDir('pc-ticket-'), 'auth'), store: given } = {}) {
   const { signTicket } = await import('../auth/tickets.mjs');

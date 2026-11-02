@@ -1,14 +1,18 @@
 /**
- * 对用户说话:send_message 的 to 填 "user"(2026-10-20 用户定,用户原话「气泡里面只展示在做什么(harness可能要改,
- * 比如加入send_message(user,xxx)的用法。)」)。说的话由界面按 tool_call 事件里的 text 按顺序画进这一轮的气泡,
- * 不进项目、不经多 Agent 公告板;工具结果只是一句「已显示」。
+ * Speak to the user: `to` in `send_message` is set to "user" (user decision, 2026-10-20, user's exact
+ * words: "only show what is being done in the bubble (harness may need changes, such as adding
+ * usage of send_message(user,xxx).)"). The message is sequentially rendered by the UI into this
+ * round's bubble according to `text` in the `tool_call` event; it does not enter the project, and
+ * does not go through the multi-Agent bulletin board; the tool result is simply "Displayed".
  *
- * 多 Agent 协调的 send_message(发给别的 Agent)定义在 server/tools/agent.mjs,同一个名字;
- * 这里的定义只在那个工具没交给模型时(托管档的开放清单不含它)补上,只能发给用户。
+ * `send_message` for multi-Agent coordination (sent to other Agents) is defined in
+ * `server/tools/agent.mjs` with the same name; the definition here is only patched in when that
+ * tool is not provided to the model (the hosted tier open manifest excludes it), and can only send
+ * to the user.
  */
 export const USER_MESSAGE_RESULT = Object.freeze({ ok: true, shown: true, note: 'Shown in the user\'s chat bubble' });
 
-/** 答一次对用户说的话:text 是空的就退回去,让模型重说 */
+/** Respond once to messages for the user: if text is empty, reject it and have the model speak again */
 export function answerUserMessage(input) {
   if (typeof input?.text !== 'string' || !input.text.trim()) return { ok: false, error: 'text must not be empty: write one or two sentences to say to the user' };
   return USER_MESSAGE_RESULT;

@@ -1,20 +1,23 @@
 /**
- * 剪辑段的声音(`kernel/cutSegments.ts` 文件头「声音怎么出」)与包络。
+ * Cut segment audio (`kernel/cutSegments.ts` file header "How audio is output") and envelopes.
  *
- * 声音那边没有「嵌套的场景」可挂,所以按时间把被引用剪辑里出声的片段平移、裁到段的窗口里,
- * 拼成一份只给混音用的项目。每层剪辑段的淡入淡出写成包络(`cutEnv`),由 `opacityAt`
- * 和各个混音器(`audioPlan.mjs` 的 `gainCurve`、`server/bakery/mux-audio.mjs` 的 afade 链)乘上去。
+ * On the audio side, there is no "nested scene" to mount, so clips producing sound in the
+ * referenced cut are shifted in time and trimmed into the segment's window, assembled into a
+ * project used solely for mixing. Fade-in and fade-out of each cut segment layer are written into
+ * an envelope (`cutEnv`), multiplied by `opacityAt` and respective mixers (`gainCurve` in
+ * `audioPlan.mjs`, afade chains in `server/bakery/mux-audio.mjs`).
  *
- * 纯 JS(.mjs):导出混音在服务端直接 import,不经 TS。和 `cutSegments.ts` 的存法同一口径。
+ * Pure JS (.mjs): export mixing is imported directly on the server without TS. Same convention as
+ * the storage format in `cutSegments.ts`.
  */
 
-/** 和 cuts.ts 新剪辑的默认时长同一个数 */
+/** Same value as the default duration of new cuts in cuts.ts */
 import { clipSpeed } from "./clipTime.mjs";
 
 const FALLBACK_CUT_DURATION = 30;
 const MAX_DEPTH = 32;
 
-/** 一层包络在 t 时刻的值:窗口外 0,窗口内 不透明度 × 淡入 × 淡出 */
+/** Value of one envelope layer at time t: 0 outside the window; opacity × fade-in × fade-out inside the window */
 export function envelopeAt(e, t, withOpacity = true) {
   if (t < e.start || t >= e.end) return 0;
   let a = withOpacity ? e.opacity ?? 1 : 1;
@@ -33,7 +36,7 @@ function activeIdOf(p) {
   return p.activeCutId && cuts.some((c) => c.id === p.activeCutId) ? p.activeCutId : cuts[0].id;
 }
 
-/** 被引用剪辑的子项目(只给声音用,不记忆化);成环、悬空、太深返回 null */
+/** Subproject of the referenced cut (for audio only, not memoized); returns null on cycles, dangling references, or excessive depth */
 function subOf(p, cutId) {
   if (!Array.isArray(p.cuts)) return null;
   const root = activeIdOf(p);
@@ -54,18 +57,23 @@ function subOf(p, cutId) {
 const memo = new WeakMap();
 
 /**
- * 只给混音用的项目:激活剪辑里的每个剪辑段,换成被引用剪辑里的片段,平移到段的时间上、裁到段的窗口里;
- * 嵌套的剪辑段递归展开。展开出来的片段放在各自新的序列里(同一个剪辑段的不同子序列在时间上会重叠),
- * 序列 id、片段 id 都带上剪辑段的路径前缀,不和原有的撞。
+ * Project solely for mixing: each cut segment in the active cut is replaced with clips from the
+ * referenced cut, shifted to the segment's time, and trimmed into the segment's window; nested cut
+ * segments are expanded recursively. Expanded clips are placed in their own new tracks (different
+ * subtracks of the same cut segment will overlap in time), with track ids and clip ids carrying
+ * the cut segment's path prefix to avoid colliding with existing ones.
  *
- * - 音量 = 子片段自己的音量 × 每一层剪辑段的音量(`audioVolume`);
- * - 静音:任何一层剪辑段静音、所在序列静音,展开出来的就静音;
- * - 淡入淡出:子片段自己的(按它原来的起止)和每一层剪辑段的,都写进 `cutEnv`(不带段的不透明度 —— 那是画面的);
- * - 裁掉的那一截:素材段与卡片段都把源时钟(`mediaOffset`;卡片段没写时取它节点的 timeOffset)往后挪同样多,
- *   和切分同一个口径;
- * - 被引用剪辑事后变短:窗口截到它的总时长为止,超出的部分没有声音。
+ * - Volume = subclip's own volume × each cut segment layer's volume (`audioVolume`);
+ * - Mute: if any cut segment layer is muted or its track is muted, the expanded clip is muted;
+ * - Fade-in/fade-out: both the subclip's own (per its original start/end) and each cut segment
+ *   layer's are written into `cutEnv` (excluding segment opacity: that belongs to visuals);
+ * - Trimmed portion: both media clips and card clips shift their source clock (`mediaOffset`; if
+ *   omitted on card clips, use its node's timeOffset) backward by the same amount, matching the
+ *   split convention;
+ * - Referenced cut shortens later: window is capped at its total duration, with silence beyond it.
  *
- * 没有剪辑段的项目原样返回同一个对象(老项目的混音一个字节不变)。
+ * Projects without cut segments return the same object as is (mixing for legacy projects is
+ * unchanged byte-for-byte).
  */
 export function audioProjectOf(p) {
   if (!(p?.tracks ?? []).some((tr) => (tr.clips ?? []).some(isSeg))) return p;
@@ -90,7 +98,7 @@ function expand(p, seg, hostTrack, prefix, outer) {
   const sub = subOf(p, seg.cutId);
   if (!sub) return [];
   const offset = Math.max(0, seg.cutOffset ?? 0);
-  const shift = seg.start - offset; // 子剪辑时间 τ ↔ 父时间 τ + shift
+  const shift = seg.start - offset; // Sub-cut time τ ↔ parent time τ + shift
   const w0 = seg.start;
   const w1 = Math.min(seg.end, sub.duration + shift);
   if (!(w1 > w0)) return [];
@@ -108,7 +116,7 @@ function expand(p, seg, hostTrack, prefix, outer) {
       const a = Math.max(s, w0), b = Math.min(e, w1);
       if (!(b > a)) continue;
       if (isSeg(c)) {
-        // 嵌套的剪辑段:先把它自己平移、裁到这一层的窗口(偏移跟着走),它自己按原起止的淡化写成包络,再递归
+        // Nested cut segment: first shift and trim it into this layer's window (offsets follow), write its own fading per original start/end into envelopes, then recurse
         const moved = {
           ...c, start: a, end: b, cutOffset: Math.max(0, c.cutOffset ?? 0) + (a - s), fadeIn: undefined, fadeOut: undefined,
           audioVolume: (c.audioVolume ?? 1) * segVolume, audioMuted: !!c.audioMuted || segMuted || !!child.muted,
@@ -124,15 +132,15 @@ function expand(p, seg, hostTrack, prefix, outer) {
         id: `${path.join("/")}/${c.id}`,
         start: a,
         end: b,
-        // 截掉的那一截按片段速度推进素材起点(变速段本身不出原声,这里只为口径一致;缺省 1 逐位不变)
+        // Advance asset start per clip speed for trimmed portion (speed-changed clips produce no original audio themselves, here only for consistency; default 1 bitwise unchanged)
         ...(trim > 0 || c.mediaId ? { mediaOffset: sourceOffset + trim * clipSpeed(c) } : {}),
         fadeIn: undefined,
         fadeOut: undefined,
         audioVolume: (c.audioVolume ?? 1) * segVolume,
         ...(segMuted || child.muted ? { audioMuted: true } : {}),
-        // 外层各段的包络、子片段自己按原起止的淡化、这一层的窗口(被引用剪辑变短时截到它的总时长)
+        // Outer segment envelopes, subclip's own fading per original start/end, and this layer's window (clamped to total duration if referenced cut shortens)
         cutEnv: [...envs, fadesOf(c, s, e), { start: w0, end: w1 }],
-        // cutId:原片段住在哪条剪辑里(卡片声音的身份与覆盖范围按原片段核,`cardAudioRendition.mjs`)
+        // cutId: which cut the original clip lives in (card audio identity and coverage checked per original clip, `cardAudioRendition.mjs`)
         cutOrigin: { clipId: c.id, segments: path, cutId: seg.cutId },
       });
     }

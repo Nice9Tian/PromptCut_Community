@@ -1,14 +1,19 @@
 /**
- * 在线构建里的动效素材目录（`vite build --mode online` 专用）。
+ * Motion graphics asset catalog in online builds (dedicated to `vite build --mode online`).
  *
- * 桌面上 `/catalog/<kind>/<name>.json` 由开发服务器的中间件提供（`server/vite-plugin-cards.ts` 的 `/catalog` 路由），
- * 只放行 `server/catalog/<kind>/index.json` 里登记过的名字。卡片参数里存的是同源绝对路径（如 `/catalog/lottie/bodymovin.json`），
- * 同一个项目桌面、在线都要能开，所以地址不改；在线页面没有本机进程，就由构建把同一批文件原样产出到
- * `dist-online/catalog/<kind>/<name>.json`，随在线构建部署到 `<部署目录>/editor/catalog/`，托管端的 nginx 在 `/catalog/` 下提供
- * （编辑器页的源与两个舞台源都要：舞台 iframe 里的 fetch 解析到舞台自己的源）。
+ * On desktop, `/catalog/<kind>/<name>.json` is served by dev server middleware (the `/catalog`
+ * route in `server/vite-plugin-cards.ts`), allowing only names registered in
+ * `server/catalog/<kind>/index.json`. Card parameters store same-origin absolute paths (e.g.
+ * `/catalog/lottie/bodymovin.json`); the same project must open on both desktop and online, so the
+ * address remains unchanged; since online pages have no local process, the build outputs the same
+ * batch of files verbatim to `dist-online/catalog/<kind>/<name>.json`, deployed with the online
+ * build to `<deploy directory>/editor/catalog/`, served by nginx on the hosted side under `/catalog/`
+ * (needed by both the editor page origin and the two stage origins: fetch inside stage iframes
+ * resolves to the stage's own origin).
  *
- * 只产出登记过的条目，与中间件放行的集合相同：种类只认 lottie、particles，名字只认 `[A-Za-z0-9-]+`。
- * 页面不在运行时读 index.json（`src/cards/catalogAssets.ts` 在构建时 import 它），所以 index.json 本身不产出。
+ * Outputs only registered entries, matching the set allowed by the middleware: kinds recognize only
+ * lottie and particles, names recognize only `[A-Za-z0-9-]+`. The page does not read index.json at
+ * runtime (`src/cards/catalogAssets.ts` imports it at build time), so index.json itself is not output.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,7 +21,7 @@ import path from 'node:path';
 export const CATALOG_KINDS = ['lottie', 'particles'];
 const NAME = /^[A-Za-z0-9-]+$/;
 
-/** `server/catalog/<kind>/index.json` 登记的条目：`{ kind, name, fileName: 'catalog/<kind>/<name>.json', source: 绝对路径 }` */
+/** Entries registered in `server/catalog/<kind>/index.json`: `{ kind, name, fileName: 'catalog/<kind>/<name>.json', source: absolute path }` */
 export function catalogEntries(root) {
   const out = [];
   for (const kind of CATALOG_KINDS) {
@@ -33,7 +38,7 @@ export function catalogEntries(root) {
   return out;
 }
 
-/** vite 插件：构建时把登记的条目原样（逐字节）产出到输出目录的 `catalog/<kind>/<name>.json` */
+/** Vite plugin: outputs registered entries byte-for-byte to `catalog/<kind>/<name>.json` in the output directory during build */
 export function onlineCatalogPlugin(root = process.cwd()) {
   return {
     name: 'promptcut-online-catalog',

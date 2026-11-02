@@ -1,12 +1,16 @@
 /**
- * 页面一侧的 see_frames(没有数据镜像、没绑项目副本时的兜底那条路,`handlers/vision.ts` 的 seePreview)认 cutId
- * (2026-10-21 用户定:看画面能指定剪辑,不用切换):
- *   - 带 cutId:发给预渲染的是那条剪辑当激活的项目视图,不给 t 取那条剪辑上次停下的位置;store 里的项目、激活剪辑、播放头都不动;
- *   - 不带:照旧发 store 里的项目、页面播放头;
- *   - cutId 不存在:明确报错,不发请求。
- * 另:页面执行器的入口两种名字都认(`mcpExecutor.ts` 进门 modelToolName);add_cut 只建不切。
+ * Page-side see_frames (the fallback path when there is no data mirror and no bound project
+ * replica, seePreview in `handlers/vision.ts`) recognizes cutId
+ * (user decision, 2026-10-21: viewing frames can specify a cut without switching):
+ *   - With cutId: sends project view with that cut as active to prerender; if t is omitted, takes
+ *     the position where that cut last stopped; project in store, active cut, and playhead remain
+ *     unchanged;
+ *   - Without: sends project in store and page playhead as before;
+ *   - cutId does not exist: returns explicit error without sending a request.
+ * Also: page executor entry point recognizes both names (incoming modelToolName in
+ * `mcpExecutor.ts`); add_cut creates only, does not switch.
  *
- * 跑:npm test -- src/mcp/handlers/seeFramesCut.test.mjs
+ * Run: npm test -- src/mcp/handlers/seeFramesCut.test.mjs
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test, { mock } from "node:test";
@@ -38,7 +42,7 @@ function load() {
 
 const sent = [];
 globalThis.fetch = async (url, init) => {
-  // 预渲染的地址(render/prerender.ts 先问 /api/prerender/info)
+  // Prerender address (render/prerender.ts first queries /api/prerender/info)
   if (String(url) === "/api/prerender/info") return { ok: true, status: 200, json: async () => ({ ready: true, url: "http://prerender.test" }) };
   sent.push({ url: String(url), body: JSON.parse(init.body) });
   return { ok: true, status: 200, json: async () => ({ ok: true, t: 0, __image: { mime: "image/png", base64: "AA" } }) };

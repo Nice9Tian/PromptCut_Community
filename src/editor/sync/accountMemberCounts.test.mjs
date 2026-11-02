@@ -1,6 +1,8 @@
 /**
- * 账号云端项目的成员列表计数(语义 `product/agent.md`「成员列表怎么数」;`hostedServices.ts` 的 `accountMemberState` 等)。
- * 回归:创建者离线、他的云端 Agent 在跑时,别的成员看到的是「成员：1 人 · Agent：1 个」,创建者那一行标「离线，Agent 在跑」(探针 B1)。
+ * Member list counting for account cloud projects (semantics `product/agent.md` "How to count
+ * the member list"; `accountMemberState` in `hostedServices.ts`, etc.).
+ * Regression: when creator is offline and their Cloud Agent is running, other members see
+ * "Members: 1 · Agents: 1", and the creator row is marked "Offline, Agent running" (probe B1).
  *
  *   node --test src/editor/sync/accountMemberCounts.test.mjs
  */

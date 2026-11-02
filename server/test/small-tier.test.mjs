@@ -1,9 +1,12 @@
 /**
- * 预渲染小尺寸(`docs/plan/c10a-contract.md` 第 9 节):尺寸规则、两档分开就绪、清单与推送、给在线页面的层表。
- * 跑:node --experimental-test-module-mocks --test server/test/small-tier.test.mjs
+ * Prerender small size (`docs/plan/c10a-contract.md` Section 9): size rules, separate readiness
+ * for both tiers, manifest and push, layer table for online pages.
+ * Run: node --experimental-test-module-mocks --test server/test/small-tier.test.mjs
  *
- * 不起 Chrome(`bakery/index.mjs` 换成假的,调用就记一笔并抛):生成小位图本身由 `scripts/probes/small-tier-probe.mjs`
- * 在真的预渲染 Chrome 里验;这里验的是它之外的一切 —— 尺寸、清单、推送、完成条件、层表、什么时候不生成。
+ * Does not launch Chrome (`bakery/index.mjs` is mocked to record calls and throw): generating
+ * small bitmaps itself is verified by `scripts/probes/small-tier-probe.mjs` in a real prerender
+ * Chrome; this verifies everything else: size, manifest, push, completion conditions, layer
+ * table, and when not to generate.
  */
 import { test, mock, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -48,7 +51,7 @@ async function makePipeline() {
   pipelines.push(p);
   return p;
 }
-/** 假素材服务客户端:按 (ns, hash) 存 */
+/** Fake asset service client: stored by (ns, hash) */
 function memClient() {
   const blobs = new Map();
   const puts = [];
@@ -66,7 +69,7 @@ function memClient() {
     async get(ns, hash) { return blobs.get(`${ns}/${hash}`)?.bytes ?? null; },
   };
 }
-/** 一张像样的 WebP 头(VP8X,带 alpha 标记),尺寸 w×h;后面的字节随便 */
+/** A decent WebP header (VP8X with alpha flag), size w×h; subsequent bytes are arbitrary */
 function fakeWebp(w, h, salt = 0) {
   const b = Buffer.alloc(40 + salt);
   b.write('RIFF', 0, 'ascii'); b.writeUInt32LE(b.length - 8, 4); b.write('WEBP', 8, 'ascii');
@@ -76,7 +79,7 @@ function fakeWebp(w, h, salt = 0) {
 }
 const html = (n) => `<div style="position:absolute;left:${n}px;top:0;width:10px;height:10px;background:red"></div>`;
 
-/* ------------------------------------------------------------------ 尺寸规则 */
+/* ------------------------------------------------------------------ Size rules */
 
 test('ST1 size: scaled proportionally to fit within 800×600, never enlarged, keeping the aspect ratio (16:9 → 800×450, 9:16 → 337×600)', () => {
   assert.deepEqual(smallSize({ projectWidth: 1920, projectHeight: 1080 }), { scale: 800 / 1920, width: 800, height: 450 });
@@ -85,7 +88,7 @@ test('ST1 size: scaled proportionally to fit within 800×600, never enlarged, ke
   assert.deepEqual(smallSize({ projectWidth: 1000, projectHeight: 1000 }), { scale: 0.6, width: 600, height: 600 });
   assert.deepEqual(smallSize({ projectWidth: 640, projectHeight: 360 }), { scale: 1, width: 640, height: 360 }, 'No upscaling');
   assert.equal(smallScale(0, 0), 1);
-  // 设了框的卡:框按项目的同一个缩放比缩(小位图铺满页面上包裹层里的快照平面)
+  // Cards with a box configured: the box scales by the same project scale ratio (small bitmap fills the snapshot plane in the wrapper layer on the page)
   assert.deepEqual(smallSize({ projectWidth: 1920, projectHeight: 1080, boxWidth: 600, boxHeight: 300 }), { scale: 800 / 1920, width: 250, height: 125 });
   assert.deepEqual(smallSize({ projectWidth: 1920, projectHeight: 1080, boxWidth: 1, boxHeight: 1 }), { scale: 800 / 1920, width: 1, height: 1 }, 'At least 1 pixel');
   assert.equal(SMALL_WEBP_QUALITY, 80);
@@ -99,7 +102,7 @@ test('ST2 WebP header: recognized, size can be read', () => {
   assert.equal(webpSize(Buffer.from('RIFF')), null);
 });
 
-/* ------------------------------------------------------------------ 清单:两档分开记 */
+/* ------------------------------------------------------------------ Manifest: tracked separately for both tiers */
 
 async function seed(p, key, frames) {
   await p.snapshots().commitSnapshots({ tier: 'shared', key, clipId: 'c1', capabilities: {}, items: frames.map((f) => ({ localFrame: f, html: html(f) })) });
@@ -119,7 +122,7 @@ test('ST3 manifest: with no small bitmaps it is identical to C6.4 down to the ch
   assert.deepEqual(after.frames, before.frames, 'The original-size table is not affected by the small size');
   assert.deepEqual(after.small.map(([f]) => f), [1, 3]);
   assert.equal(after.small[0][1], sha256(fakeWebp(800, 450, 1)));
-  // 小尺寸就绪不能当作原尺寸就绪:只有小位图、没有 HTML 的帧不进任何一张表
+  // Small size ready cannot be treated as original size ready: frames with only small bitmaps and no HTML do not enter any table
   await fs.writeFile(path.join(dir, `5${SMALL_SUFFIX}`), fakeWebp(800, 450, 5));
   const wider = (await T.collectSnapshotResult(p, task(key, 0, 7))).result;
   assert.deepEqual(wider.frames.map(([f]) => f), [0, 1, 2, 3]);
@@ -159,7 +162,7 @@ test('ST6 completion condition: before listing the manifest, wait for the small 
   const p = await makePipeline();
   const key = 'c'.repeat(64);
   const dir = await seed(p, key, [0, 1]);
-  // 模拟「小尺寸还在生成」:链上挂一个 60 ms 之后才写文件的活
+  // Simulate "small size is still generating": attach a task to the chain that writes the file only after 60 ms
   p.smallChain = new Promise((resolve) => setTimeout(async () => {
     await fs.writeFile(path.join(dir, `0${SMALL_SUFFIX}`), fakeWebp(800, 450, 0));
     await fs.writeFile(path.join(dir, `1${SMALL_SUFFIX}`), fakeWebp(800, 450, 1));
@@ -167,13 +170,13 @@ test('ST6 completion condition: before listing the manifest, wait for the small 
   }, 60));
   const { result } = await T.collectSnapshotResult(p, task(key, 0, 1));
   assert.deepEqual(result.small.map(([f]) => f), [0, 1]);
-  // 链上的活失败了也不挡原尺寸
+  // Even if tasks on the chain fail, original size is not blocked
   p.smallChain = Promise.reject(new Error('Broken'));
   const again = (await T.collectSnapshotResult(p, task(key, 0, 1))).result;
   assert.deepEqual(again.frames.map(([f]) => f), [0, 1]);
 });
 
-/* ------------------------------------------------------------------ 什么时候不生成 */
+/* ------------------------------------------------------------------ When not to generate */
 
 test('ST7 when to schedule: not scheduled without a push queue configured; if configured, it is noted and drawn later when the page is switched between prerenders (Chrome is not opened); pulled-in frames are not scheduled', async () => {
   const p = await makePipeline();
@@ -182,16 +185,16 @@ test('ST7 when to schedule: not scheduled without a push queue configured; if co
   assert.equal(p.scheduleSmallSnapshots(args), false, 'No push queue configured');
   p.pushQueue = { enqueue: async () => {} };
   assert.equal(p.smallTierEnabled(), false, 'F2: the small tier is discontinued, and defaults to false even with a push queue configured');
-  p.smallTierEnabled = () => true; // 单测下显式打开以测试排期逻辑
+  p.smallTierEnabled = () => true; // Explicitly enabled in unit tests to test scheduling logic
   assert.equal(p.scheduleSmallSnapshots(args), true, 'Recorded');
   assert.equal(p.smallPending.length, 1);
   assert.equal(p.scheduleSmallSnapshots({ ...args, adopted: true }), false, 'Pulled-in frames');
-  // 攒太多只留最新的
+  // If too many accumulate, keep only the latest
   for (let i = 0; i < 600; i++) p.scheduleSmallSnapshots({ ...args, items: [{ localFrame: i, html: html(i) }] });
   assert.ok(p.smallPending.reduce((n, j) => n + j.items.length, 0) <= 480);
   assert.ok(p.smallStats.dropped > 0);
   p.smallPending = [];
-  // commitSnapshots 的钩子照常进推送队列,但不开 Chrome
+  // commitSnapshots hook enters the push queue as usual, but does not launch Chrome
   await p.snapshots().commitSnapshots(args);
   assert.equal(bakeryCalls.length, calls, 'openBakery was never called');
   p.smallPending = [];
@@ -200,7 +203,7 @@ test('ST7 when to schedule: not scheduled without a push queue configured; if co
   p.pushQueue = null;
 });
 
-/* ------------------------------------------------------------------ 层表 */
+/* ------------------------------------------------------------------ Layer table */
 
 test('ST8 layer table: lists the cards in the prerender set that produce snapshots; the shared tier result key = the shared key, and the local tier is computed per E.9; cards classified as light or that produce no snapshots are not listed', () => {
   const fp = OWN_ENV.fingerprint;
@@ -219,8 +222,10 @@ test('ST8 layer table: lists the cards in the prerender set that produce snapsho
   assert.equal(body.span, 60);
   assert.equal(body.at, 123);
   assert.deepEqual(body.layers.map((l) => l.clipId), ['a', 'b']);
-  // C10 契约第 18 节第 3 条:层表 v 2,每层带 contentKey(共享档内容键,取不到为 null)与 envFingerprint;
-  // M7 契约 D12 升 v 3:另带候选表,没有切分记录时只有自己一个候选,等于层上的字段
+  // C10 contract Section 18, Item 3: layer table v 2, each layer includes contentKey (shared tier
+  // content key, null if unavailable) and envFingerprint;
+  // M7 contract D12 bumps to v 3: also carries a candidate table; when there is no split record,
+  // it only has itself as a single candidate, matching the layer fields
   assert.equal(body.v, 3);
   assert.deepEqual(body.layers[0], { clipId: 'a', kind: 'html', key: 'S'.repeat(8), tier: 'shared', resultKey: 'S'.repeat(8), dirKey: 'S'.repeat(8), entryKey: null, firstFrame: 30, count: 90,
     contentKey: null, envFingerprint: fp, candidates: [{ envFingerprint: fp, resultKey: 'S'.repeat(8), key: 'S'.repeat(8), dirKey: 'S'.repeat(8) }] });
@@ -286,11 +291,11 @@ test('ST9 the layer table is written to the content store: briefly batched, the 
   p.pushQueue = null;
 });
 
-/* ------------------------------------------------------------------ 完成条件:两档都推送成功(阿里云 295/300,2026-09-27) */
+/* ------------------------------------------------------------------ Completion condition: both tiers pushed successfully (Alibaba Cloud 295/300, 2026-09-27) */
 
-/** 一张共享档卡的 control(`scheduleMissingSmall` / `writeSmallSnapshots` 要的几项) */
+/** A shared-tier card control (the items required by `scheduleMissingSmall` / `writeSmallSnapshots`) */
 const controlOf = (key, count) => ({ clipId: 'c1', snapshotKey: key, tier: 'shared', capabilities: {}, count, appearance: { width: 1920, height: 1080 } });
-/** 把管线接上一个假推送队列(打开小尺寸),再把画小位图换成直接写假 WebP(单测不开 Chrome) */
+/** Connects the pipeline to a fake push queue (enabling small size) and replaces small bitmap rendering with writing fake WebP directly (unit tests do not launch Chrome) */
 function withSmallTier(p) {
   p.pushQueue = { enqueue: async () => {} };
   p.smallTierEnabled = () => true;
@@ -310,7 +315,8 @@ test('ST10 frames that have the original size but lack the small size (rendered 
   const p = await makePipeline();
   const key = 'e'.repeat(64);
   const dir = await seed(p, key, [0, 1, 2, 3, 28, 29, 30, 31]);
-  // 这几帧有小尺寸:1、2、3;0 与 28～31 没有 —— 同阿里云那一轮(锚帧 0 与播放头那一批 28～31 渲在推送队列配上之前)
+  // These frames have small size: 1, 2, 3; 0 and 28-31 do not: same as that Alibaba Cloud round
+  // (anchor frame 0 and playhead batch 28-31 were rendered before the push queue was configured)
   for (const f of [1, 2, 3]) await fs.writeFile(path.join(dir, `${f}${SMALL_SUFFIX}`), fakeWebp(800, 450, f));
   const control = controlOf(key, 60);
   const entry = { key: 'entry-e', project: { width: 1920, height: 1080, fps: 30 } };
@@ -322,7 +328,7 @@ test('ST10 frames that have the original size but lack the small size (rendered 
   assert.deepEqual(p.smallPending.flatMap((j) => j.items.map((i) => i.localFrame)), [0, 28, 29, 30, 31]);
   assert.equal(p.smallPending[0].items[0].html, html(0), 'The original HTML is read back from the frame store');
   assert.equal(p.smallPending[0].key, key);
-  // 只看这一段:28～31 不在 [0, 3] 里
+  // Only inspect this segment: 28-31 are not in [0, 3]
   p.smallPending = [];
   assert.equal(await p.scheduleMissingSmall(entry, control, { from: 0, to: 3 }), 1);
   p.smallPending = [];
@@ -334,7 +340,7 @@ test('ST11 end of a queue sub-task: if there are small sizes noted but not yet d
   const drawn = withSmallTier(p);
   const key = 'f'.repeat(64);
   await seed(p, key, [0, 1]);
-  p.smallPending = []; // 写帧的钩子顺手记下的那一批不算:这里要的是「已有原尺寸、缺小尺寸」
+  p.smallPending = []; // The batch conveniently recorded by the frame writing hook does not count: what is needed here is "has original size, missing small size"
   const resets = [];
   const bakery = {
     page: { setViewport: async () => {} },
@@ -367,11 +373,12 @@ test('ST12 sink: with the small size on, a missing small size means incomplete (
   };
   const sink = T.createAssetSink({ pipeline: p, client, content });
   const ref = task(key, 0, 3);
-  // 没开小尺寸(没配推送队列):和 C6.4 一样,原尺寸齐就完成
+  // Small size not enabled (no push queue configured): same as C6.4, completes when original size is complete
   assert.equal(await sink.has(ref), true);
   assert.equal((await sink.put(ref)).complete, true);
   assert.equal(T.smallComplete((await sink.put(ref)).result), false, 'This manifest really lacks the small size of frame 0');
-  // 开着小尺寸:缺帧 0 的小尺寸 → 不算已有、不算完成(可重试),即使内容库里已有一份原尺寸齐的清单
+  // Small size enabled: missing small size for frame 0 → not considered existing, not considered
+  // complete (retryable), even if the content store already has a manifest with complete original size
   p.pushQueue = { enqueue: async () => {} };
   p.smallTierEnabled = () => true;
   assert.ok(manifests.size, 'The content store already has the manifest above (original size complete, small size missing)');
@@ -380,7 +387,7 @@ test('ST12 sink: with the small size on, a missing small size means incomplete (
   const miss = await sink.put(ref);
   assert.equal(miss.complete, false);
   assert.equal(miss.reason, 'small-missing', 'The reply explains why it was not fully received (diagnostics for AGENT-stall-phases)');
-  // 补上那一张:两档一起推,清单每帧都有小尺寸
+  // Backfill that frame: push both tiers together, manifest has small size for every frame
   await fs.writeFile(path.join(dir, `0${SMALL_SUFFIX}`), fakeWebp(800, 450, 0));
   assert.equal(await sink.has(ref), true);
   const done = await sink.put(ref);
@@ -388,7 +395,7 @@ test('ST12 sink: with the small size on, a missing small size means incomplete (
   assert.equal(T.smallComplete(done.result), true);
   assert.deepEqual(done.result.small.map(([f]) => f), [0, 1, 2, 3]);
   for (const [, hash] of done.result.small) assert.ok(await client.has('px', hash));
-  // 流没有小尺寸:恒算齐
+  // Streams do not have small size: always considered complete
   assert.equal(T.smallComplete({ kind: 'stream', segments: {} }), true);
   p.pushQueue = null;
 });
@@ -406,7 +413,7 @@ test('ST13 queue sub-task (shared tier / local tier) also fills in when this seg
   bakery.beforeReset = (b) => p.flushSmallOn(b);
   p.acquire = async () => bakery;
   p.release = () => {};
-  // 原尺寸早就齐了(fillCardControls 什么都不渲、也不换页 —— 最坏的情形)
+  // Original size was already complete (fillCardControls renders nothing and does not switch pages: worst-case scenario)
   p.fillCardControls = async () => [];
   const key = '7'.repeat(64);
   const dir = await seed(p, key, [0, 1, 2, 3]);
@@ -419,7 +426,7 @@ test('ST13 queue sub-task (shared tier / local tier) also fills in when this seg
   assert.equal(resets.length, 1, 'Switch the page once at the end to draw them');
   const { result } = await T.collectSnapshotResult(p, task(key, 0, 3));
   assert.equal(T.smallComplete(result), true);
-  // 本地档:一帧都不用渲,只差小尺寸,也借预渲染间补
+  // Local tier: no frames need to be rendered, only missing small size, also backfilled during prerendering
   drawn.length = 0;
   const lkey = '6'.repeat(64);
   await p.snapshots().commitSnapshots({ tier: 'local', entryKey: entry.key, key: lkey, clipId: 'c2', capabilities: {}, items: [0, 1].map((f) => ({ localFrame: f, html: html(f) })) });

@@ -1,62 +1,91 @@
 /**
- * 仅供测试，生产代码不得引用。
+ * For testing only; must not be referenced by production code.
  *
- * C10a 契约测试（`server/test/c10a-*.test.mjs`、`src/**\/c10a-*.test.mjs`、`scripts/probes/c10a-*.mjs`）的公共件。
- * 依据只有 `docs/plan/c10a-contract.md`（第 2、5、8、9、11.1、12 节）与它引的 `docs/plan/auth-contract.md`；
- * 测试方没看实现（`claude/c10a-web`、`claude/c10a-lowmem`）。
+ * Shared utilities for C10a contract tests (`server/test/c10a-*.test.mjs`,
+ * `src/**\/c10a-*.test.mjs`, `scripts/probes/c10a-*.mjs`).
+ * Based solely on `docs/plan/c10a-contract.md` (sections 2, 5, 8, 9, 11.1, 12) and the
+ * `docs/plan/auth-contract.md` it references; the test author did not inspect the implementation
+ * (`claude/c10a-web`, `claude/c10a-lowmem`).
  *
- * 契约没写死的模块路径、函数名、参数与回包形状全部集中在本文件，集成时对账只改这里。
- * 每一处假设用「假设 K<n>」标出，报告 `docs/archive/agent-reports/AGENT-c10a-tests.md` 按同样的编号列出。
+ * Module paths, function names, parameters, and response shapes not fixed by the contract are all
+ * concentrated in this file; during integration, only this file is modified to reconcile.
+ * Each assumption is marked as "Assumption K<n>", listed under the same numbers in report
+ * `docs/archive/agent-reports/AGENT-c10a-tests.md`.
  *
- * # 实现不在时怎么办
+ * # What to do when implementation is absent
  *
- * 每组用例开头调本文件的 `*Support()` 探测接口在不在：不在就把这组用例标成 `node:test` 的 skip，
- * 原因写「接口缺失：…」。探测只看「实现有没有」，不看「实现对不对」：接口一旦出现，用例就真跑，
- * 名字或形状和假设对不上会直接失败（由集成方改本文件对账），不会被静默跳过。
- * 所以集成前 `npm test` 的跳过数会多出这些；集成后必须回到只跳过需要 5190 的那 1 条。
+ * At the beginning of each test suite, call `*Support()` in this file to probe whether the API
+ * exists: if absent, mark the test suite as `node:test` skip with reason "missing API: …". Probing
+ * checks only "whether implementation exists", not "whether implementation is correct": once the
+ * API appears, tests actually run, and mismatches in name or shape against assumptions fail
+ * directly (reconciled by integration team editing this file) rather than being silently skipped.
+ * Therefore, before integration, `npm test` skip count will include these extra skips; after
+ * integration, it must return to skipping only the 1 test that requires 5190.
  *
- *   K1  邀请码（契约第 5 节）：挂在现有的共享项目 HTTP 端点旁边，独立模式 `shared/invite/resolve`、
- *       `shared/invite/redeem`，挂载模式 `<WS 路径>/shared/invite/…`；服务端就是 `auth-kit.mjs` 组装的那一套
- *       （`createSharedDocService`），不另起入口。
- *       - 探测：对随机邀请码 `POST shared/invite/resolve`，回 404 `{ error: 'invite-invalid' }` 算实现在；
- *         现在的实现对不认识的 `shared/…` 路径回 404 `not-found`，据此判为缺失。
- *       - `shared.admin` 的 `invite-create` / `invite-revoke` / `invite-status` 回包字段平铺在
- *         `shared.admin.ok` 上（与 C6.5 的 `list-bans` 回 `bans` 同一做法）；`invite-status` 也接受包在 `status` 里。
- *       - `expiresAt`、`revokedAt` 是毫秒时间戳（同 auth 契约第 8 节票据的 `exp`）。
- *       - 签发、过期按文档服务注入的时钟（`auth-kit.mjs` 的 `testClock`）算。
- *   K2  旧档位的判定（契约第 8 节）：2026-10-07 用户定撤销，2026-10-22（`claude/online-browser`）连同它的用例删掉，见下文「K2 / K3 档位」。
- *   K3  能力闸（契约第 8 节）：`src/render/mediaTier.ts` 的「只用小尺寸」分支（现名 `opts.smallOnly`，最低一档）与 `src/editor/stageSwap.ts`
- *       的单舞台闸（现名 `SwapHost.singleStage()`）。探测：`src/online/onlineTier.ts` 存在。
- *   K4  预渲染小尺寸（契约第 9 节）：
- *       - 尺寸规则是一个纯函数 `(width, height) → { width, height }`，在 `SMALL_SIZE_FILES` 之一里，名字取
- *         `SMALL_SIZE_NAMES` 之一；探测：找得到这个函数。
- *       - 快照清单（C6.2 的 `SnapshotResult`）另带 `small: [[帧, 哈希, 字节数], …]`，块是 WebP，推到 `px`
- *         （`client.put('px', bytes, { ext: 'webp' })`）；`pushResult` 两档都推成功才返回，任何一块失败就抛。
- *       - 就绪索引（`server/ready-index.mjs`）的小尺寸是单独的 `kind`（`READY_KINDS` 里名字含 `small` 的那个），
- *         与 `html` 层互不覆盖。
- *   K5  MP4 封装器（契约第 11 节〔裁〕）：`src/export/` 下某个 `.ts` 导出类或工厂，名字取 `MUXER_NAMES` 之一；
- *       构造参数 `{ video: { codec: 'avc', width, height, frameRate }, audio?: { codec: 'aac', sampleRate, numberOfChannels }, fastStart? }`；
- *       方法 `addVideoChunk(chunk, meta?)`、`addAudioChunk(chunk, meta?)`、`finalize()`。`chunk` 是 WebCodecs 的
- *       `EncodedVideoChunk` / `EncodedAudioChunk` 形状（`type`、`timestamp`/`duration` 微秒、`byteLength`、`copyTo`），
- *       `meta.decoderConfig.description` 是 avcC / AudioSpecificConfig。产物取 `finalize()` 的返回值
- *       （Uint8Array / ArrayBuffer / Blob），没有就取 `muxer.target.buffer`。
- *   K6  `/api` 守卫（契约第 2 节）：`src/online/` 下某个 `.ts` 导出名字含 `guard`（不分大小写）的函数，调用后
- *       在 `ONLINE` 时让 `fetch('/api/…')` 抛错（同步抛或 reject 都算），别的地址照常转给原来的 `fetch`；
- *       `ONLINE` 为 false 时不拦。
- *       在线构建的静态检查：产物里以 `/api/` 开头、后面紧跟地址的字面量（`apiLiterals`）为 0；守卫判前缀用的 `"/api/"` 不算。
- *   K7  单舞台（契约第 8.1 节）：仍由 `src/editor/previewMode.ts` 定开几个舞台；2026-10-22 起由舞台闸门的档位定（停在第一级只开跨源 A），
- *       `stageSrc('A')` 一律跨源、带 `preview=stage`。探测：`src/online/onlineTier.ts` 存在。
+ *   K1  Invite code (contract section 5): mounted alongside existing shared project HTTP endpoints,
+ *       standalone mode `shared/invite/resolve`, `shared/invite/redeem`, attached mode
+ *       `<WS path>/shared/invite/…`; server side is the suite assembled by `auth-kit.mjs`
+ *       (`createSharedDocService`), without setting up a separate entry point.
+ *       - Probe: send `POST shared/invite/resolve` for a random invite code; returning 404
+ *         `{ error: 'invite-invalid' }` counts as implementation present; current implementation
+ *         returns 404 `not-found` for unrecognized `shared/…` paths, judged as missing accordingly.
+ *       - `invite-create` / `invite-revoke` / `invite-status` response fields of `shared.admin` are
+ *         flattened on `shared.admin.ok` (same approach as C6.5 `list-bans` returning `bans`);
+ *         `invite-status` also accepts wrapping inside `status`.
+ *       - `expiresAt`, `revokedAt` are millisecond timestamps (same as ticket `exp` in auth
+ *         contract section 8).
+ *       - Issuance and expiration are calculated based on clock injected by document service
+ *         (`testClock` in `auth-kit.mjs`).
+ *   K2  Old tier determination (contract section 8): revoked (user decision, 2026-10-07), deleted
+ *       on 2026-10-22 (`claude/online-browser`) along with its test cases; see "K2 / K3 tiers" below.
+ *   K3  Capability gate (contract section 8): "small size only" branch of `src/render/mediaTier.ts`
+ *       (currently named `opts.smallOnly`, lowest tier) and single stage gate of
+ *       `src/editor/stageSwap.ts` (currently named `SwapHost.singleStage()`). Probe:
+ *       `src/online/onlineTier.ts` exists.
+ *   K4  Prerender small size (contract section 9):
+ *       - Size rule is a pure function `(width, height) → { width, height }`, in one of
+ *         `SMALL_SIZE_FILES`, with a name taken from `SMALL_SIZE_NAMES`; probe: find this function.
+ *       - Snapshot manifest (C6.2 `SnapshotResult`) additionally carries
+ *         `small: [[frame, hash, bytes], …]`, chunks are WebP, pushed to `px`
+ *         (`client.put('px', bytes, { ext: 'webp' })`); `pushResult` returns only when both tiers
+ *         push successfully, throwing if any chunk fails.
+ *       - Small size in ready index (`server/ready-index.mjs`) is an independent `kind` (the one
+ *         whose name contains `small` in `READY_KINDS`), non-overlapping with the `html` layer.
+ *   K5  MP4 muxer (contract section 11 [ruling]): a `.ts` under `src/export/` exporting a class or
+ *       factory, with a name taken from `MUXER_NAMES`; constructor parameters
+ *       `{ video: { codec: 'avc', width, height, frameRate }, audio?: { codec: 'aac', sampleRate, numberOfChannels }, fastStart? }`;
+ *       methods `addVideoChunk(chunk, meta?)`, `addAudioChunk(chunk, meta?)`, `finalize()`. `chunk`
+ *       is WebCodecs `EncodedVideoChunk` / `EncodedAudioChunk` shape (`type`, `timestamp`/`duration`
+ *       in microseconds, `byteLength`, `copyTo`), `meta.decoderConfig.description` is avcC /
+ *       AudioSpecificConfig. Output takes return value of `finalize()` (Uint8Array / ArrayBuffer /
+ *       Blob), falling back to `muxer.target.buffer` if none.
+ *   K6  `/api` guard (contract section 2): a `.ts` under `src/online/` exporting a function whose
+ *       name contains `guard` (case-insensitive); when called, makes `fetch('/api/…')` throw (either
+ *       synchronous throw or reject) when `ONLINE`, forwarding other addresses to original `fetch`
+ *       as usual; does not intercept when `ONLINE` is false.
+ *       Static check for online build: literals in artifacts starting with `/api/` immediately
+ *       followed by an address (`apiLiterals`) must be 0; `"/api/"` used by the guard to check
+ *       prefixes does not count.
+ *   K7  Single stage (contract section 8.1): still determined by `src/editor/previewMode.ts` how
+ *       many stages to open; starting 2026-10-22 determined by stage gate tier (stopping at level 1
+ *       opens cross-origin A only), `stageSrc('A')` is always cross-origin with `preview=stage`.
+ *       Probe: `src/online/onlineTier.ts` exists.
  *
- * # 集成对账（`claude/c10a-integ`，2026-09-27；逐条理由见 `docs/archive/agent-reports/AGENT-c10a-integ.md`）
+ * # Integration reconciliation (`claude/c10a-integ`, 2026-09-27; see `docs/archive/agent-reports/AGENT-c10a-integ.md` for item-by-item rationales)
  *
- *   K1  与实现一致，未改。
- *   K2  （已删，见上）
- *   K3  `mediaTier` 的「只用小尺寸」分支与 `stageSwap` 的单舞台闸，见 `singleStageSwapHost`（2026-10-22 改名）。
- *   K4  尺寸规则 `server/bakery/small-bitmap.mjs` 的 `smallSize({ projectWidth, projectHeight })`；清单 `small`、推 `px`
- *       与假设一致；就绪索引不收小尺寸，两档分开记在清单里（导出前核对 `src/export/originals.ts` 只认 `frames`）。
- *   K5  `src/export/mp4Mux.ts` 的 `Mp4Muxer` + `MemorySink`，构造时就要解码配置；见 `muxerAdapter`。
- *   K6  `src/online/apiGuard.ts` 的 `bootApiGuard(online)`；静态检查改棘轮（`ONLINE_API_RATCHET_FILE`）。
- *   K7  与实现一致，未改。
+ *   K1  Consistent with implementation, unchanged.
+ *   K2  (Deleted, see above)
+ *   K3  "small size only" branch of `mediaTier` and single stage gate of `stageSwap`, see
+ *       `singleStageSwapHost` (renamed 2026-10-22).
+ *   K4  Size rule `smallSize({ projectWidth, projectHeight })` in
+ *       `server/bakery/small-bitmap.mjs`; manifest `small`, push `px` consistent with assumption;
+ *       ready index does not accept small size, two tiers recorded separately in manifest
+ *       (verify before export `src/export/originals.ts` only recognizes `frames`).
+ *   K5  `Mp4Muxer` + `MemorySink` in `src/export/mp4Mux.ts`, requires decoder config during
+ *       construction; see `muxerAdapter`.
+ *   K6  `bootApiGuard(online)` in `src/online/apiGuard.ts`; static check changed to ratchet
+ *       (`ONLINE_API_RATCHET_FILE`).
+ *   K7  Consistent with implementation, unchanged.
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -71,24 +100,26 @@ export const repoPath = (rel) => path.join(ROOT, ...rel.split('/'));
 export const repoUrl = (rel) => pathToFileURL(repoPath(rel)).href;
 export const exists = (rel) => fs.existsSync(repoPath(rel));
 
-/** `node:test` 的 skip 选项：接口在就是 false（真跑），不在就是「接口缺失：…」 */
+/** skip option for `node:test`: false if API exists (actually runs), "missing API: …" if absent */
 export const skipIf = (missing, what) => (missing ? `interface missing: ${what} (C10a implementation not integrated yet; runs for real automatically once integrated)` : false);
 
 export function tempDir(prefix = 'pc-c10a-') {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
-// ================================================================== K1 邀请码
+// ================================================================== K1 Invite code
 
-/** 契约第 5 节：32 字节随机数的 base64url，不带填充，43 个字符 */
+/** Contract section 5: 32-byte random number base64url, unpadded, 43 characters */
 export const INVITE_CODE_RE = /^[A-Za-z0-9_-]{43}$/;
 export const newInviteCode = () => randomBytes(32).toString('base64url');
 export const INVITE_DEFAULT_TTL_MS = 604_800 * 1000;
 
 let inviteProbe = null;
 /**
- * 探测邀请码端点在不在（K1）。起一台临时的托管端文档服务问一次，回 `{ ok, detail }`。
- * 依赖 `auth-kit.mjs`（它本身要能起服务）；起不来就当缺失并把原因带出来。
+ * Probe whether invite code endpoint exists (K1). Spin up a temporary hosted side document
+ * service to query once, returning `{ ok, detail }`.
+ * Depends on `auth-kit.mjs` (which must be able to start services); if it fails to start, treat as
+ * missing and surface the reason.
  */
 export function inviteSupport() {
   inviteProbe ??= (async () => {
@@ -116,13 +147,13 @@ export function redeemInvite(env, { code, username, deviceId }, { remote } = {})
   return env.http('shared/invite/redeem', { method: 'POST', body: { code, username, deviceId }, remote });
 }
 
-/** `invite-status` 的回包：字段平铺，或包在 `status` 里（K1） */
+/** Response of `invite-status`: fields flattened, or wrapped in `status` (K1) */
 export function inviteStatusOf(reply) {
   assert.equal(reply?.type, 'shared.admin.ok', `invite-status should be shared.admin.ok: ${JSON.stringify(reply)}`);
   return reply.status && typeof reply.status === 'object' ? reply.status : reply;
 }
 
-/** 目录下所有文件的全文（二进制按 latin1 读），用来查「原文不落盘」 */
+/** Full text of all files in directory (binary read as latin1), used to check "plaintext not written to disk" */
 export function filesContaining(dir, needle) {
   const hits = [];
   const walk = (d) => {
@@ -141,40 +172,49 @@ export function filesContaining(dir, needle) {
   return hits;
 }
 
-// ================================================================== K2 / K3 档位(旧档位判定 2026-10-07 撤销)
+// ================================================================== K2 / K3 tiers (old tier determination revoked 2026-10-07)
 
 /**
- * 2026-10-22(`claude/online-browser`):旧档位撤销(`docs/semantics/product/platforms.md`「在线浏览器」),原来的 K2 判定
- * (原来的判定模块与设备设置「显示档」)整个删掉,测它的两份用例文件一并删除。
- * 这一档管的事拆到三处:只有一个舞台(舞台闸门第一级,`src/online/onlineTier.ts`)、最低一档(取档策略的 `smallOnly`)、身份为手机。
- * 下面的探测与桩改认 `onlineTier.ts`。
+ * 2026-10-22 (`claude/online-browser`): old tier revoked
+ * (`docs/semantics/product/platforms.md` "online browser"), original K2 determination (original
+ * determination module and device setting "display tier") deleted entirely, and the two test case
+ * files testing it deleted together.
+ * Responsibilities of this tier split into three places: only one stage (stage gate level 1,
+ * `src/online/onlineTier.ts`), lowest tier (`smallOnly` in tier selection policy), identity as
+ * mobile phone.
+ * Probing and stubs below now recognize `onlineTier.ts`.
  */
 export const TIER_FILE = 'src/online/onlineTier.ts';
 
 /**
- * K3(集成对账后,2026-10-22 改名):`stageSwap.ts` 的单舞台闸在 `SwapHost.singleStage()` 上(`Preview.tsx` 按此刻挂着几个舞台给)。
- * 用例的 `setSwapHost` 经这里补上 `singleStage`。
+ * K3 (after integration reconciliation, renamed 2026-10-22): single stage gate of `stageSwap.ts`
+ * is on `SwapHost.singleStage()` (provided by `Preview.tsx` based on how many stages are currently
+ * attached).
+ * Test case `setSwapHost` patches `singleStage` through here.
  */
 export function singleStageSwapHost(host, single = true) {
   return { ...host, singleStage: () => single };
 }
 
-// ================================================================== K4 预渲染小尺寸
+// ================================================================== K4 prerender small size
 
 /**
- * 集成对账后（K4）：尺寸规则是 `server/bakery/small-bitmap.mjs` 的 `smallSize({ projectWidth, projectHeight, boxWidth?, boxHeight? })`，
- * 回 `{ width, height }`。小位图画的是包裹层的框，框按同一个缩放比缩；不给框就是整幅，正是契约第 9 节的「项目画幅」。
+ * After integration reconcile (K4): the sizing rule is
+ * `server/bakery/small-bitmap.mjs`'s `smallSize({ projectWidth, projectHeight, boxWidth?, boxHeight? })`,
+ * returning `{ width, height }`. The small bitmap draws the wrapper layer box, scaled using the same
+ * scale ratio; if no box is given, it is the full frame, exactly Section 9's "project aspect ratio"
+ * in the contract.
  */
 export const SMALL_SIZE_FILE = 'server/bakery/small-bitmap.mjs';
 export const SMALL_SIZE_NAME = 'smallSize';
 
-/** 找尺寸规则函数（K4）；回 `{ fn: (w, h) => size, file, name }`，导出了却载不进来回 `{ file, error }`，没有回 null */
+/** Find sizing rule function (K4); returns `{ fn: (w, h) => size, file, name }`, returns `{ file, error }` if exported but failed to load, returns null if not found */
 export async function findSmallSize() {
   if (!exists(SMALL_SIZE_FILE)) return null;
   const src = fs.readFileSync(repoPath(SMALL_SIZE_FILE), 'utf8');
   let mod;
   try { mod = await import(repoUrl(SMALL_SIZE_FILE)); } catch (err) {
-    // 文本里导出了这个名字却载不进来：不当「缺失」静默跳过，交给用例报错
+    // Exported this name in text but failed to load: do not silently skip as "missing", let test report error
     if (exportsName(src, SMALL_SIZE_NAME)) return { file: SMALL_SIZE_FILE, error: err };
     return null;
   }
@@ -183,30 +223,34 @@ export async function findSmallSize() {
   return { fn: (w, h) => f({ projectWidth: w, projectHeight: h }), file: SMALL_SIZE_FILE, name: SMALL_SIZE_NAME };
 }
 
-/** 集成对账后（K4）：导出前核对与取用预渲染原尺寸的模块；它只认清单的 `frames`，`small` 不算 */
+/** After integration reconcile (K4): module that checks and retrieves prerender original size before export; only recognizes manifest `frames`, not `small` */
 export const ORIGINALS_FILE = 'src/export/originals.ts';
 
-/** 源码文本里有没有 `export … <name>`（粗筛：function / const / class / export { … }） */
+/** Whether source text contains `export … <name>` (rough filter: function / const / class / export { … }) */
 export function exportsName(src, name) {
   const re = new RegExp(String.raw`export\s+(?:async\s+)?(?:function\*?|const|let|class)\s+${name}\b|export\s*\{[^}]*\b${name}\b`);
   return re.test(src);
 }
 
-/** 尺寸函数可能回 `{ width, height }` 或 `[w, h]` */
+/** Sizing function may return `{ width, height }` or `[w, h]` */
 export function sizeOf(r) {
   if (Array.isArray(r)) return { width: r[0], height: r[1] };
   return { width: r?.width ?? r?.w, height: r?.height ?? r?.h };
 }
 
-// ================================================================== K5 MP4 封装器
+// ================================================================== K5 MP4 muxer
 
 /**
- * 集成对账后（K5）：`src/export/mp4Mux.ts` 的 `Mp4Muxer` 与 `MemorySink`。实现的形状与用例假设的不同：
- * - 构造时就要 `{ video: { codec: 'avc1.…', width, height, fps, avcC }, audio?: { codec: 'mp4a.40.2', sampleRate, channels, asc }, sink }`，
- *   而 avcC / AudioSpecificConfig 要等第一个块的 `meta.decoderConfig.description` 才有；
- * - `addVideoChunk(bytes, { timestampUs, key })`、`addAudioChunk(bytes, { timestampUs, durationUs })` 收拷出来的字节；
- * - `finalize()` 回字节数，产物在 `MemorySink.bytes()`。
- * 下面的适配器照 `browserExport.ts` 的做法：先攒块，等要的解码配置都到了再建封装器、按到达顺序补进去。
+ * After integration reconcile (K5): `Mp4Muxer` and `MemorySink` in `src/export/mp4Mux.ts`.
+ * Implementation shape differs from test case assumptions:
+ * - Requires `{ video: { codec: 'avc1.…', width, height, fps, avcC }, audio?: { codec: 'mp4a.40.2', sampleRate, channels, asc }, sink }`
+ *   at construction time, whereas avcC / AudioSpecificConfig must wait for the first chunk's
+ *   `meta.decoderConfig.description`;
+ * - `addVideoChunk(bytes, { timestampUs, key })` and `addAudioChunk(bytes, { timestampUs, durationUs })`
+ *   take copied bytes;
+ * - `finalize()` returns byte count; output is in `MemorySink.bytes()`.
+ * The adapter below follows `browserExport.ts`: buffer chunks first, create muxer once required
+ * decoder configs arrive, and feed them in order of arrival.
  */
 export const MUXER_FILE = 'src/export/mp4Mux.ts';
 export const MUXER_NAMES = ['Mp4Muxer'];
@@ -250,7 +294,7 @@ function muxerAdapter(mod, opts) {
   };
 }
 
-/** 找封装器（K5）；回 `{ make, file, name }`，导出了却载不进来回 `{ file, error }`，没有回 null */
+/** Find muxer (K5); returns `{ make, file, name }`, returns `{ file, error }` if exported but failed to load, returns null if not found */
 export async function findMuxer() {
   if (!exists(MUXER_FILE)) return null;
   const src = fs.readFileSync(repoPath(MUXER_FILE), 'utf8');
@@ -263,7 +307,7 @@ export async function findMuxer() {
   return { file: MUXER_FILE, name: 'Mp4Muxer', make: (opts) => muxerAdapter(mod, opts) };
 }
 
-/** 封装器的产物字节（K5） */
+/** Muxer output bytes (K5) */
 export async function muxerBytes(muxer, finalized) {
   let out = await finalized;
   if (out === undefined || out === null) out = muxer?.target?.buffer ?? muxer?.buffer ?? muxer?.bytes;
@@ -273,7 +317,7 @@ export async function muxerBytes(muxer, finalized) {
   assert.fail(`muxer finalize() returned no bytes: ${Object.prototype.toString.call(out)}`);
 }
 
-/** WebCodecs 的 EncodedVideoChunk / EncodedAudioChunk 形状 */
+/** WebCodecs EncodedVideoChunk / EncodedAudioChunk shape */
 export function fakeChunk({ type, timestamp, duration, data }) {
   const bytes = new Uint8Array(data);
   return {
@@ -285,7 +329,7 @@ export function fakeChunk({ type, timestamp, duration, data }) {
   };
 }
 
-// ---- 样本：ffmpeg 现场出 H.264 Annex B / AAC ADTS，测试自己拆成 WebCodecs 的块
+// ---- Sample: ffmpeg outputs H.264 Annex B / AAC ADTS on the fly; test splits into WebCodecs chunks
 
 export function findFfmpegSync() {
   for (const cmd of ['ffmpeg']) {
@@ -314,7 +358,7 @@ export function run(cmd, args, { timeoutMs = 120_000 } = {}) {
   });
 }
 
-/** Annex B 拆 NAL（去掉起始码） */
+/** Annex B splits NAL (strip start codes) */
 export function splitAnnexB(buf) {
   const nals = [];
   let i = 0;
@@ -329,13 +373,14 @@ export function splitAnnexB(buf) {
     } else i++;
   }
   if (start >= 0) nals.push(buf.subarray(start));
-  // 去掉 NAL 末尾的 0（下一个起始码的前导 0）
+  // Strip trailing 0s from NAL (leading 0s of the next start code)
   return nals.map((n) => { let e = n.length; while (e > 0 && n[e - 1] === 0) e--; return n.subarray(0, e); }).filter((n) => n.length);
 }
 
 /**
- * H.264 Annex B → `{ avcC, samples: [{ key, data(AVCC 长度前缀) }] }`。
- * 要求一帧一个 slice、没有 B 帧（ffmpeg 出样本时保证）；SPS/PPS 只进 avcC，不进样本（WebCodecs `avc` 格式）。
+ * H.264 Annex B → `{ avcC, samples: [{ key, data(AVCC length prefix) }] }`.
+ * Requires one slice per frame, no B-frames (guaranteed when ffmpeg generates samples);
+ * SPS/PPS only go into avcC, not into samples (WebCodecs `avc` format).
  */
 export function annexBToAvcc(buf) {
   const nals = splitAnnexB(buf);
@@ -370,7 +415,7 @@ export function annexBToAvcc(buf) {
   return { avcC, codec, samples };
 }
 
-/** AAC ADTS → `{ asc, sampleRate, channels, frames: [Buffer] }`（去掉 ADTS 头） */
+/** AAC ADTS → `{ asc, sampleRate, channels, frames: [Buffer] }` (strip ADTS header) */
 export function adtsToRaw(buf) {
   const RATES = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350];
   const frames = [];
@@ -391,20 +436,22 @@ export function adtsToRaw(buf) {
   return { asc, sampleRate: RATES[srIdx], channels: ch, frames };
 }
 
-// ================================================================== K6 `/api` 守卫
+// ================================================================== K6 `/api` guard
 
 /**
- * 集成对账后（K6）：守卫在 `src/online/apiGuard.ts`。`installApiGuard()` 本身不看模式（调了就装）；
- * 「只在 `ONLINE` 时装」的规则是 `bootApiGuard(online, options)`，`boot.ts` 按 `ONLINE` 调它。
- * 这里照 `boot.ts` 的做法把这个进程里 `mode.ts` 的 `ONLINE`（用例已换成桩）传进去。
+ * After integration reconcile (K6): guard is in `src/online/apiGuard.ts`. `installApiGuard()`
+ * itself does not check mode (installs whenever called); the rule "install only when `ONLINE`" is
+ * in `bootApiGuard(online, options)`, which `boot.ts` calls based on `ONLINE`.
+ * Here, following `boot.ts`, pass `ONLINE` from this process's `mode.ts` (stubbed out by test case).
  */
-// 2026-10-28:这个常量没跟着搬迁改,而 apiGuard.ts 已经搬到 cloud/online/ 了。
-// 后果不是报错而是**静默 skip**:findApiGuard() 回 null → skipIf 为真 → C10A-API-05/06
-// 从「真跑」变成「跳过」,而 skip 不计失败,所以「与基线逐条对账零回归」完全照不出来。
-// 这是那次对账方法本身的一个洞:数字对得上不等于覆盖面没缩。
+// 2026-10-28: this constant was not updated with the move, while apiGuard.ts already moved to cloud/online/.
+// The consequence was not an error but **silent skip**: findApiGuard() returns null → skipIf is true → C10A-API-05/06
+// went from "actual run" to "skipped", and skip does not count as failure, so "zero regressions in
+// item-by-item reconcile with baseline" could not detect it at all.
+// This is a hole in that reconcile method itself: matching numbers does not mean coverage did not shrink.
 export const API_GUARD_FILE = 'cloud/online/apiGuard.ts';
 
-/** 找守卫（K6）；回 `{ fn, file, name }` 或 null */
+/** Find guard (K6); returns `{ fn, file, name }` or null */
 export async function findApiGuard(importer) {
   if (!exists(API_GUARD_FILE)) return null;
   const mod = await importer(API_GUARD_FILE);
@@ -413,37 +460,42 @@ export async function findApiGuard(importer) {
   return { fn: () => mod.bootApiGuard(ONLINE), file: API_GUARD_FILE, name: 'bootApiGuard' };
 }
 
-/** 目录下所有文件（递归） */
+/** All files under directory (recursive) */
 export const walkFiles = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walkFiles(path.join(dir, e.name)) : [path.join(dir, e.name)]));
 
 /**
- * 在线构建的 `/api/` 路径棘轮〔裁，主会话 2026-09-27〕：集成时产物里已有的 `/api/` 路径记在这份清单里，
- * C10A-API-03 断言「产物里的 `/api/` 路径 ⊆ 清单」，新出现的判红。逐个置灰或换在线替代归 C10 其余，做掉一个就从清单删一个。
- * 运行时守卫加网络记录里 0 个 `/api/` 请求照旧是验收（探针）。
+ * Online build `/api/` path ratchet [ruling, lead session 2026-09-27]: existing `/api/` paths in
+ * artifacts at integration time are recorded in this manifest. C10A-API-03 asserts
+ * "artifact `/api/` paths ⊆ manifest", marking newly appearing ones red. Graying out or replacing
+ * with online alternatives one by one belongs to the rest of C10; delete from manifest once resolved.
+ * Runtime guard plus 0 `/api/` requests in network logs remains the acceptance check (probe).
  */
 export const ONLINE_API_RATCHET_FILE = 'server/test/c10a-online-api-paths.json';
 
 /**
- * 翻译表那个块（`assets/i18n-*.js`）装着全部界面文案，连这个构建里剪掉了的功能的文案也在里面
- * （例如「/api/stt/install returned {0}」）。那是文字，不是请求，扫 `/api/` 时跳过它。
+ * The translation table chunk (`assets/i18n-*.js`) contains all UI copy, even copy for features
+ * cut from this build (for example "/api/stt/install returned {0}"). That is text, not a request;
+ * skip it when scanning `/api/`.
  */
 export const isTranslationTable = (file) => /^i18n-[\w-]+\.js$/.test(path.basename(file));
 
-/** 产物里 `/api/` 字面量归一成路径（取到第一个不是路径字符的地方：模板的 `${`、引号、查询串都截断）；回去重排序后的数组 */
+/** Normalize `/api/` literals in artifacts into paths (take up to the first non-path char: template `${`, quotes, query strings truncated); returns deduplicated sorted array */
 export function apiPaths(dir) {
   const out = new Set();
   for (const file of walkFiles(dir)) {
     if (!/\.(m?js|html)$/.test(file) || isTranslationTable(file)) continue;
     const text = fs.readFileSync(file, 'utf8');
-    // 与 `apiLiterals` 同一个口径（引号或反引号后紧跟 `/api/` 再紧跟地址字符），只多取出路径
+    // Same criteria as `apiLiterals` (quote or backtick followed immediately by `/api/`
+    // and path chars), only additionally extracts path
     for (const m of text.matchAll(/["'`](\/api\/[A-Za-z0-9_$][A-Za-z0-9_\-./]*)/g)) out.add(m[1].replace(/\$.*$/, ''));
   }
   return [...out].sort();
 }
 
 /**
- * 构建产物里以 `/api/` 开头、后面紧跟地址的字面量（引号或反引号起头）；回 [{ file, at, context }]。
- * 守卫判前缀用的 `"/api/"`（引号紧跟在斜杠后）不算。
+ * Literals in build artifacts starting with `/api/` immediately followed by an address
+ * (starting with quote or backtick); returns `[{ file, at, context }]`.
+ * `"/api/"` used by the guard to check prefixes (quote immediately after the slash) does not count.
  */
 export function apiLiterals(dir) {
   const hits = [];

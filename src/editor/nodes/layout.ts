@@ -8,7 +8,7 @@ export interface Graph { nodes: GraphNode[]; edges: GraphEdge[]; width: number; 
 const W = 172, H = 72, GAP_X = 92, GAP_Y = 22;
 const node = (id: string, label: string, kind: GraphNode["kind"], depth: number, extra: Partial<GraphNode> = {}): GraphNode => ({ id, label, kind, depth, width: W, height: H, x: 0, y: 0, ...extra });
 
-/** 从当前激活剪辑建立确定性的 DAG；同一个 clip 的媒体→滤镜→像素映射→Out。 */
+/** Builds a deterministic DAG from the currently active cut; for the same clip: media → filter → pixel map → Out. */
 export function graphOf(project: Project, time = 0): Graph {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];

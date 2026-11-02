@@ -1,4 +1,5 @@
-// audioFx.mjs 的类型。实现写成纯 JS 是为了 node 直接跑的服务端和单测也能 import,见那边的头注释。
+// Types for audioFx.mjs. The implementation is written in pure JS so server running directly on
+// Node and unit tests can also import it; see the header comment there.
 
 import type { FilterParamSpec } from "./filters.d.mts";
 
@@ -12,7 +13,7 @@ export interface AudioKindParamSpec {
   min: number;
   max: number;
   unit?: string;
-  /** 全部带 neutral 的参数都等于 neutral 时,这一步等于没接 */
+  /** When all parameters with neutral equal neutral, this step is equivalent to not connected */
   neutral?: number;
 }
 
@@ -22,10 +23,10 @@ export interface AudioFxKindSpec {
   params: Record<string, AudioKindParamSpec>;
 }
 
-/** 一步:{ kind, <参数名>: 数字 | 表达式字符串 }。没填的参数取种类的 default */
+/** One step: { kind, <paramName>: number | expressionString }. Unfilled parameters use kind default */
 export type AudioFxOp = { kind: AudioFxKind } & Record<string, number | string>;
 
-/** 效果库里的一条(project.audioFx),素材库「音频效果」页列的就是它 */
+/** An entry in the effects library (project.audioFx), listed on the media library "Audio effects" tab */
 export interface AudioFxDef {
   id: string;
   name: string;
@@ -36,11 +37,11 @@ export interface AudioFxDef {
   createdAt?: number;
 }
 
-/** 片段上挂的效果:引用库里的一条 + 逐段覆盖参数 */
+/** Effect attached to a clip: references an entry in the library + per-clip parameter overrides */
 export interface ClipAudioFx {
   id: string;
   params?: Record<string, number>;
-  /** 停用:挂载和逐段参数都留着,这一段上不生效。闸门在 `audioFxOfClip` */
+  /** Disabled: attachment and per-clip params are kept, inactive on this clip. Gate in `audioFxOfClip` */
   off?: boolean;
 }
 

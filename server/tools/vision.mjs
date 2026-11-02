@@ -2,8 +2,10 @@ export const visionTools = [
   {
     name: "see_frames",
     /*
-     * 原来是 see_preview(成片)和 see_sequences(素材)两个工具。合成一个、名字里不再有 preview:
-     * 「预览」这个词暗示「粗看一眼、草稿」,模型会跟着放低标准。现在统一叫「画面帧」。
+     * Originally two tools: see_preview(final video) and see_sequences(media). Combined into one,
+     * with preview no longer in the name:
+     * The word "preview" implies "a quick look, draft", and the model lowers its standards
+     * accordingly. Now uniformly called "video frames".
      */
     description:
       "View video frames. There are two sources, distinguished by source:\n\n" +
@@ -41,7 +43,8 @@ export const visionTools = [
       required: ["source"]
     },
     side: "agent",
-    // 当场起一个 Chrome 渲一帧(timeline),或先跑一遍镜头识别再拼十几张图(media),60 秒的默认上限不够
+    // Launching Chrome on the fly to render a frame (timeline), or running shot detection first then
+    // stitching a dozen images (media), exceeds the default 60 s limit
     timeoutMs: 180000
   },
   {
@@ -58,7 +61,8 @@ export const visionTools = [
       required: ["clipId"],
     },
     side: "agent",
-    // 8 帧一趟渲完(renderFrames 顺推一遍沿途截),再用 ffmpeg 编 GIF;冷启动 Chrome 可能过分钟
+    // 8 frames rendered in one pass (renderFrames advances sequentially, capturing along the way),
+    // then encoded into a GIF with ffmpeg; cold-starting Chrome can take over a minute
     timeoutMs: 180000
   }
 ];

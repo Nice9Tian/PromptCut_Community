@@ -1,34 +1,56 @@
 /**
- * 用 remotion 式的框架写的用户卡，经**在线页面自己的卡片运行时**（`src/online/cardRuntime/` 的转译、加载器、页面自带的模块表）
- * 在真浏览器（Chrome）里能不能载入并画对（任务书 `docs/plan/render-refactor-task.md`「丙」第 7 条第一处；
- * 框架合入时（「乙」）只在 Node 里跑过这一段，没有在真浏览器里验）。
+ * Whether user cards written with a remotion-style framework can be loaded and rendered correctly
+ * in a real browser (Chrome) via the online page's own card runtime (transpilation in
+ * `src/online/cardRuntime/`, loader, and the page's built-in module table) (task brief
+ * `docs/plan/render-refactor-task.md` "Bing" item 7 first occurrence; when the framework was merged
+ * ("Yi"), this part was only run in Node and was not verified in a real browser).
  *
- *   node scripts/probes/online-remotion-card-probe.mjs [--port 7450] [--out <截图目录>] [--keep-temp]
+ *   node scripts/probes/online-remotion-card-probe.mjs [--port 7450] [--out <screenshot-dir>] [--keep-temp]
  *
- * 做法：在本检出根起一个自己的开发服务器（端口 --port，另占 +1、+2；卡片同步关掉），真 Chrome 打开画面台
- * `scripts/probes/online-runtime-harness.html`：它把探针给的卡片源码（同步来的用户卡的样子：键 → 文本）交给在线页面的 `bundleCards`
- * 转译（Sucrase，含载入时锁只读那一句）、`createCardLoader` 载入（`new Function`、页面自带的模块表），再把载入出来的卡按 t 渲。
+ * Method: start its own dev server at the root of this checkout (port --port, also occupying +1 and
+ * +2; card sync turned off), and open the stage harness
+ * `scripts/probes/online-runtime-harness.html` in real Chrome: it passes the card source code
+ * supplied by the probe (shaped like synced user cards: key → text) to the online page's
+ * `bundleCards` for transpilation (Sucrase, including the line locking read-only on load) and
+ * `createCardLoader` for loading (`new Function`, page's built-in module table), then renders the
+ * loaded card by t.
  *
- * **没有覆盖的**（写进报告）：经账号加入协作项目、内容库同步、跨源舞台 iframe 与内容安全策略。原因：在线构建的开始页现在只剩账号入口
- * （`StartPage.tsx` 的 `OnlineStartPage` 只挂 `AccountProjects`，`data-pc="join-form"` 不在在线构建里），`online-card-exec-probe.mjs` 这一类
- * 靠 `join-form` 加入项目的探针在 main 上已经走不通；走账号要冻结的官网加 63xx 固定端口的夹具（`account-user-pages-probe.mjs`），不在这次的范围里。
+ * **Not covered** (included in report): joining shared projects via account, content store
+ * synchronization, cross-origin stage iframe, and Content Security Policy. Reason: the start page
+ * of online build now only has the account entry (`OnlineStartPage` in `StartPage.tsx` only mounts
+ * `AccountProjects`, and `data-pc="join-form"` is not in the online build); probes like
+ * `online-card-exec-probe.mjs` that rely on `join-form` to join projects no longer work on main;
+ * going through accounts requires a frozen official site plus a fixture on fixed 63xx ports
+ * (`account-user-pages-probe.mjs`), which is out of scope this time.
  *
- * 项目里放四张卡（都当作同步来的用户卡载入）：
- *   rs-title-reveal   测试夹具里的示例卡，原样（弹簧、错开进场、颜色过渡，行内样式）
- *   rs-orbit-canvas   测试夹具里的示例卡，原样（画布；每一帧清空重画）
- *   rs-online-mark    探针卡：用框架写，把 interpolate / random 算出来的值和「顶层对象是不是只读」写成 DOM 的数据属性
- *   rs-online-control 对照：同一张卡声明成 motion 式（不锁只读）
+ * Four cards are placed in the project (all loaded as synced user cards):
+ *   rs-title-reveal   Example card from test fixture, unmodified (spring, staggered entrance,
+ *                     color transition, inline styles)
+ *   rs-orbit-canvas   Example card from test fixture, unmodified (canvas; clear and redraw every
+ *                     frame)
+ *   rs-online-mark    Probe card: written with framework, writing values computed by interpolate /
+ *                     random and "whether top-level object is read-only" into DOM data attributes
+ *   rs-online-control Control: same card declared as motion-style (read-only not locked)
  *
- * # 验收（每条「过 / 不过」；最后一行是 JSON `{ ok, pass, fail, fails, ... }`；退出码 = 有没有「不过」）
+ * # Acceptance check (each item "pass / fail"; last line is JSON `{ ok, pass, fail, fails, ... }`;
+ *   exit code = whether there are any "fails")
  *
- * R1 四张卡都转译、载入成功（运行状态 ready）；框架卡的转译结果里接着载入时锁只读的那一句，对照卡不接。
- * R2 画出来了：示例卡画的字（逐字弹入的标题）都在；画布卡的画布上有像素。
- * R3 画得对：探针卡的 DOM 数据属性（位置、随机数）和本进程里用同一套框架算的逐字相同，三个 t 各一份；先到靠后的 t 再倒回靠前的，值与第一次相同。
- * R4 锁只读：探针卡里「顶层对象是只读」为真；对照卡（motion 式）为假；载入出来的卡定义是冻住的。
- * R5 画布卡每一帧整张重画：两个不同的 t 上画布的像素不同，回到先前的 t 上与先前逐像素相同。
- * R6 页面没有报错。
+ * R1 All four cards transpile and load successfully (runtime state ready); the transpilation output
+ *    of framework cards is followed by the line locking read-only on load, while the control card
+ *    is not.
+ * R2 Rendered: the text rendered by example cards (word-by-word bounce-in titles) is present; the
+ *    canvas of the canvas card has pixels.
+ * R3 Rendered correctly: probe card DOM data attributes (position, random numbers) match verbatim
+ *    with calculations in this process using the same framework, one set for each of three t
+ *    values; advancing to a later t then rewinding to an earlier one yields values identical to the
+ *    first time.
+ * R4 Read-only locked: "top-level object is read-only" is true in probe card; false in control card
+ *    (motion-style); the loaded card definition is frozen.
+ * R5 Canvas card redraws entirely every frame: canvas pixels differ between two different t values,
+ *    and returning to a previous t is pixel-identical to before.
+ * R6 The page has no errors.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import：不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import puppeteer from 'puppeteer';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -68,7 +90,7 @@ async function waitFor(fn, ms, what) {
   }
 }
 
-/* ------------------------------------------------------------------ 卡片源码 */
+/* ------------------------------------------------------------------ Card source */
 const FIX = path.join(ROOT, 'server', 'test', 'fixtures', 'remotion-style');
 const fixture = (n) => fs.readFileSync(path.join(FIX, n), 'utf8').replace(/\r\n/g, '\n');
 const markCard = (id, mode) => `/** Probe card: written with the framework, the computed values are written as DOM data attributes */
@@ -176,7 +198,11 @@ try {
   await page.screenshot({ path: path.join(OUT, 'online-title-t3.png'), clip });
   check('R2 the text drawn by the example card (default text "computed directly from t") is all there, no render errors', title.text === '由 t 直接算' && !title.error, title);
   await page.evaluate(() => window.__ors.unmount());
-  /** 画布卡的画面：用截图的哈希比（对画布 getImageData 会让 Chrome 把它换成软件画布、边缘的抗锯齿就变了，所以读像素放在最后） */
+  /**
+   * Canvas card visuals: compared using screenshot hash (calling getImageData on the canvas causes
+   * Chrome to replace it with a software canvas, altering edge antialiasing, so reading pixels is
+   * placed at the very end).
+   */
   const shotHash = async (name) => { const buf = Buffer.from(await page.screenshot({ clip })); if (name) fs.writeFileSync(path.join(OUT, name), buf); return createHash('sha256').update(buf).digest('hex').slice(0, 16); };
   const inkOf = () => page.evaluate(() => {
     const c = document.querySelector('#stage canvas');
@@ -241,11 +267,11 @@ try {
 } finally {
   await browser?.close().catch(() => {});
   if (child?.pid && child.exitCode === null) {
-    // 只结束自己起的这一棵
+    // Only terminate the process tree spawned by itself
     if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, timeout: 15000 });
     else child.kill('SIGKILL');
   }
-  if (!KEEP_TEMP) { try { fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* 留给系统清 */ } }
+  if (!KEEP_TEMP) { try { fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* Left for the system to clean */ } }
 }
 const ok = fails.length === 0;
 console.log(JSON.stringify({ ok, pass, fail: fails.length, fails, ...summary }));

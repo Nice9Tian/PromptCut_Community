@@ -1,12 +1,16 @@
 /**
- * 两路同时推同一份内容时，数据层不能把已经答过「收到」的分片又撤掉（claude/push-incomplete，
- * 报告 `docs/reports/AGENT-push-incomplete.md`）。
+ * When two paths push the same content concurrently, the data layer must not revoke chunks it has
+ * already answered "received" for (claude/push-incomplete, report
+ * `docs/reports/AGENT-push-incomplete.md`).
  *
- * 现场：渲染节点的产物库与本机推送队列几乎同时推同一段的块。A 传完第 0 片（已回 200）、正要收尾时，
- * B 也来传第 0 片：原实现在 B 写之前先撤掉第 0 片的标记，A 的 `complete` 于是回 `incomplete`。
- * 这里用可控的 source 把这两种交错各摆一遍，三种数据层（memory、fs 原布局、fs 分目录）都跑。
+ * Repro: The render node's artifact store and the local push queue push chunks of the same segment
+ * almost simultaneously. When A finishes uploading chunk 0 (already returned 200) and is about to
+ * finalize, B also comes to upload chunk 0: the original implementation revoked chunk 0's mark
+ * before B wrote, so A's `complete` returned `incomplete`. Here, a controllable source is used to
+ * lay out both interleavings, running across all three data layers (memory, fs original layout, fs
+ * subdirectory layout).
  *
- * 跑：node --test server/test/blob-store-concurrent-push.test.mjs
+ * Run: node --test server/test/blob-store-concurrent-push.test.mjs
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -29,7 +33,7 @@ const kinds = {
   'fs-shard': () => createFsStore({ dir: path.join(TMP, `shard-${seq++}`), chunkSize: CS, shard: true }),
 };
 
-/** 等数据层把这个 source 开始读（说明 putChunk 已经过了登记那一步） */
+/** Wait for the data layer to start reading this source (indicating putChunk has passed the registration step) */
 function controlled() {
   const src = new PassThrough();
   const started = new Promise((resolve) => {
@@ -56,7 +60,7 @@ for (const [kind, make] of Object.entries(kinds)) {
     for (let n = 0; n < 3; n++) {
       assert.equal((await store.putChunk(h, n, meta, [buf.subarray(n * CS, Math.min(buf.length, (n + 1) * CS))])).status, 'ok');
     }
-    // B 重传第 0 片，字节还在路上
+    // B retransmits chunk 0, bytes are still in flight
     const b = controlled();
     const bDone = store.putChunk(h, 0, meta, b.src);
     await Promise.race([b.started, tick(200)]);

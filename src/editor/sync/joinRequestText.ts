@@ -1,11 +1,14 @@
 import { tr } from "../../i18n/index.ts";
 /**
- * 申请加入与进入方式在界面上说的话(2026-10-22 用户定,`docs/semantics/workflow/project.md`「多用户协作」第 26、27 条、
- * 「过期云端项目转本地」第 44 行)。桌面开始页(`AccountProjects.tsx`)、手机开始页(`src/mobile/MobileStart.tsx`)、
- * 重开文件的提示(`src/editor/sync/recoveryAssociation.ts`)、成员浮层(`AccountMembersPanel.tsx`、手机的成员面板)和
- * 项目设置里的勾选(`AccountEntryOption.tsx`)共用这一份,各处说法一致。带引号的几句是语义原文。
- * 标点:被挡住那一块的几句状态(被挡住、已发送、被拒、已通过)与「通过 / 拒绝」之后的气泡照语义原文,句末不加句号;
- * 两句以上的说明(勾选下面的说明、重开文件发出后那句)照常用句号。
+ * Wording shown in the UI for join requests and entry types (user decision, 2026-10-22, `docs/semantics/workflow/project.md`,
+ * "Multi-user collaboration" items 26 and 27, "Expired cloud project to local" line 44). The desktop start page
+ * (`AccountProjects.tsx`), the mobile start page (`src/mobile/MobileStart.tsx`), the prompt for reopening a file
+ * (`src/editor/sync/recoveryAssociation.ts`), the members popover (`AccountMembersPanel.tsx`, and the mobile members
+ * panel) and the checkbox in project settings (`AccountEntryOption.tsx`) all share this one, so the wording is
+ * consistent everywhere. The quoted lines are the verbatim semantics text.
+ * Punctuation: the status lines of the blocked section (blocked, sent, rejected, approved) and the bubbles after
+ * "Approve / Reject" follow the verbatim semantics text and have no period at the end; explanations of two or more
+ * sentences (the note under the checkbox, the line after the reopen-file request is sent) use periods as usual.
  */
 
 export interface JoinRequestStatus {
@@ -19,58 +22,60 @@ export interface JoinRequestStatus {
 }
 
 export const JOIN_REQUEST_TEXT = {
-  /** 被账号名单挡住(语义原文「你不在这个项目的成员名单中」) */
+  /** Blocked by the account list (verbatim semantics text: "You are not on this project's member list") */
   notListed: tr("You are not on this project's member list"),
-  /** 按钮(语义原文) */
+  /** Button (verbatim semantics text) */
   send: tr("Send request"),
-  /** 发出之后(语义原文) */
+  /** After sending (verbatim semantics text) */
   sent: tr("Sent. Waiting for the creator to approve"),
-  /** 被拒(语义原文) */
+  /** Rejected (verbatim semantics text) */
   rejected: tr("The creator did not approve your request"),
-  /** 被通过、正在进(或接着要输二级密码) */
+  /** Approved, joining now (or about to enter the secondary password) */
   approved: tr("The creator approved your request"),
-  /** 重开文件:登录的账号不是成员(语义原文「这个账号不是这个云端项目的成员」) */
+  /** Reopening a file: the logged-in account is not a member (verbatim semantics text: "This account is not a member of this cloud project") */
   reopenNotMember: tr("This account is not a member of this cloud project"),
-  /** 从项目直达地址打开、登录的账号还不是成员:链接已填好,由用户自己点加入(`product/platforms.md`「项目直达地址」) */
+  /** Opened from a direct project address, and the logged-in account is not yet a member: the link is already filled in and the user clicks join themselves (`product/platforms.md`, "Direct project address") */
   directNotMember: tr("You are not a member of this project yet. Click \"Join and open project\" to join."),
-  /** 重开文件时点了「发送申请」之后:通过以后怎么连回去 */
+  /** After clicking "Send request" when reopening a file: how to reconnect once approved */
   reopenSent: tr("Sent. Waiting for the creator to approve. Once approved, reopen this file to reconnect to the cloud project."),
-  /** 项目设置里的勾选(语义原文「任何知道链接的人都可加入」) */
+  /** Checkbox in project settings (verbatim semantics text: "Anyone with the link can join") */
   entryLabel: tr("Anyone with the link can join"),
-  /** 取消勾选后勾选下面那一句:名单就是现在的成员,新人只能申请 */
+  /** The line under the checkbox after it is unchecked: the list is the current members, and new people can only request to join */
   entryListHint: (members: number) => tr("Account list only ({0} members now). New people must send a request, which you approve under \"Members\" in the top bar.", members),
-  /** 勾着时那一句 */
+  /** The line shown while the box is checked */
   entryLinkHint: tr("Anyone with the project link can join after signing in to their website account."),
-  /** 成员浮层里申请那一段的标题 */
+  /** Title of the requests section in the members popover */
   requestsTitle: (n: number) => tr("Join requests ({0})", n),
   approve: tr("Approve"),
   reject: tr("Reject"),
-  /** 创建者点了「通过」「拒绝」之后的气泡(桌面、手机同一句) */
+  /** Bubble after the creator clicks "Approve" or "Reject" (same line on desktop and mobile) */
   approvedToast: (name: string) => tr("Approved {0}'s request", name),
   rejectedToast: (name: string) => tr("Rejected {0}'s request", name),
-  /** 从「我的项目」列表点进一个设了二级密码、还没输过当前这一版的项目(与凭链接加入时那一句相同) */
+  /** Clicking into a project from the "My projects" list when it has a secondary password and the user has not yet entered the current version of it (same line as when joining via a link) */
   secondaryRequired: tr("This project has a secondary project password. Enter the secondary password."),
 } as const;
 
-/** 按本机时区写到分钟:「10月22日 14:05」 */
+/** Written to the minute in this machine's time zone: "Oct 22 14:05" */
 function minuteText(ms: number): string {
   const d = new Date(ms);
   const two = (n: number) => String(n).padStart(2, '0');
   return tr("{0}/{1} {2}:{3}", d.getMonth() + 1, d.getDate(), two(d.getHours()), two(d.getMinutes()));
 }
-/** 「几点之后可以再申请」(次数用完时,由服务端回的 `retryAt` 算出) */
+/** "What time you can apply again" (when attempts run out, computed from the `retryAt` returned by the server) */
 export function retryAtText(retryAt: number): string {
   return tr("You can request again after {0}.", minuteText(retryAt));
 }
-/** 成员浮层里每条申请下面那一行的时间 */
+/** The time on the line under each request in the members popover */
 export function requestedAtText(createdAt: number): string {
   return tr("Requested {0}", minuteText(createdAt));
 }
 
 /**
- * 重开文件、登录的账号不是成员时那条提示(语义 `workflow/project.md` 第 44 行):项目只放账号名单时另有「发送申请」按钮。
- * 已经发过在等的、被拒且次数用完的,不给按钮,把现状接在后面说清楚。项目知道链接就能进(`entry: 'link'`)、读到已是成员时回 null,
- * 用原来那一句、不带按钮。
+ * The notice when reopening a file and the logged-in account is not a member (semantics `workflow/project.md` line 44):
+ * when the project only has an account list, there is also a "Send request" button.
+ * If a request was already sent and is pending, or was rejected and attempts are used up, no button is given and the
+ * current state is spelled out after the notice. If the project can be entered by anyone with the link (`entry: 'link'`),
+ * or the account turns out to be a member already, return null and use the original line, without a button.
  */
 export function reopenNotice(status: JoinRequestStatus): { text: string; canSend: boolean } | null {
   if (status.entry !== 'list' || status.state === 'member') return null;
@@ -83,9 +88,12 @@ export function reopenNotice(status: JoinRequestStatus): { text: string; canSend
 }
 
 /**
- * 被挡住的人那一块该说什么、给不给「发送申请」按钮。`member`(刚被通过)只说一句,接着由页面去进项目(设了二级密码的接着问密码)。
- * 项目已经改回「知道链接就能进」(`entry: 'link'`,还不是成员)时回 null、这一块整个不显示:页面直接再试一次加入,
- * 不能一边弹着二级密码框、一边还说「已发送，等创建者通过」或「你不在这个项目的成员名单中」(与 `reopenNotice` 一致)。
+ * What the blocked user's section should say and whether to give the "Send request" button. `member` (just approved)
+ * says only one line, and then the page goes on to enter the project (for one with a secondary password, it then asks
+ * for the password). When the project has been changed back to "anyone with the link can enter" (`entry: 'link'`, not
+ * yet a member), return null and the whole section is hidden: the page just tries joining again. It must not show the
+ * secondary password box while also saying "Sent, waiting for the creator to approve" or "You are not on this
+ * project's member list" (consistent with `reopenNotice`).
  */
 export function joinRequestNotice(status: JoinRequestStatus): { text: string; canSend: boolean; hint?: string } | null {
   if (status.state === 'member') return { text: JOIN_REQUEST_TEXT.approved, canSend: false };
@@ -96,8 +104,10 @@ export function joinRequestNotice(status: JoinRequestStatus): { text: string; ca
 }
 
 /**
- * 申请被通过(`member`)或项目改回「知道链接就能进」(`entry: 'link'`)时,页面该自动再走一次加入:回一个随状态变的键,
- * 页面在键变了的时候调一次加入(设了二级密码的接着问密码)。其余时候回 null
+ * When a request is approved (`member`) or the project is changed back to "anyone with the link can enter"
+ * (`entry: 'link'`), the page should automatically go through joining once more: return a key that changes with the
+ * state, and the page calls join once whenever the key changes (for one with a secondary password, it then asks for
+ * the password). Return null in all other cases
  */
 export function autoJoinKey(request: JoinRequestStatus | null): string | null {
   return request && (request.state === 'member' || request.entry === 'link') ? `${request.projectId}:${request.state}:${request.entry}` : null;

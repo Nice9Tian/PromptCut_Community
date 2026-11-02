@@ -1,17 +1,30 @@
 /**
- * 独立渲染主机不再因用户卡分池(c66-host-cards;C6.6 T9 暴露的代码与语义冲突,报告 `docs/archive/agent-reports/AGENT-c66-host-cards.md`)。
+ * Standalone render hosts are no longer split into pools due to user cards (c66-host-cards;
+ * code and semantics conflict exposed in C6.6 T9, report
+ * `docs/archive/agent-reports/AGENT-c66-host-cards.md`).
  *
- * 语义:独立渲染主机「能认领:全部」(`product/platforms.md`「渲染节点」);每个任务标明要什么能力,节点按自身能力过滤
- * (`mechanism/document-service.md`「渲染任务队列」);用户卡与改过的卡的源码经内容库 `card-source` 同步,另一端自动装上
- * (`docs/plan/c66-design.md` 第 5 节)。
+ * Semantics: standalone render hosts "can claim: all" (`product/platforms.md` "render node");
+ * each task specifies what capabilities are needed, and nodes filter by their own capabilities
+ * (`mechanism/document-service.md` "render queue"); source code of user cards and modified cards
+ * is synced via content store `card-source`, and the other end installs them automatically
+ * (`docs/plan/c66-design.md` Section 5).
  *
- *   HC1  用户卡不同的两台节点仍在同一池:frameCode 不含 src/cards/user(除装载入口)、换行统一;改别的源码照样换版本
- *   HC2  任务要的卡本机没有就不认领(不报错);经 card-source 同步装上之后能认领,认领、完成走真队列
- *   HC3  改过的卡:同步来的新版装进主机自己的改动层;身份跟着变,旧版任务不再认领、新版的能
- *        (本机原来没有的用户卡也只装进改动层,检出目录一个文件都不写:AGENT-card-overlay)
- *   HC4  同一张卡代码不同,产物不混用:整场景键、本地档 / 共享档结果键都不同;执行器上下文按卡片代码版次重算
- *   HC5  卡片代码身份的索引:刚变过的一段时间不报身份;算法没注入时不缓存
- *   HC6  主机的同步是只读的:本机那份和服务上不同,也从不往项目里写
+ *   HC1  Two nodes with different user cards remain in the same pool: frameCode excludes
+ *        src/cards/user (except the loader entry) and normalizes line endings; modifying other
+ *        source code still bumps the version
+ *   HC2  If a task requires cards not present locally, it is not claimed (no error); it can be
+ *        claimed after being synced and installed via card-source, with claim and complete going
+ *        through the real queue
+ *   HC3  Modified cards: synced new versions are installed into the host's own overlay layer;
+ *        identity changes accordingly, old-version tasks are no longer claimed and new-version
+ *        tasks can be (user cards not originally present locally are also only installed into the
+ *        overlay layer, without writing any file to the checkout directory: AGENT-card-overlay)
+ *   HC4  Different code for the same card does not mix outputs: whole scene keys and local tier /
+ *        shared tier result keys all differ; executor context is recomputed by card code revision
+ *   HC5  Index of card code identity: does not report identity for a period right after a change;
+ *        not cached when algorithm is not injected
+ *   HC6  Host sync is read-only: even if the local copy differs from the service, it never writes
+ *        to the project
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -61,7 +74,10 @@ after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true 
 const tmp = (prefix) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); dirs.push(d); return d; };
 const put = (root, rel, text) => { fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }); fs.writeFileSync(path.join(root, rel), text); };
 
-/** 改动层只由环境变量决定(`card-overrides.mjs` 的 `overridesRoot` 每次现读):按调用临时设上 */
+/**
+ * Overlay layer is determined only by environment variables (`overridesRoot` in
+ * `card-overrides.mjs` is read fresh each time): temporarily set per call
+ */
 function withOverlay(dir, fn) {
   const before = process.env.PROMPTCUT_CARD_OVERRIDES;
   if (dir) process.env.PROMPTCUT_CARD_OVERRIDES = dir; else delete process.env.PROMPTCUT_CARD_OVERRIDES;
@@ -95,7 +111,7 @@ export const glass: CardDef<{ n: number }> = {
 };
 `;
 
-/** 一个最小的「检出」:几份源码、用户卡装载入口、一张内置卡 */
+/** A minimal "checkout": several source files, user card loader entry, a built-in card */
 function checkout(prefix, extra = {}) {
   const root = tmp(prefix);
   put(root, 'src/kernel/a.ts', 'export const a = 1;\n');
@@ -111,7 +127,7 @@ test('HC1 two nodes with different user cards are still in the same pool: frameC
   const a = checkout('pc-hc1-a-', { [USER_KEY]: cardSource('v1'), 'src/cards/user/_scopes.json': '{"price-tag":{"scope":"project"}}' });
   const b = checkout('pc-hc1-b-');
   const c = checkout('pc-hc1-c-', { [USER_KEY]: cardSource('another'), 'src/cards/user/lib/helper.ts': 'export const h = 2;\n' });
-  // 同一份源码,Windows 检出的换行
+  // The same source code, line endings from a Windows checkout
   const d = checkout('pc-hc1-d-');
   for (const rel of ['src/kernel/a.ts', 'src/cards/user/index.ts', 'src/cards/native/glass.tsx']) {
     put(d, rel, fs.readFileSync(path.join(b, rel), 'utf8').replace(/\n/g, '\r\n'));
@@ -122,7 +138,7 @@ test('HC1 two nodes with different user cards are still in the same pool: frameC
   assert.equal(frameCode(c), code, 'different user cards, or an extra user-card dependency file, also do not change the code version');
   assert.equal(frameCode(d), code, 'a CRLF checkout and an LF checkout give the same code version');
 
-  // 装载入口、内置卡、别的源码仍在代码版本里
+  // Loader entry, built-in cards, and other source code remain in code version
   const e = checkout('pc-hc1-e-', { 'src/kernel/a.ts': 'export const a = 2;\n' });
   assert.notEqual(frameCode(e), code, 'changing the kernel source changes the code version');
   const f = checkout('pc-hc1-f-', { 'src/cards/user/index.ts': 'export const userCards = [1];\n' });
@@ -137,13 +153,14 @@ test('HC1 two nodes with different user cards are still in the same pool: frameC
   assert.equal(isUserCardSource('src\\cards\\user\\x.tsx'), true);
   assert.equal(isUserCardSource('src/cards/native/x.tsx'), false);
 
-  // 过滤:创建者(有用户卡)发布的任务,没有这张卡的主机照样过代码版本这一关
+  // Filtering: tasks published by creator (with user card) still pass code version check on hosts
+  // without this card
   const task = { kind: 'snapshot', source: { projectId: 'p' }, weight: { class: 'medium' },
     requires: { envFingerprint: FP, codeVersion: frameCode(a), cardSources: {}, transcode: false, userCards: true, graphCards: false } };
   assert.deepEqual(checkClaimable(task, { profile: 'host', envFingerprint: FP, codeVersions: [frameCode(b)], capabilities: HOST_CAPABILITIES }), { ok: true });
 });
 
-/* ================================================================== 文档服务、队列夹具 */
+/* ================================================================== Document service, queue fixtures */
 
 async function startDoc(t) {
   const service = createDocService({
@@ -159,7 +176,7 @@ async function startDoc(t) {
   return { url: (user, role = 'page') => `ws://127.0.0.1:${port}/?user=${user}&dev=dev-${user}&role=${role}` };
 }
 
-/** 另开一条连接对内容库发一条请求,回回包 */
+/** Open another connection to send a request to content store, returning response */
 async function rpc(doc, message) {
   const ws = new WebSocket(doc.url('creator'), ['promptcut.v1']);
   await new Promise((r, j) => { ws.addEventListener('open', r); ws.addEventListener('error', j); });
@@ -172,7 +189,10 @@ async function rpc(doc, message) {
 }
 const putCard = (doc, key, body) => rpc(doc, { type: 'content.put', kind: 'card-source', key, body, session: 'creator-session' });
 
-/** 进程内一个项目的队列 + 一个页面发布方 + 主机(一个项目、一个节点,节点的 cardSourceVersions 是视图) */
+/**
+ * In-process queue for a project + a page publisher + host (one project, one node; node's
+ * cardSourceVersions is a view)
+ */
 function queueWithHost({ view, executor, sink }) {
   const clock = createTimerClock();
   const lb = createLoopback();
@@ -214,7 +234,10 @@ function fakeExecutor() {
 }
 const fakeSink = () => ({ async has() { return false; }, async put() { return { complete: true, result: {} }; } });
 
-/** 一版项目的切分:一个共享档的用户卡片段、一个本地档的内置卡片段 */
+/**
+ * Split of a project revision: a user card clip in shared tier, a built-in card clip in
+ * local tier
+ */
 function splitFor({ entryKey, versions, userSnapshotKey = 'sk-user' }) {
   const control = (o) => ({ count: 30, sampling: { firstFrame: 0 }, ...o });
   return splitPlan({
@@ -234,7 +257,7 @@ function splitFor({ entryKey, versions, userSnapshotKey = 'sk-user' }) {
 test('HC2/HC3 a task whose card is missing on this machine is not claimed; after the card is synced into the overlay layer via card-source it can be claimed (the checkout directory is not written); a changed newer version is also installed into the overlay layer', { timeout: 30000 }, async (t) => {
   const doc = await startDoc(t);
 
-  // ---- 创建者:本检出里有用户卡 v1,传上内容库;这一版的切分
+  // ---- Creator: this checkout has user card v1, uploaded to content store; split for this revision
   const creator = checkout('pc-hc2-creator-', { [USER_KEY]: cardSource('v1') });
   const creatorIndex = createCardCodeIndex({ identityOf: (id) => withOverlay(null, () => cards.cardCodeIdentity(creator, id)), settleMs: 0 });
   const project = { tracks: [{ clips: [{ cardId: 'price-tag' }, { cardId: 'glass' }] }] };
@@ -249,7 +272,7 @@ test('HC2/HC3 a task whose card is missing on this machine is not claimed; after
   assert.equal(tasks1.length, 2);
   for (const task of tasks1) assert.deepEqual(task.requires.cardSources, v1, `${task.tier} tier needs the price-tag code (the shared tier is its own card, the local tier is the whole scene)`);
 
-  // ---- 主机:检出里没有这张卡,有自己的改动层
+  // ---- Host: checkout does not have this card; has its own overlay layer
   const hostRoot = checkout('pc-hc2-host-');
   const overlay = tmp('pc-hc2-overlay-');
   const hostData = tmp('pc-hc2-data-');
@@ -258,7 +281,7 @@ test('HC2/HC3 a task whose card is missing on this machine is not claimed; after
   for (const task of tasks1) {
     assert.deepEqual(checkClaimable(task, node), { ok: false, rule: 1, reason: 'card-source' }, 'this machine does not have the card: not claimed, no error thrown');
   }
-  // 真队列:看得见、认领 0 次
+  // Real queue: visible, claimed 0 times
   const executor = fakeExecutor();
   const env = queueWithHost({ view: hostIndex.view, executor, sink: fakeSink() });
   env.host.start();
@@ -267,7 +290,8 @@ test('HC2/HC3 a task whose card is missing on this machine is not claimed; after
   assert.equal(env.host.nodes()[0].seen, 2, 'both tasks are visible');
   assert.deepEqual(env.claims(), [], 'no claim was sent at all');
 
-  // ---- 主机的卡片同步(只读,真 WebSocket 连文档服务的内容库):装上 v1
+  // ---- Host card sync (read-only, real WebSocket connected to document service content store):
+  // install v1
   process.env.PROMPTCUT_CARD_OVERRIDES = overlay;
   t.after(() => { delete process.env.PROMPTCUT_CARD_OVERRIDES; });
   const endpoint = createWsEndpoint({ url: doc.url('renderbox', 'render'), protocols: () => ['promptcut.v1'], backoff: { baseMs: 50, maxMs: 200 } });
@@ -284,7 +308,8 @@ test('HC2/HC3 a task whose card is missing on this machine is not claimed; after
   assert.equal(fs.existsSync(path.join(hostRoot, USER_KEY)), false, 'checkout directory is not written');
   assert.deepEqual(fs.readdirSync(path.join(hostRoot, 'src', 'cards', 'user')).sort(), userDirBefore);
   assert.equal(sync.status().records[USER_KEY].rev, 1);
-  // Vite 的文件监听作废模块之后才发变更通知;这里直接清(onCardSourceChange 的订阅方做的就是这件事)
+  // Vite file watching sends change notifications only after invalidating modules; cleared directly
+  // here (which is what onCardSourceChange subscribers do)
   hostIndex.invalidate();
   assert.deepEqual(hostIndex.projectVersions(project), v1, 'after installation the host computes the same identity as the creator');
   for (const task of tasks1) assert.deepEqual(checkClaimable(task, node), { ok: true });
@@ -292,7 +317,8 @@ test('HC2/HC3 a task whose card is missing on this machine is not claimed; after
   assert.deepEqual(env.claims().sort(), tasks1.map((x) => x.id).sort(), 'after installation it is claimed on the next tick');
   for (const task of tasks1) assert.equal(env.done(task.id), 1, `${task.id} has exactly one task.done`);
 
-  // ---- HC3:创建者改卡 v2;主机按 content.watch 当场装进改动层,检出目录照旧不写
+  // ---- HC3: creator modifies card v2; host immediately installs it into overlay layer via
+  // content.watch, still without writing to checkout directory
   await putCard(doc, USER_KEY, cardSource('v2'));
   await waitFor(() => fs.existsSync(overlayFile) && fs.readFileSync(overlayFile, 'utf8') === cardSource('v2'), 5000, 'host installs v2 into the overlay layer');
   await sync.idle();
@@ -319,7 +345,7 @@ test('HC4 the same card with different code does not mix outputs: the whole-scen
   const project = { id: 'hc4', fps: 30, width: 1920, height: 1080, duration: 2, style: {}, media: [], tracks: [{ id: 't', clips: [{ id: 'c', cardId: 'price-tag', start: 0, end: 2, params: {} }] }] };
   const v1 = { 'price-tag': 'a'.repeat(32) };
   const v2 = { 'price-tag': 'b'.repeat(32) };
-  // 整场景键
+  // Whole scene key
   assert.equal(cardEntryCode(CV, {}), CV, 'without custom cards it is just the global code version');
   assert.notEqual(cardEntryCode(CV, v1), cardEntryCode(CV, v2));
   assert.equal(cardEntryCode(CV, { b: '2', a: '1' }), cardEntryCode(CV, { a: '1', b: '2' }), 'independent of key order');
@@ -327,7 +353,7 @@ test('HC4 the same card with different code does not mix outputs: the whole-scen
   const e2 = frameIdentity(project, cardEntryCode(CV, v2));
   assert.notEqual(e1, e2);
 
-  // FramePipeline.entry:注入的身份进整场景键、记在 entry 上
+  // FramePipeline.entry: injected identity enters whole scene key, recorded on entry
   const root = tmp('pc-hc4-pipe-');
   let versions = v1;
   const pipeline = new FramePipeline({ root, origin: () => '', code: () => CV, cardSources: () => versions });
@@ -345,23 +371,24 @@ test('HC4 the same card with different code does not mix outputs: the whole-scen
     await pipeline.close?.();
   }
 
-  // 本地档:内容键里的 entry.key 不同 → 结果键不同
+  // Local tier: different entry.key in content key → different result key
   const local = (entryKey, v) => splitFor({ entryKey, versions: v }).find((x) => x.tier === 'local');
   const l1 = local(e1, v1), l2 = local(e2, v2);
   assert.notEqual(l1.input.contentKey, l2.input.contentKey);
   assert.notEqual(l1.resultKey, l2.resultKey);
   assert.equal(l1.resultKey, resultKeyOf(`${e1}/sk-glass`, FP));
-  // 共享档:键里的源码版本不同 → 共享键不同(`card-identity.mjs`)
+  // Shared tier: different source code version in key → different shared key (`card-identity.mjs`)
   const node = { cardId: 'price-tag', params: {} };
   const s1 = cardSnapshotIdentity(node, { sourceVersion: 'user:v1-source', fps: 30, phase: 0, duration: 60, stage: { width: 1920, height: 1080 } });
   const s2 = cardSnapshotIdentity(node, { sourceVersion: 'user:v2-source', fps: 30, phase: 0, duration: 60, stage: { width: 1920, height: 1080 } });
   assert.notEqual(s1, s2);
-  // 手里是 v1 的节点不认领 v2 的任务,反过来也一样
+  // Nodes holding v1 do not claim v2 tasks, and vice versa
   const holder = (v) => ({ profile: 'host', envFingerprint: FP, codeVersions: [CV], capabilities: HOST_CAPABILITIES, cardSourceVersions: { 'price-tag': [v['price-tag']] } });
   for (const task of splitFor({ entryKey: e2, versions: v2 })) assert.equal(checkClaimable(task, holder(v1)).reason, 'card-source');
   for (const task of splitFor({ entryKey: e1, versions: v1 })) assert.equal(checkClaimable(task, holder(v2)).reason, 'card-source');
 
-  // 执行器:同一版项目,卡片代码版次变了就按新代码重算上下文(不拿旧的 control 对任务)
+  // Executor: for same project revision, when card code revision changes, recompute context with
+  // new code (do not match tasks against old control)
   let stamp = 0;
   let planned = 0;
   const fakePipeline = { async planForQueue() { planned++; return { entry: { key: `e${planned}`, cardPlan: [] }, context: { cardPlan: [] } }; } };
@@ -414,7 +441,7 @@ test('HC5 index of card code identities: nothing is reported for a while after a
 test('HC6 the host\'s card sync is read-only: when the local copy differs from the one on the service, the service\'s is installed and nothing is ever written into the project', { timeout: 20000 }, async (t) => {
   const doc = await startDoc(t);
   await putCard(doc, USER_KEY, cardSource('server'));
-  // 主机检出里已有一份不同的(例如别的项目装进来的)
+  // Host checkout already has a different copy (e.g. installed from another project)
   const hostRoot = checkout('pc-hc6-host-', { [USER_KEY]: cardSource('local') });
   const overlay = tmp('pc-hc6-overlay-');
   const hostData = tmp('pc-hc6-data-');
@@ -435,10 +462,10 @@ test('HC6 the host\'s card sync is read-only: when the local copy differs from t
   const got = await rpc(doc, { type: 'content.get', kind: 'card-source', key: USER_KEY });
   assert.equal(got.rev, 1, 'cardRev in the project was not raised by the host');
   assert.equal(got.body, cardSource('server'));
-  // 本机再改一份:仍不上传
+  // Modify another copy locally: still not uploaded
   put(overlay, USER_KEY, cardSource('local-again'));
   assert.equal(sync.status().pending?.length ?? 0, 0);
-  // 备份在主机自己的数据目录里,不在检出的 out/ 下
+  // Backed up in host's own data directory, not under checkout's out/
   assert.ok(!fs.existsSync(path.join(hostRoot, 'out')), 'there is no out/card-edits in the checkout');
   void sha;
 });

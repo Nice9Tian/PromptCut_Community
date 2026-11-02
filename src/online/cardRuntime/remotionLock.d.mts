@@ -1,12 +1,12 @@
-/** 框架的目录（仓库相对路径） */
+/** Framework directory (repository-relative path) */
 export const REMOTION_FRAMEWORK_DIR: string;
-/** 运行时那一半（仓库相对路径，不带扩展名） */
+/** Runtime counterpart (repository-relative path, without extension) */
 export const REMOTION_LOCK_MODULE: string;
-/** 该锁的卡在转译缓存里用的键的后缀 */
+/** Suffix for keys used in transpilation cache by cards with this lock */
 export const REMOTION_LOCK_CACHE_TAG: string;
-/** 一个导入的说明符指的是不是框架 */
+/** Whether an import specifier refers to the framework */
 export function isFrameworkSpecifier(spec: unknown): boolean;
-/** 这份源码该不该锁、要锁哪些名字；不该锁回 null */
+/** Whether this source code should be locked and which names to lock; returns null if it should not be locked */
 export function remotionLockPlan(source: string): { names: string[]; specifiers: string[] } | null;
-/** 要接在这份源码末尾的那一段；不该锁回空串 */
+/** The snippet to append to the end of this source code; returns an empty string if it should not be locked */
 export function remotionLockSuffix(key: string, source: string): string;

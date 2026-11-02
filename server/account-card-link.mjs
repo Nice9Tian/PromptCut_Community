@@ -1,44 +1,61 @@
 /**
- * 卡片源码同步在账号云端项目里怎么连进文档服务(`server/card-sync.mjs` 的规则不变,只换端点)。
+ * How card source sync connects to the document service in account cloud projects
+ * (`server/card-sync.mjs` rules remain unchanged, only endpoints are swapped).
  *
- * 账号项目的文档服务只认账号办法的连接票据(`cloud/docservice/account-hosted.mjs`:子协议 `promptcut.account.<票据>`,
- * 旧的 `auth.ticket` 在这种连接上一律被拒)。票据由页面凭自己的登录向 `/hosted/shared/account/session` 取,
- * 角色仍是 page、权限就是这位成员此刻的权限;编辑器进程自己不持有登录,也不自报任何身份。
+ * The document service for account projects only recognizes account-based connection tickets
+ * (`cloud/docservice/account-hosted.mjs`: subprotocol `promptcut.account.<ticket>`; legacy
+ * `auth.ticket` is rejected on such connections). The page fetches the ticket from
+ * `/hosted/shared/account/session` using its own login; the role is still page, and permissions
+ * match this member's current permissions; the editor process itself holds no login and claims
+ * no identity.
  *
- * 与旧共享项目的两处不同,都在这个端点里:
+ * The two differences from legacy shared projects are both in this endpoint:
  *
- * 1. **接续不带票据**。文档服务规定接续项旁边不能有鉴权项(`server/docservice/session.mjs` 的 `parseSessionItem`,带了握手回 400),
- *    接续时由服务端按会话里记下的身份重新核对登录与成员资格(`resumeGate`)。所以只在建新会话时出示票据。
+ * 1. **Resume does not carry a ticket**. The document service requires that a resume item cannot
+ *    accompany an auth item (`parseSessionItem` in `server/docservice/session.mjs`; carrying one
+ *    returns 400 on handshake); on resume, the server re-verifies login and membership based on the
+ *    identity recorded in the session (`resumeGate`). Therefore, tickets are only presented when
+ *    creating a new session.
  *
- * 2. **连接有寿命,到期前换一条**。账号连接上的每条消息都要过闸,闸拿建连时那张票据背后的访问令牌去问账号服务;
- *    访问令牌到期(实测 120 秒,票据的 `expiresAt` 就是那个时刻)之后,这条连接还开着,但每条消息都回
- *    `credential-revoked`(再晚是 `authorization-expired`),续令牌也救不回这条连接。
- *    所以:建成会话后按票据的 `expiresAt` 定时,提前 `renewMarginMs` 结束这个会话、凭新票据建下一个;
- *    万一没赶上(时钟不准、定时被拖住),收到这两个原因的 `error` 也立刻换。换的那一下对同步规则来说就是一次
- *    断线重连:在途的请求按断线失败、留在待上传里,新会话建成后重新订阅、重新对账,期间别人的版本由对账补上。
- *    权限真被收回时(退出登录、被踢、项目没了)新票据取不到,会话层退避重试,页面那一侧发现是终局原因会解绑。
+ * 2. **Connections have a lifetime; replace with a new one before expiry**. Every message on an
+ *    account connection must pass a gate, which queries the account service using the access token
+ *    backing the ticket presented at connection setup; after the access token expires (measured at
+ *    120 seconds; the ticket's `expiresAt` is that exact moment), the connection remains open, but
+ *    every message returns `credential-revoked` (or later `authorization-expired`), and renewing
+ *    the token cannot save this connection. Therefore: after establishing a session, schedule a
+ *    timer based on the ticket's `expiresAt`, end this session `renewMarginMs` early, and establish
+ *    the next one with a new ticket; if missed (clock skew, timer delayed), switch immediately upon
+ *    receiving an `error` with either of these two reasons. To the sync rules, that switch is a
+ *    disconnect and reconnect: in-flight requests fail as disconnected and stay in pending uploads;
+ *    once the new session is established, resubscribe and reconcile; others' versions during the
+ *    gap are caught up via reconciliation. When permissions are genuinely revoked (logged out,
+ *    kicked, project deleted), a new ticket cannot be obtained; the session layer retries with
+ *    backoff, and the page side unbinds once it discovers a terminal reason.
  */
 import { createDocEndpoint } from './render-node/session-link.mjs';
 import { PRODUCT } from './auth/product.mjs';
 
 export const ACCOUNT_PROTOCOL_PREFIX = 'promptcut.account.';
 const TICKET = /^[A-Za-z0-9_-]{43}$/;
-/** 闸回这两个原因:这条连接背后的访问令牌到期了(或登录被收回),这条连接再也用不了 */
+/** Gate returns these two reasons: access token backing this connection expired (or login was revoked); connection can no longer be used */
 const DEAD_REASONS = new Set(['credential-revoked', 'authorization-expired']);
 
 export const ACCOUNT_CARD_LINK_DEFAULTS = Object.freeze({
   /**
-   * 票据到期前多久换下一个会话。要比页面续访问令牌的提前量小(`src/account/client.ts` 的 `ensureLogin`:剩不到 10 秒就续),
-   * 这样来要票据时页面一定先续了令牌,新票据是一张满寿命的;比它大的话会拿到一张只剩十来秒的票据,接着连换几次。
+   * How long before ticket expiry to switch to the next session. Must be smaller than the page's
+   * lead time for renewing access tokens (`ensureLogin` in `src/account/client.ts`: renews with less
+   * than 10 seconds remaining), so that when requesting a ticket, the page is guaranteed to have
+   * renewed the token, yielding a full-lifetime ticket; if larger, it would receive a ticket with only
+   * a dozen seconds left, triggering several rapid switches in a row.
    */
   renewMarginMs: 8_000,
-  /** 一个会话至少用多久才换(票据只剩几秒时也不至于刚建成就换;没赶上的由 `error` 兜住) */
+  /** Minimum duration a session is used before switching (avoids switching immediately after creation when only a few seconds remain; missed cases are caught by `error`) */
   minSessionMs: 3_000,
-  /** 没有给出到期时刻的票据按多久算(账号访问令牌的寿命是 120 秒,取一半) */
+  /** Duration assumed for tickets without an expiry time (account access token lifetime is 120 seconds; take half) */
   fallbackLifeMs: 60_000,
 });
 
-/** 页面交回的票据:`{ ticket, expiresAt? }` 或只有票据串 */
+/** Ticket returned by the page: `{ ticket, expiresAt? }` or just the ticket string */
 function normalizeTicket(value) {
   const ticket = typeof value === 'string' ? value : value?.ticket;
   if (typeof ticket !== 'string' || !TICKET.test(ticket)) throw new Error('Invalid account connection ticket');
@@ -47,14 +64,17 @@ function normalizeTicket(value) {
 }
 
 /**
- * `createCardSync({ connect })` 里账号项目用的端点。形状与 `createDocEndpoint` 相同(send、onMessage、onOpen、onResume、onClose、close、stats)。
+ * Endpoint used for account projects in `createCardSync({ connect })`. Same shape as
+ * `createDocEndpoint` (send, onMessage, onOpen, onResume, onClose, close, stats).
  *
  * @param {object} o
- * @param {string} o.url 文档服务的 ws(s):// 地址
- * @param {() => Promise<string | { ticket: string, expiresAt?: number }>} o.getTicket 现取一张账号办法的连接票据;取不到就抛
+ * @param {string} o.url ws(s):// address of the document service
+ * @param {() => Promise<string | { ticket: string, expiresAt?: number }>} o.getTicket Fetches an
+ *   account-based connection ticket on demand; throws if unable to obtain
  * @param {(event: string, fields?: object) => void} [o.log]
- * @param {(o: object) => object} [o.createEndpoint] 缺省 `createDocEndpoint`(测试换成替身)
- * @param {Function} [o.WebSocket] 只给测试换实现(带根证书的)
+ * @param {(o: object) => object} [o.createEndpoint] Defaults to `createDocEndpoint` (replaced with
+ *   test double in tests)
+ * @param {Function} [o.WebSocket] Only for tests to swap implementation (with root CA)
  */
 export function accountCardEndpoint({
   url,
@@ -71,10 +91,10 @@ export function accountCardEndpoint({
 } = {}) {
   if (typeof getTicket !== 'function') throw new TypeError('accountCardEndpoint: getTicket must be a function');
   const handlers = { message: [], open: [], resume: [], close: [] };
-  const emit = (kind, arg) => { for (const h of [...handlers[kind]]) { try { h(arg); } catch { /* 上层的处理出错不影响连接 */ } } };
-  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响连接 */ } };
+  const emit = (kind, arg) => { for (const h of [...handlers[kind]]) { try { h(arg); } catch { /* Errors in upper-layer handling do not affect the connection */ } } };
+  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* Logging failures do not affect the connection */ } };
   let closed = false;
-  /** 当前的会话端点 `{ ep, expiresAt, timer, renewing }`;换的时候整个换掉 */
+  /** Current session endpoint `{ ep, expiresAt, timer, renewing }`; replaced entirely when switching */
   let cur = null;
   let renews = 0;
 
@@ -101,7 +121,7 @@ export function accountCardEndpoint({
     ep.onResume?.(() => { if (cur === rec && !closed) emit('resume'); });
     ep.onClose((info) => {
       if (cur !== rec) return;
-      // 会话结束(被服务端关、保留期过了):端点自己会退避着建新会话,那时重新取票据、重新定时
+      // Session ended (closed by server, retention period expired): endpoint retries with backoff to create a new session, refetching ticket and rescheduling then
       if (rec.timer !== null) { clearTimer(rec.timer); rec.timer = null; }
       emit('close', info);
     });
@@ -112,15 +132,15 @@ export function accountCardEndpoint({
     });
   }
 
-  /** 结束这个会话、凭新票据建下一个 */
+  /** End this session and create the next one with a new ticket */
   function renew(rec, why) {
     if (closed || cur !== rec || rec.renewing) return;
     rec.renewing = true;
     renews += 1;
     say('account.renew', { why, renews });
     if (rec.timer !== null) { clearTimer(rec.timer); rec.timer = null; }
-    // 先关(它还是当前端点,关闭照常报给上层:在途的请求按断线处理),再起新的
-    try { rec.ep.close(); } catch { /* 已经关了 */ }
+    // Close first (still the current endpoint; closure is reported to upper layer as usual: in-flight requests are treated as disconnected), then start a new one
+    try { rec.ep.close(); } catch { /* Already closed */ }
     if (closed || cur !== rec) return;
     start();
   }
@@ -138,9 +158,9 @@ export function accountCardEndpoint({
       closed = true;
       const rec = cur;
       if (rec?.timer != null) { clearTimer(rec.timer); rec.timer = null; }
-      try { rec?.ep.close(); } catch { /* 已经关了 */ }
+      try { rec?.ep.close(); } catch { /* Already closed */ }
     },
-    /** 只断当前传输(测试用) */
+    /** Disconnect current transport only (for testing) */
     dropTransport: () => cur?.ep.dropTransport?.() ?? false,
     stats() {
       let inner = null;
@@ -151,8 +171,10 @@ export function accountCardEndpoint({
 }
 
 /**
- * `createCardSync().bind({ protocols })` 里标明「这是账号项目」的那一项:`cardSyncConnect` 认它,改用 `accountCardEndpoint`。
- * 直接当子协议函数调用也能用(只出示票据,不管寿命),免得别的端点拿到它时出错。
+ * The entry in `createCardSync().bind({ protocols })` indicating "this is an account project":
+ * `cardSyncConnect` recognizes it and switches to `accountCardEndpoint`. Can also be called directly
+ * as a subprotocol function (only presents the ticket, ignoring lifetime) to prevent errors when
+ * other endpoints receive it.
  */
 export function accountCardProtocols(getTicket) {
   if (typeof getTicket !== 'function') throw new TypeError('accountCardProtocols: getTicket must be a function');
@@ -161,8 +183,9 @@ export function accountCardProtocols(getTicket) {
 }
 
 /**
- * `createCardSync({ connect })`:账号项目(`accountCardProtocols` 给的子协议)用 `accountCardEndpoint`,
- * 其余与缺省的完全一样(`createDocEndpoint({ url, protocols, log })`,日志事件加 `doc.` 前缀)。
+ * `createCardSync({ connect })`: account projects (subprotocols provided by `accountCardProtocols`)
+ * use `accountCardEndpoint`; the rest is identical to the default
+ * (`createDocEndpoint({ url, protocols, log })`, prefixing log events with `doc.`).
  */
 export function cardSyncConnect(say = () => {}, { WebSocket = undefined } = {}) {
   const log = (event, fields) => say(`doc.${event}`, fields);
@@ -171,13 +194,17 @@ export function cardSyncConnect(say = () => {}, { WebSocket = undefined } = {}) 
     : createDocEndpoint({ url, protocols, log, ...(WebSocket ? { WebSocket } : {}) }));
 }
 
-/** 账号云端项目的文档服务地址:正式环境只有这一个,写在产品声明里(公开版没有);桌面外壳的账号桥也只认它(`desktop/src-tauri/src/lib.rs` 的 `account_cloud_binding`) */
+/** Document service address for account cloud projects: only this one in production, written into product manifests (absent in the public edition); the desktop shell's account bridge also only recognizes it (`account_cloud_binding` in `desktop/src-tauri/src/lib.rs`) */
 export const ACCOUNT_CLOUD_ORIGIN = PRODUCT.accountCloudOrigin;
 
 /**
- * 编辑器进程凭账号票据连出去的地址只能是账号云端的文档服务(`wss://<云端主机>/hosted/`)。
- * 票据是成员本人权限的凭证,绑定请求里的地址不能说连哪就连哪 —— 否则谁能调到绑定接口,谁就能让编辑器进程把票据送到他指定的服务器。
- * `PROMPTCUT_ACCOUNT_CLOUD_ORIGIN`(逗号分隔的 https 源)只给本机联调与探针换成测试用的账号服务,不设就只认正式环境。
+ * The address the editor process connects to using account tickets can only be the account cloud
+ * document service (`wss://<cloud-host>/hosted/`). Tickets are credentials for the member's own
+ * permissions; the address in a binding request cannot arbitrarily point anywhere: otherwise,
+ * anyone who can call the binding endpoint could make the editor process send the ticket to their
+ * specified server. `PROMPTCUT_ACCOUNT_CLOUD_ORIGIN` (comma-separated https origins) is only for local
+ * integration testing and probes to swap in a test account service; if unset, only production is
+ * recognized.
  */
 export function accountDocUrlAllowed(url, env = process.env) {
   let u;

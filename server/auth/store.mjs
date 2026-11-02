@@ -1,19 +1,23 @@
 /**
- * 共享项目的凭证存储（契约 `docs/plan/auth-contract.md` 第 3 节）。
+ * Credential store for shared projects (contract `docs/plan/auth-contract.md` Section 3).
  *
- * 目录是文档服务数据目录下的 `auth/`：
- * - `auth/server.json`：`{ v: 1, secret }`，服务端密钥（32 字节 base64url），首次打开时生成。
- *   只用来给名单外的用户名造伪盐（第 4 节），不签票据；
- * - `auth/projects/<projectId>.json`：每个共享项目一份记录，写入走临时文件加改名。
+ * The directory is `auth/` under the document service data directory:
+ * - `auth/server.json`: `{ v: 1, secret }`, server key (32 bytes base64url), generated on first
+ *   open. Only used to generate pseudo-salts for usernames not on the list (Section 4); does not
+ *   sign tickets;
+ * - `auth/projects/<projectId>.json`: one record per shared project; writes use a temporary file
+ *   plus rename.
  *
- * 打开时把全部记录读进内存，之后读只读内存，写先落盘再改内存。打不开（目录不可写、文件坏了）就抛错：
- * 独立模式的 `main.mjs` 据此失败即关（第 10 节）。
+ * On open, all records are read into memory; subsequent reads only access memory, while writes flush
+ * to disk before updating memory. Throws if unable to open (directory unwritable, file corrupted):
+ * `main.mjs` in standalone mode shuts down on failure based on this (Section 10).
  *
- * 记录里存的 `K` 对本协议等同于口令（计划第 12.2 节），所以这个目录不经任何静态服务暴露。
- * 文档服务与素材服务同进程时共用同一份内存状态（票据的代数、签名密钥，第 8 节）：用 `credentialStoreFor(dir)`
- * 按目录取进程内的单例。
+ * The `K` stored in records is equivalent to a passphrase for this protocol (plan Section 12.2), so
+ * this directory is never exposed via any static service. When the document service and asset service
+ * share the same process, they share the same in-memory state (ticket generation, signing key, Section 8):
+ * use `credentialStoreFor(dir)` to get the in-process singleton by directory.
  *
- * 只用 Node 内置模块（D2 守门）。
+ * Uses Node built-in modules only (D2 gatekeeper).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,7 +28,7 @@ import { roomUnavailableReason } from '../recovery/relocation.mjs';
 
 const BASE32 = 'abcdefghijklmnopqrstuvwxyz234567';
 
-/** `sp_<26 位小写 base32>`：130 位随机数 */
+/** `sp_<26 lowercase base32 chars>`: 130-bit random number */
 export function newProjectId() {
   const bytes = randomBytes(17);
   let bits = 0;
@@ -42,12 +46,15 @@ export function newProjectId() {
   return `sp_${out}`;
 }
 
-/** 签名密钥的编号：密钥 sha256 的前 8 个 base64url 字符（记录里不另存） */
+/** Signing key ID: first 8 base64url characters of key's sha256 (not stored separately in records) */
 export const kidOf = (ticketKey) => b64urlEncode(createHash('sha256').update(String(ticketKey), 'utf8').digest()).slice(0, 8);
 
 let tmpSeq = 0;
 
-/** 先写临时文件、刷盘，再改名盖过目标；Windows 上目标正被读时改名可能 EPERM，短暂重试 */
+/**
+ * Writes to a temporary file, flushes to disk, then renames over target; on Windows, renaming
+ * may hit EPERM while target is being read, retries briefly.
+ */
 function writeAtomic(file, text) {
   const tmp = `${file}.tmp-${process.pid}-${Date.now().toString(36)}-${(tmpSeq += 1)}`;
   try {
@@ -68,7 +75,7 @@ function writeAtomic(file, text) {
       }
     }
   } catch (err) {
-    try { fs.unlinkSync(tmp); } catch { /* 没建成 */ }
+    try { fs.unlinkSync(tmp); } catch { /* Not created */ }
     throw err;
   }
 }
@@ -76,9 +83,9 @@ function writeAtomic(file, text) {
 const clone = (v) => structuredClone(v);
 
 /**
- * 打开（必要时建出）凭证存储。
+ * Opens (creating if necessary) the credential store.
  * @param {object} options
- * @param {string} options.dir `auth/` 目录本身
+ * @param {string} options.dir The `auth/` directory itself
  * @param {() => number} [options.now]
  * @param {(event: string, fields: object) => void} [options.log]
  */
@@ -88,7 +95,7 @@ export function openCredentialStore({ dir, now = Date.now, log = () => {} } = {}
   const projectsDir = path.join(root, 'projects');
   fs.mkdirSync(projectsDir, { recursive: true });
 
-  // 服务端密钥：有就读，没有就生成
+  // Server key: read if present, generate if not
   const serverFile = path.join(root, 'server.json');
   let secret;
   if (fs.existsSync(serverFile)) {
@@ -99,16 +106,18 @@ export function openCredentialStore({ dir, now = Date.now, log = () => {} } = {}
     secret = b64urlEncode(randomBytes(32));
     writeAtomic(serverFile, `${JSON.stringify({ v: 1, secret, createdAt: now() })}\n`);
   }
-  // 可写性在这里就试一次：只读目录下 server.json 已存在时，上面不会写
+  // Test writability here: when server.json already exists in a read-only directory, above won't write
   fs.accessSync(projectsDir, fs.constants.W_OK);
 
-  /** projectId → 记录 */
+  /** projectId → record */
   const records = new Map();
-  /** 名字键 → projectId */
+  /** Name key → projectId */
   const names = new Map();
   /**
-   * 邀请码摘要 → projectId（C10a 契约第 5 节）。只记每个项目当前那一条邀请码的摘要：签发新的、删项目时跟着改；
-   * 作废的记录还在，由 `invite.mjs` 的 `inviteActive` 判失效。按摘要找项目，不必逐个项目算 HMAC。
+   * Invite code digest → projectId (C10a contract Section 5). Only records the digest of each project's
+   * current invite code: updated when issuing a new one or deleting a project; invalidated records
+   * remain, with expiration checked by `inviteActive` in `invite.mjs`. Looking up projects by digest
+   * avoids computing HMAC for each project.
    */
   const invites = new Map();
   const indexInvite = (rec, prev) => {
@@ -129,7 +138,10 @@ export function openCredentialStore({ dir, now = Date.now, log = () => {} } = {}
   }
   log('auth.store.open', { projects: records.size });
 
-  /** 记录变化的监听（托管端的目录模块用，`docs/plan/hosted-render-contract.md` 第 2 节）：建、改、删、搬迁装入之后各调一次 */
+  /**
+   * Record change listener (used by hosted-side catalog module, `docs/plan/hosted-render-contract.md`
+   * Section 2): called once after each create, update, remove, or install on move.
+   */
   const listeners = new Set();
   const changed = (type, projectId) => {
     for (const fn of [...listeners]) {
@@ -142,25 +154,28 @@ export function openCredentialStore({ dir, now = Date.now, log = () => {} } = {}
 
   return {
     dir: root,
-    /** 服务端密钥（字节） */
+    /** Server key (bytes) */
     serverSecret: Buffer.from(secret, 'base64url'),
 
     count: () => records.size,
 
-    /** 订阅记录变化：`fn({ type: 'create' | 'update' | 'remove' | 'install', projectId })`，落盘并换进内存之后调。回退订函数 */
+    /**
+     * Subscribe to record changes: `fn({ type: 'create' | 'update' | 'remove' | 'install', projectId })`,
+     * called after persisting to disk and swapping into memory. Returns an unsubscribe function.
+     */
     onChange(fn) {
       if (typeof fn !== 'function') throw new TypeError('onChange: a function is required');
       listeners.add(fn);
       return () => { listeners.delete(fn); };
     },
 
-    /** 记录的副本；没有回 null */
+    /** Replica of the record; returns null if none */
     get(projectId) {
       const rec = records.get(projectId);
       return rec ? clone(rec) : null;
     },
 
-    /** 内部用：不拷贝，只读（握手、核票据这些热路径） */
+    /** Internal use: no copy, read-only (hot paths like handshake and ticket verification) */
     peek(projectId) {
       return records.get(projectId) ?? null;
     },
@@ -172,7 +187,7 @@ export function openCredentialStore({ dir, now = Date.now, log = () => {} } = {}
 
     nameTaken: (name) => names.has(nameKey(name)),
 
-    /** 按邀请码摘要找项目（C10a）：内部用，不拷贝、只读；没有回 null */
+    /** Find project by invite code digest (C10a): internal use, no copy, read-only; returns null if none */
     peekByInviteDigest(digest) {
       const id = typeof digest === 'string' ? invites.get(digest) : undefined;
       return id ? records.get(id) ?? null : null;
@@ -207,8 +222,9 @@ export function openCredentialStore({ dir, now = Date.now, log = () => {} } = {}
     },
 
     /**
-     * 建一个项目。字段由调用方校验过；这里生成 projectId、ticketKey，代数从 1 起。名字被占用抛 `code: 'name-taken'`。
-     * @returns 记录的副本
+     * Creates a project. Fields are validated by caller; generates projectId and ticketKey here, with
+     * generation starting from 1. Throws `code: 'name-taken'` if the name is already taken.
+     * @returns Replica of the record
      */
     create({ name, mode, kdf, creator, project, list }) {
       if (names.has(nameKey(name))) {
@@ -241,8 +257,9 @@ export function openCredentialStore({ dir, now = Date.now, log = () => {} } = {}
     },
 
     /**
-     * 改一个项目：`mutate(草稿)` 改草稿，改完落盘再换进内存。项目不存在回 null。
-     * @returns 新记录的副本
+     * Updates a project: `mutate(draft)` modifies the draft, flushes to disk after edits, and swaps
+     * into memory. Returns null if the project does not exist.
+     * @returns Replica of the new record
      */
     update(projectId, mutate) {
       const cur = records.get(projectId);
@@ -258,7 +275,7 @@ export function openCredentialStore({ dir, now = Date.now, log = () => {} } = {}
       return clone(draft);
     },
 
-    /** 删掉项目记录，名字释放。回是否删了 */
+    /** Deletes the project record and releases the name. Returns whether it was deleted */
     remove(projectId) {
       const rec = records.get(projectId);
       if (!rec) return false;
@@ -269,24 +286,25 @@ export function openCredentialStore({ dir, now = Date.now, log = () => {} } = {}
       }
       records.delete(projectId);
       names.delete(nameKey(rec.name));
-      indexInvite(null, rec); // 删项目：邀请码一并删除（C10a 第 5 节）
+      indexInvite(null, rec); // Delete project: invite codes are deleted together (C10a Section 5)
       changed('remove', projectId);
       return true;
     },
 
-    /** 全部项目的 `{ projectId, name, mode }` */
+    /** `{ projectId, name, mode }` for all projects */
     list() {
       return [...records.values()].map((r) => ({ projectId: r.projectId, name: r.name, mode: r.mode }));
     },
   };
 }
 
-/** 进程内单例：按 `auth/` 目录的绝对路径 */
+/** In-process singleton: keyed by absolute path of the `auth/` directory */
 const singletons = new Map();
 
 /**
- * 按目录取进程内唯一的一份凭证存储（文档服务与素材服务同进程时共用，契约第 8 节）。
- * 第一次调用时打开；打不开就抛错，下次再调会重试。
+ * Gets the unique in-process credential store by directory (shared when document service and asset
+ * service run in the same process, contract Section 8). Opens on first call; throws if unable to
+ * open, retrying on subsequent calls.
  */
 export function credentialStoreFor(dir, options = {}) {
   const key = path.resolve(dir);
@@ -298,12 +316,12 @@ export function credentialStoreFor(dir, options = {}) {
   return store;
 }
 
-/** 只取已经打开的单例，没打开回 null（不建目录） */
+/** Only gets an already-opened singleton, returns null if not opened (does not create directory) */
 export function existingCredentialStore(dir) {
   return singletons.get(path.resolve(dir)) ?? null;
 }
 
-/** 忘掉某个目录的单例（测试清理用） */
+/** Forgets the singleton for a directory (used for test cleanup) */
 export function forgetCredentialStore(dir) {
   singletons.delete(path.resolve(dir));
 }

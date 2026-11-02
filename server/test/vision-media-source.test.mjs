@@ -1,7 +1,9 @@
-// 预渲染进程读素材的地址(server/vision/ffmpeg-frames.ts):只经素材服务的 HTTP,
-// 以及镜头拼图(/api/vision/sheet)按内容哈希做缓存键。跑法:node --test server/test/vision-media-source.test.mjs
+// Address for prerender process reading assets (server/vision/ffmpeg-frames.ts): only via asset
+// service HTTP, and shot sheet (/api/vision/sheet) uses content hash as cache key.
+// Run: node --test server/test/vision-media-source.test.mjs
 //
-// ffmpeg-frames 是 .ts,和 asset-service.test 一样用 typescript 转译到临时目录再 import。
+// ffmpeg-frames is .ts; like asset-service.test, transpile with typescript to temporary directory
+// before import.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -56,12 +58,13 @@ test('mediaSourceOf: always an HTTP address on the asset service, never a disk p
   assert.equal(frames.mediaSourceOf({ hash: h, path: 'C:\\x\\out\\media\\a.mp4' }, o), `${o}/@media/${h}`);
   assert.equal(frames.mediaSourceOf({ url: `/@media/${h}.mp4` }, o), `${o}/@media/${h}.mp4`);
   assert.equal(frames.mediaSourceOf({ url: '/@media/clip.mp4' }, o), `${o}/@media/clip.mp4`);
-  // 老 .proc 的绝对路径:原样交给素材服务的 /api/media/file(那一侧按白名单判),不拼成 /@media/file
+  // Absolute path of legacy .proc: handed as-is to asset service /api/media/file
+  // (checked against allowlist on that side), not concatenated into /@media/file
   const legacy = '/api/media/file?path=C%3A%2FUsers%2Fu%2FVideos%2FPromptCut%2Fmedia%2Fa.mp4';
   assert.equal(frames.mediaSourceOf({ url: legacy, path: 'C:/Users/u/Videos/PromptCut/media/a.mp4' }, o), `${o}${legacy}`);
-  // 有哈希时哈希优先
+  // Hash takes precedence when present
   assert.equal(frames.mediaSourceOf({ hash: h, url: legacy }, o), `${o}/@media/${h}`);
-  // 只有 path:只取最后一段文件名,指不到库外
+  // Only path: take only the last segment filename, cannot point outside the store
   assert.equal(frames.mediaSourceOf({ path: 'C:\\Windows\\win.ini' }, o), `${o}/@media/win.ini`);
   assert.equal(frames.mediaSourceOf({ hash: h }, null), null, 'asset service unreachable');
   assert.equal(frames.mediaSourceOf({ url: legacy }, null), null, 'asset service unreachable');

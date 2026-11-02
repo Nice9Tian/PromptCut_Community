@@ -17,10 +17,11 @@ import { tracks as trackActions } from "./tracks";
 
 export const captions = {
   /**
-   * 字幕专用序列:有就用,没有就建一条。
+   * Dedicated captions track: use if present, create one if not.
    *
-   * 建在**最上面**(tracks[0]):时间轴上靠上的序列画在上层,字幕本来就该压在画面之上 ——
-   * 以前用 addTrack 追加到末尾,叠放顺序翻正之后那等于把字幕塞到了所有画面底下。
+   * Placed at the **very top** (tracks[0]): tracks higher up on the timeline render on upper
+   * layers, and captions should naturally sit above video: previously appended to the end using
+   * addTrack, which after normalizing the stacking order meant stuffing captions under all video.
    */
   ensureCaptionTrack(): Track {
     const found = state.project.tracks.find((t) => t.name === CAPTION_TRACK_NAME);
@@ -28,11 +29,14 @@ export const captions = {
     return trackActions.addTrack(CAPTION_TRACK_NAME, { index: 0 });
   },
   /**
-   * 一键把某份素材的文字稿铺成字幕轨:字幕序列 → 一张 caption-track 卡 → 灌进 lines。
+   * One-click populate asset transcript into a captions track: captions track → one caption-track
+   * card → populate into lines.
    *
-   * 以前只有 AI 走 auto_workflow / fill_captions 能铺字幕,人在界面上转写完就没有下一步了。
-   * 时段按这份素材在时间轴上真正铺开的范围算(认 mediaOffset,素材被挪过、修过头也对得上)。
-   * 已经有一张覆盖同一段时间的字幕卡就往那张里灌,不再多建一张。
+   * Previously only AI using auto_workflow / fill_captions could lay captions; manual transcription
+   * in the UI had no next step. Time range is calculated based on where this asset actually spans on
+   * the timeline (respects mediaOffset, matching even if the asset was moved or head-trimmed). If a
+   * captions card already covers the same time range, populate into that card instead of creating
+   * another one.
    */
   buildCaptions(mediaId: string): { ok: true; clipId: string; count: number } | { ok: false; reason: string } {
     const p = state.project;
@@ -46,7 +50,8 @@ export const captions = {
     if (plan.lines.length === 0) return { ok: false, reason: "This media is not on the timeline yet; drag it onto the timeline first, then lay out the captions" };
 
     const track = captions.ensureCaptionTrack();
-    // 同一时段已经有字幕卡就复用它(重新转写之后再铺一次是常事,不该越铺越多)
+    // Reuse an existing captions card for the same time period (re-laying after re-transcribing is
+    // common, and should not continuously accumulate cards)
     const exist = track.clips.find((c) => isCaptionClip(c) && Math.max(c.start, plan.from) < Math.min(c.end, plan.to));
     if (exist) {
       const re = captionsFromTranscript(clips, mediaId, segments, { from: exist.start, to: exist.end });
@@ -63,11 +68,12 @@ export const captions = {
     return { ok: true, clipId: clip.id, count: plan.lines.length };
   },
   /**
-   * 改字幕卡里的一条字幕(挪位置、修边、改文字)。
+   * Modify a caption in a caption card (reposition, trim edges, edit text).
    *
-   * 字幕存在卡片的 lines 参数里(`起|止|中|英` 一行一条),所以这三个动作都是
-   * 「解析 → 在 kernel/captions 里算 → 写回同一个字符串」。时间会被夹在左右邻居之间,
-   * 不会拖出一条压着别人的字幕。返回改完之后它排到第几位,-1 = 没改成。
+   * Captions are stored in the card's lines parameter (`start|end|zh|en`, one per line), so all three
+   * actions are "parse → compute in kernel/captions → write back to the same string". Time is clamped
+   * between left and right neighbors, so dragging will not create a caption that overlaps another.
+   * Returns its position after the change, -1 = not modified.
    */
   editCaption(clipId: string, index: number, patch: { start?: number; end?: number; zh?: string; en?: string }): number {
     const hit = findClip(state.project, clipId);
@@ -78,7 +84,7 @@ export const captions = {
     clipActions.setClipParams(clipId, { lines: formatCaptions(res.lines) });
     return res.index;
   },
-  /** 删掉一条字幕 */
+  /** Delete a caption */
   removeCaption(clipId: string, index: number): boolean {
     const hit = findClip(state.project, clipId);
     if (!hit || !isCaptionClip(hit.clip)) return false;
@@ -87,7 +93,7 @@ export const captions = {
     clipActions.setClipParams(clipId, { lines: formatCaptions(removeCaptionLine(lines, index)) });
     return true;
   },
-  /** 在字幕卡里插一条(start 是相对卡片起点的秒);挤不下返回 -1 */
+  /** Insert a caption into a captions card (start is in seconds relative to card start); returns -1 if it cannot fit */
   addCaption(clipId: string, at: { start: number; end?: number; zh?: string; en?: string }): number {
     const hit = findClip(state.project, clipId);
     if (!hit || !isCaptionClip(hit.clip)) return -1;

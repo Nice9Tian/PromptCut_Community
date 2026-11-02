@@ -87,7 +87,8 @@ export const uiCallout: CardDef<Params> = {
   useWhen: "Use when the base layer is a screen recording and you need to circle a region of the interface and draw out a label. Positioning uses position (four anchors: center/bottom/left/right) plus offsetX/offsetY pixel offsets, **there is no absolute coordinate parameter**, and you must also give the ring width and height ringW/ringH and the leader line direction side. If the position can't be described clearly, don't pick this card; by default it circles the exact center of the frame.",
   tags: ["interface","callout","circle","tutorial"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,

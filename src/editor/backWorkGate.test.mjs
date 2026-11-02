@@ -1,6 +1,7 @@
 /**
- * 后台活的开始 / 停止由父页判(C10 契约第 2 节):页面可见 ∧ rAF 间隔不持续超过 500 ms ∧ 父页 rIC 在回调。
- * 跑:node --test src/editor/backWorkGate.test.mjs
+ * Start / stop of background work is judged by the parent page (section 2 of C10 contract): page is
+ * visible ∧ rAF interval does not continuously exceed 500 ms ∧ parent page rIC is invoking callback.
+ * Run: node --test src/editor/backWorkGate.test.mjs
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

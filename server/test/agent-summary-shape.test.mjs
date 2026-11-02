@@ -1,22 +1,25 @@
 /**
  * node --test server/test/agent-summary-shape.test.mjs
  *
- * 收尾那一轮(撞到轮次上限 / 重复操作检测)落进历史的形状。
+ * The shape of the final round (hitting round limit / repeat detection) written into history.
  *
- * 这里钉的和 history-consecutive-user 是同一条不变量的另一半:那边治两条连着的
- * **user**,这边治两条连着的 **assistant**。
+ * What is pinned here is the other half of the same invariant as history-consecutive-user: that
+ * side handles two consecutive **user** messages, this side handles two consecutive **assistant**
+ * messages.
  *
- * 为什么这半更狠:收尾轮的产物会被 saveHistory 原样写进 harness-sessions 里那个
- * 文件,而后续没有任何一步会把它合并回去 —— 角色不交替的历史读回来照样发出去,
- * **这个会话从此每次都 400 而且不自愈**,用户根本不知道有这么个文件可以删。
+ * Why this half is harsher: the artifact of the final round is written as-is by saveHistory into
+ * that file in harness-sessions, and no subsequent step ever merges it back: reading back history
+ * without alternating roles is still sent out, **this session will 400 every time from then on and
+ * never heal itself**, and the user has no idea such a file exists to delete.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Agent } from "../harness/agent.mjs";
 
 /**
- * 一个假模型:第一轮调一次工具(好让轮次上限触发),之后只说话。
- * 事件名要和真 provider 一致(text_delta / tool_use / stop),不然测的就不是同一条路。
+ * A fake model: calls a tool once in round 1 (to trigger round limit), and only talks afterward.
+ * Event names must match real provider (text_delta / tool_use / stop), otherwise it tests a
+ * different path.
  */
 function scripted(finalText) {
   let round = 0;
@@ -41,7 +44,7 @@ function consecutiveSameRole(msgs) {
 }
 
 test("When the round limit is hit, the closing sentence must be merged into the same assistant message", async () => {
-  // maxIterations = 1:第一轮调完工具就触发上限,第二轮进 summarizing
+  // maxIterations = 1: triggers limit right after calling tool in round 1, enters summarizing in round 2
   const agent = new Agent({ provider: scripted("I did half of it"), system: "", tools: [NOOP_TOOL], maxIterations: 1 });
   const out = await agent.run("Start");
   assert.equal(out.outcome, "round_limit", "It must really reach the wrap-up round, otherwise this test checks nothing");

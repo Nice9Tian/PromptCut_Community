@@ -1,33 +1,46 @@
-// 探针:局域网素材服务端到端(W2)。契约见 docs/plan/asset-store-contract.md 第 6 节末段。
+// Probe: LAN asset service end-to-end (W2). See end of section 6 of docs/plan/asset-store-contract.md for contract.
 //
-//   PROMPTCUT_SHARED_CONFIG=<配置文件> node scripts/probes/asset-lan-probe.mjs [--docservice <ws://…>] [--asset <http://…/api/asset>] [--mb 20] [--timeout-ms 60000]
+//   PROMPTCUT_SHARED_CONFIG=<config file> node scripts/probes/asset-lan-probe.mjs [--docservice <ws://…>] [--asset <http://…/api/asset>] [--mb 20] [--timeout-ms 60000]
 //
-// 在另一台机器(笔记本)上跑,只用 Node 内置模块(要 Node 22 起的全局 WebSocket、fetch),不需要 node_modules。
+// Runs on another machine (laptop), using only Node built-in modules (requires global WebSocket
+// and fetch from Node 22+), no node_modules needed.
 //
-// 凭证(M6a,docs/plan/auth-contract.md 第 8、11 节;集群令牌已退出素材服务,本探针不再读它):
-//   环境变量 PROMPTCUT_SHARED_CONFIG 指向共享项目配置(第一项)。探针凭项目证明连文档服务(没给 --docservice 时用配置里的 url),
-//   经这条连接的 auth.ticket 取一张 rw 素材票据和一张只读票据,读写都带票据。配置里的口令、K、证明、票据都不打印。
+// Credentials (M6a, docs/plan/auth-contract.md sections 8 and 11; cluster token is retired from
+// asset service, this probe no longer reads it):
+//   Environment variable PROMPTCUT_SHARED_CONFIG points to shared project config (first item).
+//   Probe connects to document service using project proof (uses url in config when --docservice
+//   is omitted), fetches one rw asset ticket and one read-only ticket via auth.ticket on this
+//   connection; both reads and writes carry tickets. Passphrase, K, proof, and tickets in config
+//   are never printed.
 //
-// 素材服务地址:
-//   - 没给 --asset:先按局域网发现(server/lan/discovery.mjs,限时 3 s)找这个项目。放本机的项目,素材服务地址经发现带回、
-//     不进控制面的 service.endpoints;找到就按发现的先后取第一个带票据 GET <url>/media/<一个不存在的哈希>/chunks
-//     能通的地址(source: 'lan')。没给 --docservice 时,票据也从发现到的那台文档服务取(同 server/auth/route.mjs 的选路)。
-//     找不到(放云端的项目,或不在同一网段)再在控制面连接上发 service.watch { kinds: ['asset'] },按登记顺序取第一个
-//     能通的地址(source: 'docservice')。地址都不手填。找地址那一段在 asset-lan-discover.mjs,单测 server/test/asset-lan-discover.test.mjs;
-//   - 给了 --asset:直接用它(source: 'arg');
-//   - --no-lan:不做局域网发现,只等 service.endpoints(老写法)。
+// Asset service address:
+//   - When --asset is omitted: first search for this project via LAN discovery
+//     (server/lan/discovery.mjs, 3 s timeout). For local projects, asset service address is
+//     returned via discovery and does not enter the control plane's service.endpoints; if found,
+//     takes the first working address (source: 'lan') in discovery order that responds to
+//     GET <url>/media/<nonexistent hash>/chunks with ticket. When --docservice is omitted, ticket is
+//     also fetched from discovered document service (same as routing in server/auth/route.mjs).
+//     If not found (cloud projects, or not on same subnet), sends service.watch { kinds: ['asset'] }
+//     over control plane connection, taking the first working address in registration order
+//     (source: 'docservice'). Neither address is filled manually. The address lookup logic is in
+//     asset-lan-discover.mjs, unit test server/test/asset-lan-discover.test.mjs;
+//   - When --asset is given: use it directly (source: 'arg');
+//   - --no-lan: do not perform LAN discovery, only wait for service.endpoints (legacy behavior).
 //
-// 断言(按顺序):
-//   1. 随机生成 --mb MB 数据,算出 sha256;
-//   2. 不带票据 PUT 第 0 片 → 401;不带票据读 chunks → 401;只读票据 PUT → 403;
-//   3. 带票据只传第 0、1 片,chunks 报 received: [0, 1];
-//   4. 补传其余分片,complete → 200;
-//   5. 带 Origin: http://192.168.50.247:9999 的 GET 回 Access-Control-Allow-Origin: *;
-//   6. Range: bytes=100-199 → 206,字节正确;查询串只读票据 ?t= 的 Range 也 206,带 no-store / no-referrer;
-//   7. 全件下载后 sha256 相符。
+// Assertions (in order):
+//   1. Randomly generate --mb MB data, compute sha256;
+//   2. PUT chunk 0 without ticket → 401; read chunks without ticket → 401; read-only ticket PUT → 403;
+//   3. Upload only chunks 0 and 1 with ticket, chunks reports received: [0, 1];
+//   4. Upload remaining chunks, complete → 200;
+//   5. GET with Origin: http://192.168.50.247:9999 returns Access-Control-Allow-Origin: *;
+//   6. Range: bytes=100-199 → 206, correct bytes; query string read-only ticket ?t= Range also 206,
+//      with no-store / no-referrer;
+//   7. Download whole file and verify sha256 matches.
 //
-// 输出一行 JSON:{ ok, assetUrl, source, lan: { found, ms, candidates, errors } | null, bytes, steps: [{ name, ok, ms }], fails: [{ step, detail }] }
-// 退出码:0 全过;1 有断言失败(含超时);2 用法不对、没有共享项目配置、连不上控制面或素材服务。
+// Outputs one JSON line: { ok, assetUrl, source, lan: { found, ms, candidates, errors } | null,
+// bytes, steps: [{ name, ok, ms }], fails: [{ step, detail }] }
+// Exit code: 0 all pass; 1 assertion failure (including timeout); 2 invalid usage, missing shared
+// project config, cannot connect to control plane or asset service.
 import crypto from 'node:crypto';
 import { discoverLanAsset, firstReachableAsset } from './asset-lan-discover.mjs';
 
@@ -43,7 +56,7 @@ const USAGE = `Usage: PROMPTCUT_SHARED_CONFIG=<config> node scripts/probes/asset
 const CHUNK_DEFAULT = 8 * 1024 * 1024;
 const LAN_ORIGIN = 'http://192.168.50.247:9999';
 
-/** 不带值的开关 */
+/** Flag without a value */
 const FLAGS = new Set(['no-lan', 'help']);
 
 function parseArgs(argv) {
@@ -73,14 +86,14 @@ if (!(MB > 0) || !(TIMEOUT_MS > 0)) {
   console.error(USAGE);
   process.exit(2);
 }
-/** 用过的票据:输出前一律擦掉 */
+/** Used tickets: always scrubbed before output */
 const SECRETS = new Set();
 let TICKET = '';
 let READ_TICKET = '';
 
 const result = { ok: false, assetUrl: null, source: args.asset ? 'arg' : 'docservice', lan: null, bytes: 0, steps: [], fails: [] };
 let finished = false;
-/** 打一行 JSON 退出。令牌不在 result 里,保险起见再擦一遍 */
+/** Prints one JSON line and exits. Token is not in result, scrubbed again for safety */
 function finish(code) {
   if (finished) return;
   finished = true;
@@ -88,10 +101,10 @@ function finish(code) {
   let line = JSON.stringify(result);
   for (const secret of SECRETS) line = line.split(secret).join('<ticket>');
   process.exitCode = code;
-  // 写完再退出:管道上的 stdout 可能是异步的
+  // Exit after writing: stdout on a pipe may be asynchronous
   process.stdout.write(`${line}\n`, () => process.exit(code));
 }
-/** 连不上一类:退出码 2 */
+/** Connection failures: exit code 2 */
 class Unreachable extends Error {}
 
 const deadline = Date.now() + TIMEOUT_MS;
@@ -113,7 +126,10 @@ async function request(url, init = {}, ms = left()) {
   }
 }
 
-/** 一步:计时、记结果;断言失败记进 fails 但继续跑后面的步骤,连不上就整趟停 */
+/**
+ * Single step: times and records results; assertion failures are recorded in fails but subsequent
+ * steps continue running; connection failure stops the whole pass
+ */
 async function step(name, fn) {
   const t0 = Date.now();
   try {
@@ -132,8 +148,9 @@ function check(cond, detail) {
 }
 
 /**
- * 凭共享项目连控制面,取素材票据;没给 --asset 时找第一个能通的素材服务地址:
- * lanAssets 非空(局域网发现到了这个项目)就在它里面找,否则订阅 asset 登记按顺序找
+ * Connects to control plane via shared project, fetches asset ticket; when --asset is omitted,
+ * finds the first working asset service address: if lanAssets is non-empty (LAN discovery found
+ * this project), searches within it; otherwise subscribes to asset registrations and searches in order
  */
 async function connectAndDiscover(docservice, wantDiscovery, lanAssets = []) {
   let parsed;
@@ -192,7 +209,7 @@ async function connectAndDiscover(docservice, wantDiscovery, lanAssets = []) {
         if (m?.type !== 'service.endpoints' || !Array.isArray(m.endpoints)) return;
         const list = m.endpoints.filter((x) => x?.kind === 'asset' && Array.isArray(x.urls) && x.urls.length);
         if (list.length) { clearTimeout(timer); resolve(list); }
-        // 空表:等后续推送
+        // Empty table: wait for subsequent push
       });
     });
     const hit = await reach(registrations.flatMap((r) => r.urls));
@@ -205,8 +222,9 @@ async function connectAndDiscover(docservice, wantDiscovery, lanAssets = []) {
 
 const CLOSE_WAIT_MS = 3000;
 /**
- * 关连接并等 close 事件,最多 CLOSE_WAIT_MS。关闭握手没完成就 process.exit,
- * Windows 上 libuv 会断言 UV_HANDLE_CLOSING 崩掉(连不上素材服务时 discover 之后紧接着就退出)
+ * Closes connection and waits for close event, up to CLOSE_WAIT_MS. If process.exit is called
+ * before close handshake completes, libuv on Windows crashes on assertion UV_HANDLE_CLOSING
+ * (exiting immediately after discover when failing to connect to asset service)
  */
 function closeAndWait(ws) {
   if (ws.readyState === WebSocket.CLOSED) return Promise.resolve();
@@ -214,7 +232,7 @@ function closeAndWait(ws) {
     const t = setTimeout(resolve, CLOSE_WAIT_MS);
     ws.addEventListener('close', () => { clearTimeout(t); resolve(); }, { once: true });
     if (ws.readyState !== WebSocket.CLOSING) {
-      try { ws.close(); } catch { /* 已关 */ }
+      try { ws.close(); } catch { /* Closed */ }
     }
   });
 }

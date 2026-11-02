@@ -1,11 +1,15 @@
 /**
- * C6.6 上传队列（`docs/plan/c66-design.md` 第 2 节「项目里的记录」、第 3 节；验收 T2、T3）。
- * 跑：node --test server/test/c66-upload.test.mjs
+ * C6.6 upload queue (`docs/plan/c66-design.md` Section 2 "records in the project", Section 3;
+ * acceptance check T2, T3).
+ * Run: node --test server/test/c66-upload.test.mjs
  *
- * 只照设计稿写，没看实现。队列的名字与形状是假设 K2（见 `c66-kit.mjs` 文件头）。
- * 素材服务是真 HTTP（`fake-asset-service.mjs`，memory 实现，分片 64 KiB）；队列的每个请求经记录用的 `fetch`，
- * 顺序、分片号、断网都从这里看、从这里造。素材字节是伪随机数据（队列不看内容，只按哈希传）。
- * 被测模块不存在时每条用例各自失败、报原因。
+ * Written purely against the design doc without inspecting implementation. Name and shape of
+ * the queue are assumption K2 (see file header of `c66-kit.mjs`).
+ * The asset service is real HTTP (`fake-asset-service.mjs`, in-memory implementation, 64 KiB
+ * chunks); every request from the queue goes through a recording `fetch`, where order, chunk
+ * numbers, and network disconnections are inspected and simulated. Asset bytes are pseudorandom
+ * data (the queue does not inspect content, only transmits by hash).
+ * When the module under test is absent, each test case fails individually and reports the reason.
  */
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,7 +26,7 @@ const DIR = tempDir('pc-c66-upload-');
 after(async () => { await harness.cleanup(); fs.rmSync(DIR, { recursive: true, force: true }); });
 
 let seq = 0;
-/** 写一个伪随机文件，回 `{ hash, path, ext, size, bytes }` */
+/** Writes a pseudorandom file, returning `{ hash, path, ext, size, bytes }` */
 function file(size, ext = 'mp4') {
   const bytes = bytesOf(size, ++seq * 7919);
   const p = path.join(DIR, `f${seq}.${ext}`);
@@ -32,7 +36,7 @@ function file(size, ext = 'mp4') {
 const tier = ({ hash, path: p, ext }) => ({ hash, path: p, ext });
 const chunkCount = (f) => Math.ceil(f.size / CHUNK);
 
-/** 三个素材：A、B 是视频（两档），C 是图片（只有素材原尺寸） */
+/** Three assets: A and B are videos (two tiers), C is an image (original-size asset only) */
 function materials() {
   const A = { small: file(150 * 1024), original: file(600 * 1024) };
   const B = { small: file(100 * 1024), original: file(300 * 1024) };
@@ -45,7 +49,10 @@ function materials() {
   return { A, B, C, items };
 }
 
-/** 只看写请求（PUT 分片、POST complete），把连续同哈希的并成一段：[{ hash, puts: [n...], completed }] */
+/**
+ * Only inspects write requests (PUT chunks, POST complete), and merges consecutive identical
+ * hashes into a segment: [{ hash, puts: [n...], completed }]
+ */
 function writeRuns(log) {
   const runs = [];
   for (const e of log) {
@@ -88,7 +95,7 @@ test('C66-T3-01 all small-size assets upload first, then original-size assets in
     assert.equal(r.completed, true, `run ${i + 1} (${r.hash.slice(0, 6)}) ends with complete`);
     assert.deepEqual([...new Set(r.puts)].sort((a, b) => a - b), [...Array(chunkCount(order[i])).keys()], `run ${i + 1} uploads all chunks`);
   });
-  // 每一段里 complete 是最后一个写请求
+  // In each segment, complete is the last write request
   const writes = rec.log.filter((e) => e.ns === 'media' && (e.action === 'put' || e.action === 'complete'));
   for (const f of order) {
     const idx = writes.map((e, i) => (e.hash === f.hash ? i : -1)).filter((i) => i >= 0);
@@ -106,7 +113,8 @@ test('C66-T2-01 network lost during upload, resume after restart: a new queue bu
   const { A, B, C, items } = materials();
   const qf = queueFile();
 
-  // 第一个实例：A 素材原尺寸传过 3 片就断网，之后一直不通（这个实例不再恢复，模拟进程被关掉）
+  // First instance: original-size asset A disconnects after transmitting 3 chunks and remains
+  // disconnected afterwards (this instance does not recover, simulating a killed process)
   let aOrigPuts = 0;
   const rec1 = recordingFetch((info, _log, state) => {
     if (info.action === 'put' && info.hash === A.original.hash && ++aOrigPuts > 3) {
@@ -131,7 +139,7 @@ test('C66-T2-01 network lost during upload, resume after restart: a new queue bu
     assert.equal((await chunksOf(srv.base, f.hash)).received.length, 0, `before A's original-size asset was done, not a single chunk of B's and C's original-size assets was uploaded (${f.hash.slice(0, 6)})`);
   }
 
-  // 第二个实例：同一个队列文件，不再 enqueue，网络正常
+  // Second instance: same queue file, no further enqueue, network normal
   const rec2 = recordingFetch();
   const q2 = createQueue({ file: qf, base: srv.base, fetch: rec2.fetch, chunkSize: CHUNK });
   assert.equal(await drainWithin(q2, 20_000), true, 'resume must finish within 20 s');
@@ -150,7 +158,7 @@ test('C66-T2-01 network lost during upload, resume after restart: a new queue bu
     assert.equal(st.complete, true, `GET media/<hash>/chunks for ${name} reports complete: true`);
   }
 
-  // 两档都 complete 才出队：再起一个实例，什么都不写
+  // Dequeues only when both tiers are complete: launch another instance and write nothing
   const rec3 = recordingFetch();
   const q3 = createQueue({ file: qf, base: srv.base, fetch: rec3.fetch, chunkSize: CHUNK });
   assert.equal(await drainWithin(q3, 5000), true);
@@ -163,7 +171,7 @@ test('C66-T2-02 a tier that is already complete on the asset service is not re-u
   const createQueue = await loadUploadQueue();
   const srv = await harness.serve({ chunkSize: CHUNK, isTrusted: () => true });
   const { A, items } = materials();
-  // 事先把 A 的素材小尺寸放进素材服务
+  // Prepopulate small-size asset A into asset service in advance
   const st = srv.stores.media;
   for (let n = 0; n < chunkCount(A.small); n++) {
     const part = A.small.bytes.subarray(n * CHUNK, Math.min(A.small.size, (n + 1) * CHUNK));
@@ -186,14 +194,14 @@ test('C66-T2-03 sync state does not enter the project: MediaTiers has only small
   const fieldsOf = (name) => {
     const m = new RegExp(`export interface ${name}\\s*\\{`).exec(src);
     assert.ok(m, `project.ts must have interface ${name}`);
-    // 取到配对的右花括号
+    // Find the matching closing curly brace
     let depth = 0, i = m.index + m[0].length - 1, end = -1;
     for (; i < src.length; i++) {
       if (src[i] === '{') depth++;
       else if (src[i] === '}' && --depth === 0) { end = i; break; }
     }
     const body = src.slice(m.index + m[0].length, end).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-    // 只取第一层的字段名
+    // Only get top-level field names
     const names = [];
     let d = 0;
     for (const line of body.split('\n')) {

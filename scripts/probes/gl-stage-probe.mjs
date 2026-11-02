@@ -1,26 +1,38 @@
 /*
- * R9「canvas 卡的共享 WebGL 渲染器」的舞台侧验收探针。
+ * Stage-side acceptance check probe for R9 "shared WebGL renderer for canvas cards".
  *
- *   node scripts/probes/gl-stage-probe.mjs --origin http://127.0.0.1:5240 [--out out/gl-stage] [--only 直连,编辑台]
+ *   node scripts/probes/gl-stage-probe.mjs --origin http://127.0.0.1:5240 [--out out/gl-stage] [--only direct,editor]
  *
- * 两段:
+ * Two sections:
  *
- * **直连**(不经编辑台,顶层直接开一个舞台页 `http://<舞台端口>/?stage=1&id=A&preview=stage`,经 `window.__pcStage` 驱动):
- *   - 路线 1 的上下文数:舞台主线程 0 个活的 WebGL 上下文,它的 Worker 里恰好 1 个;
- *   - 20 张不同参数的 `scene-3d` 同时活跃,不触发 `webglcontextlost`,20 个平面都贴上了位图;
- *   - 3 张卡引用同一张贴图:Worker 里 `THREE.Texture` 一个、上传一次;
- *   - 节拍:暂停时点一次时间轴只发一拍;K3(a) 的同步 `advanceTo`(往前 < 0.5 秒)只在结束后发一拍;
- *   - 快照:`back` 角色下生成快照,three 卡是非空 `<img>`、`lossy = 0`;把 `data-pc-gl-frame` 人为改掉 → `lossy` 计到它;
- *   - 能力退路:`?glOffscreen=0` 时 canvas 卡在主线程画(主线程 1 个上下文、没有 Worker),画面和 Worker 那条路逐像素比。
+ * **Direct** (does not go through editor; opens a stage page directly at the top level
+ * `http://<stage-port>/?stage=1&id=A&preview=stage`, driven via `window.__pcStage`):
+ *   - Route 1 context count: 0 live WebGL contexts on the stage main thread, exactly 1 in its Worker;
+ *   - 20 `scene-3d` cards with different parameters active simultaneously, not triggering
+ *     `webglcontextlost`, with bitmaps pasted to all 20 planes;
+ *   - 3 cards referencing the same texture: 1 `THREE.Texture` in Worker, uploaded once;
+ *   - Tick: clicking timeline once when paused emits only one tick; K3(a) synchronous `advanceTo`
+ *     (forward < 0.5 s) emits only one tick after finishing;
+ *   - Snapshot: generating snapshots under `back` role, three card is a non-empty `<img>`,
+ *     `lossy = 0`; artificially modifying `data-pc-gl-frame` → `lossy` counts it;
+ *   - Capability fallback: when `?glOffscreen=0`, canvas cards render on main thread (1 context
+ *     on main thread, no Worker), comparing frame pixel-by-pixel with the Worker path.
  *
- * **编辑台**(`/?editor&headless=1&preview=stage`,两个跨源舞台):
- *   - 路线 2(`project.glRoute = 'shared'`):两个舞台文档都走父页交来的端口、主线程 0 个上下文,父页的共享 Worker 里 1 个;
- *     对 `B` 发 `setRole('back')` 后共享 Worker 里 `B` 那份图集被释放、`A` 的不动,`stageId` 不变;
- *   - 播放:`frame` 的 `sec` 差恒为 1/fps;Worker 故意睡 100 ms 时舞台等它、不跳帧,主文档判卡顿(音频暂停);
- *   - 追帧(K5 第一路):判重、`vtOk` 的 `scene-3d`,`setTime(t, { settle: true })` 之后追上那一拍——
- *     `.pc-settling` 摘掉的那一刻平面上已经是目标帧的位图(`data-pc-gl-frame` = 包裹层的本地帧号),追帧中间步不发 `beat`。
+ * **Editor** (`/?editor&headless=1&preview=stage`, two cross-origin stages):
+ *   - Route 2 (`project.glRoute = 'shared'`): both stage documents use ports passed from the
+ *     parent page, 0 contexts on main thread, 1 in the parent page's shared Worker;
+ *     after sending `setRole('back')` to `B`, `B`'s atlas in shared Worker is released,
+ *     `A` remains untouched, `stageId` unchanged;
+ *   - Playback: `sec` difference of `frame` is always 1/fps; when Worker deliberately sleeps for
+ *     100 ms, stage waits without dropping frames, and main document detects stutter (audio paused);
+ *   - Frame catch-up (K5 route 1): classify as heavy, `vtOk` `scene-3d`, the tick caught up after
+ *     `setTime(t, { settle: true })`:
+ *     the moment `.pc-settling` is removed, the plane already has the target frame bitmap
+ *     (`data-pc-gl-frame` = local frame number of wrapper layer); intermediate frame catch-up
+ *     steps do not emit `beat`.
  *
- * 图存在 `--out`(缺省 out/gl-stage/):worker.png / main.png(退路)/ twenty.png / editor-front.png。
+ * Images saved in `--out` (default out/gl-stage/): worker.png / main.png (fallback) / twenty.png /
+ * editor-front.png.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -40,7 +52,7 @@ const fails = [];
 const result = { origin, cases: {} };
 const check = (cond, label, extra) => { if (!cond) fails.push(label + (extra !== undefined ? ' :: ' + JSON.stringify(extra) : '')); console.log(`${cond ? 'PASS' : 'FAIL'} ${label}`); return cond; };
 
-/** 每个文档里数 WebGL 上下文:包一层 getContext,活的 = 没 lost 的 */
+/** Count WebGL contexts in each document: wrap getContext; live = not lost */
 function COUNT_GL() {
   const list = [];
   const wrap = (proto) => {
@@ -83,8 +95,10 @@ const browser = await puppeteer.launch({
 
 
 /**
- * 自己写 scene-3d 的成本记录(同 playback-probe 的做法):`heavy` = 判重、`vtOk`(K5 第一路追帧);否则判轻(播放中活渲)。
- * 记录落在 dev server 的 out/card-costs.json 里、下一轮还在,所以每段开头都要按自己要的轻重重写一遍。
+ * Write cost records for scene-3d manually (same as playback-probe): `heavy` = classify as heavy,
+ * `vtOk` (K5 route 1 frame catch-up); otherwise classify as light (live render during playback).
+ * Records land in out/card-costs.json on the dev server and persist across rounds, so rewrite
+ * according to desired weight at the start of each section.
  */
 const SET_COSTS = async ({ heavy }) => {
   const { getState } = await import('/src/store/project.ts');
@@ -93,7 +107,8 @@ const SET_COSTS = async ({ heavy }) => {
   const project = getState().project;
   const { identityKeys } = clipIdentityOf(project);
   const existing = (await (await fetch('/api/data/costs')).json())?.costs ?? [];
-  // 沿用 K1 常驻探针给**这几张卡**写下的那个 device(同一 device 才是覆盖;换一个只会多一条、真实测的那条还在)
+  // Reuse the device written by the K1 resident probe for **these cards** (same device overwrites;
+  // changing it only adds a record while the real measured one remains)
   const mine = new Set(Object.values(identityKeys));
   const device = existing.find((r) => mine.has(r.identityKey))?.device ?? existing[0]?.device ?? 'gl-stage-probe';
   const seen = new Set();
@@ -108,16 +123,18 @@ const SET_COSTS = async ({ heavy }) => {
   const put = await (await fetch('/api/data/costs', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ records }) })).json();
   const after = await (await fetch('/api/data/costs')).json();
   const tuning = after?.tuning ?? null;
-  // 整份 costs 一起给(只给这几条的话,常驻探针下一轮 GET 回来的那份会把它盖掉)
+  // Provide the entire costs together (if only these records are passed, the resident probe's next
+  // GET will overwrite them)
   setPlanCosts(after?.costs ?? records, tuning);
   await new Promise((r) => setTimeout(r, 100));
   const stored = (after?.costs ?? []).filter((r) => mine.has(r.identityKey)).map((r) => ({ key: r.identityKey, device: r.device === device, capped: r.capped, kind: r.kind }));
   return { n: records.length, put, stored };
 };
 
-/** 等这个舞台把 gl 平面都贴上位图(每个平面都有 data-pc-gl-frame 且等于包裹层的本地帧号) */
+/** Wait for this stage to paste bitmaps to all gl planes (every plane has data-pc-gl-frame equal to the wrapper layer's local frame number) */
 const WAIT_PAINTED = async (n) => {
-  // 舞台页的 setTimeout / performance.now 是虚拟时钟(暂停时不走),轮询一律用真的那份
+  // setTimeout / performance.now on the stage page are virtual clocks (stopped when paused);
+  // polling always uses the real ones
   const now = window.__pcRealNow ?? (() => performance.now());
   const later = (ms) => new Promise((r) => (window.__pcRealSetTimeout ?? setTimeout)(r, ms));
   const t0 = now();
@@ -150,9 +167,9 @@ const shot = async (page, file) => {
 };
 
 try {
-  /* ============================================================ 直连 */
+  /* ============================================================ Direct */
   if (wants('direct')) {
-    /* ---- 路线 1:上下文数 + 3 张卡同一张贴图 ---- */
+    /* ---- Route 1: context count + 3 cards with the same texture ---- */
     const texUrl = '/@media/gl-migrate-texture.png';
     {
       const { page, errors } = await openStage();
@@ -177,19 +194,19 @@ try {
       check(worker?.contexts === 1, 'Route 1: exactly 1 context in the Worker', worker);
       check(worker?.threeTextures === 1 && worker?.uploads === 1, 'The same texture is referenced by 3 cards: one THREE.Texture, uploaded once', worker);
 
-      /* ---- 节拍:点一次时间轴只发一拍;同步 advanceTo 只在结束后发一拍 ---- */
+      /* ---- Tick: clicking timeline once emits only one tick; synchronous advanceTo emits only one tick after finishing ---- */
       const beats0 = diag.beats;
       await page.evaluate(() => window.__pcStage.setTime(2.0));
       await page.evaluate(WAIT_PAINTED, 4);
       const beats1 = (await page.evaluate(() => window.__pcStageDiag().gl)).beats;
-      await page.evaluate(() => window.__pcStage.setTime(2.3)); // 往前 0.3 秒:连续路,同步 advanceTo 推 9 帧
+      await page.evaluate(() => window.__pcStage.setTime(2.3)); // Forward 0.3 s: continuous path, synchronous advanceTo pushes 9 frames
       await page.evaluate(WAIT_PAINTED, 4);
       const beats2 = (await page.evaluate(() => window.__pcStageDiag().gl)).beats;
       result.cases.beatCount = { beats0, beats1, beats2 };
       check(beats1 - beats0 === 1, 'One click on the timeline (far jump) emits only one beat', { beats0, beats1 });
       check(beats2 - beats1 === 1, 'K3(a) synchronous advanceTo (forward 0.3 s = 9 frames) emits one beat only after it ends', { beats1, beats2 });
 
-      /* ---- 快照:back 角色下生成快照 ---- */
+      /* ---- Snapshots: generate snapshots under back role ---- */
       await page.evaluate(() => window.__pcStage.setRole('back'));
       const probeReply = await page.evaluate(() => window.__pcStage.setTime(1.0, { probe: true }));
       const snap = await page.evaluate(() => {
@@ -208,7 +225,7 @@ try {
       await page.close();
     }
 
-    /* ---- 20 张 three.js 卡同时活跃 ---- */
+    /* ---- 20 three.js cards active simultaneously ---- */
     {
       const { page, errors } = await openStage();
       const lost = [];
@@ -226,7 +243,7 @@ try {
       await page.close();
     }
 
-    /* ---- 能力退路:?glOffscreen=0 ---- */
+    /* ---- Capability fallback: ?glOffscreen=0 ---- */
     {
       const project = projectOf([card('k4', { shape: 'knot' }, { x: 0, y: 0, w: 960, h: 540 })]);
       const run = async (query, file) => {
@@ -253,7 +270,7 @@ try {
     }
   }
 
-  /* ============================================================ 编辑台 */
+  /* ============================================================ Editor */
   if (wants('editor')) {
     const page = await browser.newPage();
     await page.setViewport({ width: 1600, height: 1000 });
@@ -272,7 +289,8 @@ try {
       for (let i = 0; i < n; i++) actions.addCardClip('scene-3d', 0, { duration: 6 });
       actions.editCardProject((p) => ({ ...p, glRoute: route }));
       const ids = getState().project.tracks.flatMap((t) => t.clips.filter((c) => c.cardId === 'scene-3d').map((c) => c.id));
-      // 每轮换一个颜色:成本记录按 identityKey(含参数)落在 dev server 上、跨轮还在,换了参数就不会撞上上一轮写的
+      // Change color each round: cost records land on dev server by identityKey (including params) and
+      // persist across rounds; changing params avoids collisions with previous round writes
       const salt = Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
       ids.forEach((id, i) => actions.setClipParams(id, { shape: ['knot', 'cube', 'torus'][i % 3], spinY: 0.2 + i * 0.1, color: '#' + salt }, { merge: true }));
       actions.seek(0.5);
@@ -281,7 +299,7 @@ try {
     const waitProbeIdle = () => page.waitForFunction(async () => (await import('/src/editor/probeRunner.ts')).probeProgress().running === false,
       { timeout: 300000, polling: 300 }).catch(() => {});
 
-    /* ---- 路线 2:上下文数、端口、释放 ---- */
+    /* ---- Route 2: context count, ports, release ---- */
     const ids = await build(3, 'shared');
     await waitProbeIdle();
     const fronts = await page.evaluate(() => window.__pcPreviewDiag?.().frontId);
@@ -303,7 +321,8 @@ try {
     check(dA.mode === 'port' && dA.route === 'shared', 'Route 2: the visible stage uses the port handed over by the parent page', dA.mode);
     check(mainA === 0 && mainB === 0, 'Route 2: both stage documents have 0 live contexts on the main thread', { mainA, mainB });
     check(shared?.contexts === 1, 'Route 2: 1 context in the parent page\'s shared Worker', shared);
-    // 后台舞台也画一次(它平时只在探针 / 补跑时画),然后 setRole('back') 释放它那一份
+    // Also render once on the background stage (normally it renders only during probes / catch-up runs),
+    // then setRole('back') to release its portion
     await fb.evaluate(async () => {
       const { getState } = await import('/src/store/project.ts').catch(() => ({ getState: null }));
       void getState;
@@ -321,7 +340,7 @@ try {
     check(!after?.atlas?.[other] && !!after?.atlas?.[fronts], `After setRole('back') is sent to ${other}: its atlas is released, ${fronts}'s is untouched`, after?.atlas);
     check(dB2.stageId === other && dB2.mode === 'port', 'stageId does not change with the role and the port stays the same', dB2);
 
-    /* ---- 播放节拍 + Worker 睡 100 ms ---- */
+    /* ---- Playback ticks + Worker sleeps 100 ms ---- */
     await build(3, 'perDocument');
     await waitProbeIdle();
     result.cases.lightCosts = await page.evaluate(SET_COSTS, { heavy: false });
@@ -367,7 +386,7 @@ try {
     check(slow.n > 5 && slow.badSec === 0 && slow.gapMin >= 95, 'Worker sleeps 100 ms: the stage waits for it and does not skip frames (sec difference is still 1/fps, arrival gap ≥ 100 ms)', slow);
     check((stall?.mediaStallCount ?? 0) > 0, 'Worker sleeps 100 ms: the main document detects a stall (pauses audio / media after 40 ms)', stall);
 
-    /* ---- 追帧(K5 第一路)---- */
+    /* ---- Frame catch-up (K5 route 1) ---- */
     const setCosts = await page.evaluate(SET_COSTS, { heavy: true });
     const fstage = frameOf(await page.evaluate(() => window.__pcPreviewDiag?.().frontId));
     const catchup = await fstage.evaluate(async () => {
@@ -403,9 +422,11 @@ try {
     result.cases.catchup = { setCosts, ...catchup };
     check(catchup.sawSettling, 'Frame catch-up: canvas cards classified as heavy with vtOk entered .pc-settling (K5 first route)', catchup);
     check(!!catchup.unset && catchup.unset.glFrame === catchup.unset.localFrame, 'Frame catch-up: at the moment .pc-settling is removed, the plane already holds the target frame\'s bitmap (gl-frame = local frame number)', catchup.unset);
-    // setTime 自己一拍 + 追上那一拍;中间步(3 秒 × 30 帧 = 90 步)一拍都不发
-    // 从进 .pc-settling 到摘掉:只有追上那一拍(3 秒 × 30 帧 = 90 步的中间步一拍都不发)
-    // 进 .pc-settling 之后:setTime 自己落定那一拍(卡被 .pc-settling 藏着,画的是挂载帧)+ 追上那一拍;90 个中间步一拍不发
+    // setTime's own tick + caught-up tick; intermediate steps (3 s × 30 frames = 90 steps) emit no ticks
+    // From entering .pc-settling to removal: only the caught-up tick (intermediate steps of
+    // 3 s × 30 frames = 90 steps emit no ticks)
+    // After entering .pc-settling: setTime's own settle tick (card is hidden by .pc-settling, rendering
+    // the mount frame) + caught-up tick; 90 intermediate steps emit no ticks
     check(catchup.unset && catchup.settlingBeats !== null && catchup.unset.beats - catchup.settlingBeats <= 2, 'Frame catch-up intermediate steps emit no beat (between entering and removing .pc-settling there are ≤ 2 beats: the setTime beat + the catch-up beat)', catchup);
     result.cases.editorErrors = errors;
     await page.close();

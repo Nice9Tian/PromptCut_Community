@@ -1,8 +1,10 @@
 /**
- * A07(2026-10-22 用户定:回复被截断时的处理):单次输出上限调大、400 降档、截断后把写了一半的参数存进代码块接着写、
- * 代码块空间的工具与 `@code_cache:` 引用。验收见 `docs/reports/AGENT-output-cache.md`。
+ * A07 (user decision, 2026-10-22: handling truncated replies): increase single-output cap, 400
+ * tier downgrade, store half-written parameters into code blocks upon truncation to continue
+ * writing, code block space tools and `@code_cache:` references. See acceptance check in
+ * `docs/reports/AGENT-output-cache.md`.
  *
- * 全部用假模型(脚本化的 provider / 假 fetch),不调真模型。
+ * All use fake models (scripted provider / fake fetch), without calling real models.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,9 +24,9 @@ import * as anthropic from '../harness/providers/anthropic.mjs';
 import * as gemini from '../harness/providers/gemini.mjs';
 
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), `pc-oc-${p}-`));
-const rm = (d) => { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* 清理 */ } };
+const rm = (d) => { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* Cleanup */ } };
 
-// ───────────── 输出上限 ─────────────
+// ───────────── Output limit ─────────────
 
 test('per-model single-response output limits: all current Claude models 128K, GPT-5 family 128000, o family 100000, Gemini 2.5 and later 65536, and a conservative value for unrecognized models', () => {
   assert.equal(modelOutputLimit('claude-opus-5-5'), 128000);
@@ -72,7 +74,7 @@ test('reasoning models use max_completion_tokens; on a 400 it can tell "number t
   assert.equal(swapOutputParamAfter400('max_tokens is too large', 'max_tokens'), null);
 });
 
-// 假 SSE
+// Fake SSE
 const sse = (chunks) => ({ ok: true, status: 200, headers: { get: () => 'text/event-stream' }, body: (async function* () { for (const c of chunks) yield c; })() });
 const errRes = (status, message) => ({ ok: false, status, headers: { get: () => null }, text: async () => JSON.stringify({ error: { message } }) });
 const openaiDone = (text = 'OK') => sse([
@@ -183,7 +185,7 @@ test('Gemini: maxOutputTokens follows the model; on a 400 for a number that is t
   assert.equal(r.sent[1].generationConfig.maxOutputTokens, 32768);
 });
 
-// ───────────── 半截 JSON ─────────────
+// ───────────── Partial JSON ─────────────
 
 test('extracts the half-written long string field and the already completed short fields from a partial JSON', () => {
   const s = salvageToolCall('{"id":"price-tag","overwrite":true,"source":"const a = \\"x\\";\\nconst b = 1;\\nexport default {\\n  na');
@@ -191,7 +193,7 @@ test('extracts the half-written long string field and the already completed shor
   assert.equal(s.text, 'const a = "x";\nconst b = 1;\nexport default {\n  na');
   assert.equal(s.complete, false);
   assert.deepEqual(s.rest, { id: 'price-tag', overwrite: true });
-  // 转义写到一半的那一截丢掉
+  // Discard the half-written escape sequence
   assert.equal(salvageToolCall('{"source":"ab\\').text, 'ab');
   assert.equal(salvageToolCall('{"source":"ab\\u00').text, 'ab');
   assert.equal(salvageToolCall('{"source":"\\u4e2d\\u6587').text, '中文');
@@ -203,7 +205,7 @@ test('extracts the half-written long string field and the already completed shor
   assert.equal(s2.text, 'imp');
 });
 
-// ───────────── 代码块空间 ─────────────
+// ───────────── Code block space ─────────────
 
 test('code block tools: write, append, read by line / by character, replace, list, delete; invalid names and exceeding the limit are both stated explicitly', async () => {
   const dir = tmp('cc');
@@ -230,7 +232,7 @@ test('code block tools: write, append, read by line / by character, replace, lis
     assert.throws(() => small.write('big', 'x'.repeat(11)), /over the per-block limit/);
     await t.code_cache_delete.execute({ name: 'card' });
     assert.equal((await t.code_cache_list.execute({})).blocks.length, 0);
-    // 读的时候一次最多交回 readChars 字,告诉下一段从哪开始
+    // When reading, return at most readChars characters at a time, indicating where the next section starts
     const tiny = createCodeCacheStore({ dir, limits: { readChars: 4 } });
     tiny.write('long', 'abcdefghij');
     const rd = await codeCacheTools(tiny).find((x) => x.name === 'code_cache_read').execute({ name: 'long' });
@@ -303,7 +305,7 @@ test('tool list: both local and cloud (the hosted tier\'s open list) have the si
   } finally { rm(dir); }
 });
 
-// ───────────── 端到端:假模型,第一轮在 create_card 的源码中途被截断 ─────────────
+// ───────────── End-to-end: fake model, truncated midway through create_card source in round 1 ─────────────
 
 const { startRun } = await import('../runners/api.mjs');
 const FULL_SOURCE = [
@@ -351,16 +353,17 @@ test('end to end: create_card source is truncated halfway → saved into a code 
     assert.ok(events.some((e) => e.type === 'status' && /saved into code block cut_create_card_1/.test(e.text)));
     assert.ok(events.some((e) => e.type === 'diagnostic' && e.stage === 'truncated'));
     assert.equal(events.find((e) => e.type === 'done')?.outcome, 'completed');
-    // 代码块按宿主给的目录放(本机按项目、云端按项目)
+    // Code blocks are placed in the host-provided directory (by project locally, by project in cloud)
     assert.ok(fs.existsSync(path.join(dir, 'cut_create_card_1.txt')));
-  } finally { rm(dir); try { fs.unlinkSync(historyOf(sid)); } catch { /* 清理 */ } }
+  } finally { rm(dir); try { fs.unlinkSync(historyOf(sid)); } catch { /* Cleanup */ } }
 });
 
 test('end to end: when the truncation count exceeds the limit it still says plainly that it did not succeed, and says which code block holds the part already written', async () => {
   const dir = tmp('e2e-limit');
   const sid = `oc-lim-${Math.random().toString(36).slice(2, 8)}`;
   try {
-    // 每次都在 create_card 源码中途截断、每次都留下内容:有进展的截断一轮最多 6 次,第 7 次明说没做成
+    // Truncated midway through create_card source code each time, leaving content each time: at most
+    // 6 progressive truncations per round, explicitly reports failure on the 7th
     const step = { truncate: { tool: 'create_card', args: '{"id":"x","source":"abc' } };
     const { events, calls } = await runMock(Array(10).fill(step), { codeCacheDir: dir, sessionId: sid });
     const err = events.find((e) => e.type === 'error');
@@ -368,10 +371,10 @@ test('end to end: when the truncation count exceeds the limit it still says plai
     assert.match(err.message, /exceeded the single-output limit and was truncated 7 times in a row, so this round could not finish/);
     assert.match(err.message, /The part already written is stored in code block cut_create_card_1/);
     assert.equal(calls.filter((c) => c.name === 'create_card').length, 0);
-    // 一次都没留下内容的截断:连续 3 次就停
+    // Truncation that leaves no content: stops after 3 consecutive occurrences
     const sid2 = `${sid}-b`;
     const r2 = await runMock(Array(10).fill({ truncate: { say: 'Draft…' } }), { codeCacheDir: dir, sessionId: sid2 });
     assert.match(r2.events.find((e) => e.type === 'error')?.message ?? '', /exceeded the single-output limit and was truncated 3 times in a row/);
-    try { fs.unlinkSync(historyOf(sid2)); } catch { /* 清理 */ }
-  } finally { rm(dir); try { fs.unlinkSync(historyOf(sid)); } catch { /* 清理 */ } }
+    try { fs.unlinkSync(historyOf(sid2)); } catch { /* Cleanup */ }
+  } finally { rm(dir); try { fs.unlinkSync(historyOf(sid)); } catch { /* Cleanup */ } }
 });

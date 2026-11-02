@@ -1,6 +1,7 @@
-// 滤镜进导出和 see_frames 的 ffmpeg 链:链上的位置、逐帧命令的 sidecar,以及真跑一遍 ffmpeg
-// (sendcmd 的 Windows 路径转义、lutrgb / colorchannelmixer / gblur 在链上能不能起来)。
-// 跑法:node --test server/test/filter-compose.test.mjs
+// Filters into export and see_frames ffmpeg chain: position in chain, per-frame command sidecar,
+// and actually running ffmpeg once (sendcmd Windows path escaping, whether lutrgb /
+// colorchannelmixer / gblur start up in the chain).
+// How to run: node --test server/test/filter-compose.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -32,13 +33,13 @@ function compose(p, sidecarDir) {
   return buildComposeArgs({ width: p.width, height: p.height, fps: p.fps, startFrame: 0, endFrame: 29, layers, cardsPattern: "cards/%06d.png", out: "o.mp4", sidecarDir });
 }
 
-// 输入编号:0 底色、1 卡片,素材从 2 起(没有毛玻璃遮罩)。c1 → 2,c2 → 3,c3 → 4
+// Input numbers: 0 background, 1 card; assets start at 2 (no frosted glass mask). c1 → 2, c2 → 3, c3 → 4
 test("export: constant filters go after format=gbrap and before emphasis / opacity; neutral steps are not added to the chain", () => {
   const { graph, sidecars } = compose(project(), "C:\\out dir");
   const c1 = graph.split(";").find((s) => s.startsWith("[2:v]"));
   assert.match(c1, /format=gbrap,colorchannelmixer=rr=[^,]+,colorchannelmixer=rr=[^,]+\[m2\]$/, "saturate + hue are two steps; brightness 1 is neutral and is not added to the chain");
   assert.doesNotMatch(c1, /lutrgb/);
-  // 删掉了定义的滤镜:按没滤镜合成,不报错
+  // Defined filter deleted: composites as without filters, no error
   const c3 = graph.split(";").find((s) => s.startsWith("[4:v]"));
   assert.match(c3, /format=gbrap\[m4\]$/);
   assert.equal(sidecars.length, 1);
@@ -48,7 +49,7 @@ test("export: time-varying filters go through sendcmd, with one script line per 
   const { graph, sidecars } = compose(project(), "C:\\out dir");
   const c2 = graph.split(";").find((s) => s.startsWith("[3:v]"));
   assert.match(c2, /trim=start_pts=10:end_pts=20,.*format=gbrap,sendcmd=f='C\\:\/out dir\/filter-3\.cmd',premultiply/);
-  // 模糊 4p 在最后一帧(p = 0.9)最大:σ 3.6 → 补边 ceil(10.8) = 11
+  // Blur 4p is max at last frame (p = 0.9): σ 3.6 → padding ceil(10.8) = 11
   assert.match(c2, /premultiply=inplace=1,pad=iw\+22:ih\+22:11:11:color=black@0,gblur@fx3_0=sigma=0:steps=6,crop=iw-22:ih-22:11:11,unpremultiply=inplace=1,lutrgb@fx3_1=/);
   const [side] = sidecars;
   assert.equal(side.file, "C:/out dir/filter-3.cmd");
@@ -73,7 +74,7 @@ const hasFfmpeg = spawnSync("ffmpeg", ["-hide_banner", "-version"]).status === 0
 test("real ffmpeg run: the whole export chain with per-frame filters can produce a video, and sendcmd really changes the parameters", { skip: !hasFfmpeg && "No ffmpeg" }, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pc-fx-"));
   try {
-    // 素材:一段纯中灰,好量亮度;卡片层:全透明 PNG 序列
+    // Asset: pure mid-gray clip, easy to measure brightness; card layer: fully transparent PNG sequence
     execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0x808080:s=320x180:r=10:d=4", "-pix_fmt", "yuv444p", "-y", path.join(dir, "in.mp4")]);
     fs.mkdirSync(path.join(dir, "cards"));
     execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black@0:s=320x180:r=10:d=3,format=rgba", "-start_number", "0", "-y", path.join(dir, "cards", "%06d.png")]);
@@ -84,7 +85,7 @@ test("real ffmpeg run: the whole export chain with per-frame filters can produce
       cardsPattern: path.join(dir, "cards", "%06d.png"), out: path.join(dir, "o.mp4"), sidecarDir: dir, background: "#000000",
     });
     for (const s of sidecars) fs.writeFileSync(s.file, s.text);
-    // 出成逐帧 PNG 而不是 mp4:要量像素,不能让 yuv420 编码的误差混进来
+    // Outputs as frame-by-frame PNG instead of mp4: pixels must be measured; avoid yuv420 encoding errors
     const k = args.indexOf("-c:v");
     const pngArgs = [...args.slice(0, k), "-frames:v", "30", "-y", path.join(dir, "f%02d.png")];
     const r = spawnSync("ffmpeg", pngArgs, { encoding: "utf8" });
@@ -93,7 +94,7 @@ test("real ffmpeg run: the whole export chain with per-frame filters can produce
       const out = execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-i", path.join(dir, `f${String(i + 1).padStart(2, "0")}.png`), "-vf", "crop=1:1:160:90,format=rgb24", "-f", "rawvideo", "-"]);
       return out[0];
     };
-    // 片段 2(1~2 秒)亮度 1 + 0.5t:第 10 帧 t=0 → 128;第 19 帧 t=0.9 → 128×1.45 ≈ 186(中间像素离边远,模糊不影响)
+    // Clip 2 (1-2s) brightness 1 + 0.5t: frame 10 t=0 → 128; frame 19 t=0.9 → 128×1.45 ≈ 186 (center pixels far from edge, blur has no effect)
     assert.ok(Math.abs(gray(10) - 128) <= 2, `frame 10: ${gray(10)}`);
     assert.ok(Math.abs(gray(19) - 186) <= 3, `frame 19: ${gray(19)}, sendcmd did not raise the brightness`);
     assert.ok(gray(15) > gray(11) && gray(19) > gray(15), "brightness should rise frame by frame");

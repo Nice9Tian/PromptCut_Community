@@ -1,14 +1,17 @@
 /**
- * 实体几何:命中测试、实体范围、片段矩形 —— 舞台页(?stage=1)、导出页(?export=1)和
- * 预渲染页上的快照 DOM(`#pc-frame-snapshot [data-pc-scene]`)三处同一份代码。
+ * Entity geometry: hit testing, entity bounds, clip rectangles: same code across stage page
+ * (?stage=1), export page (?export=1), and snapshot DOM (`#pc-frame-snapshot [data-pc-scene]`) on
+ * prerender page.
  *
- * **根容器是入参,所有查询都从根出发**:预渲染页上 `#root` 只是 `display:none`、没有移出 DOM,
- * 全文档查询会先命中它的 0×0 节点;导出页一屏有多个 Stage 根(每个片段一个),
- * 按类名做全文档选择也不成立。根就是带 `data-pc-scene` 的那个 relative div。
+ * **Root container is an input parameter, all queries start from the root**: on prerender page,
+ * `#root` is merely `display:none` and not removed from DOM; whole-document queries first hit its
+ * 0×0 node; export page has multiple Stage roots per screen (one per clip), so selecting across
+ * the whole document by class name is also invalid. Root is that relative div with `data-pc-scene`.
  *
- * 坐标:除 `canvasPaintedBox` 外都返回**舞台坐标**(相对根的左上角、按根的布局像素);
- * `canvasPaintedBox` 返回**画布像素坐标**(生成快照时写进 `data-pc-painted-box` 用,
- * 同一份共享快照挂到不同位置和框的片段上时各自按 `<img>` 的实际框换算)。
+ * Coordinates: except for `canvasPaintedBox`, all return **stage coordinates** (relative to root's
+ * top-left corner, in root layout pixels); `canvasPaintedBox` returns **canvas pixel coordinates**
+ * (written into `data-pc-painted-box` when generating snapshots, converted by `<img>` actual box
+ * when same shared snapshot is mounted on clips at different positions and boxes).
  */
 import { canvasBox, canvasPixels, type CanvasPixels } from "./contentBox";
 import { isPlaceholderNode } from "./placeholderHost.ts";
@@ -32,10 +35,10 @@ export interface PaintedBox {
   h: number;
 }
 
-/** 根:带 `data-pc-scene` 的场景 div */
+/** Root: scene div with `data-pc-scene` */
 export type SceneRoot = Element;
 
-/** 舞台左上角在文档里的位置,把元素外框换算成舞台坐标 */
+/** Position of stage top-left corner in document, converting element bounding box to stage coordinates */
 export function stageOrigin(root: SceneRoot): DOMRect | null {
   const r = root.getBoundingClientRect();
   return r.width > 0 && r.height > 0 ? r : null;
@@ -51,15 +54,19 @@ const toStage = (r: DOMRect, origin: DOMRect): StageRect => ({
 const REPLACED = new Set(["IMG", "VIDEO", "CANVAS", "svg", "path", "rect", "circle", "ellipse", "line", "polygon", "polyline", "text", "use"]);
 
 const paintedColor = (v: string) => {
-  // rgba(0,0,0,0) / transparent 都算没画;其余只要 alpha > 0 就算画了
+  // Both rgba(0,0,0,0) / transparent count as unpainted; anything else counts as painted as long as
+  // alpha > 0
   if (!v || v === "transparent") return false;
   const m = /rgba?\(([^)]+)\)/.exec(v);
-  if (!m) return true; // 关键字色、color() 等,当作画了
+  if (!m) return true; // Named colors, color(), etc., are treated as painted
   const parts = m[1].split(/[\s,/]+/).filter(Boolean);
   return parts.length < 4 || parseFloat(parts[3]) > 0;
 };
 
-/** 生成的快照里 canvas 换成的 `<img>` 带的 `data-pc-painted-box="x,y,w,h"`(画布像素坐标) */
+/**
+ * `data-pc-painted-box="x,y,w,h"` (canvas pixel coordinates) carried by `<img>` that replaced
+ * canvas in generated snapshots.
+ */
 export function paintedBoxAttr(el: Element): PaintedBox | null {
   const raw = el.getAttribute("data-pc-painted-box");
   if (!raw) return null;
@@ -69,8 +76,9 @@ export function paintedBoxAttr(el: Element): PaintedBox | null {
 }
 
 /**
- * 把画布像素坐标的实体框换算成屏幕矩形:按元素当前外框和它的 width / height 属性之比。
- * 卡片里的 canvas 无人设 object-fit,默认 fill 下比例成立;canvas 换成的 `<img>` 同理。
+ * Convert entity box in canvas pixel coordinates to screen rectangle: based on ratio between
+ * element's current bounding box and its width / height attributes. No one sets object-fit on
+ * canvas in cards, so ratio holds under default fill; same applies to `<img>` replacing canvas.
  */
 export function paintedBoxRect(el: Element, box: PaintedBox): DOMRect | null {
   const rect = el.getBoundingClientRect();
@@ -82,9 +90,11 @@ export function paintedBoxRect(el: Element, box: PaintedBox): DOMRect | null {
 }
 
 /**
- * 画布里真正画了东西的那块,**画布像素坐标**,已按取样步长外扩一格并夹回 0..w / 0..h。
- * 生成快照(snapshot/rasterizeCanvas)把它写成 `data-pc-painted-box`;null = 整块空白或读不到像素。
- * 不做视口换算 —— 现有 `canvasBox` 返回的是视口 DOMRect,写进属性会让快照绑死在预渲染时的位置。
+ * Region in canvas where things are actually painted, in **canvas pixel coordinates**, expanded by
+ * one cell according to sampling step and clamped back to 0..w / 0..h. Generating snapshots
+ * (snapshot/rasterizeCanvas) writes it as `data-pc-painted-box`; null = entirely blank or unable to
+ * read pixels. No viewport conversion: existing `canvasBox` returns viewport DOMRect, and writing
+ * into attributes would bind snapshot to its position at prerender time.
  */
 export function canvasPaintedBox(el: HTMLCanvasElement, px: CanvasPixels | null = canvasPixels(el)): PaintedBox | null {
   if (!px) return null;
@@ -95,22 +105,26 @@ export function canvasPaintedBox(el: HTMLCanvasElement, px: CanvasPixels | null 
 }
 
 /**
- * 这个元素在这一点上算不算「实体」。
- * 实体 = 用户看得见、点下去合理的东西:文字、图片 / 视频 / 画布 / SVG 图形,
- * 或者自己画了底色、背景图、描边、阴影的盒子。只做布局用的透明容器不算——
- * 卡片的包裹层是整屏的,不穿过它就永远点不到下面那张卡;场景根同理。
- * 没有 `src` 也没有背景图的 IMG / VIDEO(快照里剥掉了 src 的素材层占位)不算实体。
+ * Whether this element counts as an "entity" at this point.
+ * Entity = things visible to users and reasonable to click: text, image / video / canvas / SVG
+ * graphics, or boxes that painted their own background color, background image, border, or shadow.
+ * Transparent containers used only for layout do not count: card's wrapper layer is full-screen,
+ * and without passing through it, cards underneath could never be clicked; same for scene root.
+ * IMG / VIDEO without `src` or background image (media layer placeholder with src stripped in
+ * snapshot) does not count as an entity.
  */
 export function isSolid(el: Element, root: SceneRoot): boolean {
   if (el === document.documentElement || el === document.body || el === root) return false;
   if (el.hasAttribute("data-pc-scene") || el.hasAttribute("data-pc-clip")) return false;
-  // 占位平面不是卡片画的东西:实体范围 / 像素扫描不算它(命中测试在 `hitTest` 里单独认它)
+  // Placeholder planes are not drawn by cards: entity bounds / pixel scanning do not count them
+  // (hit testing recognizes them separately in `hitTest`)
   if (isPlaceholderNode(el)) return false;
   const cs = getComputedStyle(el);
   /*
-   * 只看画没画,不看 pointer-events:粒子卡的 canvas(tsParticles 设了 pointer-events:none)照样是画了东西的实体,
-   * 实体范围 / contentBox 必须算上它,否则粒子卡的框永远退回整块画布。命中测试那边不受影响:
-   * elementsFromPoint 本来就跳过 pointer-events:none 的元素。
+   * Only check whether something was drawn, ignoring pointer-events: particle card canvases
+   * (tsParticles sets pointer-events:none) are still entities with painted content; entity bounds /
+   * contentBox must include them, otherwise the particle card box always falls back to the full
+   * canvas. Hit testing is unaffected: elementsFromPoint already skips pointer-events:none elements.
    */
   if (cs.visibility === "hidden" || parseFloat(cs.opacity) === 0) return false;
   if (el.tagName === "IMG" || el.tagName === "VIDEO") {
@@ -119,7 +133,7 @@ export function isSolid(el: Element, root: SceneRoot): boolean {
     return hasSrc || hasBg;
   }
   if (REPLACED.has(el.tagName)) return true;
-  // 直接持有非空白文本节点 → 是文字本身
+  // Directly holds non-whitespace text nodes → is the text itself
   for (const n of el.childNodes) {
     if (n.nodeType === Node.TEXT_NODE && (n.textContent ?? "").trim()) return true;
   }
@@ -134,7 +148,10 @@ export function isSolid(el: Element, root: SceneRoot): boolean {
   return false;
 }
 
-/** 实体元素自己的外框(屏幕坐标):canvas 可选扫像素,快照里的 `<img>` 用它带的实体框 */
+/**
+ * The entity element's own bounding box (screen coordinates): canvas can optionally scan pixels,
+ * and `<img>` in snapshots uses the entity box it carries.
+ */
 function solidRect(el: Element, scanCanvas: boolean, cache?: Map<HTMLCanvasElement, CanvasPixels | null>): DOMRect {
   if (el.tagName === "CANVAS" && scanCanvas) {
     const cv = el as HTMLCanvasElement;
@@ -156,28 +173,33 @@ function solidRect(el: Element, scanCanvas: boolean, cache?: Map<HTMLCanvasEleme
 }
 
 /**
- * 实体命中测试:舞台坐标 (x, y) 处,从最上层往下找第一个「画了东西」的元素——
- * 透明的容器一律穿过去。返回它属于哪个片段,以及那个实体元素自己的外框;什么都没点到返回 null。
+ * Entity hit test: at stage coordinates (x, y), finds the first element from top to bottom
+ * with "painted content": transparent containers are passed right through. Returns which clip
+ * it belongs to and that entity element's own bounding box; returns null if nothing was hit.
  */
 export function hitTest(root: SceneRoot, x: number, y: number): StageHit | null {
   const origin = stageOrigin(root);
   if (!origin) return null;
-  // elementsFromPoint 按绘制顺序从最上层往下给;透明容器一路穿过去
+  // elementsFromPoint returns elements from top to bottom in draw order; transparent containers
+  // are passed right through
   const stack = document.elementsFromPoint(x + origin.left, y + origin.top);
   for (const el of stack) {
     if (!root.contains(el)) continue;
     /*
-     * 组流(R8 / G1):盖在上面的 `[data-pc-group-plane]` 是 `pointer-events: none`,不在这一摞里;
-     * 组内被抑制的卡子树藏着、自己没有流平面 —— 点到它的包裹层框就算点中它(退回包裹层框),
-     * 不能穿透到背后别的图层去。
+     * Group stream (R8 / G1): the `[data-pc-group-plane]` covering the top has `pointer-events: none`
+     * and is not in this stack; card subtrees suppressed inside the group are hidden and have no
+     * stream plane of their own: clicking its wrapper layer box counts as hitting it (falling back
+     * to the wrapper layer box), and cannot penetrate through to other layers behind it.
      */
     if (el.hasAttribute("data-pc-stream-member") && el.classList.contains("pc-suppressed")) {
       const clipId = el.getAttribute("data-pc-clip");
       if (clipId) return { clipId, ...toStage(el.getBoundingClientRect(), origin) };
     }
     /*
-     * 占位符(product/rendering.md「兜底顺序」):点中它就算点中它所在的那张卡 —— 那张卡此刻正在加载,
-     * 用户点的就是它;框取占位组件根元素的框。托着它的透明槽位(铺满包裹层)不算,照常穿过去。
+     * Placeholder (product/rendering.md "Fallback order"): clicking it counts as hitting the card where
+     * it belongs: that card is currently loading, which is what the user clicked; the box uses the
+     * bounding box of the placeholder component's root element. The transparent slot holding it
+     * (filling the wrapper layer) does not count and is passed through as usual.
      */
     const ph = el.closest(`[${PLACEHOLDER_ATTR}]`);
     if (ph) {
@@ -195,16 +217,21 @@ export function hitTest(root: SceneRoot, x: number, y: number): StageHit | null 
   return null;
 }
 
-/** 根下某片段的包裹层(同一 clipId 可能有多个:导出页每个片段一个 Stage,取第一个) */
+/**
+ * Wrapper layer of a clip under root (multiple may exist for the same clipId: export page has one
+ * Stage per clip, take the first).
+ */
 export function clipWrapper(root: SceneRoot, clipId: string): Element | null {
   return root.querySelector(`[data-pc-clip="${CSS.escape(clipId)}"]`);
 }
 
 /**
- * 片段的实体范围:它所有实体元素外框的并集(舞台坐标,夹回舞台内)。
- * 给选中描边和 get_layout 的 contentBox 用 —— 字幕卡包裹层占满整屏,描边要贴着字幕本身。
- * `scanCanvas`:要不要读 canvas 像素(一张 1080p 画布十几毫秒,心跳里只对选中的卡开)。
- * 一个实体都没有(纯透明卡)退回包裹层外框,至少还能选中。
+ * Clip entity bounds: union of the bounding boxes of all its entity elements (stage coordinates,
+ * clamped back inside the stage). Used for selection outlines and get_layout contentBox: caption
+ * card wrapper layers fill the entire screen, and the outline must hug the captions themselves.
+ * `scanCanvas`: whether to read canvas pixels (a 1080p canvas takes tens of milliseconds, enabled
+ * only for selected cards during heartbeat). If there are no entities at all (purely transparent
+ * card), falls back to the wrapper layer bounding box so it can at least still be selected.
  */
 export function bounds(root: SceneRoot, clipId: string, opts: { scanCanvas?: boolean; cache?: Map<HTMLCanvasElement, CanvasPixels | null> } = {}): StageRect | null {
   const origin = stageOrigin(root);
@@ -219,31 +246,34 @@ export function bounds(root: SceneRoot, clipId: string, opts: { scanCanvas?: boo
     }
   };
   const walk = (el: Element) => {
-    // 组流平面(R8)落在舞台根下、不在任何包裹层里,不参与 `bounds` / `rects`;列在这里是兜底
+    // Group stream planes (R8) sit under the stage root and not in any wrapper layer, not participating
+    // in `bounds` / `rects`; listed here as a fallback
     if (el.hasAttribute("data-pc-group-plane")) return;
-    // 占位平面不参与实体范围(它的框本来就是按这张卡的实体框摆的,算进来只会自我循环)
+    // Placeholder planes do not participate in entity bounds (their box is already positioned based on
+    // this card's entity box; including them would only cause a self-referential loop)
     if (isPlaceholderNode(el)) return;
     if (el.hasAttribute("data-pc-proxy-plane") || el.hasAttribute("data-pc-snapshot-plane") || el.hasAttribute("data-pc-stream-plane")) {
-      // 平面是贴上去的替身,它们的框就是内容框
+      // Planes are pasted stand-ins; their boxes are the content boxes
       take(el.getBoundingClientRect());
       return;
     }
     if (isSolid(el, root)) {
       take(solidRect(el, opts.scanCanvas ?? true, opts.cache));
-      return; // 实体元素的子孙都在它外框里,不用再往下
+      return; // Descendants of an entity element are all within its bounding box, no need to go further down
     }
     for (const c of el.children) walk(c);
   };
   for (const c of wrap.children) walk(c);
   const rc = Number.isFinite(l) ? new DOMRect(l, t, r - l, b - t) : wrap.getBoundingClientRect();
-  // 夹回舞台内:文字动画常把元素甩到屏幕外,描边不该跟着跑出去
+  // Clamp back inside the stage: text animations often throw elements offscreen; outlines should not
+  // follow them outside
   const cl = Math.max(rc.left, origin.left), ct = Math.max(rc.top, origin.top);
   const cr = Math.min(rc.right, origin.right), cb = Math.min(rc.bottom, origin.bottom);
   if (cr <= cl || cb <= ct) return toStage(wrap.getBoundingClientRect(), origin);
   return toStage(new DOMRect(cl, ct, cr - cl, cb - ct), origin);
 }
 
-/** 活跃片段的包裹层外框(舞台坐标),按 clipId 去重 */
+/** Wrapper layer bounding boxes of active clips (stage coordinates), deduplicated by clipId */
 export function rects(root: SceneRoot): { clipId: string; left: number; top: number; width: number; height: number }[] {
   const origin = stageOrigin(root);
   if (!origin) return [];
@@ -260,24 +290,26 @@ export function rects(root: SceneRoot): { clipId: string; left: number; top: num
 
 export interface RectWithBounds {
   clipId: string;
-  /** 包裹层外框 */
+  /** Wrapper layer bounding box */
   rect: StageRect;
-  /** 实体范围;量不到时为 null */
+  /** Entity bounds; null when unmeasurable */
   bounds: StageRect | null;
 }
 
 export interface RectsWithBoundsOptions {
   /**
-   * 哪些片段的 canvas 要读像素:'none' 都不读(用 `data-pc-painted-box` 或元素矩形),
-   * 'selected' 只读 `clipIds` 里的(心跳:选中描边不回退到整块画布),'all' 全读(用户点击那一次)。
+   * Which clips have their canvas read for pixels: 'none' reads none (uses `data-pc-painted-box` or
+   * element rectangles), 'selected' reads only those in `clipIds` (heartbeat: selection outline does
+   * not fall back to the full canvas), 'all' reads all (that single user click).
    */
   pixels: "none" | "selected" | "all";
-  /** 'selected' 时是选中集;'all' / 'none' 时若给了就只返回这些片段 */
+  /** Selected set when 'selected'; if provided for 'all' / 'none', returns only these clips */
   clipIds?: string[];
 }
 
 /**
- * 一次往返给全部活跃片段的包裹层外框 + 实体范围(合并 Preview 里 rects() 后逐个 bounds() 的 N+1)。
+ * Returns wrapper layer bounding boxes + entity bounds for all active clips in a single round-trip
+ * (merging the N+1 of calling rects() then bounds() individually in Preview).
  */
 export function rectsWithBounds(root: SceneRoot, opts: RectsWithBoundsOptions = { pixels: "none" }): RectWithBounds[] {
   const wanted = opts.clipIds ? new Set(opts.clipIds) : null;
@@ -292,6 +324,9 @@ export function rectsWithBounds(root: SceneRoot, opts: RectsWithBoundsOptions = 
   return out;
 }
 
-/** 导出页 / 预渲染快照页给 puppeteer 侧 `page.evaluate` 用的导出面(页面内部不经它) */
+/**
+ * Export surface for puppeteer-side `page.evaluate` on export and prerender snapshot pages
+ * (not used internally by the page).
+ */
 export const solidApi = { isSolid, bounds, rects, hitTest, stageOrigin, canvasBox, canvasPaintedBox, rectsWithBounds };
 export type SolidApi = typeof solidApi;

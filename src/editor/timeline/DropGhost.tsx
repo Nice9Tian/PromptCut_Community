@@ -3,8 +3,8 @@ import type { DropPlan } from "./dropPlan";
 import { xOfTime } from "./utils";
 
 /**
- * 落点预览:拖动过程中画出「松手后片段会长在哪、多长」。
- * 蓝 = 就落在这;黄 = 这段被占了,会顺延到后面的空档;红 = 落不下。
+ * Drop preview: while dragging, draws "where the clip will land after release and how long it will be".
+ * Blue = lands right here; yellow = this span is taken, so it shifts to the next free gap; red = cannot land.
  */
 export function DropGhost({ plan }: { plan: DropPlan }) {
   const { pxPerSec } = useTimelineContext();

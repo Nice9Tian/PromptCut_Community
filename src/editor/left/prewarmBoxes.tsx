@@ -13,35 +13,43 @@ import { measureAcrossTime, unionBox, type Box } from "../../render/contentBox";
 import { knownKeys, rememberBox, dumpBoxes } from "./previewBoxes";
 
 /**
- * 后台补量:第一次打开卡片页时,把静态表里没有的卡片 / 部件挨个在屏幕外渲染一遍、
- * 量出包围盒存起来(previewBoxes.ts)。算完的下次悬停一步到位,不用再等测量跑。
+ * Background measuring: the first time the card tab opens, render every card / part missing from
+ * the static table off-screen, one after another, measure the bounding box and store it
+ * (previewBoxes.ts). Whatever is done is ready in one step on the next hover, with no waiting for
+ * measurement.
  *
- * 几条自我约束:
- *   - **一次只渲一个**,而且排在空闲时段(requestIdleCallback),不跟用户的操作抢主线程;
- *   - **用户刚动过就先让开**:点击、按键、滚轮之后 QUIET_MS 内不挂新卡、不做第二次量;
- *     挂上去之后、第一次量之前用户动了,这张卡卸掉放回队尾。三维卡挂上去就是上百毫秒(建 WebGL 场景、
- *     编译着色器),量一次要从显卡读回整张画布,正好撞上用户点开一个组、收起一个面板,那一下动画就卡住了 ——
- *     以前打开「自家卡片」之后半分钟里点什么都一顿一顿的,就是它;
- *   - **屏幕外而不是 display:none**:隐藏起来的元素没有布局也没有动画,什么都量不到;
- *   - **粒子卡不排队**:53 张全是 canvas 引擎,后台一张张点火代价太大,而且它们本来就
- *     铺满整幅、量出来是 null。它们靠悬停时的像素扫描(contentBox 的 canvasBox)就够。
+ * A few self-imposed rules:
+ *   - **Render only one at a time**, and only in idle time (requestIdleCallback), so it never
+ *     competes with user actions for the main thread;
+ *   - **Back off right after user activity**: within QUIET_MS after a click, key press or wheel,
+ *     mount no new card and do no second measurement; if the user acts after mounting but before
+ *     the first measurement, unmount the card and put it back at the end of the queue. Mounting a
+ *     3D card alone takes a hundred-plus milliseconds (building the WebGL scene, compiling
+ *     shaders), and one measurement reads the whole canvas back from the GPU. If that lands just
+ *     as the user opens a group or collapses a panel, the animation freezes -- that was why
+ *     everything stuttered for half a minute after opening "built-in cards";
+ *   - **Off-screen, not display:none**: hidden elements have no layout and no animation, so there
+ *     is nothing to measure;
+ *   - **Particle cards are not queued**: all 53 are canvas engines, igniting them one by one in
+ *     the background costs too much, and they fill the whole frame anyway, so the measurement
+ *     comes out null. The pixel scan on hover (canvasBox in contentBox) is enough for them.
  */
 const SETTLE_MS = 80;
 const MAX_MEASURE_MS = 4000;
 const GAP_MS = 120;
-/** 跟真实时间走的部件(打字机、Lottie)等它长出来的上限 */
+/** Upper limit for waiting until parts that follow real time (typewriter, Lottie) have grown in */
 const SETTLED_WAIT_MS = 1800;
-/** 用户最后一次点击 / 按键 / 滚轮之后,至少安静这么久才开始下一步 */
+/** After the user's last click / key press / wheel, stay quiet at least this long before the next step */
 const QUIET_MS = 1500;
-/** 一张卡最多给用户让这么多回(挂上去就被打断、放回队尾),再往后照量不误,免得排不到头 */
+/** A card yields to the user at most this many times (interrupted right after mounting, put back at the end of the queue); after that it is measured regardless, so it never starves */
 const MAX_YIELDS = 3;
 
 interface Job {
   key: string;
-  /** t:部件按秒计的时间轴位置(卡片用不到) */
+  /** t: the part's timeline position in seconds (unused for cards) */
   node: (t: number) => React.ReactElement;
   animMs: number;
-  /** 已经给用户让过几回 */
+  /** How many times it has already yielded to the user */
   yields?: number;
 }
 
@@ -61,8 +69,9 @@ function idle(fn: () => void, timeout = 2000) {
 const wait = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
 
 /**
- * 记下用户最后一次操作的时刻。捕获阶段 + passive,不影响任何人的事件处理。
- * click 单独算一种:键盘回车 / 空格按下按钮、脚本里的 el.click() 都没有 pointerdown。
+ * Records the time of the user's last action. Capture phase + passive, so nobody's event handling
+ * is affected. click counts as its own kind: pressing a button with Enter / Space on the keyboard,
+ * or el.click() in a script, produces no pointerdown.
  */
 function watchInput() {
   if (watching) return;
@@ -75,7 +84,7 @@ function watchInput() {
   }
 }
 
-/** 等到「用户安静了 QUIET_MS」且浏览器给了一次空闲回调;空闲回调排队期间用户又动了,就再等一轮 */
+/** Wait until "the user has been quiet for QUIET_MS" and the browser has given an idle callback; if the user acts again while the idle callback is queued, wait another round */
 function whenQuiet(): Promise<void> {
   return new Promise((resolve) => {
     const check = () => {
@@ -97,7 +106,7 @@ function cardAnimMs(def: CardDef<any>): number {
   try {
     const dyn = def.timing?.(def.defaults)?.settleMs;
     if (typeof dyn === "number" && Number.isFinite(dyn)) return dyn;
-  } catch { /* 算炸了按静态值 */ }
+  } catch { /* If the computation blows up, use the static value */ }
   const st = def.lifecycle?.settleMs;
   return typeof st === "number" && Number.isFinite(st) ? st : 1500;
 }
@@ -106,7 +115,7 @@ function partAnimMs(def: PartDef<any>): number {
   try {
     const v = def.settleMs?.(def.defaults);
     if (typeof v === "number" && Number.isFinite(v)) return v;
-  } catch { /* 同上 */ }
+  } catch { /* Same as above */ }
   return 1500;
 }
 
@@ -118,7 +127,7 @@ function ensureStage(w: number, h: number, themeId: string): HTMLElement {
     document.body.appendChild(container);
   }
   container.style.cssText = `position:fixed;left:-20000px;top:0;width:${w}px;height:${h}px;overflow:hidden;pointer-events:none;z-index:-1;`;
-  // 主题是一串 CSS 自定义属性,只能一条条 setProperty
+  // The theme is a set of CSS custom properties, so setProperty has to be called one by one
   for (const [k, v] of Object.entries(themeStyle(themeId) as Record<string, string>)) {
     if (k.startsWith("--")) container.style.setProperty(k, String(v));
   }
@@ -126,10 +135,11 @@ function ensureStage(w: number, h: number, themeId: string): HTMLElement {
   return container;
 }
 
-/** @returns false = 挂上去之后用户马上动了,这张没量,要放回队尾 */
+/** @returns false = the user acted right after mounting, this one was not measured and must go back to the end of the queue */
 async function runJob(job: Job, w: number, h: number, themeId: string): Promise<boolean> {
-  // 挂卡是一步里最重的,挂之前先等用户安静下来;flushSync 当场挂完 ——
-  // 交给 React 自己排的话,真正挂载会落到之后的某个任务里,那时用户可能已经在点了
+  // Mounting the card is the heaviest part of a step, so wait for the user to be quiet before it.
+  // flushSync finishes the mount on the spot -- if React schedules it itself, the real mount lands
+  // in some later task, when the user may already be clicking
   await whenQuiet();
   const host = ensureStage(w, h, themeId);
   const total = Math.min(MAX_MEASURE_MS, Math.max(400, job.animMs) + 300);
@@ -148,22 +158,28 @@ async function runJob(job: Job, w: number, h: number, themeId: string): Promise<
     try {
       box = unionBox(box, measureAcrossTime(stage, total));
     } catch {
-      // 哪张卡渲染炸了都不该拖垮整条队列
+      // No card whose render blows up should bring down the whole queue
     }
   };
-  // 量两回:刚挂上去(入场从画外飞进来的那一段靠拨 Web Animations 取到),
-  // 再等它跑一会儿(打字机、Lottie 这些跟真实时间走的,拨不动,只能等内容自己长出来)。
+  // Measure twice: right after mounting (the stretch where the entrance flies in from off-screen is
+  // captured by scrubbing Web Animations), then after letting it run for a while (typewriter,
+  // Lottie and other things that follow real time cannot be scrubbed, so we can only wait for the
+  // content to grow in itself).
   await wait(SETTLE_MS);
-  // 第一回不能往后拖:入场动画跑完就拨不到了。挂上去这一小段里用户动了的话,
-  // 读画布正好撞上他的动画 —— 这回不量,卸掉整张放回队尾重来
+  // The first measurement must not be delayed: once the entrance animation finishes it can no
+  // longer be scrubbed. If the user acts during this short stretch after mounting, reading the
+  // canvas would collide with their animation -- skip this measurement, unmount the whole card and
+  // put it back at the end of the queue to retry
   if (lastInput !== inputAtMount && (job.yields ?? 0) < MAX_YIELDS) {
     root!.render(null);
     job.yields = (job.yields ?? 0) + 1;
     return false;
   }
   sample();
-  // 第二回量的是长好的样子。卡挂着就一直在渲染(AnimClock 的 rAF、三维卡的 WebGL),
-  // 所以不能挂着干等用户停手:到点了用户还在动,就跟第一回一样卸掉放回队尾;让够了照量不误
+  // The second measurement captures the grown-in look. A mounted card keeps rendering (AnimClock's
+  // rAF, the 3D card's WebGL), so it cannot sit there waiting for the user to stop: if the user is
+  // still acting when the time comes, unmount and put it back at the end of the queue, as in the
+  // first measurement; once it has yielded enough, measure regardless
   await wait(Math.min(total, SETTLED_WAIT_MS));
   if (performance.now() - lastInput < QUIET_MS && (job.yields ?? 0) < MAX_YIELDS) {
     root!.render(null);
@@ -178,13 +194,13 @@ async function runJob(job: Job, w: number, h: number, themeId: string): Promise<
 }
 
 function buildQueue(w: number, h: number, force: boolean): Job[] {
-  // force(生成静态表)= 不认静态表,但认本机缓存,重载后能接着量
+  // force (generate the static table) = ignore the static table but honor the local cache, so it can resume measuring after a reload
   const known = knownKeys(w, h, force);
   const jobs: Job[] = [];
   for (const def of allCards()) {
-    // 粒子卡不排队:见上面的说明
+    // Particle cards are not queued: see the note above
     if (assetCardKind(def) === "particles") continue;
-    // 素材效果卡没有 React 组件,离屏量不出包围盒 —— 库里也只显示静态占位,不用预热
+    // Media effect cards have no React component, so the bounding box cannot be measured off-screen -- the library only shows a static placeholder for them anyway, no need to warm up
     const Component = def.Component;
     if (typeof Component !== "function") continue;
     const key = `card:${def.id}`;
@@ -203,17 +219,18 @@ function buildQueue(w: number, h: number, force: boolean): Job[] {
 }
 
 /**
- * 开始后台补量。重复调用无副作用;无头实例(agent 那份页面)不做这件事。
- * `force` 只给 scripts/preview-boxes.mjs 用:重新量一遍静态表里的东西。
+ * Starts background measuring. Repeated calls have no side effects; a headless instance (the page
+ * the agent uses) does not do this.
+ * `force` is only for scripts/preview-boxes.mjs: re-measure everything in the static table.
  */
 export function startPrewarm(force = false): void {
   if ((started && !force) || typeof document === "undefined") return;
   try {
     if (new URLSearchParams(location.search).has("headless")) return;
-  } catch { /* 拿不到就当普通页面 */ }
+  } catch { /* If it cannot be obtained, treat it as a normal page */ }
   started = true;
   watchInput();
-  // 补量是「用户点开了一个卡片组」那一下带起来的,那次点击发生在监听装上之前:启动时刻就当作一次操作,别紧跟着挂卡
+  // Background measuring is kicked off by the user opening a card group, and that click happened before the listeners were installed: count the start time as a user action, so no card is mounted right after
   lastInput = performance.now();
   const { width, height, themeId } = getState().project;
   const queue = buildQueue(width, height, force);
@@ -225,7 +242,7 @@ export function startPrewarm(force = false): void {
       root?.render(null);
       return;
     }
-    // 空闲 + 用户安静的等待在 runJob 里(whenQuiet)
+    // The wait for idle time + a quiet user is in runJob (whenQuiet)
     void runJob(job, width, height, themeId)
       .then((done) => {
         if (!done) queue.push(job);
@@ -238,7 +255,7 @@ export function startPrewarm(force = false): void {
   next();
 }
 
-/** 给 scripts/preview-boxes.mjs 用:催一遍、看还剩几个、把结果拿走 */
+/** For scripts/preview-boxes.mjs: nudge it along, see how many are left, take the results away */
 if (typeof window !== "undefined") {
   (window as unknown as { __pcPreviewBoxes?: unknown }).__pcPreviewBoxes = {
     start: (force?: boolean) => startPrewarm(force === true),

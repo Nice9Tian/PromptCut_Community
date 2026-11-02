@@ -1,6 +1,6 @@
-// mcp-tools.mjs 是纯数据、没有 node 依赖，前端可以直接引；它没有 .d.ts，
-// 所以在这里就地声明用到的那点形状。
-// @ts-expect-error 无类型声明的 .mjs
+// mcp-tools.mjs is pure data with no node dependency, so the frontend can import it directly; it
+// has no .d.ts, so the little shape that is used is declared here in place.
+// @ts-expect-error .mjs without type declarations
 import { tools as RAW_TOOL_SPECS } from "../../server/mcp-tools.mjs";
 import { modelToolName, pageToolName } from "../../server/tools/ui-names.mjs";
 import { webOpen, webView, webClick, webType, webScroll, webRead, webHandoff, webClose } from "./web";
@@ -17,23 +17,28 @@ import { trackJobs, trackResults } from "../mcp/common";
 import { tr as trText } from "../i18n/index.ts";
 
 /**
- * Agent 服务端向页面要只读页面状态用的内部工具名(server/agent/agent-side.mjs 的 PAGE_STATE_TOOL)。
- * 不在工具表里、Agent 看不到,所以不写成字面的分发分支(tool-schema.test.mjs 的对账只认声明过的工具)。
+ * Internal tool name the Agent server uses to ask the page for read-only page state (PAGE_STATE_TOOL
+ * in server/agent/agent-side.mjs). It is not in the tool table and the Agent cannot see it, so it is
+ * not written as a literal dispatch branch (the reconcile in tool-schema.test.mjs only recognizes
+ * declared tools).
  */
 const PAGE_STATE_TOOL = "__page_state";
 const TOOL_SPECS = RAW_TOOL_SPECS as { name: string; inputSchema?: { required?: string[] } }[];
 
 /**
- * 按工具自己的 inputSchema 校验必填参数。
+ * Validates required parameters against the tool's own inputSchema.
  *
- * 为什么要在这一层拦：inputSchema 里写了 required，但**没有任何一层真的执行它**。
- * MCP 协议指望客户端自觉，而 CLI 驱动（claude / codex / agy）并不保证会校验。
- * 于是漏传参数会一路走到实现里：`seek({})` 把 t 设成 null、`set_theme({})` 把
- * themeId 设成 undefined，还都回 `{ok:true}` —— Agent 以为成功了，项目却已经坏了。
- * 沉默地改坏状态，比报错难查得多。
+ * Why intercept at this layer: inputSchema declares required, but **no layer actually enforces it**.
+ * The MCP protocol relies on the client to be diligent, and CLI drivers (claude / codex / agy) do
+ * not guarantee validation. So a missing parameter goes all the way into the implementation:
+ * `seek({})` sets t to null and `set_theme({})` sets themeId to undefined, and both still return
+ * `{ok:true}`: the Agent thinks it succeeded while the project is already broken. Silently
+ * corrupting state is much harder to track down than an error.
  *
- * API 直连那条路在 harness/agent.mjs 里已经有同样的校验；这里补的是走 MCP 的那条。
- * 只查「必填的在不在」，不做类型推断——过度校验会把合法调用也挡掉。
+ * The direct API path already has the same validation in harness/agent.mjs; this fills in the path
+ * that goes through MCP.
+ * It only checks "is the required parameter present" and does no type inference: over-validation
+ * would also block legitimate calls.
  */
 function missingRequired(tool: string, args: unknown): string[] {
   const spec = TOOL_SPECS.find((t) => t.name === tool);
@@ -55,12 +60,15 @@ export interface EditorApi {
   getSelection(): any;
   addClip(args: { cardId: string; start: number; duration?: number; trackId?: string; params?: any }): any;
   updateClip(args: { clipId: string; start?: number; end?: number; cardId?: string; params?: any; opacity?: number; fadeIn?: number; fadeOut?: number; label?: string; trackId?: string }): any;
-  /** 卡片级定位(场景图的根节点)。部件级接进来时加 node 参数,签名不用改 */
+  /**
+   * Card-level addressing (the root node of the scene graph). When part-level is added, add a node
+   * parameter; the signature does not need to change
+   */
   setPosition(args: { clipId: string; space?: "world" | "local"; x?: number; y?: number; w?: number; h?: number; anchor?: [number, number]; scale?: number; rotate?: number; rotateX?: number; rotateY?: number; translateZ?: number; clear?: boolean; clamp?: boolean }): any;
   setRect(args: { clipId: string; x1: number; y1: number; x2: number; y2: number; mode?: "fit" | "canvas"; align?: [number, number] }): any;
   align(args: { clipId: string; h?: "left" | "center" | "right"; v?: "top" | "center" | "bottom"; margin?: number }): any;
   nudge(args: { clipId: string; dx?: number; dy?: number; scaleBy?: number; rotateBy?: number; clamp?: boolean }): any;
-  /** 异步:contentBox 要问舞台一次往返(D4 页面侧)。写工具仍是同步的 */
+  /** Async: contentBox needs a round trip to the stage (D4, page side). Write tools are still synchronous */
   getLayout(args?: { clipId?: string }): Promise<any>;
   getClip(args: { clipId: string }): any;
   listParts(args?: { partId?: string; detail?: string }): any;
@@ -83,13 +91,14 @@ export interface EditorApi {
   listTransitions(): any;
   addTransition(args: { kind: string; clipId: string; otherClipId?: string; dur?: number }): any;
   removeTransition(args: { transitionId: string }): any;
-  // 序列(轨道)。校验和门槛在 mcp/tools/trackTools.ts
+  // Tracks. Validation and gates are in mcp/tools/trackTools.ts
   addTrack(args: { name?: string; index?: number }): any;
   listTracks(): any;
   removeTrack(args: { trackId?: string; trackIds?: string[]; force?: boolean; reason?: string }): any;
   updateTrack(args: { trackId: string; name?: string; hidden?: boolean; muted?: boolean; locked?: boolean }): any;
   moveTrack(args: { trackId: string; index: number }): any;
-  // 滤镜库。校验和门槛在 editor/right/filterTools.ts,数值和三条管线的翻译在 kernel/filters.mjs
+  // Filter library. Validation and gates are in editor/right/filterTools.ts; the values and their
+  // translation for the three pipelines are in kernel/filters.mjs
   listFilters(): any;
   createFilter(args: any): any;
   updateFilter(args: any): any;
@@ -101,25 +110,35 @@ export interface EditorApi {
   removePixelMap(args: { pixelMapId: string; force?: boolean; reason?: string }): any;
   applyPixelMap(args: { clipId: string; pixelMapId?: string }): any;
   listMediaEffects(args?: { mediaId?: string }): any;
-  // 音频效果库。校验和门槛在 editor/right/audioFxTools.ts,数值在 kernel/audioFx.mjs,节点图在 src/audio/fxChain.ts
+  // Audio effects library. Validation and gates are in editor/right/audioFxTools.ts, the values in
+  // kernel/audioFx.mjs, the node graph in src/audio/fxChain.ts
   listAudioFx(): any;
   createAudioFx(args: any): any;
   updateAudioFx(args: any): any;
   removeAudioFx(args: { fxId: string; force?: boolean; reason?: string }): any;
   applyAudioFx(args: { clipId: string; fxId: string; params?: Record<string, number> }): any;
-  /** 测响度:服务端 ffmpeg ebur128(server/vite-plugin-audio.ts) */
+  /** Measure loudness: server-side ffmpeg ebur128 (server/vite-plugin-audio.ts) */
   measureAudio(args: { clipId?: string; mediaId?: string; scope?: string; series?: boolean }): Promise<any>;
-  /** 自定义测量(计划 A6):PCM 交专用 Chrome 的沙箱跑 Agent 写的 JS(server/audio-measure-js.mjs) */
+  /**
+   * Custom measurement (plan A6): the PCM goes to a dedicated Chrome's sandbox, which runs JS written
+   * by the Agent (server/audio-measure-js.mjs)
+   */
   measureAudioJs(args: { code: string; clipId?: string; mediaId?: string; scope?: string; start?: number; duration?: number; sampleRate?: number; mono?: boolean; timeoutMs?: number }): Promise<any>;
-  // 多条剪辑(时间轴)。其余 clip / 序列工具都只作用于当前激活的那条
+  // Multiple cuts (timelines). All other clip / track tools act only on the currently active one
   listCuts(args?: { cutId?: string }): any;
   switchCut(args: { cutId?: string; name?: string }): any;
   addCut(args?: { name?: string }): any;
   renameCut(args: { cutId: string; name: string }): any;
   removeCut(args: { cutId: string; force?: boolean; reason?: string }): any;
-  /** 在激活剪辑里放一个引用别的剪辑的剪辑段(cutId 或 name 二选一);放进自己、循环引用时抛并说明原因 */
+  /**
+   * Place a cut segment referencing another cut in the active cut (either cutId or name); throws
+   * with an explanation when it would be placed into itself or form a circular reference
+   */
   addCutSegment(args: { cutId?: string; name?: string; start: number; duration?: number; cutOffset?: number; trackId?: string }): any;
-  /** 改剪辑段引用哪条剪辑(cutId 或 name)、从被引用剪辑的第几秒开始(cutOffset) */
+  /**
+   * Change which cut a cut segment references (cutId or name) and at which second of the referenced
+   * cut it starts (cutOffset)
+   */
   setCutSegment(args: { clipId: string; cutOffset?: number }): any;
   seek(args: { t: number }): any;
   play(): any;
@@ -128,7 +147,7 @@ export interface EditorApi {
   setProjectMeta(args: any): any;
   setCamera3d(args: { enabled?: boolean; fovDeg?: number }): any;
   bakeCard(args: { clipId: string; t?: number; size?: number; bg?: string }): Promise<any>;
-  // STT 工具
+  // STT tools
   sttStatus(): Promise<any>;
   sttInstall(args: { engine: string }): Promise<any>;
   transcribeMedia(args: { mediaId: string; engine?: string; model?: string; language?: string }): Promise<any>;
@@ -139,7 +158,7 @@ export interface EditorApi {
   getTrack(args: { mediaId: string; full?: boolean }): any;
   trackStatus(): Promise<any>;
   trackInstall(): Promise<any>;
-  // 主体检测：画面里的人在哪、哪一侧是空的
+  // Subject detection: where the people in the frame are, which side is empty
   detectSubjects(args: { mediaId: string; times?: number[]; prompt?: string; force?: boolean }): Promise<any>;
   listSubjects(args: { mediaId: string }): any;
   subjectStatus(): Promise<any>;
@@ -154,7 +173,8 @@ export interface EditorApi {
   listCaptions(args: { clipId?: string }): any;
   editCaption(args: { clipId?: string; op?: string; index?: number; text?: string; en?: string; start?: number; end?: number }): any;
   importMedia(args: { url?: string; name?: string }): Promise<any>;
-  // 配音:云端 TTS 生成 mp3 进素材库,给 start 就上时间轴
+  // Voiceover: cloud TTS generates an mp3 into the media library, and with start given it is put
+  // on the timeline
   voiceList(): Promise<any>;
   voiceGenerate(args: { text: string; start?: number; trackId?: string; provider?: string; voiceId?: string; speed?: number; emotion?: string; name?: string }): Promise<any>;
   collectStatus(): Promise<any>;
@@ -170,14 +190,20 @@ export interface EditorApi {
   applyCard(args: any): any;
   getCardSource(args: { cardId: string; file?: string }): Promise<any>;
   editCard(args: { cardId: string; file?: string; find: string; replace: string; replaceAll?: boolean }): Promise<any>;
-  /** 只读 DOM 树(inspect_card_dom):每个节点标出源码位置,改动一律走 editCard */
+  /**
+   * Read-only DOM tree (inspect_card_dom): each node is tagged with its source location, and all
+   * changes go through editCard
+   */
   inspectCardDom(args: { clipId: string; t?: number; ref?: number | string; depth?: number }): Promise<any>;
   seePreview(args: { t?: number; clipId?: string; times?: number[]; cutId?: string }): Promise<any>;
   seeSequences(args: { mediaId: string; page?: number; perPage?: number; grid?: number; scene?: number; from?: number; to?: number }): Promise<any>;
   cardAuthoringGuide(): Promise<any>;
 }
 
-/** 这些工具改的是时间轴:做成一次,就值得给 SKILL 悬浮窗下面那张预览图刷新一次 */
+/**
+ * These tools change the timeline: each time one succeeds, it is worth refreshing the preview
+ * image below the SKILL floating window once
+ */
 const TIMELINE_TOOLS = new Set([
   "add_clip", "update_clip", "remove_clip", "duplicate_clip", "split_clip",
   "add_transition", "remove_transition", "set_clip_volume", "set_clip_muted", "render_card_audio", "separate_audio", "create_audio", "set_emphasis",
@@ -190,16 +216,21 @@ const TIMELINE_TOOLS = new Set([
 ]);
 
 /**
- * 聊天栏的「看得见的结果」。
+ * The "visible results" of the chat panel.
  *
- * 用户在简洁界面点开一个工具,原来看到的是入参和结果的 JSON —— 那是给调试看的。
- * 看图的工具该看到当时返回的那张图,加卡 / 删卡该看到那张卡,改卡该看到改了哪几个参数
- * 和前后两段动图。这些东西只有执行工具的这个页面拿得到(改之前的工程、返回的位图),
- * 所以在这里交给服务端存一份「可视化记录」,把它的 id 放在结果最前面:四家的工具结果
- * 摘要都保留开头那一截,聊天栏凭这个 id 去取记录。
+ * When a user opens a tool in the concise view, what they used to see was the JSON of the input
+ * arguments and the result, which is meant for debugging. A tool that looks at an image should show
+ * the image it returned at the time; adding / deleting a card should show that card; editing a card
+ * should show which parameters changed and the two animated images before and after. Only this page,
+ * which executes the tool, can get these things (the project from before the change, the returned
+ * bitmap), so here a "visualization record" is handed to the server to store, and its id is put at
+ * the very front of the result: all four vendors' tool result summaries keep the opening part, and
+ * the chat panel uses this id to fetch the record.
  *
- * 动图不在这里渲:这里只存「怎么渲」(那张卡当时的样子),用户点开时服务端才渲。
- * 所以 Agent 调工具只多一次本地写文件;交记录最多等 3 秒,超时就不带,工具结果照常返回。
+ * The animated images are not rendered here: only "how to render" is stored (what the card looked
+ * like at the time), and the server renders when the user opens it. So an Agent tool call costs just
+ * one extra local file write; handing over the record waits at most 3 seconds, and on timeout it is
+ * left out and the tool result returns as usual.
  */
 const CLIP_EDIT_TOOLS = new Set([
   "update_clip", "set_clip", "set_position", "set_rect", "align", "nudge", "set_emphasis",
@@ -242,14 +273,19 @@ async function withVisual(tool: string, args: any, result: unknown, before: unkn
     if (!data?.ok || !data.visualId) return result;
     return { visualId: data.visualId, ...(result as object) };
   } catch {
-    return result; // 可视化是附带的,交不上就算了
+    return result; // The visualization is incidental; if it cannot be delivered, drop it
   }
 }
 
-/** get_gif:把一张卡整段均匀抽 8 帧,用户看动图、模型看 4×2 拼图 */
+/**
+ * get_gif: samples 8 frames evenly across the whole card; the user sees the animated image and
+ * the model sees a 4×2 montage
+ */
 async function getGif(args: { clipId: string }) {
-  // 兜底路径(有数据镜像时服务端直接做,见 vite-plugin-ai 的服务端工具)。发到预渲染的源上,180 秒就放手
-  // 两步(cloud-task.md 决议 12):先只写规格,再由 `/render` 渲像素(`user` 角色)
+  // Fallback path (when there is a data mirror the server does it directly, see the server-side tools
+  // of vite-plugin-ai). Sent to the prerender source; gives up after 180 seconds.
+  // Two steps (cloud-task.md resolution 12): first write only the spec, then `/render` renders the
+  // pixels (`user` role)
   const post = async (path: string, body: unknown) => {
     const res = await fetch(await prerenderUrl(path), {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -269,22 +305,31 @@ async function getGif(args: { clipId: string }) {
   };
 }
 
-/** 同一时刻只渲染一张:agent 连着改十张卡,预览跟着渲染十次没意义,只留最后那次 */
+/**
+ * Render only one at a time: when the agent edits ten cards in a row, rendering the preview ten
+ * times is pointless, so only the last one is kept
+ */
 let lastActionBusy = false;
 let lastActionPending: (() => Promise<void>) | null = null;
 
 /**
- * SKILL 模式的悬浮窗下面显示「桌面 APP 会话上一步做成的动作」的画面。
+ * Under the SKILL mode floating window, shows the picture of "the last action the desktop app
+ * session completed".
  *
- * 编辑器进程在桌面会话做成一次操作、SKILL 模式开着时经 SSE 发 `skill.preview`(server/vite-plugin-ai.ts 的
- * requestSkillPreview);这里只对时间轴操作照做:按 see_frames 那条路把那一刻的整屏渲染成 png,POST 给服务端写到
- * skillRoot/last-action.{png,json},壳的 watcher 盯着那两个文件,变了就推给悬浮窗。全程失败静默 —— 预览是锦上添花,
- * 不能反过来影响工具调用。(原来由无头实例的页面做,A4 归档无头实例之后由用户这份页面做。)
+ * When the editor process completes an operation in a desktop session and SKILL mode is on, it
+ * sends `skill.preview` over SSE (requestSkillPreview in server/vite-plugin-ai.ts); here only
+ * timeline operations are acted on: following the see_frames route, the whole screen at that moment
+ * is rendered to a png and POSTed to the server, which writes it to skillRoot/last-action.{png,json};
+ * the shell's watcher watches those two files and pushes any change to the floating window. Failure
+ * is silent throughout: the preview is a nice-to-have and must not affect tool calls in return.
+ * (It used to be done by the headless instance's page; after A4 archived the headless instance, it
+ * is done by the user's own page.)
  */
 function reportLastAction(api: EditorApi, tool: string, clipId: string | null, start: number | null): void {
   if (!TIMELINE_TOOLS.has(tool)) return;
   const run = async () => {
-    // 时间点:优先这次动作涉及的那张卡的中点,都没有就让服务端用当前播放头
+    // Time point: prefer the midpoint of the card this action involved; if there is none, let the
+    // server use the current playhead
     let t: number | undefined;
     const clip = clipId ? getState().project.tracks.flatMap((tr) => tr.clips).find((c) => c.id === clipId) : undefined;
     if (clip && typeof clip.start === "number" && typeof clip.end === "number") t = (clip.start + clip.end) / 2;
@@ -311,7 +356,10 @@ function reportLastAction(api: EditorApi, tool: string, clipId: string | null, s
   kick();
 }
 
-/** web_* 的分发。返回体里的 __image 原样往上传,让 harness 把它摘成图片块 */
+/**
+ * Dispatch for web_*. The __image in the response body is passed up unchanged, so the harness can
+ * pull it out as an image block
+ */
 async function runWebTool(tool: string, args: any): Promise<any> {
   switch (tool) {
     case "web_open": return webOpen(args);
@@ -322,9 +370,10 @@ async function runWebTool(tool: string, args: any): Promise<any> {
     case "web_read": return webRead(args);
     case "web_handoff": {
       const r = await webHandoff(args);
-      // 桌面壳模式:agent 的浏览器是主窗口里的子 webview,Node 那边挪不动它,
-      // 只回一个 shell 标记。这边**不弹窗打断用户**:点亮顶栏的「浏览器」页签(闪烁 +
-      // 「有待操作」气泡),用户自己点过去时面板才把 webview 摆出来。
+      // Desktop shell mode: the agent's browser is a child webview in the main window, which the Node
+      // side cannot move, so it only returns a shell marker. This side **does not pop up a window to
+      // interrupt the user**: it lights up the "Browser" tab in the top bar (blinking + a "pending
+      // action" bubble), and the panel shows the webview only when the user clicks over there themselves.
       if (r && (r as { shell?: boolean }).shell) {
         if (args?.hide) closeAgentBrowser();
         else requestAgentBrowser(typeof args?.reason === "string" ? args.reason : "");
@@ -341,8 +390,9 @@ export function connectMcpExecutor(getApi: () => EditorApi, onStatus?: (s: { con
   let active = true;
 
   /*
-   * `?observe=1`:只读观看。页面照常渲染项目,但**不连桥**(不会把编辑台从工具通道上挤掉)。
-   * 不带 = 编辑台(先来后到、刷新可接管)。
+   * `?observe=1`: read-only viewing. The page renders the project as usual but **does not connect the
+   * bridge** (so it never pushes the editor off the tool channel).
+   * Without it = the editor (first come, first served; a refresh can take over).
    */
   const params = (() => {
     try { return new URLSearchParams(location.search); } catch { return new URLSearchParams(); }
@@ -350,20 +400,25 @@ export function connectMcpExecutor(getApi: () => EditorApi, onStatus?: (s: { con
   const observeOnly = params.has("observe");
 
   if (observeOnly) {
-    // 明确告诉界面「没连桥」,免得状态点显示成绿的、让人以为工具能用
+    // Tell the UI explicitly that "the bridge is not connected", so that the status dot does not show
+    // green and make people think the tools are usable
     onStatus?.({ connected: false });
     return () => {};
   }
 
   /*
-   * 这个页面是「编辑台」,由它把项目镜像给服务端(数据管理的只读镜像,见 src/render/dataMirror.ts)。
-   * 只读观看页(observe)上面已经 return 了,不会走到这里 —— 两个页面同时推会互相覆盖。
+   * This page is the "editor", and it mirrors the project to the server (the read-only mirror used by
+   * data management, see src/render/dataMirror.ts).
+   * The read-only viewing page (observe) already returned above and never gets here: two pages
+   * pushing at once would overwrite each other.
    *
-   * **不再等桥连上**(A7):帧请求的 body 里只有 `{session, localRev}`,项目由服务端从镜像取 ——
-   * 没有 Agent 连着的时候,编辑页自己的预览也得能画。判据从「连着 MCP 桥」换成「页面角色是编辑页」。
+   * **No longer waits for the bridge to connect** (A7): the body of a frame request holds only
+   * `{session, localRev}`, and the server takes the project from the mirror. The editor page's own
+   * preview must be drawable even when no Agent is connected. The criterion changed from "connected
+   * to the MCP bridge" to "the page's role is the editor page".
    */
   startDataMirror();
-  // 多 Agent:页签变了就报给编辑器进程的公告板(A3)
+  // Multi-Agent: when the tabs change, report to the editor process's bulletin board (A3)
   const stopTabReports = agentBus.startTabReports();
 
   const connect = () => {
@@ -372,7 +427,8 @@ export function connectMcpExecutor(getApi: () => EditorApi, onStatus?: (s: { con
 
     source.onopen = () => {
       onStatus?.({ connected: true });
-      // 编辑器进程可能刚重启:页签再报一次,公告板的名单才齐(A3)
+      // The editor process may have just restarted: report the tabs once more, so that the bulletin
+      // board's list is complete (A3)
       agentBus.resendTabs();
     };
 
@@ -393,25 +449,30 @@ export function connectMcpExecutor(getApi: () => EditorApi, onStatus?: (s: { con
         window.dispatchEvent(new CustomEvent("ai-chat-error", { detail: trText("Another editor page took over the AI connection") }));
         active = false;
       } else if (ev.type === "agent.board") {
-        // 多 Agent 公告板(编辑器进程里的那份)变了:页签名跟着范围改、标未读(A3)
+        // The multi-Agent bulletin board (the one inside the editor process) changed: tab names change with
+        // the scope, and tabs are marked unread (A3)
         agentBus.applyBoard(ev.agents);
       } else if (ev.type === "agent.desktop") {
-        // 桌面 APP 会话的分组(A4):厂商、正在进行的操作、进度报告,整份替换
+        // Desktop app session groups (A4): vendor, operation in progress, progress report; replaced wholesale
         applyDesktopSessions(ev.sessions);
       } else if (ev.type === "skill.preview") {
-        // 桌面会话做成了一次操作、SKILL 模式开着:给悬浮窗刷一张预览(失败静默)
-        try { reportLastAction(getApi(), String(ev.tool), typeof ev.clipId === "string" ? ev.clipId : null, typeof ev.start === "number" ? ev.start : null); } catch { /* 预览是附带的 */ }
+        // A desktop session completed an operation while SKILL mode is on: refresh a preview for the
+        // floating window (silent on failure)
+        try { reportLastAction(getApi(), String(ev.tool), typeof ev.clipId === "string" ? ev.clipId : null, typeof ev.start === "number" ? ev.start : null); } catch { /* The preview is incidental */ }
       } else if (ev.type === "agent.spawn") {
-        // spawn_agent 拉起子 Agent:开一个带角色名的新页签(A3)
+        // spawn_agent starts a subagent: open a new tab with a role name (A3)
         void agentBus.handleSpawn(ev);
       } else if (ev.type === "agent.ticket") {
-        // Agent 服务端要一张 agent 角色的连接票据(共享项目;server/vite-plugin-ai.ts 的 requestTicket)
+        // The Agent server asks for a connection ticket with the agent role (shared project; requestTicket
+        // in server/vite-plugin-ai.ts)
         void issueAgentTicket(ev);
       } else if (ev.type === "call" && ev.tool === PAGE_STATE_TOOL) {
         /*
-         * Agent 服务端向页面要一次只读的页面状态(c65-integ2 裁定:既读页面状态又写项目的工具改在服务端执行,
-         * 见 server/agent/agent-exec.mjs 的 PAGE_STATE_TOOLS):播放头、页面内存里 track_points 跑出来的轨迹。
-         * 只读,不改任何状态,不经 EditorApi。
+         * The Agent server asks the page for a read-only snapshot of page state (ruling in c65-integ2:
+         * tools that both read page state and write the project are executed on the server instead, see
+         * PAGE_STATE_TOOLS in server/agent/agent-exec.mjs): the playhead, and the trajectories that
+         * track_points produced in page memory.
+         * Read-only, changes no state, does not go through EditorApi.
          */
         const q = (ev.args ?? {}) as { keys?: string[]; args?: { mediaId?: unknown } };
         const keys = Array.isArray(q.keys) ? q.keys : [];
@@ -429,28 +490,39 @@ export function connectMcpExecutor(getApi: () => EditorApi, onStatus?: (s: { con
       } else if (ev.type === "call") {
         const id = ev.id;
         /*
-         * 会动用户界面的工具改了名(`user_interface_` 前缀,server/tools/ui-names.mjs):服务端发来的内部操作名保持旧名
-         * (0.7.18 桌面版当发起人页面时照常认),这里两种都认,进门统一换成新名再查路由表
+         * Tools that move the user interface were renamed (`user_interface_` prefix,
+         * server/tools/ui-names.mjs): the internal operation names sent by the server keep the old names
+         * (the 0.7.18 desktop app still recognizes them as usual when it is the initiating page), so both
+         * are accepted here, and on entry they are all converted to the new name before the routing table
+         * is consulted
          */
         const tool = modelToolName(ev.tool);
         const args = ev.args as any;
-        // 多 Agent:服务端把发起这次调用的 Agent 对话 ID 带过来(走 agy 或外部命令行的没有)
+        // Multi-Agent: the server passes along the chat ID of the Agent that initiated this call (those
+        // going through agy or an external command line do not have one)
         const agent: string | null = typeof ev.agent === "string" && ev.agent ? ev.agent : null;
-        // 时间轴操作前后各看一眼项目,算出这次改了哪几条「剪辑->序列」,随回包带给服务端的公告板(没接文档服务时用)
+        // Look at the project once before and once after a timeline operation, work out which "cut->track"
+        // entries this one changed, and carry them in the response to the server's bulletin board (used
+        // when the document service is not connected)
         const before = TIMELINE_TOOLS.has(tool) ? getState().project : null;
-        // 聊天栏要画「改之前」的那张卡:只有改卡 / 删卡的工具才拍这一份
+        // The chat panel needs to draw the card as it was "before the change": only tools that edit /
+        // delete a card take this copy
         const visualBefore = CLIP_EDIT_TOOLS.has(tool) || tool === "remove_clip" ? cloneProject(getState().project) : null;
         const api = getApi();
-        // 一对一转发的工具在路由表里;表外的(公告板、see_frames、get_gif、web_*)各自有分支。
-        // 用 Object.hasOwn 查:直接下标的话,tool 叫 "toString" / "constructor" 会摸到
-        // Object.prototype 上的东西,本该回「未知工具」的却变成了别的报错。
+        // Tools forwarded one-to-one are in the routing table; those outside the table (bulletin board,
+        // see_frames, get_gif, web_*) each have their own branch.
+        // Look up with Object.hasOwn: with direct indexing, a tool named "toString" / "constructor" would
+        // hit things on Object.prototype, and what should have returned "unknown tool" becomes some other
+        // error.
         const route = Object.hasOwn(TOOL_ROUTES, tool) ? TOOL_ROUTES[tool] : undefined;
         let ok = true;
         let result: unknown;
         let error: string | undefined;
-        // 这次调用期间本页面发出的提交(留在页面的写工具):回包里带 opIds,Agent 服务端据此推进这个对话读到的版本
+        // Commits issued by this page during this call (write tools that stay in the page): the response
+        // carries opIds, from which the Agent server advances the version this chat has read
         const opMark = pageOpMark();
-        // 这次调用期间本页面的修改是 Agent 让做的,不算「用户动过」(src/editor/userEditing.ts,A2)
+        // Changes made by this page during this call were requested by the Agent and do not count as "the
+        // user touched it" (src/editor/userEditing.ts, A2)
         beginAgentTool();
 
         try {
@@ -458,15 +530,19 @@ export function connectMcpExecutor(getApi: () => EditorApi, onStatus?: (s: { con
           if (missing.length > 0) {
             throw new Error(trText("Missing required parameters: {0}. Add them and try again.", missing.join(trText(", "))));
           }
-          // 一对一转发 EditorApi 的那一百来个工具走路由表(src/mcp/routes.mjs)。
-          // await 与否照抄原分发链:表里说 awaited 才 await,不做统一。
-          // (多 Agent 的公告板工具在编辑器进程里答,不再到页面来,计划 agent-workflow-plan.md A3)
+          // The hundred or so tools that forward one-to-one to EditorApi go through the routing table
+          // (src/mcp/routes.mjs).
+          // Whether to await copies the original dispatch chain: await only when the table says awaited, no
+          // unification.
+          // (The multi-Agent bulletin board tools are answered inside the editor process and no longer reach
+          // the page, plan agent-workflow-plan.md A3)
           if (route) {
             result = route.passArgs ? api[route.method](args) : api[route.method]();
             if (route.awaited) result = await result;
           }
           else if (tool === "see_frames") {
-            // 一个工具两种画面:成片(timeline)走 seePreview,素材镜头拼图(media)走 seeSequences
+            // One tool, two kinds of picture: the final video (timeline) goes through seePreview, the media
+            // shot montage (media) goes through seeSequences
             const { source, ...rest } = (args ?? {}) as any;
             if (source === "media") {
               result = rest.mediaId
@@ -479,8 +555,9 @@ export function connectMcpExecutor(getApi: () => EditorApi, onStatus?: (s: { con
             }
           }
           else if (tool === "get_gif") result = await getGif(args);
-          // 网页操作不经过 EditorApi:浏览器整个在服务端,这些工具不碰编辑台的任何状态。
-          // 挂进 EditorApi 只会逼编辑台那边实现 8 个纯转发的方法。
+          // Web operations do not go through EditorApi: the browser lives entirely on the server, and these
+          // tools touch no state of the editor. Hooking them into EditorApi would only force the editor side
+          // to implement 8 pure-forwarding methods.
           else if (tool.startsWith("web_") || tool === "user_interface_web_handoff") result = await runWebTool(pageToolName(tool), args);
           else throw new Error(trText("Unknown tool: {0}", tool));
         } catch (err: unknown) {
@@ -497,13 +574,19 @@ export function connectMcpExecutor(getApi: () => EditorApi, onStatus?: (s: { con
         if (ok && tool !== "get_gif") result = await withVisual(tool, args, result, visualBefore);
 
         /*
-         * 回结果之前把这次改动推给数据镜像:Agent 改完马上 see_frames 时,服务端拿镜像去渲,
-         * 必须已经是改完的那一份(读后写一致)。没改动时这一步什么都不发。
+         * Push this change to the data mirror before returning the result: when the Agent calls see_frames
+         * right after an edit, the server renders from the mirror, and that must already be the edited copy
+         * (read-after-write consistency). When nothing changed, this step sends nothing.
          */
-        try { await flushDataMirror(); } catch { /* 推不上不影响这次结果;服务端没有新镜像时会退回经页面执行 */ }
+        try { await flushDataMirror(); } catch { /*
+ * A failed push does not affect this result; when the server has no fresh mirror, it falls back to
+ * executing through the page
+ */ }
 
         const opIds = pageOpIdsSince(opMark);
-        // 这次改了哪几条「剪辑->序列」随回包带回去:没接文档服务时,服务端的公告板靠它记改动(A3;接了就由提交流记)
+        // Which "cut->track" entries this call changed are carried back in the response: when the document
+        // service is not connected, the server's bulletin board relies on it to record changes (A3; once
+        // connected, the commit stream records them)
         let scopes: string[] = [];
         if (ok && before) {
           try { scopes = agentBus.diffScopes(before, getState().project); } catch { scopes = []; }

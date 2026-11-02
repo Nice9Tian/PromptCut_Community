@@ -3,7 +3,8 @@
 import assert from 'node:assert/strict';
 import puppeteer from 'puppeteer';
 
-// 地址必须显式给(环境变量 BASE),不给就报用法退出:永不缺省连用户常驻的编辑器(5190～5192)。
+// The address must be provided explicitly (environment variable BASE), exiting with usage if
+// omitted: never connects to the user's resident editor by default (5190-5192).
 const BASE = (process.env.BASE || '').replace(/\/+$/, '');
 if (!BASE) {
   console.error('Usage: BASE=http://127.0.0.1:<port of your own dev server> node server/test/cli-setup-ui.mjs\nWithout an address it does not run: it never falls back to the user\'s always-running editor.');

@@ -1,8 +1,9 @@
 /**
- * 侧边 rail 自由布局的纯逻辑。
- * 跑:node --experimental-test-module-mocks --test src/editor/dock/railLayout.test.mjs
+ * Pure logic for side rail freeform layout.
+ * Run: node --experimental-test-module-mocks --test src/editor/dock/railLayout.test.mjs
  *
- * 钉死:读出来的布局怎么校验、拖动之后顺序和选中项怎么变、「+」画在哪、一侧拖空时哪些项看得见。
+ * Lock down: how the loaded layout is validated, how order and selected items change after dragging,
+ * where "+" is drawn, and which items are visible when one side is dragged empty.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -108,15 +109,15 @@ test("Validation: if active is not on that side, fall back to the fallback's sel
 
 test("move: moving down / up on the same side, gap counts as if the dragged item is still in its original position", () => {
   const base = L(["library", "animations", "effects", "edit", "captions"], ["script", A("main")]);
-  // library 拖到 effects 和 edit 之间:gap = 3
+  // Drag library between effects and edit: gap = 3
   const down = moveItem(base, "library", "left", 3);
   assert.deepEqual(down.layout.left, ["animations", "effects", "library", "edit", "captions"]);
   assert.equal(down.layout.active.left, "library");
   assert.equal(down.emptied, null);
-  // captions 拖到最上面
+  // Drag captions to the top
   const up = moveItem(base, "captions", "left", 0);
   assert.deepEqual(up.layout.left, ["captions", "library", "animations", "effects", "edit"]);
-  // 原地放下:顺序不变,但成为选中项
+  // Drop in place: order unchanged, but becomes the selected item
   const same = moveItem(base, "effects", "left", 2);
   assert.deepEqual(same.layout.left, base.left);
   assert.equal(same.layout.active.left, "effects");
@@ -146,7 +147,7 @@ test("move: source side dragged empty → emptied, active set to null, the empty
   assert.deepEqual(r.layout.left, []);
   assert.equal(r.layout.active.left, null);
   assert.equal(r.emptied, "left");
-  // 再拖回空 rail
+  // Drag back to empty rail
   const back = moveItem(r.layout, A("main"), "left", 0);
   assert.deepEqual(back.layout.left, [A("main")]);
   assert.equal(back.layout.active.left, A("main"));
@@ -200,10 +201,10 @@ test("Close an Agent: remove that item; if it was the selected item, select its 
   assert.equal(r.layout.active.left, A("t3"), "The closed item is an Agent: look among the remaining Agents first");
   assert.deepEqual(r.emptied, []);
 
-  // 关掉右侧选中的主 Agent(Agent 1):切到剩下的 Agent,不跳到剧本
+  // Close the selected lead Agent (Agent 1) on the right: switch to remaining Agent, do not jump to script
   const main = syncAgents(L(["library"], ["script", A("main"), A("t3")], { right: A("main") }), ["t3"]);
   assert.equal(main.layout.active.right, A("t3"));
-  // 这一侧没有别的 Agent 了才退回原来的「先上后下」
+  // Fall back to original "top first, then bottom" only when no other Agents remain on this side
   const noAgent = syncAgents(L(["library"], ["script", A("main")], { right: A("main") }), ["t9"]);
   assert.equal(noAgent.layout.active.right, "script");
 
@@ -233,7 +234,7 @@ test("Drop target index conversion: count only the drawn items", () => {
   assert.equal(gapToFullIndex(full, [], 0), 4);
   assert.equal(gapToFullIndex(full, full, 4), 4, "When everything is drawn, the index stays as is");
 
-  // 换算完交给 moveItem:script 拖到最后
+  // Pass to moveItem after conversion: drag script to the end
   const layout = L(full, [A("b")], { left: "script" });
   const r = moveItem(layout, "script", "left", gapToFullIndex(full, shown, 2));
   assert.deepEqual(r.layout.left, ["library", A("a"), "script", "animations"]);
@@ -250,7 +251,7 @@ test("withActive / sameLayout", () => {
 });
 
 test("Cut group: not a page, never becomes the selected item; a side with only it left counts as empty", () => {
-  // 存下来的 active 指着剪辑组(不该出现,但要兜住):退回那一侧第一个页面项
+  // Stored active points to cut group (should not happen, but must be handled): fall back to the first page item on that side
   const v = validateLayout({ left: [CUTS_ITEM, "library"], right: ["script", A("main")], active: { left: CUTS_ITEM } }, ["main"]);
   assert.equal(v.active.left, "library");
   assert.equal(effectiveActive(L([CUTS_ITEM], ["script"], { left: CUTS_ITEM }), "left"), null);
@@ -268,17 +269,17 @@ test("Cut group: dragging the whole group to the other side keeps the selected i
   assert.deepEqual(r.layout.active, { left: "library", right: A("main") });
   assert.equal(r.emptied, null);
 
-  // 左边的页面项都拖走了,只剩剪辑组:左边算空,选中项置 null
+  // All page items on the left are dragged away, leaving only cut group: left counts as empty, selected item set to null
   const onlyCuts = moveItem(L(["library", CUTS_ITEM], ["script"], { left: "library" }), "library", "right", 0);
   assert.deepEqual(onlyCuts.layout.left, [CUTS_ITEM]);
   assert.equal(onlyCuts.layout.active.left, null);
   assert.equal(onlyCuts.emptied, "left");
 
-  // 选中项被拖走时,相邻项里跳过剪辑组
+  // When the selected item is dragged away, skip cut group among adjacent items
   const skip = moveItem(L(["library", CUTS_ITEM, "edit"], ["script"], { left: "library" }), "library", "right", 0);
   assert.equal(skip.layout.active.left, "edit");
 
-  // 关掉 Agent 后那一侧只剩剪辑组:同样算空
+  // When only cut group remains on that side after closing Agent: also counted as empty
   const synced = syncAgents(L([...SECTION_IDS], [A("t2"), CUTS_ITEM], { right: A("t2") }), ["main"]);
   assert.deepEqual(synced.layout.right.includes(CUTS_ITEM), true);
   assert.equal(synced.layout.active.right === CUTS_ITEM, false);

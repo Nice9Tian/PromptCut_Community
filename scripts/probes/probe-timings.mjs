@@ -1,28 +1,33 @@
 /**
- * 探针共用的耗时记录(`docs/semantics/guide_files/verification.md`「耗时只记录,不当闸门」)。
+ * Shared timing records for probes (`docs/semantics/guide_files/verification.md` "Record durations
+ * only, do not use as gates").
  *
- * 时间数字(编码耗时、加载与换档用时、握手用时、往返时延等)照样量、照样写进结果,但不决定过不过、不影响退出码。
- * 探针把原来拿时间当通过条件的地方改成 `timings.record(名字, 数值, { formerLimit })`,结束前 `timings.print()`:
- * 标准输出里多一行 `TIMINGS {"probe":…,"timings":[…]}`,验收运行器(`scripts/acceptance/`)把它收进 results.json,
- * 发版时汇进 `docs/reports/release-timings.md`。
+ * Timing metrics (encoding time, load and tier-switch time, handshake time, round-trip latency,
+ * etc.) are still measured and written to results, but do not determine pass/fail and do not affect
+ * exit code. Probes change places that previously used time as pass condition to
+ * `timings.record(name, value, { formerLimit })`, and call `timings.print()` before finishing:
+ * standard output gets an extra line `TIMINGS {"probe":…,"timings":[…]}`, which acceptance runner
+ * (`scripts/acceptance/`) collects into results.json and aggregates into
+ * `docs/reports/release-timings.md` at release.
  *
- * 环境变量 `PC_PROBE_TIMING_SCALE=<倍数>`:把记下的每个数字乘上这个倍数(只用来证明时间不再是闸门——
- * 调到远超原门槛,探针仍然判过)。记录里带 `scaled` 标出来,这样的数字不进发版记录。
+ * Environment variable `PC_PROBE_TIMING_SCALE=<multiplier>`: multiplies each recorded number by
+ * this factor (used only to prove time is no longer a gate: even set far beyond original gate, probe
+ * still passes). Marked with `scaled` in record; such numbers do not enter release records.
  *
- * 不起进程、不碰网络;单测在 `server/test/probe-timings.test.mjs`。
+ * Starts no processes, touches no network; unit tests in `server/test/probe-timings.test.mjs`.
  */
 
 export const TIMINGS_PREFIX = 'TIMINGS ';
 
-/** 读 PC_PROBE_TIMING_SCALE:正数才认,否则 1 */
+/** Read PC_PROBE_TIMING_SCALE: recognized only if positive number, otherwise 1 */
 export function timingScale(env = process.env) {
   const n = Number(env.PC_PROBE_TIMING_SCALE);
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
 
 /**
- * @param {string} probe 探针名
- * @param {{ scale?: number }} [opts] 缺省读环境变量
+ * @param {string} probe probe name
+ * @param {{ scale?: number }} [opts] defaults to reading environment variable
  */
 export function createTimings(probe, { scale = timingScale() } = {}) {
   const list = [];
@@ -30,8 +35,8 @@ export function createTimings(probe, { scale = timingScale() } = {}) {
     probe,
     list,
     /**
-     * 记一个耗时数字,返回记下的值(量不出来记 null)。
-     * `formerLimit`:原来的门槛(文字,只作说明);`unit` 缺省毫秒。
+     * Record a duration metric, returning the recorded value (record null if measurement fails).
+     * `formerLimit`: former gate (text, for documentation only); `unit` defaults to milliseconds.
      */
     record(name, value, { unit = 'ms', formerLimit = null, note = null } = {}) {
       const ok = typeof value === 'number' && Number.isFinite(value);
@@ -39,14 +44,14 @@ export function createTimings(probe, { scale = timingScale() } = {}) {
       list.push({ name, value: v, unit, ...(formerLimit ? { formerLimit } : {}), ...(note ? { note } : {}), ...(scale !== 1 ? { scaled: scale } : {}) });
       return v;
     },
-    /** 把别处(子进程的结果行)带回来的记录并进来 */
+    /** Merge in records brought back from elsewhere (child process result lines) */
     merge(items) { for (const t of items ?? []) if (t && typeof t.name === 'string') list.push(t); },
     line() { return TIMINGS_PREFIX + JSON.stringify({ probe, timings: list }); },
     print(log = console.log) { log(this.line()); },
   };
 }
 
-/** 从一段输出里取出全部 TIMINGS 行,摊平成 [{ probe, name, value, unit, formerLimit?, note?, scaled? }] */
+/** Extract all TIMINGS lines from output and flatten into [{ probe, name, value, unit, formerLimit?, note?, scaled? }] */
 export function parseTimingLines(output) {
   const out = [];
   for (const raw of String(output).split(/\r?\n/)) {
@@ -55,7 +60,7 @@ export function parseTimingLines(output) {
     try {
       const v = JSON.parse(l.slice(TIMINGS_PREFIX.length));
       for (const t of v?.timings ?? []) if (t && typeof t.name === 'string') out.push({ probe: v.probe ?? null, ...t });
-    } catch { /* 不是合法的一行,跳过 */ }
+    } catch { /* Not a valid line, skip */ }
   }
   return out;
 }

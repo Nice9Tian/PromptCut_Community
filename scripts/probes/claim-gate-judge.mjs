@@ -1,12 +1,15 @@
 /**
- * `claim-gate-probe.mjs` 的判定(纯函数,`server/test/maint-3-claim-gate-judge.test.mjs` 直接测)。
+ * Judgment for `claim-gate-probe.mjs` (pure function, directly tested by
+ * `server/test/maint-3-claim-gate-judge.test.mjs`).
  *
- * 输入是探针一路采到的样本与预渲染进程诊断里的调度记录(`FramePipeline.noteSched`:`{ kind, worker, at, waitMs? }`,
- * `worker` 是在哪个实例上开工,`'agent'` = Agent 专用实例,`'queue'` = `'queue'` lane 的预渲染间)。
+ * Input consists of samples collected along the way by the probe and scheduling records in prerender
+ * process diagnostics (`FramePipeline.noteSched`: `{ kind, worker, at, waitMs? }`, where `worker`
+ * indicates on which instance work starts, `'agent'` = Agent dedicated instance, `'queue'` = prerender
+ * room in `'queue'` lane).
  */
 
 /**
- * 一路采到的队列诊断样本 → 摘要。
+ * Queue diagnostic samples collected along the way → summary.
  * @param {Array<{ at: number, held: number, spare: boolean|null, agentOpen: boolean|null, agentUnit: string|null, queueAtAgent: number }>} samples
  */
 export function summarizeSamples(samples) {
@@ -14,21 +17,24 @@ export function summarizeSamples(samples) {
   return {
     count: list.length,
     maxHeld: list.reduce((m, s) => Math.max(m, Number(s.held) || 0), 0),
-    /** 持有两项的样本数 */
+    /** Number of samples holding two items */
     heldTwo: list.filter(s => Number(s.held) >= 2).length,
     spareSeen: list.some(s => s.spare === true),
     agentOpenSeen: list.some(s => s.agentOpen === true),
-    /** 专用实例手里是一项普通预渲染队列的项(`agentUnit === 'queue'`)的样本数 */
+    /** Number of samples where dedicated instance holds a normal prerender queue item (`agentUnit === 'queue'`) */
     agentOnQueue: list.filter(s => s.agentUnit === 'queue').length,
     maxQueueAtAgent: list.reduce((m, s) => Math.max(m, Number(s.queueAtAgent) || 0), 0),
   };
 }
 
 /**
- * 「Agent 任务来了不排在排队中的预渲染后面」:`sentAt` 时刻发出 Agent 请求,调度记录里
- *   - 必须有一条 `agent@agent` 开工于 `sentAt` 之后(这次请求的第一个 Agent 任务);
- *   - 从 `sentAt` 到那一条之间,专用实例上**不许**再开工新的普通预渲染(`queue@agent` / `card-batch@agent` / `preview@agent`
- *     / `prerender@agent`):开工的只能是发请求那一刻已经在做的那一项(它开工于 `sentAt` 之前,不在这个区间里)。
+ * "Agent tasks do not queue behind queued prerenders when they arrive": send Agent request at
+ * `sentAt`; in scheduling records:
+ *   - must have an `agent@agent` entry starting after `sentAt` (first Agent task of this request);
+ *   - between `sentAt` and that entry, dedicated instance **must not** start any new normal
+ *     prerender (`queue@agent` / `card-batch@agent` / `preview@agent` / `prerender@agent`):
+ *     the only started work can be the item already in progress when the request was sent (which
+ *     started before `sentAt` and is not in this interval).
  * @param {Array<{ kind: string, worker: string, at: number, waitMs?: number }>} recent
  * @param {number} sentAt
  * @returns {{ ok: boolean, agentAt: number|null, agentWaitMs: number|null, jumped: Array<object>, reason?: string }}
@@ -43,9 +49,11 @@ export function judgeAgentOrder(recent, sentAt) {
 }
 
 /**
- * Agent 查询的等待(AGENT-maint-3 第 5 项):专用实例上的队列任务按批(4 帧)让路,Agent 任务至多等手里那一批加一次切换
- * (让路后恢复队列任务的那次页面重置在 Agent 做完之后,不算在等待里)。`limitMs` 是这个量级的上界(探针缺省 15 s;
- * 改前整项 60 帧要等约 38 s)。回不满足的条目(空 = 过)。
+ * Agent query wait time (item 5 of AGENT-maint-3): queue tasks on dedicated instance yield in
+ * batches (4 frames); Agent tasks wait at most for the batch in hand plus one switch (the page
+ * reset that resumes queue tasks after yielding occurs after the Agent finishes, not counted
+ * in wait time). `limitMs` is upper bound of this order of magnitude (probe defaults to 15 s;
+ * before change, whole 60-frame item waited ~38 s). Returns unmet items (empty = pass).
  */
 export function judgeAgentWait(order, limitMs) {
   if (!order || order.agentWaitMs == null) return ['The Agent task wait time was not measured'];
@@ -53,10 +61,12 @@ export function judgeAgentWait(order, limitMs) {
 }
 
 /**
- * 一趟的判定。`withAgent`:这一趟先让 Agent 用过专用实例(它开着)。
- *   - 开着:见过持有两项(`maxHeld >= 2`)、见过多出的那一格开(`spareSeen`)、专用实例上做过队列任务(`queue@agent >= 1`);
- *   - 没开:持有数从没超过 1、多出的那一格从没开、专用实例从没开过、专用实例上一项队列任务都没做。
- * @returns {string[]} 不满足的条目(空 = 全过)
+ * Judgment for one pass. `withAgent`: this pass first lets Agent use dedicated instance (it is open).
+ *   - Open: saw holding two items (`maxHeld >= 2`), saw extra slot open (`spareSeen`), ran queue
+ *     tasks on dedicated instance (`queue@agent >= 1`);
+ *   - Not open: held count never exceeded 1, extra slot was never open, dedicated instance was never
+ *     open, not a single queue task was run on dedicated instance.
+ * @returns {string[]} Unmet items (empty = all passed)
  */
 export function judgeRun({ withAgent, summary, counts }) {
   const fails = [];

@@ -1,4 +1,5 @@
-// 存储计划 A 部分（docs/plan/storage-plan.md）：遗留文件的启动清理、导出中间文件、中止写入即删、播放 MOV 用完即删。
+// Storage plan Part A (docs/plan/storage-plan.md): startup cleanup of leftover files, export
+// intermediate files, delete on aborted write, delete playback MOV after use.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -47,7 +48,7 @@ test('sweepFrameLibrary only cleans the few forms left behind by dead processes 
     const gone = [
       await put(root, `${k}/mov/full-${DEAD}.tmp.mov`),
       await put(root, `${k}/mov/playback-${DEAD}-${uuid}.mov`),
-      await put(root, `${k}/mov/playback-${randomUUID()}.mov`, 'x', old),       // 旧版,没有 pid,早就没人动
+      await put(root, `${k}/mov/playback-${randomUUID()}.mov`, 'x', old),       // Old version, no pid, untouched for a long time
       await put(root, `${k}/html-cache/live-${DEAD}-abc123/stage/000.json`),
       await put(root, `${k}/preview-${DEAD}.tmp.mp4`),
       await put(root, `tracks/${t}/preview-${DEAD}.tmp.mp4`),
@@ -59,17 +60,18 @@ test('sweepFrameLibrary only cleans the few forms left behind by dead processes 
       await put(root, `${k}/mov/frames/000000.png`),
       await put(root, `${k}/mov/frames.json`),
       await put(root, `${k}/mov/playback-${ALIVE}-${uuid}.mov`),
-      await put(root, `${k}/mov/playback-${randomUUID()}.mov`),                  // 旧版但刚写过
+      await put(root, `${k}/mov/playback-${randomUUID()}.mov`),                  // Old version but recently written
       await put(root, `${k}/html-cache/live-${ALIVE}-def456/stage/000.json`),
       await put(root, `${k}/html-cache/frames.json`),
       await put(root, `${k}/preview.mp4`),
       await put(root, `tracks/${t}/preview.mp4`),
       await put(root, `tracks/${t}/000000.png`),
       await put(root, `controls/${c}/mov/full.mov`),
-      await put(root, `not-a-key/mov/full-${DEAD}.tmp.mov`),                    // 不认得的目录
-      await put(root, `${k}/mov/full-${DEAD}.tmp.mov.bak`),                    // 不认得的名字
+      await put(root, `not-a-key/mov/full-${DEAD}.tmp.mov`),                    // Unrecognized directory
+      await put(root, `${k}/mov/full-${DEAD}.tmp.mov.bak`),                    // Unrecognized name
     ];
-    // 链接:死进程名字的 spill 指向帧库外(junction),以及 spill 目录里面藏着一个链接 —— 都跳过,外面的文件不动
+    // Links: dead-process-named spill pointing outside the frame store (junction), and a link hidden
+    // inside the spill directory: both skipped, outside files untouched
     const target = await put(outside, 'keep.txt');
     const linkType = process.platform === 'win32' ? 'junction' : 'dir';
     await fs.symlink(outside, path.join(root, k, 'html-cache', `live-${DEAD}-link`), linkType);
@@ -121,7 +123,7 @@ test('cancelled or failed exports: large intermediate files are gone, the existi
   const outside = path.join(base, 'elsewhere');
   try {
     await put(dir, 'project.json');
-    await put(dir, 'overlay.mov');                       // 渲完了、合成时失败
+    await put(dir, 'overlay.mov');                       // Render completed, failed during composition
     await put(dir, 'parts/000/overlay.mov');
     await put(dir, 'frames/000001.png');
     const target = await put(outside, 'user.mp4');
@@ -165,7 +167,7 @@ test('Consolidation: the export directory rules exist in one place only. Every n
       assert.equal(name, `export-${id}`);
     }
     assert.deepEqual(claimed.map(c => L.parseExportId(path.basename(c.outDir)).seq), [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 'suffix starts at -2');
-    // 两边收拾同一份目录,结果一样
+    // Both sides clean up the same directory, same result
     const one = path.join(base, 'a'), two = path.join(base, 'b');
     for (const dir of [one, two]) for (const rel of [...INTERMEDIATE, ...EXPORT_KEEP]) await put(dir, rel, rel);
     await pruneExportDir(one);
@@ -182,7 +184,7 @@ test('after MovFrameStore.suspend aborts writing, the temporary MOV is gone', as
   const dir = await tmpRoot('pc-suspend-');
   try {
     const store = new MovFrameStore({ dir });
-    // 写入器只建文件、abort 什么都不删:删文件必须是 suspend 自己做的
+    // Writer only creates files, abort deletes nothing: deleting files must be done by suspend itself
     const factory = (_ffmpeg, file) => {
       fsSync.mkdirSync(path.dirname(file), { recursive: true }); fsSync.writeFileSync(file, 'partial');
       return { write: async () => {}, finish: async () => {}, abort: async () => {} };
@@ -203,7 +205,7 @@ test('PlaybackMovStore: file names carry the pid, dispose deletes the file', asy
     assert.equal(await exists(movie.movieFile), true);
     await movie.dispose();
     assert.equal(await exists(movie.movieFile), false);
-    await movie.put(0, Buffer.from('late')).catch(() => {});   // 晚到的写入不会把文件建回来
+    await movie.put(0, Buffer.from('late')).catch(() => {});   // Late-arriving writes will not recreate the file
     assert.equal(await exists(movie.movieFile), false);
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 });
@@ -239,7 +241,7 @@ test('legacy playback session: the playback MOV is deleted on version change, on
 test('FramePipeline only runs startup cleanup on the real frame store root', async () => {
   const base = await tmpRoot('pc-sweep-ctor-');
   try {
-    // 用一个确实已退出的 pid,走真的 pidAlive
+    // Use a pid that has genuinely exited, running real pidAlive
     const gonePid = spawnSync(process.execPath, ['-e', '0']).pid;
     const k = key(9);
     const lib = path.join(base, 'frame-library');

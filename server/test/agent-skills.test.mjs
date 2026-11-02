@@ -1,8 +1,9 @@
 /**
- * 技能(issue 46):`SKILL.md` 的解析、扫描、清单、`load_skill` 与运行器的接线。
- * 语义见 docs/semantics/product/agent.md「技能」,做法与数字见 mechanism/agent.md「技能的加载」。
+ * Skills (issue 46): parsing, scanning, manifest of `SKILL.md`, and wiring `load_skill` to runner.
+ * See docs/semantics/product/agent.md "Skills" for semantics, and mechanism/agent.md "Loading skills"
+ * for implementation and numbers.
  *
- * 全部用假模型,不调真模型。
+ * Uses fake models throughout; does not call real models.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +17,7 @@ import { tools as mcpTools } from '../mcp-tools.mjs';
 import { startRun } from '../runners/api.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'pc-skills-'));
-const rm = (d) => { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* 清理 */ } };
+const rm = (d) => { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* Cleanup */ } };
 const put = (root, rel, text) => {
   const file = path.join(root, ...rel.split('/'));
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -177,13 +178,13 @@ test('load_skill: bundled documents outside the folder, with absolute paths, not
     const attempts = ['../other-secret.md', 'references/../../other-secret.md', '..\\other-secret.md', path.join(outside, 'secret.md'), '/etc/passwd', 'C:/Windows/win.ini', 'scripts/run.py', 'scripts/run.py:stream.md', ''];
     for (const file of attempts) await assert.rejects(tool.execute({ name: 'guarded', file }), denied('skill-file-denied'), file);
     await assert.rejects(tool.execute({ name: 'guarded', file: 'big.md' }), denied('skill-file-too-large'));
-    // 目录链接:Windows 上文件符号链接要特权,junction 不要,这样这条在哪都真跑
+    // Directory link: file symlinks require privileges on Windows while junctions do not, so this actually runs anywhere
     fs.symlinkSync(outside, path.join(root, 'guarded', 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
     await assert.rejects(tool.execute({ name: 'guarded', file: 'linked/secret.md' }), denied('skill-file-denied'));
     assert.deepEqual((await tool.execute({ name: 'guarded' })).files, ['big.md'], 'a folder linked to outside is not listed');
   } finally {
-    // 先拆链接再删目录,不让删除顺着链接走到外面那个目录
-    try { fs.rmSync(path.join(root, 'guarded', 'linked'), { recursive: false, force: true }); } catch { /* 清理 */ }
+    // Unlink first before deleting directory, preventing deletion from following link to outer directory
+    try { fs.rmSync(path.join(root, 'guarded', 'linked'), { recursive: false, force: true }); } catch { /* Cleanup */ }
     rm(root); rm(outside);
   }
 });
@@ -214,7 +215,7 @@ test('built-in skills: all valid, and every tool they mention really exists', ()
   }
 });
 
-/** 假的 OpenAI 兼容口:按顺序回 replies,记下每次请求的请求体。只从 startRun 进去,看真 fetch 会看到什么 */
+/** Fake OpenAI-compatible endpoint: returns replies in sequence, records each request body. Only enters via startRun to see what real fetch will see */
 function fakeGateway(replies) {
   const requests = [];
   const line = (chunk) => `data: ${JSON.stringify(chunk)}\n\n`;

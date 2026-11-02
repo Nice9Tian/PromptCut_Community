@@ -1,7 +1,10 @@
 /**
- * 云端 Agent 服务各测试文件共用的搭法(从 cloud-agent-service.test.mjs 里搬出来,内容不变):
- * 本机回环的内存文档服务(端口 0)、不带插件的 vite、托管档服务(不经 HTTP)。模型用模拟提供方,全部不出网。
- * 鉴权与连文档服务的凭证是测试替身:连接用回环的 agent 角色项。
+ * Shared setup across test files for Cloud Agent service (moved from
+ * cloud-agent-service.test.mjs, content unchanged):
+ * In-memory document service on local loopback (port 0), vite without plugins, hosted tier service
+ * (not via HTTP). Model uses mock provider, completely no network egress.
+ * Credentials for auth and connecting to document service are test mocks: connection uses the
+ * loopback agent role item.
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -16,10 +19,10 @@ import { wsClient, waitFor } from './fake-ws-kit.mjs';
 
 export const ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 
-/** 主人键(与 `create-agent-service.mjs` 的 `ownerKeyOf` 同一条规则,这里只要键名) */
+/** Owner key (same rule as `ownerKeyOf` in `create-agent-service.mjs`, only key name needed here) */
 export const ownerNameOf = (i) => (i.creator === true ? 'creator' : (i.mode === 'restricted' && i.username ? `user:${i.username}` : `device:${i.userId}`));
 
-/** 读一条事件流(SSE)到出现 `until(事件)` 为真,回收到的事件 */
+/** Reads an event stream (SSE) until `until(event)` is true, returning received events */
 export async function readSse(url, headers, until = (e) => e.type === 'end', { signal } = {}) {
   const res = await fetch(url, { headers, signal });
   if (res.status !== 200) return { status: res.status, events: [], body: await res.text() };
@@ -58,7 +61,10 @@ export const script = (steps) => `Follow the script.\n\`\`\`mock-script\n${JSON.
 export const credentials = { protocolsFor: (_identity, n) => ['promptcut.v1', `promptcut.role.agent.${n}`] };
 export const modelConfig = () => ({ vendor: 'mock', model: 'mock-1' });
 
-/** 本机回环的文档服务(内存)加两个小工具:把项目写进去、读当前内容 */
+/**
+ * Document service on local loopback (in-memory) plus two tools: write project, read current
+ * content
+ */
 export async function startDoc(t) {
   const server = http.createServer((req, res) => { res.statusCode = 404; res.end(); });
   const built = createSharedDocService({ mode: 'lan', dataDir: null, store: null, server, path: '/docservice', isLoopback: () => true, localDevice: { deviceId: 'pc-test-device-0001', deviceName: 'test' }, log: () => {} });
@@ -102,14 +108,17 @@ export async function startDoc(t) {
   };
 }
 
-/** 一套:文档服务 + vite + 托管档服务(不经 HTTP) */
+/** A suite: document service + vite + hosted tier service (not via HTTP) */
 export async function startKit(t, { limits, extra = {}, dataDir: dataDirIn = null } = {}) {
   const doc = await startDoc(t);
   const dataDir = dataDirIn ?? fs.mkdtempSync(path.join(os.tmpdir(), 'pc-cloud-agent-'));
   const vite = await createVite({ configFile: false, root: ROOT, logLevel: 'silent', server: { middlewareMode: true, hmr: false, ws: false, watch: null }, appType: 'custom', optimizeDeps: { noDiscovery: true, include: [] } });
   const logs = [];
   const others = [];
-  /** 在同一个数据目录、同一个文档服务上再起一份服务(模拟进程被杀后重新起来:前一份不收尾) */
+  /**
+   * Start another service on the same data directory and document service (simulates process killed
+   * and restarted: previous one did not finalize)
+   */
   const another = (extra2 = {}) => {
     const s = createHostedAgentService({
       root: ROOT, loadModule: (id) => vite.ssrLoadModule(id), docUrl: doc.url, credentials, modelConfig, dataDir,
@@ -124,10 +133,11 @@ export async function startKit(t, { limits, extra = {}, dataDir: dataDirIn = nul
     await vite.close();
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
-  /** 等这个对话的事件里出现 end,回全部事件 */
+  /** Wait for end to appear in events for this chat, returning all events */
   async function finished(identity, conversationId, ms = 30_000, svc = service) {
     const seen = [];
-    // 看的人用另一个设备号:不让「等结束」这件事本身被算成「发起方在线」
+    // Viewer uses another device id: prevents "waiting for end" itself from being counted as
+    // "initiator online"
     const watcher = { ...identity, userId: `${identity.userId}#watch`, ownerKey: identity.ownerKey ?? ownerNameOf(identity) };
     await waitFor(() => {
       seen.length = 0;

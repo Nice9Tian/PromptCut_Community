@@ -18,9 +18,9 @@ const EDIT_TAB_KEYS = EDIT_TABS.map((t) => t.key);
 const EDIT_TAB_STORE = "pc.left.editTab";
 
 /**
- * 「编辑」分区:胶囊分页 参数 / 代码 / 节点(记在 pc.left.editTab)。
- * 参数、代码是 Inspector(它在内部把两页都常驻挂着,切过去不丢代码框里没提交的草稿);节点是 NodeGraphTab。
- * 三页都常驻挂载,只用行内 display 显隐。
+ * The "Edit" section: pill tabs Parameters / Code / Nodes (remembered in pc.left.editTab).
+ * Parameters and Code are the Inspector (internally it keeps both tabs mounted, so switching away doesn't lose uncommitted drafts in the code box); Nodes is NodeGraphTab.
+ * All three tabs stay mounted and are shown or hidden only with inline display.
  */
 export function EditSection() {
   const [tab, setTab] = useState<EditTab>(() => readStored(EDIT_TAB_STORE, EDIT_TAB_KEYS, "form"));

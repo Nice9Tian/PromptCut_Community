@@ -1,7 +1,9 @@
 /**
- * 舞台这一侧的隔离:加固里的纯判定、自检的结论、执行闸门、舞台入口的认定(契约 `docs/plan/online-card-exec-contract.md` 第 3 节)。
- * 加固钩子与自检在真实浏览器里的行为由 `scripts/probes/online-card-security-probe.mjs` 断言。
- * 跑:node --test src/online/isolation/isolation.test.mjs
+ * Stage-side isolation: pure decisions in hardening, self-check conclusions, execution gate,
+ * stage entry identification (contract `docs/plan/online-card-exec-contract.md` section 3).
+ * Behavior of hardening hooks and self-checks in real browsers asserted by
+ * `scripts/probes/online-card-security-probe.mjs`.
+ * Run: node --test src/online/isolation/isolation.test.mjs
  */
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
@@ -46,7 +48,7 @@ test("OCS-H-03 the no-egress allowlist/Trusted Types/WebRTC guard still pass; pe
     [{crossOrigin:true,csp:'meta',harden:HARDENED},['meta-only']],
     [{crossOrigin:true,csp:'header',harden:null},['not-hardened']],
     [{crossOrigin:true,csp:'header',harden:{...HARDENED,installed:false}},['not-hardened']],
-    // 关键项没装上(审查 P3):装了也不算
+    // Critical item not installed (review P3): does not count even if installed
     [{crossOrigin:true,csp:'header',harden:{...HARDENED,errors:['storage:localStorage:Cannot redefine property']}},['not-hardened']],
     [{crossOrigin:true,csp:'header',harden:{...HARDENED,errors:['storage:sessionStorage:x']}},['not-hardened']],
     [{crossOrigin:true,csp:'header',harden:{...HARDENED,errors:['storage:indexedDB:x']}},['not-hardened']],
@@ -59,7 +61,8 @@ test("OCS-H-03 the no-egress allowlist/Trusted Types/WebRTC guard still pass; pe
     [{crossOrigin:true,csp:'header',harden:{...HARDENED,errors:['scope:integrity: built-in objects or platform interfaces were modified before the guard (JSON)']}},['not-hardened']],
   ];
   for(const [facts,reasons] of cases){const r=judgeIsolation(facts);assert.equal(r.ok,false);assert.deepEqual(r.reasons,reasons);}
-  // 非关键项(纵深防御那几层、旧式文件系统入口等)没装上不挡执行;名字只是前缀相近的也不算
+  // Non-critical items (defense-in-depth layers, legacy filesystem entries, etc.) failing to install
+  // do not block execution; names with merely similar prefixes do not count either
   for (const e of ['storage:webkitRequestFileSystem:x', 'scope:IDBFactory.open:x', 'window:name:x', 'MutationObserver:x', 'storage:localStorageX:x', 'scope:WorkerX:x']) {
     assert.equal(judgeIsolation({crossOrigin:true,csp:'header',harden:{...HARDENED,errors:[e]}}).ok, true, e);
   }
@@ -70,7 +73,7 @@ test("OCS-H-03 the no-egress allowlist/Trusted Types/WebRTC guard still pass; pe
 
 test("OCS-H-04 execution gate: no execution if it is not a stage document, the self-check has no result, the self-check failed, or the parent page has not approved; it opens only when all four are met", () => {
   assert.deepEqual({ allowed: cardExecGate().allowed, reason: cardExecGate().reason }, { allowed: false, reason: "not-stage" });
-  // 不是舞台文档:父页怎么点头都不开
+  // Not a stage document: never opens no matter how parent page approves
   noteMediaPolicy({ cardExec: true });
   assert.equal(cardExecGate().reason, "not-stage");
   markIsolatedStageDocument();
@@ -80,7 +83,7 @@ test("OCS-H-04 execution gate: no execution if it is not a stage document, the s
   setIsolationReport(OK_REPORT);
   assert.equal(cardExecGate().reason, "ok");
   assert.equal(cardExecGate().allowed, true);
-  // 父页收回(另一台没过、总开关关了):关上;再点头再开
+  // Parent page revokes (other instance failed, master switch off): closes; reopens upon re-approval
   noteMediaPolicy({ cardExec: false });
   assert.deepEqual({ allowed: cardExecGate().allowed, reason: cardExecGate().reason }, { allowed: false, reason: "parent" });
   noteMediaPolicy(null);
@@ -92,7 +95,8 @@ test("OCS-H-04 execution gate: no execution if it is not a stage document, the s
 test("OCS-H-05 execution gate, no secrets when executing: a document that has seen a ticket never executes; a document whose gate has opened no longer receives tickets", () => {
   markIsolatedStageDocument();
   setIsolationReport(OK_REPORT);
-  // 旧办法:父页给了带票据的取档策略 → 这份票据可以用,但本文档永久不执行(哪怕父页同时点头)
+  // Legacy approach: parent page gave tier selection policy with ticket → ticket usable, but this
+  // document permanently does not execute (even if parent page also approves)
   assert.deepEqual(noteMediaPolicy({ ticket: "v1.aaa.bbb", cardExec: true }), { acceptTicket: true });
   assert.equal(cardExecGate().reason, "ticket-seen");
   noteMediaPolicy({ cardExec: true, ticket: null });
@@ -104,11 +108,11 @@ test("OCS-H-05 execution gate, no secrets when executing: a document that has se
   setIsolationReport(OK_REPORT);
   noteMediaPolicy({ cardExec: true });
   assert.equal(cardExecGate().allowed, true);
-  // 闸门开过(可能跑过用户代码)之后再来的票据:不收,调用方把它丢掉
+  // Ticket arriving after gate opened (user code may have run): rejected, caller drops it
   assert.deepEqual(noteMediaPolicy({ ticket: "v1.aaa.bbb" }), { acceptTicket: false });
   assert.equal(cardExecGate().allowed, false);
   assert.equal(cardExecGate().reason, "parent");
-  // 没票据的策略:acceptTicket 为假(没有票据可收)
+  // Policy without ticket: acceptTicket is false (no ticket to accept)
   assert.deepEqual(noteMediaPolicy({ ticket: "", cardExec: true }), { acceptTicket: false });
 });
 
@@ -141,12 +145,13 @@ test("OCS-H-07 stage entry is recognized by path: only stage.html; the editor pa
 });
 
 test("OCS-H-08 startup hook: does nothing when not an online build, not in a browser, or not a stage entry (no hardening installed, gate stays at not-stage, no message to the parent page)", () => {
-  // Node 里没有 window:任何组合都不做事
+  // No window in Node: does nothing for any combination
   assert.equal(bootStageGuard({ online: true, base: "/editor/" }), false);
   assert.equal(bootStageGuard({ online: false, base: "/editor/" }), false);
   assert.equal(cardExecGate().reason, "not-stage");
   assert.doesNotThrow(() => announceStageIsolation());
-  // 有 window 但路径不是舞台入口(编辑器页、同源单舞台):同样不做事,只留一个只读的观察口
+  // Has window but path is not stage entry (editor page, same-origin single stage): likewise does
+  // nothing, leaving only a read-only observation port
   const posted = [];
   const fakeWindow = { parent: { postMessage: (m) => posted.push(m) } };
   globalThis.window = fakeWindow;
@@ -158,7 +163,7 @@ test("OCS-H-08 startup hook: does nothing when not an online build, not in a bro
     assert.equal(fakeWindow.__pcStageIsolation, undefined);
     announceStageIsolation();
     assert.equal(posted.length, 0);
-    // 桌面运行环境(不是在线构建)连观察口都不留
+    // Desktop runtime environment (not online build) does not even leave an observation port
     delete fakeWindow.__pcCardExecGate;
     globalThis.location = { pathname: "/editor/stage.html" };
     assert.equal(bootStageGuard({ online: false, base: "/" }), false);
@@ -169,7 +174,10 @@ test("OCS-H-08 startup hook: does nothing when not an online build, not in a bro
   }
 });
 
-/** 仿浏览器的全局对象:存储入口挂在实例或原型上(窗口在实例上,Worker 的 indexedDB / caches 在原型上),全是可改的访问器 */
+/**
+ * Browser-like global object: storage entries attached to instance or prototype (window on
+ * instance, Worker indexedDB / caches on prototype), all mutable accessors
+ */
 function fakeGlobal({ onProto = false } = {}) {
   const realLocal = new Map(), realSession = new Map();
   const storageOf = (m) => ({
@@ -205,40 +213,40 @@ test("OCS-H-09 persistent storage of the stage origin is withdrawn: localStorage
   assert.deepEqual(r.errors, []);
   for (const k of ["localStorage", "sessionStorage", "indexedDB", "caches", "webkitRequestFileSystem", "StorageManager.getDirectory", "StorageBucketManager.open"]) assert.ok(r.denied.includes(k), k);
 
-  // 「卡片」把参数里的素材地址(带路径号)存下来:本文档里读得回,真实存储里没有
+  // "Card" stores media URL from params (with path id): readable in this document, absent in real storage
   const leak = "/media-s/0123456789abcdef0123456789abcdef/media/" + "a".repeat(64);
   scope.localStorage.setItem("params", leak);
   scope.sessionStorage.setItem("params", leak);
-  scope.localStorage.leakProp = leak; // 属性写法同样只在内存
+  scope.localStorage.leakProp = leak; // Property syntax also remains in memory only
   assert.equal(scope.localStorage.leakProp, leak);
   assert.equal(realLocal.has("leakProp"), false);
   assert.equal(scope.localStorage.getItem("params"), leak);
   assert.equal(scope.sessionStorage.getItem("params"), leak);
   assert.equal(realLocal.has("params"), false);
   assert.equal(realSession.has("params"), false);
-  // 真实存储里原有的键列不出、读不到、删不掉
+  // Pre-existing keys in real storage cannot be listed, read, or deleted
   assert.equal(scope.localStorage.getItem("old-key"), null);
   assert.equal(scope.localStorage.length, 1);
   assert.deepEqual([0, 1].map((i) => scope.localStorage.key(i)), ["params", null]);
   scope.localStorage.removeItem("old-key"); scope.localStorage.clear();
   assert.equal(realLocal.get("old-key"), "old-value");
 
-  // 唯一放行的:取档的「能不能放」结论,键形状与值都要对
+  // Only pass-through: "can release" decision of tier selection; key shape and value must both match
   const hash = "b".repeat(64);
   assert.ok(STAGE_STORAGE_PASSTHROUGH_KEY.test(`pc.playable.152:${hash}`));
   scope.localStorage.setItem(`pc.playable.152:${hash}`, "1");
   assert.equal(realLocal.get(`pc.playable.152:${hash}`), "1");
   assert.equal(scope.localStorage.getItem(`pc.playable.152:${hash}`), "1");
-  scope.localStorage.setItem(`pc.playable.152:${"c".repeat(64)}`, leak); // 值不对:不写真实存储,也不留内存
+  scope.localStorage.setItem(`pc.playable.152:${"c".repeat(64)}`, leak); // Invalid value: does not write to real storage, nor keep in memory
   assert.equal(realLocal.has(`pc.playable.152:${"c".repeat(64)}`), false);
   assert.equal(scope.localStorage.getItem(`pc.playable.152:${"c".repeat(64)}`), null);
   for (const bad of [`pc.playable.152:${hash}x`, `pc.playable.x:${hash}`, `pc.playable.152:${"B".repeat(64)}`, `pc.stageSid.v1:a:b`, `xpc.playable.152:${hash}`]) {
     scope.localStorage.setItem(bad, "1");
     assert.equal(realLocal.has(bad), false, bad);
   }
-  realLocal.set(`pc.playable.152:${"d".repeat(64)}`, leak); // 真实存储里形状不对的值读出来也当没有
+  realLocal.set(`pc.playable.152:${"d".repeat(64)}`, leak); // Malformed values read from real storage are treated as absent
   assert.equal(scope.localStorage.getItem(`pc.playable.152:${"d".repeat(64)}`), null);
-  // 放行的键不能删掉真实存储里的结论
+  // Allowed keys cannot delete conclusions in real storage
   scope.localStorage.removeItem(`pc.playable.152:${hash}`);
   assert.equal(realLocal.get(`pc.playable.152:${hash}`), "1");
 
@@ -249,7 +257,7 @@ test("OCS-H-09 persistent storage of the stage origin is withdrawn: localStorage
   await assert.rejects(scope.navigator.storageBuckets.open("x"), /persistent storage/);
   assert.deepEqual(await scope.navigator.storage.estimate(), {}, "unrelated methods stay as before");
 
-  // 卡片代码想改回来:重新定义、赋值、删除都不成
+  // Card code attempting to revert: redefining, assigning, and deleting all fail
   for (const k of ["localStorage", "sessionStorage", "indexedDB", "caches"]) {
     assert.throws(() => Object.defineProperty(scope, k, { value: {} }), TypeError, k);
     assert.equal(Reflect.set(scope, k, {}), false, k);
@@ -269,7 +277,8 @@ test("OCS-H-10 The Worker global object (entry point is on the prototype) is wit
   assert.equal(d.get, undefined, "the accessor on the prototype was replaced with a value");
   assert.equal(d.value, undefined);
   assert.notEqual(scope.indexedDB, idb);
-  // 接线:舞台加固与声音线程都调它(源码核对;真实浏览器里的行为由 media-cache-probe 核)
+  // Wiring: stage hardening and sound thread both invoke it (source check; behavior in real browsers
+  // verified by media-cache-probe)
   const harden = fs.readFileSync(new URL("./harden.ts", import.meta.url), "utf8");
   assert.match(harden, /const storage = denyPersistentStorage\(w\);/);
   const worker = fs.readFileSync(new URL("../cardRuntime/soundWorker.ts", import.meta.url), "utf8");

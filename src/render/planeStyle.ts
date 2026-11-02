@@ -1,35 +1,48 @@
 /**
- * 舞台四种平面的样式表(E7)。
+ * Stylesheet for the four stage planes (E7).
  *
- * 机制照 `solidMode.ts` 的实体模式:**组件永远挂着,包裹层加一个类、样式表藏掉子树,
- * 要显示的东西是包裹层里的兄弟平面** —— 不改 key、不换子节点类型,React 不会卸载重挂,
- * `pinAnimations` 的锚点不丢(锚点一丢,用户看到的是「每次暂停,字都重新飞进来一次」)。
+ * Mechanism follows solid mode in `solidMode.ts`: **the component stays permanently mounted,
+ * a class is added to the wrapper layer, and the stylesheet hides the subtree; what needs to be
+ * displayed is the sibling plane inside the wrapper layer**: no key changes, no child node type
+ * changes, React will not unmount and remount, and `pinAnimations` anchors are preserved (if anchors
+ * are lost, the user sees "every time it pauses, text flies in again").
  *
- * 四个类:
+ * Four classes:
  *
- *   `.pc-snapshot`   贴着 HTML 快照(C3 / C4):子树 `display:none`,放过三种平面;
- *   `.pc-suppressed` 播放中的重卡(E7 第 5 条):同样 `display:none`,放过三种平面 ——
- *                    有流贴流、缺流贴最近快照、都没有就透明;
- *   `.pc-awaiting`   这一帧的快照还没到(E0 的 `setTime({ awaiting })`):`visibility:hidden`,
- *                    500 ms 兜底之后由 `StageView` 摘掉改露活组件 —— **宁可露初始态也不能永久隐身**
- *                    (`visibility:hidden` 会让 `solid.ts` 的 `isSolid` 判它不是实体,`hitTest` 点不中);
- *   `.pc-settling`   正在用子树虚拟时间追帧(K5 第一路):也是 `visibility:hidden`。
- *                    **不能用 `display:none`** —— 子树没有布局盒的话 `layoutId` 那类量布局的全错、
- *                    CSS 动画被取消成 `idle`、`pinAnimations` 直接跳过,`syncIn` 一步都钉不上。
+ *   `.pc-snapshot`   Overlaid with HTML snapshots (C3 / C4): subtree `display:none`, exempting
+ *                    three planes;
+ *   `.pc-suppressed` Heavy cards during playback (E7 item 5): likewise `display:none`, exempting
+ *                    three planes: paste stream if available, paste nearest snapshot if missing,
+ *                    transparent if neither;
+ *   `.pc-awaiting`   Snapshot for this frame has not arrived yet (E0 `setTime({ awaiting })`):
+ *                    `visibility:hidden`, removed by `StageView` after a 500 ms fallback to reveal
+ *                    the live component: **better to reveal initial state than be permanently invisible**
+ *                    (`visibility:hidden` causes `solid.ts` `isSolid` to judge it as not an entity,
+ *                    so `hitTest` cannot hit it);
+ *   `.pc-settling`   Performing frame catch-up using subtree virtual time (K5 pass 1): also
+ *                    `visibility:hidden`. **Cannot use `display:none`**: if subtree has no layout
+ *                    boxes, layout measurements like `layoutId` are all wrong, CSS animations get
+ *                    cancelled to `idle`, `pinAnimations` is skipped directly, and `syncIn` cannot
+ *                    pin a single step.
  *
- * 三个 `display:none` 类同时存在时是三条规则**求并集**(不是 CSS 优先级,别想着用 `display:block` 覆盖);
- * 后两个是 `visibility`,和前三条不冲突、同样求并集。`.pc-settling` 与 `.pc-snapshot`、
- * 与 `.pc-suppressed` 都是互斥的,互斥由 `Stage` / `StageView` 保证,不靠 CSS。
+ * When the three `display:none` classes coexist, the three rules **form a union** (not CSS
+ * specificity; do not attempt to override with `display:block`); the latter two use `visibility`,
+ * which do not conflict with the first three and likewise form a union. `.pc-settling` is mutually
+ * exclusive with both `.pc-snapshot` and `.pc-suppressed`; mutual exclusivity is guaranteed by
+ * `Stage` / `StageView`, not by CSS.
  *
- * 导出页不传这几个 prop,这张表一个字都不会注入 —— 逐像素基线不受影响。
+ * The export page does not pass these props, so not a single character from this stylesheet will
+ * be injected: pixel-by-pixel baselines remain unaffected.
  */
 
 import { PLACEHOLDER_ATTR } from "./placeholder/contract.ts";
 import { PLACEHOLDER_SLOT_ATTR } from "./placeholderHost.ts";
 
 /**
- * 平面都要放过:代理色块、快照平面、流平面,以及占位平面(槽位和组件根元素;product/rendering.md「兜底顺序」)——
- * 占位符正是在子树被藏起来(抑制 / 等快照 / 追帧)的时候才显示的,被这几条规则一起藏掉就白挂了。
+ * All planes must be exempted: proxy color blocks, snapshot planes, stream planes, and placeholder
+ * planes (slots and component root elements; product/rendering.md "Fallback order"): placeholders
+ * are displayed precisely when the subtree is hidden (suppression / awaiting snapshot / frame
+ * catch-up); hiding them together with these rules defeats the purpose of mounting them.
  */
 const PLANES = `:not([data-pc-snapshot-plane]):not([data-pc-proxy-plane]):not([data-pc-stream-plane]):not([${PLACEHOLDER_SLOT_ATTR}]):not([${PLACEHOLDER_ATTR}])`;
 
@@ -42,7 +55,7 @@ export const PLANE_CSS = [
 
 let injected = false;
 
-/** 注入一次。只有真的用上这几个 prop 的宿主(舞台页)才会调它 */
+/** Injected once. Only hosts that actually use these props (stage page) will call it */
 export function ensurePlaneStyle(): void {
   if (injected || typeof document === "undefined") return;
   injected = true;

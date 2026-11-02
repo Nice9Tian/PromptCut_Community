@@ -1,9 +1,12 @@
-// D3:`see_frames` 回包附实体矩形 —— server/vision/render.ts 的 renderFrames 出口。
-// 渲染和量框都由 FramePipeline 做(cards-layout.test.mjs 测),这里把它换成假的,
-// 只验出口:给模型看的缩图才量、每帧挂 rects、文字部分按 clipId 一行、量不出来不连累图片。
+// D3: `see_frames` response attaches entity rectangles: renderFrames exit of
+// server/vision/render.ts. Rendering and box measurement are both done by FramePipeline
+// (tested in cards-layout.test.mjs); replaced with a mock here, only verifying the exit:
+// measure only thumbnails shown to models, attach rects to each frame, text portion is
+// one line per clipId, failure to measure does not compromise images.
 //
-// render.ts 是 .ts、兄弟模块不带扩展名,和 asset-service.test 一样用 typescript 转译到临时目录,
-// 五个依赖换成桩。跑法:node --test server/test/see-frames-rects.test.mjs
+// render.ts is .ts and sibling modules have no extensions; like asset-service.test, transpile
+// to a temporary directory with typescript, replacing five dependencies with stubs.
+// How to run: node --test server/test/see-frames-rects.test.mjs
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,7 +26,9 @@ const post = stub('post.mjs', `import fs from 'node:fs/promises';
 export async function postFrame({ cards, out }) { await fs.copyFile(cards, out); return { width: 960, height: 540 }; }`);
 const http = stub('http.mjs', 'export const outRoot = r => r;');
 const pool = stub('pool.mjs', 'export const runExport = async () => null;');
-// 单张卡片位图那条路(bitmapOnly):真身借预渲染间截图,这里换成假的,只验 renderFrames 把它分出去、不碰 FramePipeline
+// The single-card bitmap path (bitmapOnly): the real implementation takes screenshots via the
+// prerender room; replaced with a mock here, only verifying that renderFrames dispatches it
+// without touching FramePipeline
 const bitmap = stub('card-bitmap.mjs', 'export const cardBitmapScratch = r => r; export const renderCardBitmaps = (...a) => globalThis.__seeRectsBitmaps(...a);');
 let src = fs.readFileSync(path.join(ROOT, 'server', 'vision', 'render.ts'), 'utf8');
 for (const [a, b] of [['"../vite-plugin-frames"', `"${frames}"`], ['"../png-post.mjs"', `"${post}"`], ['"./http"', `"${http}"`], ['"./card-bitmap"', `"${bitmap}"`], ['"./worker-pool"', `"${pool}"`]]) {

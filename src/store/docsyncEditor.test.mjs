@@ -1,11 +1,14 @@
 /**
- * c65-editor 给 docsync 加的几件事的测试。跑:node --test src/store/docsyncEditor.test.mjs
+ * Tests for additions to docsync by c65-editor. Run: node --test src/store/docsyncEditor.test.mjs
  *
- *   - AI 栏「撤销这一步」(`revertRemote`):以页面身份提交 Agent 那次提交的逆操作,带 undoOf、进页面自己的撤销栈;
- *     这一步之后被**不同于那个 Agent 对话**的任何写入(含页面自己后来的改动)改过的实体不撤(2026-09-26 主会话裁定);
- *   - 别人的改动发 `remote` 通知(时间轴描边用);
- *   - 超过 256 KiB 的根替换走 `project.upload`(真文档服务,`server/docservice/modules/project.mjs`);
- *     差异本身超过 256 KiB 时改成一条根替换。
+ *   - AI panel "Undo this step" (`revertRemote`): commits inverse operation of Agent's commit as
+ *     page identity, with undoOf, enters page's own undo stack; entities modified after this step
+ *     by any write **different from that Agent chat** (including page's own later changes) are not
+ *     undone (lead session ruling, 2026-09-26);
+ *   - Others' modifications emit `remote` notifications (used for timeline stroke);
+ *   - Root replacements exceeding 256 KiB go through `project.upload` (real document service,
+ *     `server/docservice/modules/project.mjs`); converted to a root replacement when diff itself
+ *     exceeds 256 KiB.
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import test from "node:test";
@@ -103,7 +106,7 @@ test("undo this step: later edits by the page itself also block it (including un
   svc.drain();
   assert.equal(svc.rev, revBefore, "nothing was undone, so no commit is produced");
   assert.equal(textOf(svc.project, "c1"), "A1");
-  // 还没确认的本地修改
+  // Unconfirmed local modifications
   G.ds.commit(withText(G.ds.project, "c2", "G2"));
   svc.drain();
   const op2 = lastOp(svc).opId;
@@ -119,7 +122,8 @@ test("undo this step: the inverse carried by the event takes priority; when no i
   svc.drain();
   const agentOp = lastOp(svc).opId;
   assert.equal(A.ds.canRevertRemote("nope"), false);
-  // 事件给的逆操作(这里故意给一个只改 c1 为「事件」的,验证用的是它)
+  // Inverse operation provided by event (here deliberately provide one that only changes c1 to
+  // "event" to verify it is used)
   const r = A.ds.revertRemote({ opId: agentOp, inverse: [{ op: "set", path: "/tracks/@t1/clips/@c1/params/text", value: "Event" }] });
   assert.equal(r.done, true);
   svc.drain();
@@ -137,7 +141,7 @@ test("others' edits emit a remote notice carrying the entity and the writer iden
   assert.equal(remote[0].by.session, "B");
 });
 
-/* ---------------- 真文档服务:大的根替换走分片上传 ---------------- */
+/* ---------------- Real document service: large root replacements use chunked upload ---------------- */
 
 const kit = await import("../../server/test/c65-kit.mjs");
 
@@ -151,7 +155,10 @@ async function realPage(env, session, initial, user = "u1") {
   return { ds, ws, sent };
 }
 
-/** 文档服务的当前版本:另开一个页面读(大项目的 project.state 分片发回,DocSync 自己拼) */
+/**
+ * Current version of the document service: read by opening another page (for large projects,
+ * project.state is sent back in chunks, DocSync reassembles them itself).
+ */
 async function serverCopy(env) {
   const R = await realPage(env, 'reader-' + Math.random().toString(36).slice(2, 6), {}, 'reader');
   await kit.waitFor(() => R.ds.status === 'online', 10_000, 'reader online');

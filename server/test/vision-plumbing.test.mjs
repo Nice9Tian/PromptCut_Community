@@ -1,9 +1,11 @@
 /**
- * 图片怎么从工具结果一路走到模型跟前。跑：node --test server/test/vision-plumbing.test.mjs
+ * How images travel from tool results all the way to the model.
+ * Run: node --test server/test/vision-plumbing.test.mjs
  *
- * 这条链上每一段都能悄悄地坏：base64 留在 tool_result 里模型看不见画面、
- * 某家 provider 把 image 块丢了、历史按字面长度算把整段对话截光。
- * 三者都不会报错，只会表现成「模型好像没看图」，所以逐段钉住。
+ * Every step along this chain can fail silently: base64 stays in tool_result so the model
+ * cannot see the image, a provider drops the image chunk, or history calculated by literal
+ * length truncates the entire chat. None of the three throw errors; they only manifest as
+ * "the model seems not to have seen the image", so pin down each step.
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -16,7 +18,7 @@ import { createProvider as gemini } from '../harness/providers/gemini.mjs';
 const B64 = 'A'.repeat(200000);
 const imageMsg = () => ({ role: 'user', content: [{ type: 'image', mime: 'image/png', data: B64 }, { type: 'text', text: 'Look at this one' }] });
 
-/** 把 provider 的请求体截下来，不真的发网络 */
+/** Intercept the provider request body without actually sending it over the network */
 async function bodyOf(create, messages) {
   let captured;
   const fetchImpl = async (_url, init) => {
@@ -24,11 +26,12 @@ async function bodyOf(create, messages) {
     return { ok: true, status: 200, headers: new Map(), body: { getReader: () => ({ read: async () => ({ done: true }), releaseLock() {} }) } };
   };
   const p = create({ apiKey: 'k', model: 'm' }, { fetchImpl });
-  // 只关心它发出去的请求体。空流会让 provider 抱怨「没返回 SSE 数据」，
-  // 那是它该有的行为，这里咽掉就行——请求体在报错之前就已经截到了。
+  // Only care about the outgoing request body. An empty stream makes the provider complain
+  // "no SSE data returned", which is its expected behavior; just swallow it here: the request body
+  // was already intercepted before the error was thrown.
   try {
     for await (const _ of p.stream(messages, [], '', undefined)) void _;
-  } catch { /* 空流 */ }
+  } catch { /* Empty stream */ }
   assert.ok(captured, 'The provider sent no request');
   return captured;
 }
@@ -55,7 +58,7 @@ test('openai still sends a plain string when there are no images (compatible end
   assert.equal(body.messages.find((m) => m.role === 'user').content, 'Hello');
 });
 
-/** 真实形状:同一条 user 消息里先是工具结果,后面跟着图片和说明 */
+/** Real shape: inside the same user message, tool result comes first, followed by image and description */
 const mixedMsg = () => ({
   role: 'user',
   content: [
@@ -104,11 +107,12 @@ test('gemini converts image blocks into inlineData', async () => {
   assert.equal(part.inlineData.data, B64);
 });
 
-// ── agent.mjs 把 __image 从工具结果里摘出来 ────────────────────────────
-// 这一段是整条链的入口：漏了它，base64 会当成普通文本灌进历史，模型什么也看不见，
-// 界面存档还会被撑大。而它不报错，只表现成「模型好像没看图」。
+// ── agent.mjs extracts __image from tool results ──────────────────────────
+// This section is the entry point of the entire chain: miss it, and base64 gets poured into history
+// as plain text, the model sees nothing, and the UI archive gets bloated. Yet it throws no error,
+// only manifesting as "the model seems not to have seen the image".
 
-/** 第一轮调一次工具，第二轮说句话收尾 */
+/** Round 1 calls a tool once, and round 2 says a sentence to wrap up */
 function scriptedProvider(toolName) {
   let turn = 0;
   return { name: 'scripted', async *stream() {
@@ -199,16 +203,17 @@ test('pruneImages leaves messages without images alone', () => {
   assert.equal(h.get()[0].content[0].text, 'x');
 });
 
-// ── 回归面 ────────────────────────────────────────────────────────────
-// 这次改动碰到了这几条路但不打算改变它们的行为。改坏了不会报错，只会让
-// 「什么时候截断」「消息发成什么形状」悄悄变掉，所以拿旧行为当基准钉住。
+// ── Regression surface ──────────────────────────────────────────────────
+// This change touches these paths but does not intend to change their behavior. Breaking them
+// will not report an error, but will silently alter "when to truncate" and "what shape messages
+// are sent in", so pin them down using the old behavior as a baseline.
 
 test('Regression: the length algorithm for plain-text history is byte-for-byte identical to before the change', () => {
   const msgs = [];
   for (let i = 0; i < 200; i++) {
     msgs.push({ role: i % 2 ? 'assistant' : 'user', content: [{ type: 'text', text: 'Long text'.repeat(200) + i }] });
   }
-  const old = JSON.stringify(msgs).length; // 改之前就是这么算的
+  const old = JSON.stringify(msgs).length; // It was calculated this way before the change
   assert.equal(MessageHistory.fromJSON(msgs, {}).estimateTokens(), Math.ceil(old / 3));
 });
 

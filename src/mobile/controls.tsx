@@ -1,10 +1,11 @@
 /**
- * 手机版面板里的数值控件:滑块 + 数字框、按卡片参数声明画的一栏。调整面板与滤镜一栏共用。
+ * Numeric controls in the mobile app panels: slider + number box, a row drawn from the card parameter
+ * declarations. Shared by the adjustment panel and the filter row.
  */
 import { useEffect, useRef, useState } from "react";
 import type { Control } from "../kernel/types";
 
-/** 滑块 + 数字框:拖动中只改显示,松手(或数字框回车 / 失焦)才提交一次,一次拖动 = 一步撤销 */
+/** Slider + number box: while dragging only the display changes, the value is committed once on release (or Enter / blur in the number box), one drag = one undo step */
 export function Slider(props: { label: string; value: number; min: number; max: number; step?: number; unit: string; onCommit: (v: number) => void; pcm?: string }) {
   const [v, setV] = useState(props.value);
   const range = useRef<HTMLInputElement>(null);

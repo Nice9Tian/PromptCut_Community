@@ -1,19 +1,22 @@
 /*
- * 列出「公开侧还在 import 闭源」的每一处 —— 这就是要拆的接缝清单。
+ * Lists every place where "public side still imports closed source": this is the seam manifest to
+ * decouple.
  *
- *   node scripts/dev/community-seams.mjs <仓库根> [--md]
+ *   node scripts/dev/community-seams.mjs <repo-root> [--md]
  *
- * 归属表在 `server/test/community-ownership.mjs`（和守门测试 `server/test/community-boundary.test.mjs`
- * 共用同一张，两边各抄一份会漂）。放在 server/test/ 而不是这里，是因为仓库的依赖方向规则是
- * `scripts/ → server/`，反过来不行（`server/test/bakery-deps.test.mjs` 钉着这条）。判定规则：公开代码不许 import 闭源；闭源可以随便 import 公开。
- * 表的内容以 `docs/plan/community-boundary.md` 第三节为准。
+ * Ownership table is in `server/test/community-ownership.mjs` (shared with the gatekeeper test
+ * `server/test/community-boundary.test.mjs`; copying to both sides would cause drift). Placed in
+ * server/test/ rather than here because repo dependency direction rule is `scripts/ → server/`,
+ * and the reverse is forbidden (pinned by `server/test/bakery-deps.test.mjs`). Evaluation rule:
+ * public code must not import closed source; closed source can freely import public.
+ * Table contents are governed by section 3 of `docs/plan/community-boundary.md`.
  */
 import { importsOf, isCloud, isLan, isTest, listCodeFiles } from '../../server/test/community-ownership.mjs';
 
 const ROOT = process.argv[2] ?? '.';
 const AS_MD = process.argv.includes('--md');
 
-/** 公开文件 → 它引到的闭源文件们 */
+/** Public file → closed source files it imports */
 const seams = new Map();
 for (const rel of listCodeFiles(ROOT)) {
   if (isCloud(rel)) continue;
@@ -22,14 +25,17 @@ for (const rel of listCodeFiles(ROOT)) {
 }
 
 /*
- * 第二维：core → lan（用户 2026-10-28 定的第三类，见 `community-ownership.mjs` 的 `LAN_DIRS`）。
+ * Second dimension: core → lan (the third category (user decision, 2026-10-28), see `LAN_DIRS` in
+ * `community-ownership.mjs`).
  *
- * 后面要出 Lite 版（只有本地、没有局域网），从社区版裁出来、不另开仓库。方向规则和闭源那一层
- * 同形：core 不许 import lan，否则 Lite 裁不掉。**这一轮不立闸门**（Lite 构建与检查等拆完两仓
- * 之后再加），这里只把数报出来，免得在动手之前先悄悄变差。
+ * Later a Lite edition will be released (local-only, no LAN), carved out of the community edition
+ * without creating a separate repo. The direction rule is isomorphic to the closed source layer:
+ * core must not import lan, otherwise Lite cannot be carved out. **No gate is established in this
+ * round** (Lite build and checks will be added after decoupling the two repos); this only reports
+ * the numbers so things do not quietly deteriorate before work begins.
  *
- * `src/main.tsx` 是故意留的那一条边（入口注册，见 `src/editor/sync/lanBoot.ts`），单独列出来，
- * 不混在待办里。
+ * `src/main.tsx` is the one edge deliberately retained (entry registration, see
+ * `src/editor/sync/lanBoot.ts`), listed separately so it is not mixed into the todo list.
  */
 const LAN_ENTRY = 'src/main.tsx';
 const lanSeams = new Map();
@@ -43,7 +49,7 @@ const rows = [...seams.entries()].sort((a, b) => b[1].length - a[1].length || a[
 const prod = rows.filter(([f]) => !isTest(f));
 const tests = rows.filter(([f]) => isTest(f));
 
-/** 按「这个文件属于哪一块」分组，方便切成互不撞车的活 */
+/** Grouped by "which section this file belongs to" to split into non-colliding tasks */
 const AREAS = [
   'src/editor/sync/', 'src/editor/right/', 'src/editor/io/', 'src/editor/left/', 'src/editor/',
   'src/start/', 'src/ai/', 'src/online/', 'src/mobile/', 'src/render/',

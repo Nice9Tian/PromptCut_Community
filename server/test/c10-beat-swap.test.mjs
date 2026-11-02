@@ -1,19 +1,27 @@
 /**
- * C10 播放按拍换快照（`docs/plan/c10-contract.md` 第 6 节；语义 `product/platforms.md`「在线浏览器模式」、
- * `product/rendering.md`「兜底顺序」）。
- * 跑：node --experimental-test-module-mocks --test server/test/c10-beat-swap.test.mjs
+ * C10 playback snapshot swapping per tick (`docs/plan/c10-contract.md` section 6; semantics
+ * `product/platforms.md` "Online browser mode", `product/rendering.md` "Fallback order").
+ * Run: node --experimental-test-module-mocks --test server/test/c10-beat-swap.test.mjs
  *
- *   C10-BS-01 `SWAP_MS` 缺省 3 ms；
- *   C10-BS-02 换帧成本 swapMs 计入每拍预算：装得下的层换快照，装不下的显示占位；两组不重不漏；
- *   C10-BS-03 已占用越多、swapMs 越大，装得下的越少；占满一拍全部占位；不给 swapMs 时按 SWAP_MS；
- *   C10-BS-04 回包带 deadMs 时，它等于拍长（或预算）减去已占用；
- *   C10-BS-05 在线按拍换帧：播放中的投递不受 33 ms 节流（60 fps 下相邻两拍都投）；
- *   C10-BS-06 节流只留给非播放时的投递（暂停时 33 ms 内不重投）；
- *   C10-BS-07 桌面（开关关着）照旧受 33 ms 节流。
+ *   C10-BS-01 `SWAP_MS` defaults to 3 ms;
+ *   C10-BS-02 Frame swap cost swapMs counts toward per-tick budget: layers that fit swap
+ *             snapshots, layers that do not fit display placeholders; the two sets are
+ *             mutually exclusive and exhaustive;
+ *   C10-BS-03 The more already used and the larger swapMs, the fewer layers fit; all display
+ *             placeholders when a tick is filled; uses SWAP_MS when swapMs is omitted;
+ *   C10-BS-04 When response includes deadMs, it equals tick duration (or budget) minus used;
+ *   C10-BS-05 Online per-tick frame swap: deliveries during playback are not throttled to
+ *             33 ms (both adjacent ticks deliver at 60 fps);
+ *   C10-BS-06 Throttling applies only to non-playback delivery (no redelivery within 33 ms
+ *             when paused);
+ *   C10-BS-07 Desktop (switch off) is still throttled to 33 ms as usual.
  *
- * 「deadMs 由拍长减去已占用算出」里的拍长，契约没说是 `1000 / fps` 还是 K2 的预算 `1000 / fps × 0.7`：
- * 这里两种都认——装得下的层数 k 须满足 `floor((预算 − 已占用) / swapMs) ≤ k ≤ floor((拍长 − 已占用) / swapMs)`。
- * 需要主会话定（报告「需要主会话定的事」）。假设见 `c10-kit.mjs` 的 K3。
+ * For tick duration in "deadMs calculated by subtracting used from tick duration", the contract
+ * does not specify whether it is `1000 / fps` or K2 budget `1000 / fps × 0.7`: both are accepted
+ * here: layer count k that fits must satisfy
+ * `floor((budget − used) / swapMs) ≤ k ≤ floor((tickDuration − used) / swapMs)`.
+ * Requires lead session decision (report "Matters requiring lead session decision").
+ * See K3 in `c10-kit.mjs` for assumptions.
  */
 import test, { mock, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -83,7 +91,7 @@ it('C10-BS-04 when the response carries deadMs, it equals the tick length (or th
   assert.ok(ok, `deadMs ${r.deadMs} is neither the tick length minus occupied (${(beatMs(30) - 8).toFixed(3)}) nor the budget minus occupied (${(budgetMs(30) - 8).toFixed(3)})`);
 });
 
-/* ------------------------------------------------------------------ 节流（snapshotFeed.ts） */
+/* ------------------------------------------------------------------ Throttling (snapshotFeed.ts) */
 
 let feed = null;
 let plan = { segments: [] };
@@ -135,7 +143,7 @@ beforeEach(async () => {
   now += 10_000;
 });
 
-/** 播放头在第 f 帧（60 fps）；先把这一帧的字节取到手 */
+/** Playhead at frame f (60 fps); fetch this frame's bytes first */
 async function primeAt(f, stage, frame, playing) {
   const head = { project: project([card('h', 0, 10)]), t: frame / FPS, playing };
   await f.deliverSnapshots(stage, 'front', head);
@@ -152,7 +160,7 @@ async function twoBeats({ on, playing }) {
     const stage = fakeStage();
     await primeAt(f, stage, 60, playing);
     assert.equal(await f.deliverSnapshots(stage, 'front', { project: project([card('h', 0, 10)]), t: 60 / FPS, playing }), 0, 'Nothing is delivered once snapshots are retired');
-    // 下一拍（60 fps，约 16.7 ms 后），换到第 61 帧
+    // Next tick (60 fps, approx. 16.7 ms later), swap to frame 61
     now += 1000 / FPS;
     const head2 = await primeAt(f, stage, 61, playing);
     return await f.deliverSnapshots(stage, 'front', head2);

@@ -1,15 +1,18 @@
 /**
- * Node 24.19 在 Windows 上的测试子进程偶发以 0xC0000005 原生崩溃（nodejs/node#65756），
- * spec 报告器只显示整份文件的「test failed」，不打印子进程退出码。
+ * Test subprocesses of Node 24.19 occasionally crash natively with 0xC0000005 on Windows
+ * (nodejs/node#65756), and the spec reporter only displays "test failed" for the whole file
+ * without printing subprocess exit codes.
  *
- * npm test 由此脚本启动原来的全量命令，保留 spec 实时输出，另挂事件报告器；
- * 每个文件级失败都打印退出码、含义、已报用例数和 stderr 行数，首次异常的诊断不能省。
- * 只单独重跑没有断言失败且进程异常终止的文件，最多两次；只有根汇总表明
- * 原始失败全是这些文件、没有取消项，重跑通过后才返回成功。重跑可能掩盖
- * 非确定性的原生崩溃，所以首次退出信息始终保留在终端输出中。
+ * npm test uses this script to run the original full command, retaining real-time spec output
+ * while attaching an event reporter; each file-level failure prints exit code, meaning, reported
+ * test count, and stderr line count; diagnosis of the first exception cannot be skipped.
+ * Only rerun individually files that have no assertion failures and terminated abnormally,
+ * at most twice; only when root summary shows original failures were exclusively these files
+ * with no cancelled items will passing reruns return success. Reruns might mask non-deterministic
+ * native crashes, so initial exit information is always retained in terminal output.
  *
- * 升级到包含 nodejs/node#65778 的 Node 后可移除：v26.10.0 起，或合入回移
- * nodejs/node#66168 的 v24.x 发布版。
+ * Can be removed after upgrading to Node versions containing nodejs/node#65778: v26.10.0 and above,
+ * or a v24.x release incorporating backported nodejs/node#66168.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -22,15 +25,18 @@ const root = path.resolve(fileURLToPath(import.meta.url), '..', '..');
 const reporter = path.join(root, 'scripts', 'test-event-reporter.mjs');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'promptcut-test-'));
 /*
- * 缺省要跑哪些测试。
+ * Tests to run by default.
  *
- * A2（2026-10-28）把云端专属的测试与探针搬到了闭源目录下（镜像原来的目录结构）。私有仓库里它们
- * 照样要跑，公开仓库里那个目录根本不存在、这几条就是空集。
+ * A2 (2026-10-28) moved cloud-exclusive tests and probes to the closed-source directory
+ * (mirroring the original directory structure). They still need to run in the private repository;
+ * in the public repository that directory does not exist at all, making these an empty set.
  *
- * 闭源目录按 `PROMPTCUT_CLOUD_DIR` 找，缺省是仓库根下的 `cloud` —— 和
- * `server/docservice/extensions.mjs`、`server/vite-plugin-hosted-gate.ts` 同一个约定：
- * 切到子模块布局之后，闭源目录不在公开仓库根下面，写死路径会让这几条永远落空。
- * 本文件因此登记在 `server/test/community-ownership.mjs` 的 `LOADER_WHITELIST` 里。
+ * The closed-source directory is located via `PROMPTCUT_CLOUD_DIR`, defaulting to `cloud` under
+ * the repository root: the same convention as `server/docservice/extensions.mjs` and
+ * `server/vite-plugin-hosted-gate.ts`: after switching to the submodule layout, the closed-source
+ * directory is no longer under the public repository root, so hardcoding paths would make these
+ * entries always miss. This file is therefore registered in `LOADER_WHITELIST` of
+ * `server/test/community-ownership.mjs`.
  */
 function defaultGlobs() {
   const base = ['server/test/*.test.mjs', 'src/**/*.test.mjs', 'tools/report-worker/*.test.mjs'];
@@ -44,9 +50,12 @@ function defaultGlobs() {
 const files = process.argv.length > 2 ? process.argv.slice(2) : defaultGlobs();
 const baseArgs = ['--experimental-test-module-mocks', '--test-global-setup=server/test/global-setup.mjs', '--test'];
 
-// 看门：某个测试文件的进程超过时限还没结束（常见原因：测试失败后没关服务，进程退不出来），就杀掉它的进程树。
-// 被杀的文件由测试运行器记成文件级失败；这里再点名，并在最终汇总前列出。不改变其它文件的通过与失败判定。
-// 不用 node 自带的 --test-force-exit：实验里它会让本来通过的文件（asset-announce 等）被记成文件级失败。
+// Watchdog: if a test file process exceeds the time limit without exiting (common cause: services
+// were not closed after test failures, so the process cannot exit), kill its process tree.
+// Killed files are recorded by the test runner as file-level failures; they are named again here
+// and listed before the final summary. Does not alter pass/fail verdicts of other files.
+// Do not use node's built-in --test-force-exit: in experiments it caused otherwise passing files
+// (such as asset-announce) to be recorded as file-level failures.
 const WATCHDOG_MS = Number(process.env.PROMPTCUT_TEST_FILE_LIMIT_MS) || 15 * 60 * 1000;
 const WATCHDOG_POLL_MS = Number(process.env.PROMPTCUT_TEST_WATCHDOG_POLL_MS) || 30 * 1000;
 const killedByWatchdog = [];

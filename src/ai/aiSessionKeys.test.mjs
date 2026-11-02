@@ -1,22 +1,24 @@
 /**
  * node --test src/ai/aiSessionKeys.test.mjs
  *
- * 换项目 / 新建项目时,**后端的会话 id 也必须清掉**。
+ * When switching projects / creating a new project, **the backend session id must also be cleared**.
  *
- * 来自一份用户诊断报告:全新项目、界面上对话空的、素材库也空的,而第一轮请求就发出去
- * 19 条消息(trace 里 stage:"request", messages:19),模型张口就说出上一个项目里
- * 那条视频的名字 —— 它一次 list_media 都没调,那个名字是从上一段历史里读到的。
+ * From a user diagnostic report: in a brand-new project, the chat in the UI was empty and the
+ * media library was also empty, yet the first-round request sent 19 messages (stage:"request",
+ * messages:19 in trace), and the model immediately spoke the name of the video from the previous
+ * project: it did not call list_media once, and that name was read from the previous history.
  *
- * 原因:清的只是看得见的那段对话,而决定模型看到什么的是 localStorage 里的
- * aiSession:<provider>,服务端拿它去读回整段历史。界面和后端对「这是哪段对话」
- * 的认知是脱节的 —— 而这种脱节没有任何界面症状,只能靠测试守住。
+ * Reason: what was cleared was only the visible chat, whereas what determines what the model sees
+ * is aiSession:<provider> in localStorage, which the server uses to read back the entire history.
+ * The UI and backend are disconnected in their understanding of "which chat this is": and this
+ * disconnect has no UI symptoms, so it can only be guarded by tests.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 const { resetAiSessionIds, AI_SESSION_PREFIX } = await import("./aiSessionKeys.ts");
 
-/** 一份够用的 localStorage 替身 */
+/** A sufficient localStorage stand-in */
 function store(initial = {}) {
   const map = new Map(Object.entries(initial));
   return {

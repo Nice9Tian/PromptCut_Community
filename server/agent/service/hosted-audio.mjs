@@ -1,17 +1,27 @@
 /**
- * 云端 Agent 的测响度(`measure_audio`;契约 `docs/plan/cloud-agent-contract.md` 第 9.4b 节)。
+ * Loudness measurement for Cloud Agent (`measure_audio`; contract `docs/plan/cloud-agent-contract.md`
+ * Section 9.4b).
  *
- * 桌面版里 ffmpeg 直接拿本机素材服务上的地址当输入。云节点上不让 ffmpeg 自己出网:
+ * In the desktop app, ffmpeg directly takes addresses on the local asset service as input. On cloud
+ * nodes, ffmpeg is not allowed direct network egress:
  *
- *   「测谁」在项目副本上算(`src/mcp/common.ts` 的 `measureAudioRequest`,与桌面版同一份;只认本项目素材表里的素材)
- *     → 凭成员本人的**只读**素材票据把要测的素材取到这个对话的工作目录(`measure/` 下,取完核对内容哈希)
- *     → 用工作区的受限子进程起 ffprobe / ffmpeg 量(`server/audio-loudness.mjs`,与桌面版同一份参数与解析)
- *     → 量完删掉取来的文件。
+ *   "What to measure" is computed on the project replica (`measureAudioRequest` in
+ *   `src/mcp/common.ts`, same copy as desktop app; only recognizes assets in this project's asset
+ *   table)
+ *     → Fetches assets to measure into this chat's working directory (under `measure/`, verifying
+ *       content hash after fetch) using the member's own **read-only** asset ticket
+ *     → Measures with ffprobe / ffmpeg spawned via restricted child process in workspace
+ *       (`server/audio-loudness.mjs`, same parameters and parsing as desktop app)
+ *     → Deletes fetched files after measuring.
  *
- * 子进程:工作目录是对话目录、环境变量按白名单重建、不弹窗口(`workspace.mjs` 的 `spawn`);起出来的是一棵杀得掉的进程树
- * (`perception/runner.mjs`),超时杀的是整棵树(`audio-loudness.mjs` 里的 `child.kill()` 与工作区自带的超时都是);每个输入前加
- * `-protocol_whitelist file`——素材是成员传的,伪装成媒体的播放列表不能让 ffmpeg 去连网络地址。
- * 整个进程里同时只跑一个测量(`slot`)。只读成员也能测(只读不写)。
+ * Child process: working directory is the chat directory, environment variables are rebuilt from
+ * a whitelist, no windows popup (`spawn` in `workspace.mjs`); what is spawned is a killable process
+ * tree (`perception/runner.mjs`), and timeouts kill the entire tree (both `child.kill()` in
+ * `audio-loudness.mjs` and the workspace's built-in timeout do so); each input is prepended with
+ * `-protocol_whitelist file`: assets are uploaded by members, and playlists disguised as media
+ * must not allow ffmpeg to connect to network addresses.
+ * Only one measurement (`slot`) runs at a time in the entire process. Read-only members can also
+ * measure (read-only, no writes).
  */
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -20,17 +30,17 @@ import { measureLoudness } from '../../audio-loudness.mjs';
 import { ffprobeText } from '../../audio-source.mjs';
 
 export const HOSTED_AUDIO_DEFAULTS = Object.freeze({
-  /** 一次测量取来的素材合计上限 */
+  /** Total limit on assets fetched for a single measurement */
   maxFetchBytes: 1024 * 1024 * 1024,
-  /** 取一份素材的时限 */
+  /** Time limit for fetching an asset */
   fetchMs: 40_000,
-  /** ffmpeg 的时限 */
+  /** Time limit for ffmpeg */
   measureMs: 50_000,
-  /** 时间轴档最多多少段 */
+  /** Maximum number of clips for timeline tier */
   maxEntries: 200,
 });
 
-/** 找 ffmpeg 与同目录的 ffprobe(`PROMPTCUT_FFMPEG` 或 PATH 上);找不到回 null。结果按进程缓存 */
+/** Finds ffmpeg and ffprobe in same dir (`PROMPTCUT_FFMPEG` or on PATH); returns null if not found. Results cached per process */
 let toolsCache;
 export function findAudioTools(env = process.env) {
   if (toolsCache !== undefined) return toolsCache;
@@ -45,13 +55,13 @@ export function findAudioTools(env = process.env) {
         const pr = spawnSync(p, ['-version'], { timeout: 5000, windowsHide: true });
         if (pr.status === 0 && !pr.error) { toolsCache = { ffmpeg: cand, ffprobe: p }; return toolsCache; }
       }
-    } catch { /* 下一个 */ }
+    } catch { /* Next */ }
   }
   return toolsCache;
 }
 export function _resetAudioTools() { toolsCache = undefined; }
 
-/** 每个输入(`-i`)前加 `-protocol_whitelist file`:ffmpeg 只读本地文件 */
+/** Prepends `-protocol_whitelist file` before each input (`-i`): ffmpeg only reads local files */
 export function localOnlyArgs(args) {
   const out = [];
   for (const a of args) {
@@ -65,12 +75,12 @@ const HASH_URL = /^\/@media\/([a-f0-9]{64})(?:[/?#.]|$)/;
 
 /**
  * @param {object} d
- * @param {() => object} d.workspace 这个对话的工作区
+ * @param {() => object} d.workspace Workspace for this chat
  * @param {() => Promise<object>} d.host `ssr-host.mjs`
- * @param {(apply: (host: object) => any) => Promise<any>} d.read 在放好项目副本的 store 上执行(只读)
+ * @param {(apply: (host: object) => any) => Promise<any>} d.read Executes on store holding project replica (read-only)
  * @param {(hash: string, onChunk: (chunk: Buffer) => void, o: { maxBytes: number, timeoutMs: number }) => Promise<{ status: number }>} d.fetchAsset
- *   凭成员本人的只读素材票据按哈希取一份素材
- * @param {{ acquire(signal?: AbortSignal): Promise<() => void> }} d.slot 进程级的测量名额
+ *   Fetches an asset by hash using the member's own read-only asset ticket
+ * @param {{ acquire(signal?: AbortSignal): Promise<() => void> }} d.slot Process-level measurement slot
  * @param {() => ({ ffmpeg: string, ffprobe: string } | null)} [d.tools]
  */
 export function createAudioTools({ workspace, host, read, fetchAsset, slot, tools = findAudioTools, limits: limitsIn = {}, ToolError = Error }) {
@@ -88,7 +98,7 @@ export function createAudioTools({ workspace, host, read, fetchAsset, slot, tool
 
     const ws = workspace();
     const release = await slot.acquire();
-    /** 素材哈希 → 工作区里的相对路径(同一份素材只取一次) */
+    /** Asset hash → relative path in workspace (each asset is fetched only once) */
     const fetched = new Map();
     let budget = limits.maxFetchBytes;
     const spawnIn = (cmd, a, o = {}) => ws.spawn(cmd, localOnlyArgs(a), { stdio: o.stdio, timeoutMs: limits.measureMs + 5000 });
@@ -138,14 +148,14 @@ export function createAudioTools({ workspace, host, read, fetchAsset, slot, tool
         },
       });
       if (out.status !== 200 || out.body?.ok === false) {
-        // 报错里不带工作目录的磁盘路径
+        // Error messages do not include working directory disk path
         const root = ws.dir();
         throw new ToolError(String(out.body?.error ?? `Loudness measurement failed (${out.status})`).split(root).join('<working directory>').slice(0, 400));
       }
       return h.audio.measureFinish(req, out.body);
     } finally {
       release();
-      for (const hash of fetched.keys()) { try { ws.remove(`measure/${hash}`); } catch { /* 留给对话删除时清 */ } }
+      for (const hash of fetched.keys()) { try { ws.remove(`measure/${hash}`); } catch { /* Left to be cleaned up when chat is deleted */ } }
     }
   }
 

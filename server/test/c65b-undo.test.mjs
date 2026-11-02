@@ -1,11 +1,14 @@
 /**
- * C6.5 第二批：撤销 / 重做的用户侧行为（V5 的用户侧）、快捷键、提示条文案、`.proc` 等确认后才写（V7 页面侧）。
- * 用例 C65B-U-*、C65B-V7-*。
- * 跑：node --test server/test/c65b-undo.test.mjs
+ * C6.5 batch 2: user-facing undo/redo behavior (V5 user-facing side), shortcuts, notice bar copy,
+ * writing `.proc` only after confirmation (V7 page side).
+ * Test cases C65B-U-*, C65B-V7-*.
+ * Run: node --test server/test/c65b-undo.test.mjs
  *
- * 依据：`docs/plan/c65-design.md` 第 4、8、13 节，第 11 节 V5、V7；`docs/plan/c65-undo-draft.md` 第 1～3 节与文案表。
- * 第一批已在 `c65-undo.test.mjs` 钉了 V5 的基本面（C65-V5-01～05）；这里补「谁改的」三种身份、重做一侧、
- * 快捷键与文案。设计稿没写死的接口集中在 `c65b-kit.mjs`（假设 B5、B7、B8、B9）。
+ * Based on: `docs/plan/c65-design.md` sections 4, 8, 13, section 11 V5, V7;
+ * `docs/plan/c65-undo-draft.md` sections 1-3 and copy tables.
+ * Batch 1 already pinned the fundamentals of V5 in `c65-undo.test.mjs` (C65-V5-01..05); this adds
+ * the three "who changed it" identities, redo side, shortcuts, and copy. Interfaces unspecified
+ * in the design draft are centralized in `c65b-kit.mjs` (assumptions B5, B7, B8, B9).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,7 +31,7 @@ async function setup(t) {
     return p;
   };
   t.after(() => { for (const p of pages) p.close(); });
-  /** 别的写入身份直接提交一次 set */
+  /** Another write identity directly commits a set. */
   const writeAs = async (who, session, path, value) => {
     const c = await env.connect(who);
     await openProject(c, PID);
@@ -42,7 +45,7 @@ async function setup(t) {
 
 const skippedMap = (res) => new Map((res.skipped ?? []).map((s) => [s.entity, s.by]));
 
-// ------------------------------------------------------------------ 部分没撤 / 全部没撤：实体与「谁改的」
+// ------------------------------------------------------------------ Partially not undone / completely not undone: entities and "who changed it"
 
 test('C65B-U-01 partly not undone: returns the entities that were not undone and the write identity that changed them, telling apart an Agent\'s chat, another member, and you on another page; the rest are undone as usual', async (t) => {
   const { env, open, writeAs } = await setup(t);
@@ -108,7 +111,7 @@ test('C65B-U-03 redo works the same way: when only some are not redone, it retur
   assert.equal(clipOf(st.project, 'c1').label, 'Bob1');
   assert.equal(clipOf(st.project, 'c2').label, 'A2', 'c2 is back after redo');
 
-  // 全部没重做：另开一个页面会话，状态干净
+  // Completely not redone: opens another page session with clean state
   const B = await open({ user: 'alice', dev: 'dev-a', session: 'page-b2' });
   B.edit((p) => { clipOf(p, 'c3').label = 'B3'; clipOf(p, 'c4').label = 'B4'; });
   await B.settled();
@@ -128,7 +131,7 @@ test('C65B-U-03 redo works the same way: when only some are not redone, it retur
   assert.equal(st.rev, revBefore, 'no commit');
 });
 
-// ------------------------------------------------------------------ 快捷键（B5）
+// ------------------------------------------------------------------ Shortcuts (B5)
 
 test('C65B-U-04 keyboard shortcuts: Ctrl+Z undoes; Ctrl+Shift+Z and Ctrl+Y both redo (same for Cmd); when focus is in an input box, leave it to the input box', async () => {
   const action = await loadShortcut();
@@ -172,7 +175,7 @@ test('C65B-U-05 Ctrl+Y and Ctrl+Shift+Z have the same effect on the page: both r
   }
 });
 
-// ------------------------------------------------------------------ 提示条文案（B8）
+// ------------------------------------------------------------------ Notice bar copy (B8)
 
 const by = (userId, extra = {}) => ({ actor: { userId, role: 'page', ...extra }, session: 's' });
 const skipped = (n) => Array.from({ length: n }, (_, i) => ({ entity: clip(`c${i + 1}`), by: by(`u${i}@d`) }));
@@ -208,7 +211,7 @@ test('C65B-U-06 notice text: partly not undone / nothing undone / redo, two kind
   assert.ok(five.lines[2].includes('click to expand'), five.lines[2]);
 });
 
-// ------------------------------------------------------------------ V7 页面侧：.proc 等确认后才写（B7）
+// ------------------------------------------------------------------ V7 page side: write .proc only after confirmation (B7)
 
 test('C65B-V7-01 page saves .proc: when there are unconfirmed operations, it serializes only after they are confirmed, and the written content matches the version confirmed by the document service', async () => {
   await registerTs();

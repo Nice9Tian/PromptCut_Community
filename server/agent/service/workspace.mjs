@@ -1,25 +1,35 @@
 /**
- * 云端 Agent 的工作区:按「项目 × 对话」隔离的本地目录(任务书 `docs/plan/cloud-agent-task.md` J;
- * 契约 `docs/plan/cloud-agent-contract.md` 第 9.5 节)。
+ * Cloud Agent workspace: local directory isolated by "project × chat" (task brief
+ * `docs/plan/cloud-agent-task.md` J; contract Section 9.5 in `docs/plan/cloud-agent-contract.md`).
  *
- * 托管档里凡是读写本地文件的工具(附件、下载、感知类工具的中间文件、配音的产物等),一律落在
+ * In hosted tier, all tools that read or write local files (attachments, downloads, intermediate
+ * files for perception tools, voiceover outputs, etc.) fall strictly under:
  *
- *   <数据目录>/work/<项目 id>/<主人键>/<对话 id>/
+ *   <data directory>/work/<project id>/<owner key>/<chat id>/
  *
- * 之下,由这里给路径、核路径:
+ * and paths are provided and verified here:
  *
- *   - 工具给的相对路径先在字面上拒掉绝对路径、Windows 盘符、UNC、`..`、NUL 与设备名;再解析,核对落在对话目录之内;
- *     再对**已经存在的最深一层**取真实路径(跟符号链接、junction),核对仍在对话目录的真实路径之内——
- *     所以目录里若被放进一个指向外面的链接,经它读写同样被拒;
- *   - 写入计入对话与项目两级的总量上限,超了拒写;
- *   - 对话删除、项目删除时整棵删掉;
- *   - 子进程(Python、ffmpeg、下载器)只经 `spawn()` 起:工作目录是对话目录,环境变量是一张**白名单**重建的,
- *     不带 Agent 服务的私钥目录、数据目录、文档服务地址、委托与模型 Key(这些本来也只在内存里,这里连同名的环境变量一起不传)。
- *     起出来的是一棵杀得掉的进程树(`perception/runner.mjs` 的 `spawnTree`):非 Windows 上是新进程组的组长,
- *     `child.kill()` 与自带的超时杀的都是整棵树(Python 再起的 ffmpeg 一起死)。
+ *   - Relative paths provided by tools literally reject absolute paths, Windows drive letters,
+ *     UNC, `..`, NUL, and device names first; then resolve and verify they fall within the chat
+ *     directory; then take the realpath of the **deepest existing layer** (following symlinks and
+ *     junctions), verifying it remains within the realpath of the chat directory: so if a link
+ *     pointing outside is placed inside the directory, reading and writing through it is likewise
+ *     rejected;
+ *   - Writes count toward total size limits at both chat and project levels; writes exceeding the
+ *     limit are rejected;
+ *   - When a chat or project is deleted, the entire tree is deleted;
+ *   - Subprocesses (Python, ffmpeg, downloaders) are spawned only via `spawn()`: working
+ *     directory is the chat directory; environment variables are rebuilt from a **whitelist**,
+ *     excluding the Agent service's private key directory, data directory, document service
+ *     address, delegation, and model Keys (these are originally in-memory only, and even
+ *     environment variables of the same name are not passed here). What is spawned is a killable
+ *     process tree (`spawnTree` in `perception/runner.mjs`): on non-Windows it is the leader of a
+ *     new process group, and both `child.kill()` and the built-in timeout kill the entire tree
+ *     (ffmpeg spawned by Python also dies).
  *
- * 这只是进程内的一道:节点上应当再用独立的非特权用户跑这些子进程(部署说明里写),本模块不假设它存在。
- * 纯 Node,不引用 `src/`。
+ * This is only an in-process defense: the node should run these subprocesses under an independent
+ * unprivileged user (as documented in deployment notes); this module does not assume its presence.
+ * Pure Node, does not import `src/`.
  */
 import { spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -29,13 +39,13 @@ import { killTree, spawnTree } from './perception/runner.mjs';
 export { killTree };
 
 export const WORKSPACE_DEFAULTS = Object.freeze({
-  /** 一个对话的工作目录总量上限 */
+  /** Total size limit for a chat's working directory */
   maxConversationBytes: 2 * 1024 * 1024 * 1024,
-  /** 一个项目所有对话的工作目录总量上限 */
+  /** Total size limit of working directories for all chats in a project */
   maxProjectBytes: 8 * 1024 * 1024 * 1024,
-  /** 单个文件上限 */
+  /** Single file size limit */
   maxFileBytes: 1024 * 1024 * 1024,
-  /** 一个对话目录里最多多少个文件 */
+  /** Maximum number of files in a chat directory */
   maxFiles: 2000,
 });
 
@@ -49,22 +59,24 @@ export class WorkspaceError extends Error {
 }
 
 const ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
-/** Windows 的保留设备名(带不带扩展名都算) */
+/** Windows reserved device names (with or without extension) */
 const DEVICE_RE = /^(con|prn|aux|nul|com[0-9]|lpt[0-9]|conin\$|conout\$)(\..*)?$/i;
 
-/** 当目录名用:项目 id 里的冒号在 Windows 上不能进路径 */
+/** Used as directory name: colons in project ids cannot appear in Windows paths */
 const dirName = (id) => String(id).replace(/[^A-Za-z0-9._-]/g, '_');
 
-/** `child` 是不是在 `parent` 之内(或就是它);两者都要是已解析的绝对路径 */
+/** Whether `child` is inside `parent` (or identical to it); both must be resolved absolute paths */
 export function isInside(parent, child) {
   const rel = path.relative(parent, child);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
 /**
- * 字面检查一个工具给的相对路径;回规范化后的各段。不合规矩就抛。
- * 拒:空、绝对路径(`/x`、`\x`)、盘符(`C:`、`C:\x`、`C:x`)、UNC 与设备路径(`\\server\share`、`\\?\`、`//x`)、
- * 任何一段是 `..`、带 NUL、段名是 Windows 设备名、段名以空格或点结尾(Windows 会悄悄去掉,能绕过别的比较)、带 `:`(NTFS 备用数据流)。
+ * Literally inspect a relative path provided by a tool; returns normalized segments. Throws if invalid.
+ * Rejects: empty, absolute paths (`/x`, `\x`), drive letters (`C:`, `C:\x`, `C:x`), UNC and device
+ * paths (`\\server\share`, `\\?\`, `//x`), any segment that is `..`, contains NUL, segment name is
+ * a Windows device name, segment name ends with a space or dot (Windows silently strips them,
+ * which can bypass other checks), contains `:` (NTFS alternate data streams).
  */
 export function splitRelative(input) {
   if (typeof input !== 'string' || !input) throw new WorkspaceError('bad-path', 'Path is empty');
@@ -82,7 +94,7 @@ export function splitRelative(input) {
   return parts;
 }
 
-/** 已存在的最深一层的真实路径,加上还不存在的那几段 */
+/** Realpath of the deepest existing level, plus segments that do not yet exist */
 function realOfDeepest(abs) {
   const pending = [];
   let cur = abs;
@@ -108,10 +120,11 @@ function treeSize(dir) {
     try { list = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
     for (const e of list) {
       const p = path.join(d, e.name);
-      // 链接本身不跟:不让一个指向外面的链接把外面的体积算进来,也不沿着它走出去
+      // Do not follow the link itself: prevent an outbound link from counting outside size,
+      // and do not traverse out along it.
       if (e.isSymbolicLink()) { files += 1; continue; }
       if (e.isDirectory()) walk(p);
-      else if (e.isFile()) { files += 1; try { bytes += fs.statSync(p).size; } catch { /* 刚被删 */ } }
+      else if (e.isFile()) { files += 1; try { bytes += fs.statSync(p).size; } catch { /* Just deleted */ } }
     }
   };
   walk(dir);
@@ -119,8 +132,10 @@ function treeSize(dir) {
 }
 
 /**
- * 子进程的环境变量:白名单重建。只留找可执行文件、临时目录、区域设置要的那几个,外加调用方点名要给的。
- * 任何 `PROMPTCUT_*`、代理、云厂商凭证的变量都不在白名单里。
+ * Subprocess environment variables: rebuilt from whitelist. Keeps only those needed to find
+ * executables, temporary directories, and locale settings, plus those explicitly requested by
+ * the caller. Any `PROMPTCUT_*`, proxy, or cloud provider credential variables are not in the
+ * whitelist.
  */
 const ENV_ALLOW = ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'SYSTEMROOT', 'windir', 'ComSpec', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE'];
 export function childEnv(cwd, extra = {}, base = process.env) {
@@ -131,7 +146,7 @@ export function childEnv(cwd, extra = {}, base = process.env) {
   env.HOME = cwd; env.USERPROFILE = cwd;
   for (const [k, v] of Object.entries(extra ?? {})) {
     if (typeof v !== 'string') continue;
-    if (/^PROMPTCUT_/i.test(k)) continue; // 服务自己的配置一个都不传
+    if (/^PROMPTCUT_/i.test(k)) continue; // None of the service's own configuration is passed
     env[k] = v;
   }
   return env;
@@ -139,13 +154,14 @@ export function childEnv(cwd, extra = {}, base = process.env) {
 
 /**
  * @param {object} o
- * @param {string | null} o.dataDir Agent 服务的数据目录;null 时工作区不可用(只给不碰文件的测试)
- * @param {object} [o.limits] 覆盖 `WORKSPACE_DEFAULTS`
+ * @param {string | null} o.dataDir Agent service data directory; when null, workspace is
+ *   unavailable (for tests that do not touch files only)
+ * @param {object} [o.limits] overrides `WORKSPACE_DEFAULTS`
  * @param {(event: string, fields?: object) => void} [o.log]
  */
 export function createWorkspaces({ dataDir, limits: limitsIn = {}, log = () => {}, spawnImpl = nodeSpawn } = {}) {
   const limits = { ...WORKSPACE_DEFAULTS, ...limitsIn };
-  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响工具 */ } };
+  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* Logging failure does not affect tools */ } };
   const root = dataDir ? path.join(path.resolve(dataDir), 'work') : null;
 
   const projectDir = (projectId) => {
@@ -155,8 +171,9 @@ export function createWorkspaces({ dataDir, limits: limitsIn = {}, log = () => {
   };
 
   /**
-   * 一个对话的工作区。目录用到时才建。
-   * @param {{ projectId: string, ownerKey: string, conversationId: string }} who 全部来自鉴权与服务端,不来自工具参数
+   * Workspace for a chat. Directory is created only when used.
+   * @param {{ projectId: string, ownerKey: string, conversationId: string }} who all from
+   *   authentication and server side, not from tool arguments
    */
   function open({ projectId, ownerKey, conversationId }) {
     if (typeof ownerKey !== 'string' || !/^[A-Za-z0-9]{8,64}$/.test(ownerKey)) throw new WorkspaceError('bad-path', 'Owner key is invalid');
@@ -169,7 +186,7 @@ export function createWorkspaces({ dataDir, limits: limitsIn = {}, log = () => {
       return dir;
     };
 
-    /** 工具给的相对路径 → 核过的绝对路径 */
+    /** Relative path from tool → verified absolute path */
     function resolve(rel) {
       const parts = splitRelative(rel);
       const abs = path.resolve(dir, ...parts);
@@ -195,7 +212,10 @@ export function createWorkspaces({ dataDir, limits: limitsIn = {}, log = () => {
     return {
       projectId,
       conversationId,
-      /** 对话目录(已建)。只交给 `spawn` 与本模块的使用方,不回给模型 */
+      /**
+       * Chat directory (created). Given only to `spawn` and callers of this module, not returned
+       * to the model.
+       */
       dir: ensure,
       resolve,
       exists(rel) {
@@ -218,12 +238,15 @@ export function createWorkspaces({ dataDir, limits: limitsIn = {}, log = () => {
         const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
         checkQuota(buf.length);
         fs.mkdirSync(path.dirname(abs), { recursive: true });
-        // 建完父目录再核一次:父目录这一步也不能经链接出去
+        // Verify again after creating parent directory: parent directory must not escape via link either
         resolve(rel);
         fs.writeFileSync(abs, buf);
         return { path: splitRelative(rel).join('/'), size: buf.length };
       },
-      /** 逐块写(下载):回 `{ write(chunk), end(), abort() }`,边写边记体积,超了抛 */
+      /**
+       * Write chunk by chunk (download): returns `{ write(chunk), end(), abort() }`, tracking size
+       * while writing, throws if exceeded.
+       */
       writer(rel) {
         const abs = resolve(rel);
         checkQuota(0);
@@ -233,20 +256,20 @@ export function createWorkspaces({ dataDir, limits: limitsIn = {}, log = () => {
         const fd = fs.openSync(abs, 'w');
         let bytes = 0;
         let open = true;
-        const close = () => { if (open) { open = false; try { fs.closeSync(fd); } catch { /* 已经关了 */ } } };
+        const close = () => { if (open) { open = false; try { fs.closeSync(fd); } catch { /* Already closed */ } } };
         return {
           write(chunk) {
             bytes += chunk.length;
-            if (bytes > room) { close(); try { fs.rmSync(abs, { force: true }); } catch { /* 删不掉就留给清理 */ } throw new WorkspaceError('quota', 'The working directory cannot hold this file'); }
+            if (bytes > room) { close(); try { fs.rmSync(abs, { force: true }); } catch { /* If deletion fails, leave it for cleanup */ } throw new WorkspaceError('quota', 'The working directory cannot hold this file'); }
             fs.writeSync(fd, chunk);
           },
           end() { close(); return { path: splitRelative(rel).join('/'), size: bytes }; },
-          abort() { close(); try { fs.rmSync(abs, { force: true }); } catch { /* 删不掉就留给清理 */ } },
+          abort() { close(); try { fs.rmSync(abs, { force: true }); } catch { /* If deletion fails, leave it for cleanup */ } },
         };
       },
       remove(rel) {
         const abs = resolve(rel);
-        try { fs.rmSync(abs, { force: true }); } catch { /* 没有就算了 */ }
+        try { fs.rmSync(abs, { force: true }); } catch { /* Ignore if absent */ }
       },
       list() {
         const out = [];
@@ -258,7 +281,7 @@ export function createWorkspaces({ dataDir, limits: limitsIn = {}, log = () => {
             if (e.isSymbolicLink()) continue;
             const rel = prefix ? `${prefix}/${e.name}` : e.name;
             if (e.isDirectory()) walk(path.join(d, e.name), rel);
-            else if (e.isFile()) { try { out.push({ path: rel, size: fs.statSync(path.join(d, e.name)).size }); } catch { /* 刚被删 */ } }
+            else if (e.isFile()) { try { out.push({ path: rel, size: fs.statSync(path.join(d, e.name)).size }); } catch { /* Just deleted */ } }
           }
         };
         walk(dir, '');
@@ -266,8 +289,12 @@ export function createWorkspaces({ dataDir, limits: limitsIn = {}, log = () => {
       },
       usage: () => treeSize(dir),
       /**
-       * 不经 `write` / `writer` 往这个目录里落一个新文件之前问**一次**:还放得下多少字节(单文件上限、对话与项目的剩余额度,三者取小)。
-       * 文件数到了上限抛 `quota`。这里各扫一遍对话目录和项目目录(同步的);调用方按回来的数自己累计,不要每写一块来问一次
+       * Before placing a new file into this directory without going through `write` / `writer`, ask
+       * **once**: how many bytes can still fit (minimum of single-file limit, remaining quota for chat,
+       * and remaining quota for project).
+       * Throws `quota` if file count reaches the limit. Here it scans the chat directory and project
+       * directory once each (synchronously); caller should accumulate using the returned count itself,
+       * rather than asking each time a chunk is written.
        */
       room() {
         ensure();
@@ -276,15 +303,19 @@ export function createWorkspaces({ dataDir, limits: limitsIn = {}, log = () => {
         return Math.max(0, Math.min(limits.maxFileBytes, limits.maxConversationBytes - mine.bytes, limits.maxProjectBytes - treeSize(pdir).bytes));
       },
       /**
-       * 起子进程:工作目录是对话目录,环境变量按白名单重建,不弹窗口。`args` 里的路径由调用方用 `resolve()` 得到。
-       * 回的 `child.kill()` 杀整棵进程树;`timeoutMs` 到点也杀整棵树。起 Python 时参数用 `isolatedPythonArgs()` 拼(隔离模式)。
+       * Spawn subprocess: working directory is the chat directory, environment variables are rebuilt
+       * from whitelist, no window pops up. Paths in `args` are obtained by caller using `resolve()`.
+       * Returned `child.kill()` kills the entire process tree; when `timeoutMs` expires, it also kills
+       * the entire tree. When starting Python, assemble arguments using `isolatedPythonArgs()`
+       * (isolated mode).
        * @param {string} command
        * @param {string[]} args
        * @param {{ env?: Record<string, string>, stdio?: any, timeoutMs?: number }} [options]
        */
       spawn(command, args = [], options = {}) {
         const cwd = ensure();
-        // 起成一棵杀得掉的树(`perception/runner.mjs`):非 Windows 上是新进程组的组长;回的 `child.kill()` 杀整棵树
+        // Spawn as a killable tree (`perception/runner.mjs`): on non-Windows it is the leader of a new
+        // process group; returned `child.kill()` kills the entire tree
         const child = spawnTree(command, args, { cwd, env: childEnv(cwd, options.env), stdio: options.stdio }, { spawnImpl });
         if (Number(options.timeoutMs) > 0) {
           const timer = setTimeout(() => { killTree(child); }, Number(options.timeoutMs));
@@ -293,7 +324,7 @@ export function createWorkspaces({ dataDir, limits: limitsIn = {}, log = () => {
         }
         return child;
       },
-      /** 删掉这个对话的整个工作目录 */
+      /** Delete the entire working directory for this chat */
       destroy() {
         try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 }); } catch (err) { say('agent.workspace.remove-failed', { projectId, message: String(err?.code ?? err).slice(0, 80) }); }
       },
@@ -304,7 +335,7 @@ export function createWorkspaces({ dataDir, limits: limitsIn = {}, log = () => {
     root,
     available: root !== null,
     open,
-    /** 项目删除:整棵删掉 */
+    /** Project deletion: delete the entire tree */
     removeProject(projectId) {
       if (!root) return;
       try { fs.rmSync(projectDir(projectId), { recursive: true, force: true, maxRetries: 3 }); } catch (err) { say('agent.workspace.remove-failed', { projectId, message: String(err?.code ?? err).slice(0, 80) }); }

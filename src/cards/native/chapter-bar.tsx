@@ -14,16 +14,21 @@ interface Params extends HudParams {
 
 function ChapterBarCard({ params, t = 0, duration = 6, playToken = 0 }: CardProps<Params>) {
   /*
-   * 高亮块的**共享布局 id**。两截都不能少:
+   * The **shared layout id** of the highlight block. Neither of the two parts can be dropped:
    *
-   *   useId()    —— 同屏摆两张章节条时,写死的字符串会让两张抢同一个 layoutId,高亮在两张卡之间乱飞。
-   *   playToken  —— 重挂载要换一个新 id。`layoutId` 是「共享布局」:旧节点消失、新节点出现,
-   *                 Motion 会把这当成一次过渡,让新高亮从旧位置滑过去。而重挂载是**重播**,
-   *                 不是过渡。useId() 挡不住这个 —— 它在同一个树位置上重挂载后是同一个值。
+   *   useId():   when two chapter bars are placed on the same screen, a hardcoded string would make
+   *              the two fight over the same layoutId, and the highlight flies around between them.
+   *   playToken: a remount needs a new id. `layoutId` is a "shared layout": the old node disappears and
+   *              the new node appears, Motion treats this as a transition and lets the new highlight
+   *              slide over from the old position. But a remount is a **replay**, not a transition.
+   *              useId() cannot stop this: after a remount at the same tree position it is the same
+   *              value.
    *
-   * 这不是洁癖:预览跳转时会重挂载(StageView 的 setToken),导出每一趟都是全新页面、
-   * 永远碰不到旧节点。于是同一帧两边不一样 —— 实测预览里高亮被投影补了 translateY(-13.442px),
-   * 导出是 none;全新页面上第一次渲染则逐字节相同,正是这条的直接证据。
+   * This is not fussiness: on a preview jump it remounts (StageView's setToken), while every export
+   * pass is a brand-new page that never meets an old node. So the same frame differs between the two
+   * sides: in testing the highlight in the preview had a projection-compensated translateY(-13.442px)
+   * and the export had none; the first render on a brand-new page is byte-identical, which is direct
+   * evidence for this.
    */
   const gid = `${useId()}-${playToken}`;
   const rawChapters = params.chapters.split("|").filter(Boolean);
@@ -120,7 +125,8 @@ export const chapterBar: CardDef<Params> = {
   useWhen: "The video is split into several chapters and needs a persistent progress indicator at the top to tell viewers which section is being covered. **Each line of chapters is formatted as \"chapter name, space, start seconds\"**; if the seconds are missing, progress stops working; a single horizontal row only fits 3 to 5 short chapter names. This card follows the timeline, so the clip must cover the whole span, not just a short piece.",
   tags: ["chapters","navigation","progress","persistent"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,

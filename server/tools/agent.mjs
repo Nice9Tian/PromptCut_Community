@@ -1,7 +1,7 @@
 import { SPAWN_ROLE_IDS, SPAWN_ROLE_HINTS } from "../agent/spawn-roles.mjs";
 
-// 多 Agent(计划 docs/plan/agent-workflow-plan.md A3):五个工具都在编辑器进程里答(side: "server"),
-// 公告板按项目一份(server/agent/agent-board.mjs),所有 Agent 看到同一份;拉起子 Agent 见 server/agent/multi-agent.mjs。
+// Multi-agent (plan docs/plan/agent-workflow-plan.md A3): all five tools answered in editor process (side: "server"),
+// bulletin board is one per project (server/agent/agent-board.mjs), seen by all Agents; subagents: server/agent/multi-agent.mjs.
 export const agentTools = [
   {
     name: "spawn_agent",
@@ -37,7 +37,8 @@ export const agentTools = [
   },
   {
     name: "send_message",
-    // to 填 "user" 是对用户说话(2026-10-20 用户定:气泡里只展示 Agent 在做什么);API 直连由 harness/tools/index.mjs 就地答,经 MCP 的由公告板(agent-board.mjs)答
+    // Setting to to "user" speaks to the user (user decision, 2026-10-20: bubbles only show what the Agent is doing);
+    // direct API is answered locally by harness/tools/index.mjs, and via MCP by the bulletin board (agent-board.mjs)
     description: "Send a message. With to set to \"user\" you speak to the user: before each group of operations, tell the user in a sentence or two what you are about to do, and after each group say in one sentence what was done; these appear in order in this turn's chat bubbles (the wrap-up is still delivered with a report_progress whose final is true). With to set to another Agent's chat ID (the id in list_agents) or all, you message other Agents to coordinate the division of work (e.g. \"I'll edit track 2, you don't touch it\"): if the recipient is idle, the message is sent to it immediately as a message; if it is busy, it rides along in the result of its next tool call. There is a cap on consecutive back-and-forth between Agents; beyond it, messages stay in the recipient's inbox until the user next speaks, so do not use it for idle chatter: saying it clearly once is enough.",
     inputSchema: {
       type: "object",

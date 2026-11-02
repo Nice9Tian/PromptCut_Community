@@ -2,7 +2,7 @@ import { srcUrl } from "../../testing/registerTs.mjs";
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 let base = "https://assets.example.test/api/asset", ticketCalls = 0;
-/** 账号云端项目:项目号,以及账号会话签发的素材票据(`force` 为真时换一张) */
+/** Account cloud project: project id, and asset ticket issued by account session (renewed when `force` is true) */
 let accountProject = null, accountTicketCalls = [], legacyTicketCalls = 0;
 mock.module(srcUrl("editor/media/assetTiers.ts"), { namedExports: {
   remoteAssetBase: () => base,

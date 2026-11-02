@@ -1,28 +1,39 @@
 /**
- * 云端 Agent 的运动追踪四件套:`track_status`、`track_install`、`track_points`、`get_track`
- * (拆包表 P3 一行;`docs/plan/cloud-agent-tools-implementation.md`)。`attach_clip_motion` 在 `../hosted-motion.mjs`。
+ * Cloud Agent motion tracking suite of four: `track_status`, `track_install`, `track_points`,
+ * `get_track` (row P3 in breakdown table; `docs/plan/cloud-agent-tools-implementation.md`).
+ * `attach_clip_motion` is in `../hosted-motion.mjs`.
  *
- * 和桌面版(`server/vite-plugin-track.ts`)的差别,都来自「账号版云端」的几条硬规矩:
+ * Differences from the desktop app (`server/vite-plugin-track.ts`) all stem from a few hard rules
+ * of "account cloud":
  *
- *   - 素材字节经项目素材服务(F0 的 `ProjectAssets.openRead`),先落到这个对话的工作区,再递给 Python;
- *     不收本机路径、不收地址。
- *   - 作业状态写在 F0 的持久作业表里(`ToolJobs`,SQLite):每次推进都重核 doc 的当前授权与 fence;
- *     服务重启后 `running` 的变成 `interrupted`,不会凭内存里的 Map 消失成 404。
- *   - 轨迹结果持久在本模块自己的表里,键是「项目 × 对话 × 素材 × 素材版本」,不是全局 `mediaId` 的 Map;
- *     只有作业表里是 `done` 的作业,它的结果才读得到(写结果之后作业推进失败,结果跟着删)。
- *   - Python 子进程只经工作区的受限 `spawn()` 起(环境变量白名单、不弹窗口、起成一棵杀得掉的进程树),再登记进 F0 的运行资源表:
- *     fence 变了(私有、停止、Agent 关闭、被踢……)由资源表杀掉整棵树(Python 再起的 ffmpeg 一起),`close()` 等到 close 事件才算收干净。
- *     杀树、等收尾、登记用公共实现 `runner.mjs`。
- *   - Python 用隔离模式起(`-I`,`runner.mjs` 的 `isolatedPythonArgs`):工作目录是对话工作区,不让它排进模块搜索路径;
- *     包目录只来自部署配置(`python.packageRoot`),经引导代码递进去。
- *   - 云端 `track_install` 只跑包里随发的(或部署者指定的锁定)依赖清单,模型给不了任何 pip 或 shell 参数;
- *     部署者没开安装时回明确的原因(节点上的拓展由托管方统一装)。
+ *   - Asset bytes go through project asset service (F0 `ProjectAssets.openRead`), landing in this
+ *     chat workspace first before passing to Python; does not accept local paths or addresses.
+ *   - Job status is written to F0 persistent jobs table (`ToolJobs`, SQLite): each advancement
+ *     re-verifies doc current authorization and fence; after service restarts, `running` becomes
+ *     `interrupted`, rather than vanishing into 404 via an in-memory Map.
+ *   - Tracking results persist in this module's own table, keyed by "project × chat × asset ×
+ *     asset version", not a global `mediaId` Map; only jobs marked `done` in the jobs table have
+ *     readable results (if job advancement fails after writing results, results are deleted too).
+ *   - Python child processes are spawned only via workspace restricted `spawn()` (env var
+ *     allowlist, no popups, spawned as a killable process tree), then registered into F0
+ *     run-resources table: when fence changes (private, stopped, Agent closed, kicked...), the
+ *     resource table kills the entire tree (including ffmpeg spawned by Python), and `close()`
+ *     waits for close event before considering it cleanly finalized. Killing tree, waiting for
+ *     cleanup, and registration use shared implementation `runner.mjs`.
+ *   - Python is launched in isolated mode (`-I`, `isolatedPythonArgs` in `runner.mjs`): working
+ *     directory is the chat workspace, prevented from entering module search path; package
+ *     directory comes solely from deployment config (`python.packageRoot`), passed in via
+ *     bootstrap code.
+ *   - Cloud `track_install` only runs dependency manifests bundled with package (or pinned by
+ *     deployer); model cannot pass any pip or shell arguments; returns a clear reason when
+ *     deployer has not enabled installation (extensions on nodes are installed uniformly by host).
  *
- * 追踪分两档,由 Python 侧按 `status` 选:装了 torch 且权重在 → BootsTAPIR;否则 numpy 的模板匹配兜底。
- * 结果里的 `engine` 是真实跑的那一档,不在起作业时猜。
+ * Tracking has two tiers, selected by Python side via `status`: torch installed with weights
+ * present → BootsTAPIR; otherwise numpy template matching fallback.
+ * `engine` in results is the tier actually run, not guessed when starting the job.
  *
- * 本文件只调用 F0(`tool-context`、`tool-jobs`、`project-assets`、`run-resources`),不改它们;
- * 不引用 `src/`,不碰渲染。
+ * This file only calls F0 (`tool-context`, `tool-jobs`, `project-assets`, `run-resources`) and
+ * does not modify them; does not import `src/`, does not touch rendering.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
@@ -33,31 +44,33 @@ import { isolatedPythonArgs, splitRoots, superviseChild } from './runner.mjs';
 export const TRACK_TOOL_NAMES = Object.freeze(['track_status', 'track_install', 'track_points', 'get_track']);
 
 export const TRACK_DEFAULTS = Object.freeze({
-  /** 一次最多追几个点 */
+  /** Maximum number of points to track at once */
   maxPoints: 32,
   /**
-   * 视频超过这么多帧就拒绝(不截断:轨迹要盖住整段素材,`attach_clip_motion` 才对得上时间)。
-   * 模板匹配把整段视频解成灰度放内存(720 长边约 0.3 MB 一帧),1800 帧约 0.5 GB;按节点内存由部署者调。
+   * Rejects if video exceeds this many frames (do not truncate: trajectory must cover entire asset
+   * so `attach_clip_motion` can match timing).
+   * Template matching decodes entire video into grayscale in memory (~0.3 MB per frame for 720 long
+   * edge), 1800 frames is ~0.5 GB; tuned by deployer according to node memory.
    */
   maxFrames: 1800,
-  /** 取来的素材字节上限 */
+  /** Upper limit on fetched asset bytes */
   maxVideoBytes: 1024 * 1024 * 1024,
-  /** 同时跑几个追踪作业(其余排队,作业状态是 queued) */
+  /** Concurrently running tracking jobs (remainder queue up with job status queued) */
   maxConcurrentJobs: 2,
-  /** 一次追踪的时限 */
+  /** Time limit for a single tracking run */
   jobTimeoutMs: 10 * 60_000,
-  /** 一次安装的时限 */
+  /** Timeout for single installation */
   installTimeoutMs: 30 * 60_000,
-  /** `track_status` 起 Python 的时限 */
+  /** Time limit for `track_status` to launch Python */
   statusTimeoutMs: 60_000,
-  /** `track_status` 结果缓存多久(装完拓展会清) */
+  /** Cache duration for `track_status` results (cleared after installing extensions) */
   statusTtlMs: 10_000,
-  /** 进度写进作业表的最小间隔 */
+  /** Minimum interval for writing progress into jobs table */
   progressIntervalMs: 500,
 });
 
 export class TrackToolError extends Error {
-  /** @param {string} code 稳定的机器可读码(`TRACK_*`);message 是给模型看的中文 */
+  /** @param {string} code Stable machine-readable code (`TRACK_*`); message is Chinese for model */
   constructor(code, message, extra = {}) {
     super(message);
     this.name = 'TrackToolError';
@@ -71,7 +84,7 @@ const canonical = (value) => JSON.stringify(value);
 const sha256 = (text) => createHash('sha256').update(text).digest('hex');
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-/** 报错里不带服务器上的路径:盘符路径和 `/a/b` 形的路径都抹掉 */
+/** Error messages omit server paths: drive-letter paths and `/a/b`-style paths are stripped */
 export function scrubPaths(text, max = 400) {
   return String(text ?? '')
     .replace(/[A-Za-z]:[\\/][^\s'"<>|]*/g, '<path>')
@@ -79,11 +92,13 @@ export function scrubPaths(text, max = 400) {
     .slice(0, max);
 }
 
-/* ---------------------------------------------------------------- 结果表 */
+/* ---------------------------------------------------------------- Results table */
 
 /**
- * 追踪作业与结果的持久表(SQLite,WAL + FULL)。和 `ToolJobs` 的作业表是两个文件:作业表只收状态,
- * 这里收「作业对应哪个素材的哪个版本」和轨迹本体。读取一律带 `projectId`、`conversationId` 两个范围。
+ * Persistent table for tracking jobs and results (SQLite, WAL + FULL). Separate file from
+ * `ToolJobs` jobs table: jobs table only holds status; here it stores "which version of which
+ * asset the job corresponds to" and trajectory itself. Reads always include both `projectId` and
+ * `conversationId` scopes.
  */
 export function createTrackResultStore({ databasePath, now = Date.now } = {}) {
   if (typeof databasePath !== 'string' || !databasePath.trim() || databasePath === ':memory:') {
@@ -94,7 +109,7 @@ export function createTrackResultStore({ databasePath, now = Date.now } = {}) {
   const existed = fs.existsSync(file);
   const db = new DatabaseSync(file);
   if (!existed && process.platform !== 'win32') {
-    try { fs.chmodSync(file, 0o600); } catch { /* 目录已是 0700 */ }
+    try { fs.chmodSync(file, 0o600); } catch { /* Directory is already 0700 */ }
   }
   db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;');
   db.exec(`
@@ -129,7 +144,7 @@ export function createTrackResultStore({ databasePath, now = Date.now } = {}) {
     engine: row.engine, detail: row.detail, createdAt: row.created_at,
   } : null);
   return Object.freeze({
-    /** 登记一个作业对应哪个素材;已登记过(幂等重试)回 false */
+    /** Registers which asset a job maps to; returns false if already registered (idempotent retry) */
     registerRun({ jobId, kind, projectId, conversationId, mediaId = '', mediaRev = null, mediaHash = null, pointCount = 0 }) {
       const d = live();
       const seq = (d.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM track_runs').get()).n;
@@ -138,7 +153,7 @@ export function createTrackResultStore({ databasePath, now = Date.now } = {}) {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(jobId, kind, projectId, conversationId, mediaId, mediaRev, mediaHash, pointCount, Number(now()), seq);
       return Number(info.changes) === 1;
     },
-    /** 取来素材之后补上它此刻的版本 */
+    /** Supplements its current version after fetching asset */
     setMediaVersion(jobId, { mediaRev, mediaHash }) {
       live().prepare('UPDATE track_runs SET media_rev=?, media_hash=? WHERE job_id=?').run(mediaRev ?? null, mediaHash ?? null, jobId);
     },
@@ -152,7 +167,7 @@ export function createTrackResultStore({ databasePath, now = Date.now } = {}) {
     run(jobId, projectId, conversationId) {
       return decodeRun(live().prepare('SELECT * FROM track_runs WHERE job_id=? AND project_id=? AND conversation_id=?').get(jobId, projectId, conversationId));
     },
-    /** 这个对话里最近一次(某素材的追踪 / 安装) */
+    /** Most recent in this chat (tracking / install for an asset) */
     latestRun({ projectId, conversationId, kind, mediaId = '' }) {
       return decodeRun(live().prepare(`SELECT * FROM track_runs WHERE project_id=? AND conversation_id=? AND kind=? AND media_id=?
         ORDER BY seq DESC LIMIT 1`).get(projectId, conversationId, kind, mediaId));
@@ -165,7 +180,7 @@ export function createTrackResultStore({ databasePath, now = Date.now } = {}) {
   });
 }
 
-/* ---------------------------------------------------------------- 小工具 */
+/* ---------------------------------------------------------------- Utilities */
 
 function createSlots(max) {
   let free = Math.max(1, max);
@@ -182,13 +197,16 @@ function createSlots(max) {
   };
 }
 
-/** stderr 末尾有用的一行(Python 的栈最后一行就是异常本身) */
+/** Useful line at end of stderr (last line of Python stack trace is the exception itself) */
 function lastLine(text, max = 300) {
   const lines = String(text ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   return (lines.at(-1) ?? '').slice(-max);
 }
 
-/** 对话里原样回给模型的追踪摘要(与桌面版同形:每个点的可见帧数、位移范围、起止坐标) */
+/**
+ * Tracking summary returned as-is to model in chat (same shape as desktop app: visible frames,
+ * displacement range, start/end coordinates per point)
+ */
 export function summarizePoints(points) {
   return points.map((p, i) => {
     const xs = p.xy.map((q) => q[0]);
@@ -213,7 +231,7 @@ const ENGINE_NOTE = {
     + 'but once the target turns, scales or is occluded for a long time, tracking is lost; a point with a note field means it could not be tracked at all',
 };
 
-/** Python 侧的 error.code → 作业表里的稳定错误码 */
+/** Python error.code → stable error code in jobs table */
 const PYTHON_ERROR_CODE = {
   'too-long': 'TRACK_TOO_LONG',
   'engine-unavailable': 'TRACK_ENGINE_UNAVAILABLE',
@@ -222,10 +240,16 @@ const PYTHON_ERROR_CODE = {
   'video-missing': 'TRACK_FAILED',
 };
 
-/** 这些错误码说明任务的授权或 fence 变了:作业记成「随任务取消」,不当成追踪自己失败 */
+/**
+ * These error codes indicate task authorization or fence changed: job recorded as
+ * "cancelled with task", not treated as tracking failure itself
+ */
 const CANCEL_CODES = new Set(['run-resource-fenced', 'run-resource-unauthorized', 'forbidden', 'fence-rejected', 'fence-changed', 'job-scope-mismatch']);
 
-/** 作业错误码 → 给模型看的话。导出给「后台作业状态」(`hosted-workflow.mjs` 的 `errorTexts`)用,两处说的是同一句 */
+/**
+ * Job error code → message for model. Exported for background job status
+ * (`errorTexts` in `hosted-workflow.mjs`), both use identical phrasing
+ */
 export const TRACK_ERROR_TEXT = Object.freeze({
   TRACK_TIMEOUT: 'This tracking run exceeded the time limit and was stopped. Reduce the number of points or trim the media shorter, then track again.',
   TRACK_TOO_LONG: 'The media is too long and exceeds the number of frames this node can track at once. Trim the media shorter first, then track.',
@@ -246,7 +270,7 @@ const JOB_ERROR_MESSAGE = TRACK_ERROR_TEXT;
 
 const errorMessageOf = (code) => JOB_ERROR_MESSAGE[code] ?? `Tracking failed (${code}).`;
 
-/* ---------------------------------------------------------------- 提供者 */
+/* ---------------------------------------------------------------- Provider */
 
 /**
  * @param {object} d
@@ -254,15 +278,22 @@ const errorMessageOf = (code) => JOB_ERROR_MESSAGE[code] ?? `Tracking failed (${
  * @param {{ register(context: object, o: { kind: string, resource: object }): Promise<{ signal: AbortSignal, closed: Promise<void> }> }} d.resources F0 `run-resources`
  * @param {object} d.jobs F0 `tool-jobs`
  * @param {{ openRead(context: object, mediaId: string, o?: object): Promise<{ stream: import('node:stream').Readable, assetRef: object, mediaRev: string, kind: string, closed: Promise<void> }> }} d.assets F0 `project-assets`
- * @param {(context: object) => Promise<object>} d.workspace 这个对话的工作区(`workspace.mjs` 的 `open()`)
- * @param {string} [d.databasePath] 结果表的磁盘路径(与 `results` 二选一)
- * @param {ReturnType<typeof createTrackResultStore>} [d.results] 现成的结果表(调用方持有,关闭也归调用方)
+ * @param {(context: object) => Promise<object>} d.workspace Workspace for this chat (`open()` in
+ *   `workspace.mjs`)
+ * @param {string} [d.databasePath] Disk path for results table (mutually exclusive with `results`)
+ * @param {ReturnType<typeof createTrackResultStore>} [d.results] Existing results table (held by
+ *   caller, closed by caller too)
  * @param {{ executable: string, packageRoot: string, pylibs?: string, models?: string, ffmpeg?: string, requirements?: string } | null} d.python
- *   部署者配置的 Python 运行环境;`packageRoot` 是放着 `promptcut_*` 包的目录。null = 这台节点没配
+ *   Python runtime configured by deployer; `packageRoot` is directory containing `promptcut_*`
+ *   packages. null = not configured on this node
  * @param {(context: object) => Promise<{ media: Array<{ id: string, kind?: string, hash?: string }> } | null>} [d.readProject]
- *   项目副本的只读视图;给了才能提前核「素材存在、是视频」和判轨迹是否过期
- * @param {{ enabled?: boolean, direct?: boolean, env?: Record<string, string> }} [d.install] 部署者开了才能装;没给 `egress` 时还要 `direct: true`(部署者声明节点层已管住这个进程的出网)才装
- * @param {{ startProxy(): Promise<{ url: string, close(): Promise<void> }> } | null} [d.egress] 出网闸(`egress.mjs`):安装时 pip 只经它起的回环代理连网
+ *   Read-only view of project replica; provided to verify upfront that "asset exists, is video"
+ *   and determine if trajectory is expired
+ * @param {{ enabled?: boolean, direct?: boolean, env?: Record<string, string> }} [d.install]
+ *   Deployer must enable to install; without `egress`, requires `direct: true` (deployer declared
+ *   node level already controls process egress) to install
+ * @param {{ startProxy(): Promise<{ url: string, close(): Promise<void> }> } | null} [d.egress]
+ *   Egress gate (`egress.mjs`): during installation pip connects only via loopback proxy it starts
  * @param {object} [d.limits]
  */
 export function createTrackTools({
@@ -281,15 +312,15 @@ export function createTrackTools({
   const ownsStore = resultsIn === null;
 
   const slots = createSlots(limits.maxConcurrentJobs);
-  const runners = new Set();        // 还在跑的作业(含排队的)
-  const children = new Set();       // 还没 close 的子进程(`{ kill }`,杀的是整棵树)
-  const activeJobs = new Set();     // 本进程里有 runner 的 jobId
-  let installing = null;            // 本进程里正在装的 jobId(进程级单例)
+  const runners = new Set();        // Jobs still running (including queued ones)
+  const children = new Set();       // Child processes not yet closed (`{ kill }`, kills entire tree)
+  const activeJobs = new Set();     // jobIds with runners in this process
+  let installing = null;            // jobId currently installing in this process (process-level singleton)
   let closing = false;
   let closeReceipt = null;
   let statusCache = null;
 
-  /* ---- 起 Python ---- */
+  /* ---- Spawn Python ---- */
 
   const pythonFlags = () => {
     const flags = [];
@@ -300,13 +331,16 @@ export function createTrackTools({
   };
 
   /**
-   * 经工作区的受限 spawn 起 `promptcut_track …`(隔离模式),登记进运行资源表,逐行解析 stdout 的 JSON 事件。
-   * 回 `{ code, signal, timedOut, aborted, events, stderrTail }`;子进程 exit + close 之后才返回。
+   * Spawns `promptcut_track …` (isolated mode) via workspace restricted spawn, registers into
+   * run-resources table, and parses stdout JSON events line by line.
+   * Returns `{ code, signal, timedOut, aborted, events, stderrTail }`; returns only after child
+   * process exit + close.
    */
   async function runPython(context, ws, args, { timeoutMs, onEvent = () => {}, env = {}, preamble = [] } = {}) {
     if (!python?.executable) throw new TrackToolError('TRACK_UNCONFIGURED', 'This cloud node has no Python runtime configured for motion tracking. Tell the user to contact the host.');
     if (closing) throw new TrackToolError('TRACK_CLOSED', 'Service is shutting down');
-    // PYTHON* 环境变量在隔离模式下不生效(包目录、UTF-8 都由命令行给),这里不设
+    // PYTHON* env vars take no effect in isolated mode (package dir and UTF-8 passed via CLI),
+    // not set here
     const argv = isolatedPythonArgs('promptcut_track', { roots: splitRoots(python.packageRoot), args: [...pythonFlags(), ...preamble, ...args] });
     const child = ws.spawn(python.executable, argv, { env: { ...env } });
     const entry = { kill: () => child.kill() };
@@ -327,30 +361,31 @@ export function createTrackTools({
             try { ev = JSON.parse(line); } catch { continue; }
             if (!isPlain(ev)) continue;
             state.events.push(ev.event === 'log' ? { event: 'log' } : ev);
-            try { onEvent(ev); } catch { /* 回调出错不影响进程收尾 */ }
+            try { onEvent(ev); } catch { /* Callback errors do not affect process cleanup */ }
           }
         },
         onStderr: (chunk) => { state.stderrTail = (state.stderrTail + chunk.toString('utf8')).slice(-2000); },
       });
     } catch (error) {
-      // 登记被拒:superviseChild 已经杀掉整棵树并等到它收干净
+      // Registration rejected: superviseChild already killed entire tree and waited for clean exit
       children.delete(entry);
       throw error;
     }
     const end = await run.done;
     children.delete(entry);
     if (end.spawnError) {
-      // 起都没起来(解释器路径不对):没有进程可登记
+      // Failed to even launch (interpreter path incorrect): no process to register
       throw Object.assign(new Error('python-spawn-failed'), { code: end.spawnError?.code ?? 'SPAWN_FAILED', jobCode: 'TRACK_ENGINE_UNAVAILABLE', detail: 'The Python interpreter failed to start' });
     }
     return { code: end.code, signal: end.signal, timedOut: end.timedOut, aborted: end.aborted, events: state.events, stderrTail: state.stderrTail };
   }
 
-  /* ---- 作业状态推进 ---- */
+  /* ---- Job status advancement ---- */
 
   /**
-   * 作业修订号的游标。所有推进排成一条队(进度事件和终态不能抢同一个修订号);
-   * `update` 遇到 active→retained 的合法变化时,走 F0 给的受控 checkpoint 再试一次。
+   * Cursor for job revision number. All advancements queue in a single line (progress events and
+   * terminal state cannot race for the same revision number); when `update` encounters a legitimate
+   * active→retained transition, retry via controlled checkpoint provided by F0.
    */
   function cursorFor(context, jobId) {
     let revision = 0;
@@ -392,7 +427,7 @@ export function createTrackTools({
     return running;
   }
 
-  /* ---- 追踪作业 ---- */
+  /* ---- Tracking job ---- */
 
   async function runTrackJob(context, jobId, { mediaId, points }) {
     const cursor = cursorFor(context, jobId);
@@ -406,7 +441,7 @@ export function createTrackTools({
       if (closing) throw Object.assign(new Error('closing'), { jobCode: 'PROVIDER_CLOSED', terminal: 'interrupted' });
       await cursor.update({ state: 'running', stage: 'fetch', progress: 0 });
 
-      /* 取素材字节 → 工作区 */
+      /* Fetch asset bytes → workspace */
       let read;
       try {
         read = await assets.openRead(context, mediaId);
@@ -443,7 +478,7 @@ export function createTrackTools({
       }
       await cursor.update({ stage: 'decode', progress: 0.05 }, { throttle: true });
 
-      /* 跑 Python */
+      /* Run Python */
       const abs = ws.resolve(spool);
       const outcome = await runPython(context, ws, [
         'track', '--video', abs, '--points', canonical(points), ...(limits.maxFrames ? ['--max-frames', String(limits.maxFrames)] : []),
@@ -467,7 +502,8 @@ export function createTrackTools({
       const failure = outcome.events.find((e) => e.event === 'error');
       if (outcome.code !== 0 || !result) {
         const detail = scrubPaths(failure?.message ?? lastLine(outcome.stderrTail, 500));
-        // 没有任何 JSON 事件、栈里是导入失败:不是追踪本身出错,是这台节点缺依赖
+        // No JSON events at all and stack trace shows import failure: not tracking error itself, this node
+        // is missing dependencies
         const missingDependency = !failure && /ModuleNotFoundError|ImportError/.test(outcome.stderrTail);
         throw Object.assign(new Error('python-failed'), {
           jobCode: missingDependency ? 'TRACK_ENGINE_UNAVAILABLE' : (PYTHON_ERROR_CODE[failure?.code] ?? 'TRACK_FAILED'),
@@ -478,7 +514,7 @@ export function createTrackTools({
         throw Object.assign(new Error('bad-result'), { jobCode: 'TRACK_FAILED', detail: 'The tracking process did not return a valid result' });
       }
 
-      /* 存结果,再把作业推到 done;推不过去(fence 变了)就把结果删掉,不留迟到的产物 */
+      /* Save results, advance job to done; if update fails (fence changed), delete results, leaving no late artifacts */
       store.setEngine(jobId, result.engine);
       store.saveResult(jobId, { width: result.width, height: result.height, frames: result.frames, points: result.points });
       try {
@@ -489,17 +525,17 @@ export function createTrackTools({
       }
     } catch (error) {
       const code = error?.jobCode ?? (CANCEL_CODES.has(error?.code) ? 'RUN_CANCELLED' : 'TRACK_FAILED');
-      if (error?.detail) { try { store.setDetail(jobId, error.detail); } catch { /* 表已关 */ } }
+      if (error?.detail) { try { store.setDetail(jobId, error.detail); } catch { /* Table already closed */ } }
       const terminal = error?.terminal ?? (code === 'RUN_CANCELLED' ? 'cancelled' : 'error');
       await finishWith(cursor, jobId, { state: terminal, stage: 'done', errorCode: code });
     } finally {
-      if (ws && spool) { try { ws.remove(spool); } catch { /* 工作区已清 */ } }
+      if (ws && spool) { try { ws.remove(spool); } catch { /* Workspace already cleared */ } }
       if (slotHeld) slots.release();
       activeJobs.delete(jobId);
     }
   }
 
-  /* ---- 安装作业 ---- */
+  /* ---- Installation job ---- */
 
   async function runInstallJob(context, jobId) {
     const cursor = cursorFor(context, jobId);
@@ -509,7 +545,8 @@ export function createTrackTools({
       await cursor.update({ state: 'running', stage: 'install', progress: 0.05 });
       const ws = await workspace(context);
       const tail = [];
-      // 模型触发的下载只经出网闸:pip 子进程的代理指向闸起的回环代理,别的网络它出不去
+      // Downloads triggered by model only go through egress gate: pip child process proxy points to
+      // loopback proxy started by gate; cannot access any other network
       const env = { ...(install.env ?? {}) };
       if (egress) {
         proxy = await egress.startProxy();
@@ -547,7 +584,7 @@ export function createTrackTools({
       await cursor.update({ state: 'done', stage: 'done', progress: 1 });
     } catch (error) {
       const code = error?.jobCode ?? (CANCEL_CODES.has(error?.code) ? 'RUN_CANCELLED' : 'TRACK_INSTALL_FAILED');
-      if (error?.detail) { try { store.setDetail(jobId, error.detail); } catch { /* 表已关 */ } }
+      if (error?.detail) { try { store.setDetail(jobId, error.detail); } catch { /* Table already closed */ } }
       await finishWith(cursor, jobId, { state: error?.terminal ?? (code === 'RUN_CANCELLED' ? 'cancelled' : 'error'), stage: 'done', errorCode: code });
     } finally {
       if (proxy) await proxy.close().catch(() => {});
@@ -556,7 +593,7 @@ export function createTrackTools({
     }
   }
 
-  /* ---- 工具 ---- */
+  /* ---- Tools ---- */
 
   const MODEL_HINTS = {
     bootstapir: 'Extension installed, using BootsTAPIR.',
@@ -594,7 +631,7 @@ export function createTrackTools({
         ready: !!info.ready,
         engine: info.engine ?? null,
         version: info.version,
-        // 路径一概不回:模型用不着,也不该知道节点的目录
+        // Never return paths: model does not need them and should not know node directories
         runtime: { installed: !!info.runtime?.installed, ...(info.runtime?.version ? { version: String(info.runtime.version) } : {}), ...(info.runtime?.error ? { error: scrubPaths(info.runtime.error, 200) } : {}) },
         model: { exists: !!info.model?.exists, ...(Number.isFinite(info.model?.bytes) ? { bytes: info.model.bytes } : {}) },
         fallback: { available: !!info.fallback?.available, ...(info.fallback?.numpy ? { numpy: String(info.fallback.numpy) } : {}), ...(info.fallback?.error ? { error: scrubPaths(info.fallback.error, 200) } : {}) },
@@ -607,7 +644,7 @@ export function createTrackTools({
 
   async function installStatusOf(context, run) {
     let job = null;
-    try { job = await jobs.get(context, run.jobId); } catch { /* 读不到就只报登记的 */ }
+    try { job = await jobs.get(context, run.jobId); } catch { /* If unreadable, only report what was registered */ }
     let extra = {};
     if (job?.state === 'done' && run.detail) { try { extra = JSON.parse(run.detail); } catch { extra = {}; } }
     return {
@@ -691,7 +728,8 @@ export function createTrackTools({
     const started = await jobs.start(context, 'track.points', digest, requestId);
     const fresh = store.registerRun({ jobId: started.jobId, kind: 'track', projectId: context.projectId, conversationId: context.conversationId, mediaId, pointCount: points.length });
     if (!fresh) {
-      // 同一请求的重试:不开第二个作业。上次进程没了而作业还停在排队的,标成中断,让模型 force 重追
+      // Retrying the same request: do not start second job. If previous process is gone while job remains
+      // queued, mark as interrupted so model can force re-track
       if (started.state === 'queued' && !activeJobs.has(started.jobId)) {
         const cursor = cursorFor(context, started.jobId);
         await finishWith(cursor, started.jobId, { state: 'interrupted', stage: 'done', errorCode: 'INTERRUPTED_ON_RESTART' });
@@ -710,10 +748,12 @@ export function createTrackTools({
     };
   }
 
-  /** 这个对话里某素材最近一次追踪的读法:`{ run, job, result? }`;没追过回 null */
+  /** Read method for most recent track of an asset in chat: `{ run, job, result? }`; returns null if never tracked */
   /**
-   * 本实例名下、还标着排队或进行中,却没有 runner 在跑它(上一代进程没了、或登记完还没来得及起 runner 就崩了)的作业。
-   * 作业表只在启动时把 `running` 转成 `interrupted`,`queued` 不会;这里按「读到的视图」把它们当中断,不写作业表。
+   * Jobs under this instance still marked queued or running, but with no runner executing them
+   * (previous-generation process gone, or crashed after registration before starting runner).
+   * Jobs table only converts `running` to `interrupted` at startup, not `queued`; here they are
+   * treated as interrupted according to "read view", without writing to jobs table.
    */
   function orphaned(job, context) {
     return (job.state === 'queued' || job.state === 'running') && job.instanceId === context.instanceId
@@ -741,7 +781,7 @@ export function createTrackTools({
       `${errorMessageOf(code)}${run.detail ? `Details: ${run.detail}.` : ''}${retry}`, { jobId: job.jobId, state: job.state, errorCode: code });
   }
 
-  /** 项目里这段素材现在的版本和追踪时的对得上吗(没有项目视图就不判) */
+  /** Does current version of this asset in project match tracking time (not evaluated if no project view) */
   async function staleness(context, run) {
     if (typeof readProject !== 'function') return { checked: false };
     let project;
@@ -780,8 +820,10 @@ export function createTrackTools({
   }
 
   /**
-   * 给 `attach_clip_motion` 用:这段素材在这个对话里最近一次追踪完成的完整结果。
-   * 读取同样重核 doc 授权(`jobs.get` 的读闸);没追过、没跑完、失败了都抛带 code 的错,不回占位。
+   * For `attach_clip_motion`: the full result of the most recent completed tracking run for this
+   * asset in this chat.
+   * Reads also re-verify doc authorization (`jobs.get` read gate); throws an error with code if
+   * never tracked, not finished running, or failed, returning no placeholder.
    */
   async function readResult(context, { mediaId: mediaIdIn }) {
     const mediaId = checkMediaId(mediaIdIn);
@@ -799,7 +841,7 @@ export function createTrackTools({
 
   return {
     handles: new Set(TRACK_TOOL_NAMES),
-    /** @param {string} name @param {object} args @param {object} context F0 的可信 `ToolRunContext` */
+    /** @param {string} name @param {object} args @param {object} context F0 trusted `ToolRunContext` */
     async call(name, args, context) {
       if (!Object.hasOwn(TOOLS, name)) throw new TrackToolError('TRACK_UNKNOWN_TOOL', `The track provider does not handle ${name}`);
       if (closing) throw new TrackToolError('TRACK_CLOSED', 'Service is shutting down, try again later');
@@ -808,14 +850,15 @@ export function createTrackTools({
     readResult,
     results: store,
     /**
-     * 关停:杀掉本提供者持有的子进程,等每个 close 事件和每个作业收尾。
-     * 回的 `childrenClosed` 只在每个子进程都真的 close 之后才是 true。
+     * Shutdown: kill child processes held by this provider, and wait for each close event and each job
+     * to finalize.
+     * The returned `childrenClosed` is true only after every child process has actually closed.
      */
     async close(reason = 'close') {
       if (closeReceipt) return closeReceipt;
       closing = true;
       closeReceipt = (async () => {
-        for (const child of [...children]) { try { child.kill(); } catch { /* 已经退了 */ } } // 每个都是杀整棵树
+        for (const child of [...children]) { try { child.kill(); } catch { /* Already exited */ } } // Each kills the entire tree
         await Promise.allSettled([...runners]);
         const receipt = { childrenClosed: children.size === 0, streamsClosed: true, workPending: runners.size, reason };
         if (ownsStore) store.close();

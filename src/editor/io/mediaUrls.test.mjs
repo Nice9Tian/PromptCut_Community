@@ -88,7 +88,7 @@ test("Derived sound media is not migrated back to video even if the source file 
   assert.deepEqual(moved, []);
 });
 
-/* ---------------- A1:素材键(内容 sha256)优先于一切 ---------------- */
+/* ---------------- A1: asset key (content sha256) takes precedence over everything ---------------- */
 
 const HASH = "c28c081b3ffbc80cf0feafd8efba149355609f625e4968b62b7375d2954b31cb";
 
@@ -102,9 +102,9 @@ test("mediaUrlFromHash: only a 64-digit hex is accepted, uppercase is normalized
 
 test("If there is a hash, it is always /@media/<hash>: a path from another machine makes no difference, and pending is cleared along the way", () => {
   const { media, missing } = restoreMediaUrls([
-    // 存盘时那台机器的落点,这台机器上根本不存在
+    // The drop target from that machine when saved does not exist at all on this machine
     { id: "h", kind: "video", name: "a.mp4", url: "", hash: HASH, ext: "mp4", path: "D:/another-machine/media/a.mp4", pending: true },
-    // 死掉的 blob: 也照样被 hash 救回来
+    // Dead blob: is still recovered by hash
     { id: "b", kind: "image", name: "b.png", url: "blob:http://127.0.0.1:5204/x", hash: HASH },
   ]);
   assert.equal(media[0].url, `/@media/${HASH}`);

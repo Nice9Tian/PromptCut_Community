@@ -1,14 +1,24 @@
 /**
- * 依赖下层的流的差分取层(渲染重构「戊二」的「下层二」,`docs/plan/prerender-products-contract.md` 第 5.3 节)的单测。
- * 跑:`npm test -- server/test/below-capture.test.mjs`
+ * Unit tests for differential layer extraction of below-dependent streams (render refactor "Wu-2",
+ * "lower layer 2", `docs/plan/prerender-products-contract.md` section 5.3).
+ * Run: `npm test -- server/test/below-capture.test.mjs`
  *
- *   - 算那一层的算式(`diffLayer`):两张相同、下层全透明、下层完全不透明、下层半透明、量化噪声、毛玻璃的掩码、裁切;
- *   - 取两张时下层状态一致的保证(`belowSegmentCapture`,配真的 `bakeStream`、假的预渲染间):上张、藏、下张、撤的先后,
- *     中间不推时间;藏了一定撤;每个分段第一帧的两条实测,和它们没过时怎么办;目标卡不在页面上的帧;改到矩形外面的帧;
- *   - 接到生产者上(`StreamProducer.runSegment`,真的 ffmpeg):`kind: 'below'` 的流截图矩形恒为整个画面、等素材就位、
- *     稀疏那一趟量出实体框、第二趟收紧;解出来盖回下层等于带目标卡的画面;收紧矩形不够大时放大重来;单卡流走的路不变;
- *   - 键:`BELOW_STREAM_VERSION` 是 1;`capture-below.mjs` 进截图代码的指纹、不进生成快照的代码指纹。
- * 需要 ffmpeg 的几条在没有 ffmpeg 的机器上跳过。
+ *   - Formula for calculating that layer (`diffLayer`): two identical images, fully transparent lower
+ *     layer, fully opaque lower layer, translucent lower layer, quantization noise, frosted-glass
+ *     mask, clipping;
+ *   - Guarantee of consistent lower layer state when taking two captures (`belowSegmentCapture`, with
+ *     real `bakeStream` and fake prerender room): ordering of upper capture, hide, lower capture,
+ *     and revert, no time advancement in between; revert guaranteed after hide; two sanity checks
+ *     on first frame of each segment, and what to do if they fail; frames where target card is not
+ *     on page; frames modified outside the rectangle;
+ *   - Connecting to producer (`StreamProducer.runSegment`, real ffmpeg): screenshot rectangle for
+ *     `kind: 'below'` stream is always full frame, wait for assets to be ready, sparse pass measures
+ *     entity box, second pass tightens; decoded and composited back onto lower layer equals image
+ *     with target card; expand and retry when tight rectangle is not large enough; single-card
+ *     stream code path unchanged;
+ *   - Keys: `BELOW_STREAM_VERSION` is 1; `capture-below.mjs` enters screenshot code fingerprint, does
+ *     not enter code fingerprint for generating snapshots.
+ * Tests requiring ffmpeg are skipped on machines without ffmpeg.
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -29,25 +39,25 @@ import { createReadyHub } from '../ready-index.mjs';
 const ffmpegOk = spawnSync('ffmpeg', ['-version'], { windowsHide: true }).status === 0;
 after(() => dropStreamEncoderSpares());
 
-/* ------------------------------------------------------------ 参照实现(和产品代码各写各的) */
+/* ------------------------------------------------------------ Reference implementation (written independently from production code) */
 
-/** 确定的伪随机数 */
+/** Deterministic pseudorandom numbers */
 function rng(seed) { let s = seed >>> 0; return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; }; }
 const px = (r, g, b, a) => [r, g, b, a];
 const image = (pixels) => Buffer.from(pixels.flat());
-/** 一层(预乘色,0～1)按普通的叠加盖在 straight RGBA 的一个像素上,回预乘色的结果(满分 255) */
+/** Composites a layer (premultiplied color, 0-1) over a straight RGBA pixel via normal blend, returns premultiplied color result (out of 255) */
 function over(layer, lower) {
   const la = lower[3] / 255, keep = 1 - layer.a;
   return [0, 1, 2].map(k => (layer.c[k] + lower[k] / 255 * la * keep) * 255).concat([(layer.a + la * keep) * 255]);
 }
 const premul = (p) => [p[0] * p[3] / 255, p[1] * p[3] / 255, p[2] * p[3] / 255, p[3]];
-/** 预乘色(满分 255)四舍五入成 straight RGBA 的 8 位像素(截图给的就是这种) */
+/** Rounds premultiplied color (out of 255) to an 8-bit straight RGBA pixel (as provided by screenshots) */
 function toStraight(q) {
   const a = Math.round(q[3]);
   if (a <= 0) return [0, 0, 0, 0];
   return [0, 1, 2].map(k => Math.max(0, Math.min(255, Math.round(q[k] / a * 255)))).concat([Math.min(255, a)]);
 }
-/** 把算出来的 S(straight RGBA,8 位)盖回 `lower`,和 `upper` 比:回最大的通道差(预乘色,满分 255) */
+/** Composites computed S (straight RGBA, 8-bit) back onto `lower`, compares with `upper`: returns maximum channel difference (premultiplied color, out of 255) */
 function backError(layerPx, lowerPx, upperPx) {
   const a = layerPx[3] / 255;
   const got = over({ a, c: [0, 1, 2].map(k => layerPx[k] / 255 * a) }, lowerPx);
@@ -55,14 +65,14 @@ function backError(layerPx, lowerPx, upperPx) {
   return Math.max(...got.map((v, k) => Math.abs(v - want[k])));
 }
 const pixelAt = (buf, i) => [buf[i * 4], buf[i * 4 + 1], buf[i * 4 + 2], buf[i * 4 + 3]];
-/** 一行像素算一遍,回每个像素的 S 和盖回去的最大差 */
+/** Computes across a row of pixels, returns S for each pixel and maximum difference when composited back */
 function solve(upperPixels, lowerPixels, options = {}) {
   const n = upperPixels.length;
   const out = diffLayer(image(upperPixels), image(lowerPixels), n, 1, options);
   const layer = Array.from({ length: n }, (_, i) => pixelAt(out.rgba, i));
   return { out, layer, errors: layer.map((s, i) => backError(s, lowerPixels[i], upperPixels[i])) };
 }
-/** 契约第 5.3 节原来的算式(不透明度取各条下限里最大的),只算不透明度 */
+/** Original formula from contract section 5.3 (opacity takes maximum among lower bounds), computes opacity only */
 function contractAlpha(upperPx, lowerPx) {
   const ra = upperPx[3] / 255, la = lowerPx[3] / 255;
   let a = la < 1 ? (ra - la) / (1 - la) : 0;
@@ -74,7 +84,7 @@ function contractAlpha(upperPx, lowerPx) {
   return Math.max(0, Math.min(1, a));
 }
 
-/* ------------------------------------------------------------ 算式 */
+/* ------------------------------------------------------------ Formulas */
 
 test('BD-same the two screenshots are identical: that layer is fully transparent', () => {
   const rand = rng(1);
@@ -88,14 +98,14 @@ test('BD-same the two screenshots are identical: that layer is fully transparent
 test('BD-lower-clear lower layer fully transparent: that layer is simply the frame with the target card', () => {
   const rand = rng(2);
   const upper = Array.from({ length: 300 }, () => px(Math.floor(rand() * 256), Math.floor(rand() * 256), Math.floor(rand() * 256), 1 + Math.floor(rand() * 255)));
-  // 下层全透明时截图里它的颜色恒为 0;颜色是别的值也一样(全透明处颜色不算数)
+  // When lower layer is fully transparent, its color in screenshots is always 0; same if color is another value (colors at fully transparent points do not count)
   for (const lowerColor of [0, 200]) {
     const lower = upper.map(() => px(lowerColor, lowerColor, lowerColor, 0));
     const { out } = solve(upper, lower);
     assert.equal(Buffer.compare(out.rgba, image(upper)), 0);
     assert.equal(out.changed, 300);
   }
-  // 带目标卡的画面也全透明的像素:透明
+  // Pixels where image with target card is also fully transparent: transparent
   assert.ok(solve([px(9, 9, 9, 0)], [px(0, 0, 0, 0)]).out.rgba.every(v => v === 0));
 });
 
@@ -110,20 +120,20 @@ test('BD-lower-solid lower layer fully opaque, target card is a patch of shadow:
   }
   const { layer, errors } = solve(upper, lower);
   assert.ok(Math.max(...errors) <= 1.5, `Maximum difference after compositing back ${Math.max(...errors)}`);
-  // 有一个通道够亮的像素上,不透明度量得准:离 0.3 × 255 = 76.5 不超过 3 级
+  // On pixels where at least one channel is bright enough, opacity is measured accurately: within 3 levels of 0.3 × 255 = 76.5
   const bright = layer.filter((_, i) => Math.max(lower[i][0], lower[i][1], lower[i][2]) >= 128);
   assert.ok(bright.length > 1000);
   for (const s of bright) assert.ok(Math.abs(s[3] - shade * 255) <= 3, `Opacity ${s[3]}`);
-  // 颜色是黑的(预乘以后不超过 2 级)
+  // Color is black (no more than 2 levels after premultiplication)
   for (const s of bright) assert.ok(Math.max(s[0], s[1], s[2]) * s[3] / 255 <= 2, `Color ${s}`);
 });
 
 test('BD-noise-solid quantization noise (opaque lower layer): a very dark channel that is off by one level must not push the whole pixel to opaque', () => {
-  // 纯绿的下层,红蓝两个通道只有 1、2 级;压暗三成以后它们四舍五入到 0 或 1
+  // Pure green lower layer, red and blue channels only have 1 or 2 levels; after darkening by 30%, they round to 0 or 1
   const lower = [px(1, 255, 1, 255), px(2, 255, 0, 255), px(1, 250, 2, 255), px(0, 255, 0, 255)];
   const upper = lower.map(l => toStraight(over({ a: 0.3, c: [0, 0, 0] }, l)));
   assert.deepEqual(upper[0], [1, 179, 1, 255]);
-  // 同一幅画面换一种取整(截掉小数而不是四舍五入):1 × 0.7 = 0.7 变成 0,差不到一级
+  // Same image with different rounding (truncating decimals instead of rounding): 1 × 0.7 = 0.7 becomes 0, difference is less than one level
   const noisy = lower.map(l => px(Math.floor(l[0] * 0.7), Math.floor(l[1] * 0.7), Math.floor(l[2] * 0.7), 255));
   assert.deepEqual(noisy[0], [0, 178, 0, 255]);
   for (const set of [upper, noisy]) {
@@ -131,7 +141,7 @@ test('BD-noise-solid quantization noise (opaque lower layer): a very dark channe
     for (const s of layer) assert.ok(Math.abs(s[3] - 76.5) <= 3, `Opacity ${s[3]} should be around 76`);
     assert.ok(Math.max(...errors) <= 1.5, `Maximum difference after compositing back ${Math.max(...errors)}`);
   }
-  // 对照:不放宽(容差 0,即契约原来的算式)时,同样的像素被顶成完全不透明
+  // Control: without relaxation (tolerance 0, i.e. contract's original formula), the same pixel is pushed to fully opaque
   const strict = solve(noisy, lower, { tolerance: 0 }).layer;
   assert.equal(strict[0][3], 255);
   assert.equal(contractAlpha(noisy[0], lower[0]), 1);
@@ -146,7 +156,7 @@ test('BD-contract with an opaque lower layer and tolerance 0, the opacity is the
     const same = u.every((v, k) => v === l[k]);
     assert.equal(got, same ? 0 : Math.round(contractAlpha(u, l) * 255), `R ${u} L ${l}`);
   }
-  // 放宽以后只会更小,而且不会小过头:盖回去的颜色最多差一级多一点
+  // After relaxation it can only be smaller, and will not become too small: composited color differs by just over one level at most
   for (let i = 0; i < 500; i++) {
     const l = px(Math.floor(rand() * 256), Math.floor(rand() * 256), Math.floor(rand() * 256), 255);
     const u = px(Math.floor(rand() * 256), Math.floor(rand() * 256), Math.floor(rand() * 256), 255);
@@ -178,18 +188,18 @@ test('BD-overlay any layer over any lower layer (opaque, semi-transparent and fu
 });
 
 test('BD-noise-faint quantization noise (lower layer almost fully transparent): a color mismatch must not produce an opaque pixel', () => {
-  // 实测碰到的像素:下层是不透明度 1/255 的蓝,带目标卡的画面是不透明度 1/255 的黑(预乘以后两个都是 0)
+  // Pixel encountered in live testing: lower layer is blue with 1/255 opacity, image with target card is black with 1/255 opacity (both are 0 after premultiplication)
   const lower = [px(0, 0, 255, 1), px(0, 64, 128, 4), px(10, 10, 10, 128)];
   const upper = [px(0, 0, 0, 1), px(0, 60, 128, 4), px(9, 9, 9, 128)];
   const { layer, errors } = solve(upper, lower);
   for (const s of layer) assert.ok(s[3] <= 2, `Opacity ${s[3]}`);
   assert.ok(Math.max(...errors) <= 1.5);
-  // 对照:契约原来的算式在第一个像素上给出完全不透明(盖回去不透明度差 254 级)
+  // Control: contract's original formula yields fully opaque on the first pixel (opacity differs by 254 levels when composited back)
   assert.equal(contractAlpha(upper[0], lower[0]), 1);
 });
 
 test('BD-lower-half semi-transparent lower layer, the target card is a layer that is really laid on top: when the opacity formula and the color lower bound do not conflict, both hold', () => {
-  // 白字(不透明度 0.6)上面压一层深色半透明:R 的不透明度 = a + 0.6 × (1 − a)
+  // Dark translucent layer over white text (opacity 0.6): R opacity = a + 0.6 × (1 - a)
   const l = px(255, 255, 255, 153);
   const layer = { a: 0.676, c: [0.04, 0.045, 0.06] };
   const u = toStraight(over(layer, l));
@@ -199,20 +209,20 @@ test('BD-lower-half semi-transparent lower layer, the target card is a layer tha
 });
 
 test('BD-glass pixels inside the outer frame of the frosted glass where the lower layer is fully opaque: that layer is the frame with the target card (opaque); pixels outside the frame and pixels where the lower layer is not opaque are computed as usual', () => {
-  // 一行 8 个像素,玻璃盖住中间 4 个(第 2～5 个)
+  // Row of 8 pixels, glass covers the middle 4 (pixels 2-5)
   const lower = [px(200, 30, 30, 255), px(200, 30, 30, 255), px(200, 30, 30, 255), px(40, 200, 40, 255), px(40, 200, 40, 255), px(90, 90, 90, 128), px(40, 200, 40, 255), px(40, 200, 40, 255)];
   const upper = lower.map((l, i) => (i === 2 ? l : toStraight(over({ a: 0.4, c: [0, 0, 0] }, l))));
   const glass = [{ x: 2, y: 0, w: 4, h: 1 }];
   const { layer, errors, out } = solve(upper, lower, { glass });
-  // 框里、下层不透明:第 2 个(两张相同)、第 3、4 个 —— 都是 R 本身、不透明度 255
+  // Inside box, opaque lower layer: pixel 2 (both images identical), pixels 3 and 4: all are R itself, opacity 255
   for (const i of [2, 3, 4]) assert.deepEqual(layer[i], [upper[i][0], upper[i][1], upper[i][2], 255], `Item ${i}`);
-  // 框里、下层半透明(第 5 个):不能取 1,照常算
+  // Inside box, translucent lower layer (pixel 5): cannot take 1, compute normally
   assert.ok(layer[5][3] < 255 && layer[5][3] > 0);
-  // 框外:照最小的不透明度(这里是一层 0.4 的黑,最小的就是它自己)
+  // Outside box: use minimum opacity (here a 0.4 black layer, minimum is itself)
   for (const i of [0, 1, 6, 7]) assert.ok(Math.abs(layer[i][3] - 0.4 * 255) <= 4, `Item ${i} opacity ${layer[i][3]}`);
   assert.ok(Math.max(...errors) <= 1.5);
   assert.equal(out.changed, 8);
-  // 没有掩码时第 2 个是透明的
+  // Without mask, pixel 2 is transparent
   assert.equal(solve(upper, lower).layer[2][3], 0);
 });
 
@@ -228,14 +238,14 @@ test('BD-mask frosted glass mask: a rounded rectangle, a pixel counts only if it
   assert.equal(at(39, 44), 0, 'Bottom-right corner cut off by the rounded corner');
   assert.equal(at(23, 27), 1, 'Inside the rounded corner');
   assert.equal(at(19, 35), 0);
-  // 没有圆角:整块
+  // No rounded corners: entire block
   const square = glassMask([{ x: 20, y: 25, w: 20, h: 20 }], area);
   assert.equal(square.reduce((s, v) => s + v, 0), 400);
-  // 半径比边长的一半还大:缩成一个圆
+  // Radius larger than half the side length: collapses into a circle
   const round = glassMask([{ x: 20, y: 25, w: 20, h: 20, radii: [[50, 50], [50, 50], [50, 50], [50, 50]] }], area);
   const filled = round.reduce((s, v) => s + v, 0);
   assert.ok(Math.abs(filled - Math.PI * 100) <= 12, `Circle area ${filled}`);
-  // 伸到区域外面的部分裁掉;带小数的坐标不出界
+  // Portions extending outside the region are clipped; fractional coordinates do not go out of bounds
   const partial = glassMask([{ x: 0.5, y: 10.25, w: 20.5, h: 15.5 }], area);
   assert.equal(partial.reduce((s, v) => s + v, 0), 11 * 6);
 });
@@ -267,10 +277,10 @@ test('BD-outside whether the two screenshots differ outside the handed-out recta
   const crop = { x: 6, y: 4, w: 8, h: 4 };
   const upper = Buffer.from(lower);
   assert.equal(changedOutside(upper, lower, W, H, crop), null);
-  // 矩形里面改:不算
+  // Modifications inside the rectangle: do not count
   upper[(5 * W + 8) * 4] = 99;
   assert.equal(changedOutside(upper, lower, W, H, crop), null);
-  // 上方一个、同一行左边一个、右边一个
+  // One above, one to the left on the same row, one to the right
   upper[(1 * W + 15) * 4 + 3] = 99;
   upper[(6 * W + 2) * 4 + 1] = 99;
   upper[(7 * W + 17) * 4 + 2] = 99;
@@ -280,25 +290,25 @@ test('BD-outside whether the two screenshots differ outside the handed-out recta
 test('BD-outside-layer pixels outside the rectangle that differ byte for byte but still compute to fully transparent do not count as changed outside; only pixels with real content count', () => {
   const W = 20, H = 12;
   const crop = { x: 6, y: 4, w: 8, h: 4 };
-  // 下层是不透明度 1/255 的蓝(几乎全透明)
+  // Lower layer is blue with 1/255 opacity (almost fully transparent)
   const lower = Buffer.alloc(W * H * 4);
   for (let i = 0; i < W * H; i++) lower.set([0, 0, 255, 1], i * 4);
-  // 外面几个像素颜色变成了黑(预乘以后和原来一样是 0):逐字节不同,但算出来的那一层是透明的
+  // Several pixels outside turned black (still 0 after premultiplication as before): bytes differ, but computed layer is transparent
   const faint = Buffer.from(lower);
   for (const [x, y] of [[2, 1], [17, 7], [3, 10]]) faint.set([0, 0, 0, 1], (y * W + x) * 4);
   assert.ok(changedOutside(faint, lower, W, H, crop));
   assert.equal(layerOutside(faint, lower, W, H, crop), null);
-  // 外面有一个真的盖了东西的像素:算
+  // One pixel outside actually covered by content: counts
   const real = Buffer.from(faint);
   real.set([200, 200, 200, 180], (9 * W + 16) * 4);
   assert.deepEqual(layerOutside(real, lower, W, H, crop), { x: 16, y: 9, w: 1, h: 1 });
-  // 矩形里面再怎么变都不算
+  // Changes inside the rectangle do not count no matter how they change
   const inside = Buffer.from(lower);
   inside.set([10, 10, 10, 255], (5 * W + 8) * 4);
   assert.equal(layerOutside(inside, lower, W, H, crop), null);
 });
 
-/* ------------------------------------------------------------ 取两张 */
+/* ------------------------------------------------------------ Two captures */
 
 const STAGE = { width: 96, height: 64 };
 const pngOf = (data, width, height) => { const png = new PNG({ width, height }); data.copy(png.data); return PNG.sync.write(png); };
@@ -307,7 +317,7 @@ const cropOf = (data, rect) => {
   for (let y = 0; y < rect.h; y++) data.copy(out, y * rect.w * 4, ((rect.y + y) * STAGE.width + rect.x) * 4, ((rect.y + y) * STAGE.width + rect.x + rect.w) * 4);
   return out;
 };
-/** 下层在第 `frame` 帧的画面:不透明的竖条纹往右走,左下角一块半透明;`drift` 不为 0 时整体再挪几列(模拟「多走了一步」) */
+/** Lower layer image at frame `frame`: opaque vertical stripes move right, translucent block in bottom-left; shifts by several columns when `drift` is non-zero (simulating "taking an extra step") */
 function lowerPixels(frame, drift = 0) {
   const data = Buffer.alloc(STAGE.width * STAGE.height * 4);
   for (let y = 0; y < STAGE.height; y++) for (let x = 0; x < STAGE.width; x++) {
@@ -317,9 +327,9 @@ function lowerPixels(frame, drift = 0) {
   }
   return data;
 }
-/** 目标卡这一帧的框(`slide` 为真时它每帧往右挪一点) */
+/** Target card box for this frame (shifts slightly right each frame when `slide` is true) */
 const targetBox = (frame, slide) => ({ x: 30 + (slide ? frame * 2 : 0), y: 20, w: 24, h: 16 });
-/** 带目标卡的画面:框里是「滤过的下层」(这里取整块的平均色再压暗)加一行白字,框外一圈 4 像素的阴影 */
+/** Image with target card: inside box is "filtered lower layer" (here average color of whole block darkened) plus a line of white text, 4-pixel shadow outside box */
 function upperPixels(frame, { drift = 0, slide = false } = {}) {
   const data = lowerPixels(frame, drift);
   const box = targetBox(frame, slide);
@@ -338,13 +348,15 @@ function upperPixels(frame, { drift = 0, slide = false } = {}) {
 }
 
 /**
- * 假的预渲染间,配真的 `bakeStream`。页面的状态只有:当前帧、目标卡藏没藏、截过几张图。
- *   present(frame)  这一帧页面上有没有目标卡
- *   stale           藏起来以后的第一张截图给的还是藏之前的画面(合成器里上一拍的旧图)
- *   drifting        下层每截一张图就多走一步(不该有的页面)
- *   stuck           藏不住(算出来的不透明度不是 0)
- *   failLower       藏着的时候截图抛错
- *   slide           目标卡每帧往右挪
+ * Fake prerender room, paired with real `bakeStream`. Page state only includes: current frame,
+ * whether target card is hidden, screenshot count.
+ *   present(frame)  whether target card is on page at this frame
+ *   stale           first screenshot after hiding still returns pre-hide image (stale image from
+ *                   previous tick in compositor)
+ *   drifting        lower layer takes an extra step per screenshot (invalid page)
+ *   stuck           cannot hide (computed opacity is not 0)
+ *   failLower       throws error when taking screenshot while hidden
+ *   slide           target card moves right each frame
  */
 function fakeBakery({ present = () => true, stale = false, drifting = false, stuck = false, failLower = false, slide = false } = {}) {
   const log = [];
@@ -373,7 +385,7 @@ function fakeBakery({ present = () => true, stale = false, drifting = false, stu
     },
     client: { async send(method, params) { if (method === 'Emulation.setDeviceMetricsOverride') clip = params.viewport ? { x: params.viewport.x, y: params.viewport.y, w: params.viewport.width, h: params.viewport.height } : { x: 0, y: 0, w: STAGE.width, h: STAGE.height }; } },
     async beginFrame(extra = {}) {
-      // 画一张丢掉的(`frame-stream.mjs` 的 `BELOW_DISCARD_SHOT`):只记下在哪一帧画过
+      // Renders a discarded frame (`BELOW_DISCARD_SHOT` in `frame-stream.mjs`): only records which frame it was rendered on
       if (extra.screenshot?.format === 'jpeg') {
         if (extra.screenshot?.quality === 1) log.push(`draw:${frame}`);
         return { screenshotData: 'ok' };
@@ -394,7 +406,7 @@ function fakeBakery({ present = () => true, stale = false, drifting = false, stu
   return bakery;
 }
 const VIEW = { x: 0, y: 0, w: STAGE.width, h: STAGE.height };
-/** 一个分段:真的 `bakeStream` 加 `belowSegmentCapture`。回每帧交出来的东西 */
+/** A segment: real `bakeStream` plus `belowSegmentCapture`. Returns what is yielded for each frame */
 async function capture(bakery, { from = 0, to = 4, stride = 1, rect = VIEW, record = newBelowRecord(), verify = true, signature = 'S', notes = [] } = {}) {
   const frames = new Map();
   await bakeStream(bakery, { streamSignature: signature, fromFrame: from, toFrame: to, stride, fps: 30, mountFrame: 0, clip: VIEW,
@@ -402,7 +414,7 @@ async function capture(bakery, { from = 0, to = 4, stride = 1, rect = VIEW, reco
     onFrame: async (frame, shot) => { frames.set(frame, shot); } });
   return { frames, record, notes };
 }
-/** 从 `mark` 起的操作(去掉预热那一段) */
+/** Operations from `mark` onwards (excluding warmup) */
 const opsOf = (bakery, frame) => {
   const start = bakery.log.lastIndexOf(`step:${frame}`);
   const next = bakery.log.indexOf(`step:${frame + 1}`, start + 1);
@@ -412,11 +424,11 @@ const opsOf = (bakery, frame) => {
 test('BD-order the order of taking the two screenshots: upper, hide, lower, unhide; time is not advanced between the two; the first frame of each segment takes two extra screenshots for a real measurement', async () => {
   const bakery = fakeBakery();
   const { frames, record } = await capture(bakery, { from: 0, to: 4 });
-  // 第 0 帧(分段第一帧):上张(前面没截过,先丢一张)→ 藏 → 下张 → 再截一张(实测)→ 撤 → 再截一张(实测)
+  // Frame 0 (first frame of segment): upper capture (none captured before, discard one first) → hide → lower capture → capture another (sanity check) → revert → capture another (sanity check)
   assert.deepEqual(opsOf(bakery, 0), ['shot:0:upper:96x64', 'shot:0:upper:96x64', 'hide:0:target', 'shot:0:lower:96x64', 'shot:0:lower:96x64', 'show:0', 'shot:0:upper:96x64']);
-  // 之后每帧:上张 → 藏 → 下张 → 撤
+  // Subsequent frames: upper capture → hide → lower capture → revert
   for (const f of [1, 2, 3, 4]) assert.deepEqual(opsOf(bakery, f), [`shot:${f}:upper:96x64`, `hide:${f}:target`, `shot:${f}:lower:96x64`, `show:${f}`], `Frame ${f}`);
-  // 两张之间没有推过时间:每一次藏和它后面最近的一次撤之间没有 step
+  // Time is not stepped between the two captures: no step between each hide and its immediate following revert
   const hideAt = bakery.log.map((op, i) => (op.startsWith('hide:') ? i : -1)).filter(i => i >= 0);
   for (const i of hideAt) {
     const until = bakery.log.findIndex((op, j) => j > i && op.startsWith('show:'));
@@ -426,23 +438,23 @@ test('BD-order the order of taking the two screenshots: upper, hide, lower, unhi
   assert.equal(bakery.log.filter(op => op.startsWith('hide:')).length, bakery.log.filter(op => op.startsWith('show:')).length);
   assert.deepEqual([record.frames, record.checks, record.absent, record.failed, record.primeLower], [5, 1, 0, null, false]);
   assert.deepEqual(record.last, { frame: 0, lowerStable: true, upperStable: true });
-  // 交出来的每一帧盖回这一帧的下层,等于这一帧带目标卡的画面
+  // Each yielded frame composited back onto this frame's lower layer equals this frame's image with target card
   for (const [f, shot] of frames) {
     assert.deepEqual([shot.width, shot.height], [96, 64]);
     const lower = lowerPixels(f), upper = upperPixels(f);
     let worst = 0;
     for (let i = 0; i < 96 * 64; i++) worst = Math.max(worst, backError(pixelAt(shot.rgba, i), pixelAt(lower, i), pixelAt(upper, i)));
     assert.ok(worst <= 1.5, `Frame ${f} maximum difference after compositing back ${worst}`);
-    // 目标卡没有改动的地方全透明:框和阴影以外一个不透明的像素都没有
+    // Areas untouched by target card are fully transparent: not a single opaque pixel outside box and shadow
     const box = targetBox(f, false);
     for (let y = 0; y < 64; y++) for (let x = 0; x < 96; x++) {
       const near = x >= box.x - 4 && x < box.x + box.w + 4 && y >= box.y - 4 && y < box.y + box.h + 4;
       if (!near) assert.equal(shot.rgba[(y * 96 + x) * 4 + 3], 0, `(${x},${y}) should be transparent`);
     }
-    // 毛玻璃的框里(下层不透明)是不透明的
+    // Inside the frosted-glass box (opaque lower layer) is opaque
     assert.equal(shot.rgba[((box.y + 2) * 96 + box.x + 2) * 4 + 3], 255);
   }
-  // 不做实测时第一帧也只有四步
+  // Without sanity checks, the first frame also has only four steps
   const plain = fakeBakery();
   await capture(plain, { from: 0, to: 0, verify: false });
   assert.deepEqual(opsOf(plain, 0), ['shot:0:upper:96x64', 'shot:0:upper:96x64', 'hide:0:target', 'shot:0:lower:96x64', 'show:0']);
@@ -471,7 +483,7 @@ test('BD-stale the first screenshot after hiding shows the stale frame: the real
   assert.deepEqual(record.last, { frame: 0, lowerStable: false, upperStable: true });
   assert.ok(notes.some(m => /two consecutive captures differ/.test(m)));
   assert.equal(bakery.log.filter(op => op.startsWith('hide:')).length, bakery.log.filter(op => op.startsWith('show:')).length, 'Unhidden even on failure');
-  // 重来:每张下张先丢一张,实测通过,交出来的那一层是对的
+  // Retry: discard one frame before each lower capture, sanity check passes, yielded layer is correct
   const again = fakeBakery({ stale: true });
   const { frames } = await capture(again, { from: 0, to: 2, record, signature: 'S2' });
   assert.deepEqual(opsOf(again, 1), ['shot:1:upper:96x64', 'hide:1:target', 'shot:1:upper:96x64', 'shot:1:lower:96x64', 'show:1']);
@@ -489,7 +501,7 @@ test('BD-drift a page whose lower layer advances one more step with every extra 
   assert.equal(record.failed, 'upper-changed');
   assert.ok(notes.some(m => /no longer produce/.test(m)));
   assert.equal(bakery.log.filter(op => op.startsWith('hide:')).length, bakery.log.filter(op => op.startsWith('show:')).length);
-  // 判死以后再来:第一帧就抛,不再藏
+  // Retry after marked dead: throws on the first frame, no longer hides
   const again = fakeBakery({ drifting: true });
   await assert.rejects(capture(again, { from: 15, to: 16, record, signature: 'S2' }), e => e.code === 'upper-changed');
   assert.equal(again.log.filter(op => op.startsWith('hide:')).length, 0);
@@ -513,7 +525,7 @@ test('BD-rect the handed-out rectangle is smaller than the screenshot rectangle:
     assert.deepEqual([frames.get(f).width, frames.get(f).height], [40, 30]);
     assert.equal(Buffer.compare(frames.get(f).rgba, cropOf(whole.frames.get(f).rgba, rect)), 0, `Frame ${f} is identical to computing the whole frame and then cropping`);
   }
-  // 目标卡每帧往右挪 2 像素:到第 4 帧阴影的右边出了矩形(矩形右边界是 64,阴影右边到 30 + 8 + 24 + 4 = 66)
+  // Target card moves 2 pixels right each frame: by frame 4 shadow right edge exceeds rectangle (rectangle right bound is 64, shadow right edge reaches 30 + 8 + 24 + 4 = 66)
   const record = newBelowRecord();
   const sliding = fakeBakery({ slide: true });
   await assert.rejects(capture(sliding, { from: 0, to: 6, rect, record }), (e) => {
@@ -526,7 +538,7 @@ test('BD-rect the handed-out rectangle is smaller than the screenshot rectangle:
   assert.throws(() => belowSegmentCapture(fakeBakery(), { clipId: 'target', view: rect, rect: VIEW }), /not inside the screenshot rectangle/);
 });
 
-/* ------------------------------------------------------------ 接到生产者上 */
+/* ------------------------------------------------------------ Connecting to producer */
 
 const ENV_FP = '0123456789abcdef';
 const control = (clipId, start, end, caps) => ({
@@ -552,7 +564,7 @@ async function producerFor(project, { below = true } = {}) {
   const cardPlan = clipIds.map(id => control(id, 0, 2, id === 'target' ? GLASS_CAPS : PLAIN_CAPS));
   const specs = planStreams({ key: 'E', project, cardPlan }, { envFingerprint: ENV_FP, below });
   const stateOf = (spec) => {
-    // `queueOnly`:自动生产不碰这条流(测试里没有真的预渲染间给它借),分段由下面的 `run` 一个一个产
+    // `queueOnly`: auto-production does not touch this stream (tests have no real prerender room to borrow), segments are produced one by one by `run` below
     const state = { spec, manifest: producer.freshManifest(spec), isolated: {}, generation: 0, entryKey: 'E', aliases: new Set(), reserved: new Set(), failures: new Map(), measured: null, measuredSegments: new Set(), queueOnly: true };
     producer.streams.set(spec.streamKey, state);
     return state;
@@ -568,7 +580,7 @@ async function producerFor(project, { below = true } = {}) {
   const close = async () => { await producer.close(); await fs.rm(root, { recursive: true, force: true }); };
   return { producer, specs, stateOf, run, close, root };
 }
-/** ffmpeg 解一个分段成 RGB(上半预乘色、隔 8 行、下半不透明度) */
+/** ffmpeg decodes a segment into RGB (top half premultiplied color, 8-row gap, bottom half opacity) */
 function decode(dir, init, seg) {
   const file = path.join(dir, 'dec.mp4');
   fsSync.writeFileSync(file, Buffer.concat([init, seg]));
@@ -587,16 +599,16 @@ test('BD-produce the producer produces a below-dependent stream: screenshots are
     const bakery = fakeBakery();
     const segments = [0, 1, 2, 3];
     for (const n of segments) await run(bakery, state, n, SPARSE_STRIDE);
-    // 实体框:目标卡的框加阴影是 x 26..57、y 16..39;外扩 8、夹回画面、凑成偶数
+    // Entity box: target card box plus shadow is x 26..57, y 16..39; expanded by 8, clamped to frame, padded to even numbers
     assert.deepEqual(state.measured, { x: 26, y: 16, w: 32, h: 24 });
     assert.deepEqual(state.manifest.tight, { x: 18, y: 8, w: 48, h: 40 });
     assert.ok(bakery.log.filter(op => op.startsWith('shot:')).every(op => op.endsWith(':96x64')), 'The sparse pass captures the whole frame');
     assert.ok(bakery.log.some(op => op.startsWith('media:')), 'Waited for media before the screenshot');
-    // 稀疏那一趟每个分段只取分段的第一帧:第 1、3 帧没有取,第 15 帧(第 1 段的第一帧)取了
+    // The sparse pass only captures the first frame of each segment: frames 1 and 3 are not captured, frame 15 (first frame of segment 1) is captured
     assert.ok(!bakery.log.includes('hide:1:target') && !bakery.log.includes('hide:3:target') && bakery.log.includes('hide:0:target') && bakery.log.includes('hide:15:target'));
     const sparseHides = bakery.log.filter(op => op.startsWith('hide:')).length;
     assert.equal(sparseHides, 4, 'One for each of the four segments');
-    // 每个分段的位置矩形记在清单里(平面坐标:这种流是舞台坐标),就是那一张里目标卡改动的那一块
+    // Each segment's position rectangle is recorded in manifest (plane coordinates: this stream uses stage coordinates), which is the region modified by target card in that frame
     for (const n of segments) assert.deepEqual(state.manifest.segments[n].box, { x: 26, y: 16, w: 32, h: 24 }, `Position rectangle of segment ${n}`);
     assert.ok(segments.every(n => state.manifest.segments[n].stride === SEGMENT_FRAMES), 'The stride of a sparse segment records the segment\'s frame count');
     for (const n of segments) await run(bakery, state, n, 1);
@@ -607,9 +619,9 @@ test('BD-produce the producer produces a below-dependent stream: screenshots are
     assert.equal(status.below.checks, 8, 'Two passes, each segment gets one real measurement');
     assert.equal(status.below.frames, 4 + 60);
     assert.equal(status.below.glassFrames, 64);
-    // 补密以后位置矩形还在(沿用稀疏分段的)
+    // Position rectangle remains after densification (reusing sparse segment's)
     for (const n of segments) assert.deepEqual(state.manifest.segments[n].box, { x: 26, y: 16, w: 32, h: 24 });
-    // 解第 1 个分段:每一帧盖回这一帧的下层,和这一帧带目标卡的画面比(收紧矩形里)
+    // Decodes segment 1: each frame composited back onto this frame's lower layer, compared against this frame's image with target card (inside tight rectangle)
     const seg = state.manifest.segments[1];
     const init = state.manifest.inits[seg.init];
     assert.deepEqual(init.rect, { x: 18, y: 8, w: 48, h: 40 });
@@ -618,7 +630,7 @@ test('BD-produce the producer produces a below-dependent stream: screenshots are
     const raw = decode(dir, await fs.readFile(producer.store.initFile(spec.streamKey, seg.init)), await fs.readFile(path.join(dir, seg.file)));
     const rect = init.rect, frameBytes = rect.w * 2 * (rect.h + 8) * 3;
     assert.equal(raw.length, SEGMENT_FRAMES * frameBytes);
-    /** 第 k 张解出来的画面盖回第 `f` 帧的下层,和第 `truth` 帧带目标卡的画面比(平均差) */
+    /** The k-th decoded frame composited back onto frame `f` lower layer, compared with frame `truth` image with target card (average difference) */
     const errorAgainst = (k, f, truth = f) => {
       const picture = raw.subarray(k * frameBytes, (k + 1) * frameBytes), lower = lowerPixels(f), upper = upperPixels(truth);
       let sum = 0, n = 0;
@@ -643,7 +655,7 @@ test('BD-widen the tight rectangle is not big enough (in frames the sparse pass 
     const spec = specs.find(s => s.kind === 'below');
     assert.equal(spec.hasMedia, false);
     const state = stateOf(spec);
-    // 目标卡每帧往右挪 2 像素;稀疏那一趟只量分段的第一帧(第 0 帧),第 14 帧比量到的最右边多出 28 像素。把收紧矩形设小,让它露出来
+    // Target card moves 2 pixels right each frame; sparse pass only measures first frame of segment (frame 0), frame 14 exceeds measured right edge by 28 pixels. Set tight rectangle small to expose it
     const bakery = fakeBakery({ slide: true });
     await run(bakery, state, 0, SPARSE_STRIDE);
     assert.deepEqual(state.measured, { x: 26, y: 16, w: 32, h: 24 });
@@ -655,7 +667,7 @@ test('BD-widen the tight rectangle is not big enough (in frames the sparse pass 
     assert.ok(producer.log.some(l => /tight rectangle widened to/.test(l.message)));
     assert.equal(state.below.overflows >= 1, true);
     assert.equal(bakery.streamLease, null, 'The lease is voided, and the page is reloaded the next time');
-    // 再来:一直放大到装得下为止(每次只多看到一帧),最后产出来
+    // Retry: keep expanding until it fits (seeing only one more frame each time), finally produce it
     let seg = null;
     for (let attempt = 0; attempt < 8 && !seg; attempt++) {
       const task = { state, segment: 0, stride: 1 };
@@ -668,7 +680,7 @@ test('BD-widen the tight rectangle is not big enough (in frames the sparse pass 
 });
 
 test('BD-noreplay the member and the lower layers are all remotion-style (`replay: false`): even when it cannot continue from the previous segment it does not replay from the mount frame; with a motion-style lower layer it does replay', { skip: !ffmpegOk }, async () => {
-  // 下层是 motion 式的卡:回放
+  // Lower layer is a motion-style card: replay
   const stateful = await producerFor(projectOf());
   try {
     const spec = stateful.specs.find(s => s.kind === 'below');
@@ -678,7 +690,7 @@ test('BD-noreplay the member and the lower layers are all remotion-style (`repla
     assert.ok(bakery.log.includes('step:0') && bakery.log.includes('step:29'), 'Advanced from the mount frame to this segment');
     assert.equal(stateful.producer.status().streams[0].replayedFrames, 30);
   } finally { await stateful.close(); }
-  // 下层只有素材(纯素材段按时间直接取帧),目标卡是 remotion 式:不回放
+  // Lower layer has only assets (pure asset segments fetch frames directly by time), target card is remotion-style: do not replay
   const direct = await producerFor({ ...STAGE, fps: 30, duration: 2, media: [{ id: 'm', kind: 'video', name: 'v.mp4', url: '/v.mp4' }],
     tracks: [{ id: 't-top', clips: [{ id: 'target', cardId: 'glass', start: 0, end: 2 }] }, { id: 't-low', clips: [{ id: 'video', mediaId: 'm', start: 0, end: 2 }] }] });
   try {
@@ -690,7 +702,7 @@ test('BD-noreplay the member and the lower layers are all remotion-style (`repla
     const stepped = bakery.log.filter(op => op.startsWith('step:')).map(op => Number(op.slice(5)));
     assert.equal(Math.min(...stepped), 30, 'Lands directly on the first frame of this segment');
     assert.equal(direct.producer.status().streams.find(s => s.kind === 'below').replayedFrames, 0);
-    // 两张照样取、实测照样做
+    // Two captures are taken as usual, sanity checks performed as usual
     assert.equal(direct.producer.status().streams.find(s => s.kind === 'below').below.checks, 1);
   } finally { await direct.close(); }
 });
@@ -721,24 +733,26 @@ test('BD-draw a below-dependent stream that needs replay: every tick that is adv
     assert.equal(spec.replay, true, 'The lower layer is a motion-style card: needs replay');
     const state = stateOf(spec);
     const bakery = fakeBakery();
-    // 画过一张丢掉的帧。换截图矩形时 `bakeStream` 自己也会画一张(在推第一帧之前,帧号还是上一趟留下的),不算:从这一趟推的第一帧之后数
+    // Rendered one discarded frame. When changing screenshot rectangle, `bakeStream` itself also renders
+    // one (before pushing first frame, frame number left from previous pass), not counted: count from
+    // after first frame pushed in this pass
     const draws = from => { const ops = bakery.log.slice(from); const first = ops.findIndex(op => op.startsWith('step:')); return ops.slice(Math.max(0, first)).filter(op => op.startsWith('draw:')).map(op => Number(op.split(':')[1])); };
     const hides = from => bakery.log.slice(from).filter(op => op.startsWith('hide:')).map(op => Number(op.split(':')[1]));
-    // 稀疏:第 0、1 段。每段只取第一帧,其余 14 帧各画一张丢掉
+    // Sparse: segments 0 and 1. Each segment captures only first frame; remaining 14 frames each render and discard
     let mark = bakery.log.length;
     await run(bakery, state, 0, SPARSE_STRIDE);
     await run(bakery, state, 1, SPARSE_STRIDE);
     assert.deepEqual(hides(mark), [0, 15], 'Only the first frames of the two segments capture an image');
     assert.deepEqual(draws(mark), [...Array.from({ length: 14 }, (_, i) => 1 + i), ...Array.from({ length: 14 }, (_, i) => 16 + i)], 'Every other frame draws one');
     assert.deepEqual([state.manifest.segments[0].samples, state.manifest.segments[1].samples], [15, 15], 'The discarded ones do not go into the segments: the sample count is unchanged');
-    // 满密度、接着租约:每一帧都是要取的,一张都不用丢
+    // Full density, continuing lease: every frame is captured, none need to be discarded
     for (const n of [0, 1]) delete state.manifest.segments[n];
     bakery.streamLease = null;
     mark = bakery.log.length;
     await run(bakery, state, 0, 1);
     await run(bakery, state, 1, 1);
     assert.equal(hides(mark).length, 30);
-    // 满密度、断了租约单独产第 2 段:从挂载帧回放到第 29 帧,每一拍画一张;第 30 帧起才取图
+    // Full density, broken lease producing segment 2 standalone: replays from mount frame to frame 29, rendering one per tick; captures images only from frame 30
     bakery.streamLease = null;
     mark = bakery.log.length;
     const before = state.replayedFrames ?? 0;
@@ -763,14 +777,14 @@ test('BD-card the single-card stream takes the same path as before: only one scr
     assert.equal(bakery.log.filter(op => /^(hide|show|media):/.test(op)).length, 0);
     assert.equal(bakery.log.filter(op => op.startsWith('shot:')).length, 16, 'Discard one on the first frame first, then one per frame afterwards');
     assert.equal(producer.status().streams.find(s => s.kind === 'card').below, null);
-    // 开关关着:计划里没有依赖下层的流
+    // Toggle is off: no below-dependent streams in the plan
     const off = await producerFor(projectOf({ media: true }), { below: false });
     assert.deepEqual(off.specs.map(s => s.kind), ['card']);
     await off.close();
   } finally { await close(); }
 });
 
-/* ------------------------------------------------------------ 键 */
+/* ------------------------------------------------------------ Keys */
 
 test('BD-keys BELOW_STREAM_VERSION is 2; capture-below.mjs goes into the screenshot code fingerprint (the stream\'s codeVersion) but not into the code fingerprint for generating snapshots', async () => {
   assert.equal(BELOW_STREAM_VERSION, 2);

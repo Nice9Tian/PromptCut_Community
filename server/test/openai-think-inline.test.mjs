@@ -1,19 +1,20 @@
 /**
  * node --test server/test/openai-think-inline.test.mjs
  *
- * openai 兼容驱动:中转站把 `<think>…</think>` 内联在 content 里发回来时,
- * 它必须被拆到思考通道,而不是原样进正文。
+ * OpenAI-compatible driver: when the relay service sends back `<think>…</think>` inlined in
+ * content, it must be split into the thinking channel rather than entering the body as is.
  *
- * 这一条钉的是用户实际撞到的那个现象:聊天气泡里出现一个赤裸的 `</think>`。
- * 只测拆分器不够 —— 拆分器对了、没接进流循环也一样漏,所以这里从 provider 的
- * stream() 出口验。
+ * This test pins down the phenomenon users actually encountered: a bare `</think>` appearing in
+ * the chat bubble. Testing the splitter alone is not enough: even if the splitter is correct, it
+ * will still leak if not wired into the stream loop; so here it is verified from provider's
+ * stream() exit.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const { createProvider } = await import('../harness/providers/openai.mjs');
 
-/** 把若干 SSE 数据块做成一个假的 fetch 响应 */
+/** Assemble multiple SSE data chunks into a fake fetch response */
 function fakeFetch(chunks) {
   return async () => ({
     ok: true,
@@ -25,7 +26,7 @@ function fakeFetch(chunks) {
   });
 }
 
-/** 把一串 content 增量包成 SSE;最后带 finish_reason 收尾 */
+/** Wrap a series of content deltas into SSE; finalize with finish_reason at the end */
 function sseOf(deltas) {
   const out = deltas.map((d) => `data: ${JSON.stringify({ choices: [{ delta: { content: d } }] })}\n\n`);
   out.push(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] })}\n\n`);

@@ -20,14 +20,16 @@ import { ReadOnlyFence } from "../ReadOnlyFence";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 编辑分区的参数 / 代码两页。哪一页显示由分区头部的胶囊分页决定(tab),
- * 但两页在这里**都常驻挂载**、只切 display:代码框里没提交的草稿切到参数页再回来还在。
- * 片段头部(卡名、换卡、开始/结束)两页共用一份。
+ * The parameters / code pages of the edit section. Which page is shown is decided by the pill tabs
+ * in the section header (tab),
+ * but **both pages stay mounted** here and only toggle display: an uncommitted draft in the code
+ * box is still there after switching to the parameters page and back.
+ * The clip header (card name, change card, start / end) is shared by both pages.
  */
 export function Inspector({ tab }: { tab: "form" | "code" }) {
   const selId = useStore(s => s.selection[0]);
   const project = useStore(s => s.project);
-  // 在线页面同步来的用户卡表变了(新同步到一张卡、源码改了控件):参数面板跟着换
+  // The user card table synced from the online browser changed (a new card was synced, or a control changed in the source): the parameters panel follows
   useSyncExternalStore(onSyncedUserCardsChanged, syncedUserCardsGen);
 
   const hit = selId ? findClip(project, selId) : null;
@@ -42,12 +44,12 @@ export function Inspector({ tab }: { tab: "form" | "code" }) {
 
   const { clip } = hit;
 
-  // 剪辑段:没有卡也没有素材,属性是引用哪条剪辑、偏移,以及框、不透明度、淡入淡出、音量与静音
+  // Cut segment: has no card and no media; its properties are which cut it references, the offset, plus frame, opacity, fade in / out, volume and mute
   if (isCutSegment(clip)) return <ReadOnlyFence><CutSegmentForm key={clip.id} clip={clip} /></ReadOnlyFence>;
 
   if (clip.mediaId && !clip.cardId) {
     const media = project.media.find(m => m.id === clip.mediaId);
-    // 参数面板整块进只读围栏:这个项目只给了只读权限(游客)时值照常显示、控件一起置灰(悬停是 viewOnlyText())
+    // The whole parameters panel goes into a read-only guard: when this project grants only read-only access (guest), values show as usual and controls are all greyed out (hover shows viewOnlyText())
     return (
       <div className="flex-1 min-h-0 overflow-y-auto pc-left-scroll flex flex-col p-3 text-xs">
         <ReadOnlyFence>
@@ -68,7 +70,7 @@ export function Inspector({ tab }: { tab: "form" | "code" }) {
     );
   }
 
-  // 先查能跑的定义;在线页面同步来的用户卡没有定义,用源码里解析出的只读视图(名字、默认值、控件)
+  // Look up a runnable definition first; a user card synced from the online browser has no definition, so use the read-only view parsed from the source (name, defaults, controls)
   const cardDef = paramsCardView(clip.cardId, { getCard, syncedCardView });
   const magic = allCards().filter(c => c.source === "magicui");
   const native = allCards().filter(c => c.source === "native");
@@ -117,7 +119,7 @@ export function Inspector({ tab }: { tab: "form" | "code" }) {
           <NumberField attrs={{ "data-pc": "clip-end" }} step={0.1} min={0} value={clip.end} onCommit={v => actions.moveClip(clip.id, { end: v })} className="w-16 pc-left-input is-sm" />
           <span className="pc-left-faint ml-auto">{(clip.end - clip.start).toFixed(2)}s</span>
         </div>
-        {/* 套了素材效果卡的视频段(片段同时带 cardId 和 mediaId):速度照样能改,取帧走素材节点的倍率 */}
+        {/* A video segment wrapped in a media effect card (the clip carries both cardId and mediaId): speed can still be changed, and frame fetching uses the media node's rate */}
         {clip.mediaId && project.media.find(m => m.id === clip.mediaId)?.kind === "video" && <ClipSpeedForm key={`speed-${clip.id}`} clip={clip} />}
       </div>
       </ReadOnlyFence>
@@ -126,12 +128,12 @@ export function Inspector({ tab }: { tab: "form" | "code" }) {
         <ReadOnlyFence>
         {clip.cardId === "mu-typing" && <TypingSoundControls key={clip.id} clip={clip} />}
         {isComposite(clip) ? <PartsForm clip={clip} /> : <ParamsForm clip={clip} cardDef={cardDef} />}
-        {/* 三维排在卡片参数后面:它改的是「这张卡摆在哪」,不是卡片自己的内容 */}
+        {/* 3D goes after the card parameters: it changes "where this card is placed", not the card's own content */}
         <Frame3DForm clip={clip} />
         </ReadOnlyFence>
       </div>
       <div className="flex-1 min-h-0 flex flex-col" style={{ display: tab === "code" ? "flex" : "none" }}>
-        {/* 按片段 id 做 key:换了片段就换一份草稿,不会把上一段没提交的内容带过来 */}
+        {/* Keyed by clip id: switching clips switches to a separate draft, so uncommitted content from the previous clip is not carried over */}
         <CodeTab key={clip.id} clip={clip} />
       </div>
     </div>

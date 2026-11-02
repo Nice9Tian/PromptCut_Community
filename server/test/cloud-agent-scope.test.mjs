@@ -1,8 +1,11 @@
 /**
- * CA-SCOPE-01 云端的一轮结束后,这个对话声明过的范围随之撤掉(契约 `docs/plan/cloud-agent-contract.md` 第 25 节的小修)。
+ * CA-SCOPE-01 After a cloud round finishes, the scope declared by this chat is cleared accordingly
+ * (contract `docs/plan/cloud-agent-contract.md` section 25 minor amendment).
  *
- * 云端的对话没有页签可关:不撤的话,别的成员的 AI 栏顶上会一直挂着「〈成员〉的云端 Agent 正在改:…」,而顶栏已经是「Agent:0 个」。
- * 说完、模型调用失败、被主人停掉,三种收尾都验;一轮进行中范围是在的(别的 Agent 的 `list_agents` 看得到)。
+ * Cloud chats have no tab to close: if not cleared, other members' AI panel top will keep showing
+ * "Cloud Agent for <member> is editing: …", while the top bar already shows "Agent: 0".
+ * Tests all three completions: finished speaking, model call failure, and stopped by owner;
+ * scope remains present during a round (visible to other Agents' `list_agents`).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,7 +17,8 @@ const alice = { projectId: 'p-a', userId: 'alice@dev-a', username: 'alice', devi
 const SCOPE = 'Cut 1->Track 1';
 
 test('CA-SCOPE-01 after a round ends (finished, failed, stopped) the scope declaration is withdrawn; while running it is present', { timeout: 180_000 }, async (t) => {
-  // 公告板自己:clearScope 只在原来有范围时回 true,撤掉之后名单里的范围是 null
+  // Bulletin board itself: clearScope returns true only when a scope previously existed; after
+  // clearing, scope in the list is null
   const board = createAgentBoards(() => ({})).boardFor('p-x');
   board.beginRun('c-1', 0);
   assert.equal(board.clearScope('c-1'), false);
@@ -27,7 +31,7 @@ test('CA-SCOPE-01 after a round ends (finished, failed, stopped) the scope decla
 
   const kit = await startKit(t);
   await kit.doc.seed(project('p-a', 'A'));
-  /** 另开一个对话问一次名单,回名单里各 Agent 的 [id, scope] */
+  /** Open another chat to query the list once, returning [id, scope] for each Agent in the list */
   let n = 0;
   const scopesNow = async () => {
     const id = `c-ask-${(n += 1)}`;
@@ -38,20 +42,20 @@ test('CA-SCOPE-01 after a round ends (finished, failed, stopped) the scope decla
     return String(out.summary);
   };
 
-  // 进行中:范围在(另一个对话看得到)
+  // In progress: scope is present (visible in another chat)
   await kit.service.send(alice, 'c-scope', { prompt: script([{ tool: 'declare_scope', input: { scope: SCOPE } }, { sleepMs: 2500 }, { say: 'That\'s all' }]) });
   await waitFor(() => { const all = []; kit.service.subscribe(alice, 'c-scope', 0, (e) => all.push(e))?.(); return all.some((e) => e.type === 'tool_result' && e.name === 'declare_scope'); }, 15_000, 'scope was declared');
   assert.ok((await scopesNow()).includes(SCOPE), 'While a round is in progress, other chats can see the scope it declared');
-  // 说完
+  // Finished speaking
   assert.equal((await kit.finished(alice, 'c-scope')).at(-1).state, 'idle');
   assert.equal((await scopesNow()).includes(SCOPE), false, 'After finishing, the scope was withdrawn');
 
-  // 模型调用失败
+  // Model call failure
   await kit.service.send(alice, 'c-scope-fail', { prompt: script([{ tool: 'declare_scope', input: { scope: SCOPE } }, { fail: 'Simulated model error' }]) });
   assert.equal((await kit.finished(alice, 'c-scope-fail')).at(-1).state, 'failed');
   assert.equal((await scopesNow()).includes(SCOPE), false, 'After failure, the scope was withdrawn');
 
-  // 被主人停掉
+  // Stopped by owner
   await kit.service.send(alice, 'c-scope-stop', { prompt: script([{ tool: 'declare_scope', input: { scope: SCOPE } }, { sleepMs: 30_000 }, { say: 'Never reached' }]) });
   await waitFor(() => { const all = []; kit.service.subscribe(alice, 'c-scope-stop', 0, (e) => all.push(e))?.(); return all.some((e) => e.type === 'tool_result' && e.name === 'declare_scope'); }, 15_000, 'scope was declared');
   kit.service.abort(alice, 'c-scope-stop');

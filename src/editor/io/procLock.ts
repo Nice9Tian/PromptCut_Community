@@ -1,30 +1,35 @@
 /**
- * 草稿的独占锁:同一份 .proc 不该被两个 PromptCut 同时编辑。
+ * Exclusive lock for drafts: the same .proc should not be edited by two PromptCuts at once.
  *
- * 两层一起用,缺一层都不够:
+ * Use two layers together; missing either one is not enough:
  *
- * 1. **Node 那半**(`/api/skill-lock`)—— 原子创建 `<name>.proc.lock`(`open(…,'wx')`),
- *    抢到就是自己的。浏览器里跑也有这一层。它的弱点是持有者被强杀之后锁文件会留下,
- *    只能退回读锁里的 pid 判活,而 pid 会被系统回收,有误判的可能。
+ * 1. **The Node half** (`/api/skill-lock`): atomically create `<name>.proc.lock` (`open(…,'wx')`);
+ *    whoever wins it owns the lock. It also works when running in a browser. Its weakness is that after
+ *    the holder is killed, the lock file is left behind, and it can only fall back to reading the pid
+ *    in the lock to check liveness, but pids get recycled by the system, so misjudgments are possible.
  *
- * 2. **外壳那半**(Tauri 命令 `acquire_proc_lock`)—— 用 Windows 共享模式 0 把那个
- *    锁文件的句柄独占住。**进程一死内核立刻收走**,没有残留锁这回事。只有拿得到
- *    原生句柄的一侧做得到,所以放在 Rust 里。
+ * 2. **The shell half** (Tauri command `acquire_proc_lock`): use Windows share mode 0 to hold the
+ *    handle of that lock file exclusively. **The kernel reclaims it the moment the process dies**, so
+ *    there is no such thing as a stale lock. Only the side that can get a native handle can do this,
+ *    so it lives in Rust.
  *
- * 顺序是先 Node 后外壳:Node 那步会把锁文件建出来并判定「有没有别人」,外壳那步只是
- * 把已经属于自己的锁加固成内核级。反过来的话,外壳会先把文件创建并锁住,Node 再去
- * `open(…,'r+')` 探测就会拿到自己造成的 EBUSY,把自己判成「别人占着」。
+ * The order is Node first, then shell: the Node step creates the lock file and decides "whether anyone
+ *    else holds it", and the shell step only hardens the lock that is already ours to kernel level.
+ *    In the reverse order, the shell would create and lock the file first, and Node's later
+ *    `open(…,'r+')` probe would hit an EBUSY that we caused ourselves, judging ourselves to be "held by someone else".
  *
- * 拿不到锁不是崩溃,是一句话:调用方决定要不要拦住「打开」这个动作。
+ * Failing to get the lock is not a crash, it is a message: the caller decides whether to block the "open" action.
  */
 
 /**
- * 在线构建的编译期常量(写法与用意见 `src/online/pageFlag.ts` 的「在线构建剪枝」)。在线页面没有草稿(新建、打开、保存都置灰),
- * 也就不抢、不放草稿锁;在线构建里 /api/skill-lock 调用整段剪掉(M8 遗留 L24)。
+ * Compile-time constant for the online build (see "online build pruning" in `src/online/pageFlag.ts`
+ * for how it is written and why). Online pages have no drafts (new, open and save are greyed out),
+ * so they neither take nor release a draft lock; in the online build the whole /api/skill-lock call
+ * is pruned away (M8 leftover L24).
  */
 const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
 
-/** Tauri 的 invoke。浏览器里跑就没有,那时只有 Node 那半 */
+/** Tauri's invoke. Not available when running in a browser, in which case only the Node half exists */
 function invoke(): ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null {
   const t = (window as unknown as {
     __TAURI__?: { core?: { invoke?: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> } };
@@ -34,11 +39,11 @@ function invoke(): ((cmd: string, args?: Record<string, unknown>) => Promise<unk
 
 export interface LockOutcome {
   ok: boolean;
-  /** 拿不到时给用户看的一句话 */
+  /** One-line message shown to the user when the lock cannot be acquired */
   error?: string;
-  /** 上一个持有者已经不在了,锁被接管 */
+  /** The previous holder is gone, so the lock was taken over */
   stolen?: boolean;
-  /** SKILL 模式下不加锁 */
+  /** No lock in SKILL mode */
   skipped?: string;
 }
 
@@ -53,18 +58,20 @@ async function post(action: "acquire" | "release", body: Record<string, unknown>
     const data = (await res.json().catch(() => ({}))) as LockOutcome;
     return { ...data, ok: res.ok && data.ok !== false };
   } catch (e) {
-    // 服务端没有这个接口(旧版本)不该把打开项目整个挡掉
+    // The server lacking this endpoint (old version) must not block opening the project entirely
     return { ok: true, error: e instanceof Error ? e.message : String(e) };
   }
 }
 
-/** 现在锁着哪一份,放锁时要用同一个 key */
+/** Which draft is locked right now; releasing must use the same key */
 let heldDraftId: string | null = null;
 let heldPath: string | null = null;
 
 /**
- * 抢一份草稿的锁。拿不到就把原因给回去,由调用方决定拦不拦。
- * 已经锁着别的草稿会先放掉那一份 —— 一个窗口同一时刻只编辑一个项目。
+ * Acquire the lock for a draft. If it cannot be acquired, return the reason and let the caller
+ * decide whether to block.
+ * If another draft is already locked, that one is released first: a window edits only one project
+ * at a time.
  */
 export async function acquireDraftLock(draftId: string): Promise<LockOutcome> {
   if (heldDraftId === draftId) return { ok: true };
@@ -72,7 +79,8 @@ export async function acquireDraftLock(draftId: string): Promise<LockOutcome> {
   const out = await post("acquire", { draftId });
   if (!out.ok) return out;
   heldDraftId = draftId;
-  // 服务端回了真实路径才能让外壳去锁;没回就只有 Node 那一层(浏览器里本来也只有它)
+  // The shell can only lock if the server returned the real path; without it only the Node layer
+  // applies (which is all a browser has anyway)
   const file = (out as LockOutcome & { file?: string }).file;
   if (file && !out.skipped) {
     heldPath = file;
@@ -81,8 +89,9 @@ export async function acquireDraftLock(draftId: string): Promise<LockOutcome> {
       try {
         await call("acquire_proc_lock", { procPath: file });
       } catch (e) {
-        // 外壳这层加固失败不改变结论:Node 那层已经判定锁是我们的了。
-        // 记一行,别把用户拦在门外。
+        // A failure in the shell's extra hardening does not change the outcome: the Node layer has already
+        // decided the lock is ours.
+        // Log one line, and do not keep the user out.
         console.warn("[procLock] Shell hardening failed, only the Node-level protection remains:", e);
       }
     }
@@ -91,11 +100,14 @@ export async function acquireDraftLock(draftId: string): Promise<LockOutcome> {
 }
 
 /**
- * 放掉当前持有的锁。换草稿、回首页、新建项目、关页面都要调。
+ * Release the lock currently held. Call it when switching drafts, returning to the home page,
+ * creating a project, or closing the page.
  *
- * 给了 `onlyId` 就只在当前持有的正是这一份时才放:「换草稿时放上一份」的调用点
- * 用它 —— 那一刻手里可能已经是刚抢到的新草稿的锁了(先 openDraft 再记 activeDraftId),
- * 不带 id 一放就把新锁放掉,正在编辑的草稿就没人锁着了。
+ * With `onlyId`, release only if the lock currently held is exactly that one: call sites that
+ * "release the previous one when switching drafts" use it. At that moment the lock in hand may
+ * already be the one for the newly acquired draft (openDraft runs first, then activeDraftId is
+ * recorded). Releasing without an id would release the new lock, and the draft being edited
+ * would be left with no lock.
  */
 export async function releaseDraftLock(onlyId?: string): Promise<void> {
   if (onlyId !== undefined && heldDraftId !== onlyId) return;
@@ -105,22 +117,24 @@ export async function releaseDraftLock(onlyId?: string): Promise<void> {
   heldPath = null;
   if (file) {
     const call = invoke();
-    // 先松内核那层,否则 Node 那半连锁文件都删不掉
+    // Release the kernel layer first, otherwise the Node half cannot even delete the lock file
     if (call) await call("release_proc_lock", { procPath: file }).catch(() => {});
   }
   if (id) await post("release", { draftId: id });
 }
 
 /*
- * 关页面 / 刷新时放锁。
+ * Release the lock on page close / refresh.
  *
- * 不放的话:刷新之后新的页面去抢同一份草稿,Node 那半看到锁文件还在、里面的 pid
- * 又确实活着(是同一个 vite 进程),于是把自己判成「别人占着」—— 用户刷新一下就
- * 打不开自己的项目了。
+ * Without this: after a refresh the new page tries to acquire the same draft, the Node half sees
+ * the lock file still there and the pid inside really alive (it is the same vite process), so it
+ * decides someone else holds the lock, and the user can no longer open their own project just by
+ * refreshing.
  *
- * pagehide 比 beforeunload 可靠(手机端和 bfcache 都会触发);用 sendBeacon 而不是
- * fetch,页面正在卸载时普通请求会被浏览器掐掉。外壳那层的句柄不用管:进程还活着的话
- * 下一句 acquire 会先 release,进程没了内核自己就收走了。
+ * pagehide is more reliable than beforeunload (it also fires on mobile and with bfcache); use
+ * sendBeacon rather than fetch, because the browser kills ordinary requests while the page is
+ * unloading. The handle held by the shell layer needs no attention: if the process is still alive,
+ * the next acquire releases first; if the process is gone, the kernel reclaims it on its own.
  */
 if (!ONLINE_BUILD && typeof window !== "undefined") {
   window.addEventListener("pagehide", () => {
@@ -131,12 +145,12 @@ if (!ONLINE_BUILD && typeof window !== "undefined") {
         new Blob([JSON.stringify({ draftId: heldDraftId })], { type: "application/json" }),
       );
     } catch {
-      /* 卸载途中失败没有补救机会,下次抢锁时 pid 兜底那条会认出是自己 */
+      /* A failure during unload cannot be remedied; the pid fallback will recognize it as ours on the next acquire */
     }
   });
 }
 
-/** 当前锁着的草稿 id,没有就是 null */
+/** Id of the draft currently locked, or null if none */
 export function lockedDraftId(): string | null {
   return heldDraftId;
 }

@@ -1,36 +1,44 @@
 /**
- * 有声动效卡(画面是组件、另写了 `audio()`,如 `av-pulse`)的画面成本身份:自动、即时补测,不默认判重(2026-10-06 用户定)。
- * 桌面一侧的真实浏览器探针,全程在本机:本探针自己起的 dev server,不连任何托管端,不向扬声器出声(Chrome 无头、`--mute-audio`)。
+ * Visual cost identity of audio motion cards (visual is a component with separate `audio()`, like
+ * `av-pulse`): automatic, immediate catch-up measurement, not classified as heavy by default
+ * (user decision, 2026-10-06).
+ * Real-browser probe on desktop side, entirely local: probe starts its own dev server, connects
+ * to no hosted side, outputs no sound to speakers (headless Chrome, `--mute-audio`).
  *
- * 两种用法:
+ * Two usages:
  *
- *   # 1. 跑一遍:摆项目(或载入另一趟留下的项目)→ 等测量 → 核对 → 从编辑器页面的导出入口导出成片
- *   node scripts/probes/av-card-cost-probe.mjs run --out <目录> [--kind av|plain] [--project <另一趟的 project.json>]
- *        [--tree <仓库根,缺省本仓库>] [--port 5720] [--expect light|legacy]
+ *   # 1. Single run: arrange project (or load project left from another pass) -> wait for measurement
+ *        -> verify -> export final video from editor page export entry
+ *   node scripts/probes/av-card-cost-probe.mjs run --out <dir> [--kind av|plain] [--project <project.json from another pass>]
+ *        [--tree <repo root, default this repo>] [--port 5720] [--expect light|legacy]
  *
- *   # 2. 两趟的成片逐帧比(ffmpeg 解成原始像素,逐帧 sha256)
- *   node scripts/probes/av-card-cost-probe.mjs compare --a <目录甲> --b <目录乙>
+ *   # 2. Frame-by-frame comparison of final videos from two passes (ffmpeg decodes to raw pixels, per-frame sha256)
+ *   node scripts/probes/av-card-cost-probe.mjs compare --a <dir A> --b <dir B>
  *
- * `--tree` 指到另一份检出(改前的提交)就能在那份代码上跑同一个项目,再用 `compare` 比两边的成片。
- * 端口:dev server 占 `--port` 起连号三个(编辑器页加两个舞台)。数据目录都在 `--out` 下。
+ * `--tree` pointing to another checkout (pre-change commit) allows running same project on that
+ * code, then comparing final videos on both sides with `compare`.
+ * Ports: dev server occupies three consecutive ports starting from `--port` (editor page plus two stages).
+ * Data directories are all under `--out`.
  *
- * 验收标准(每项一行 `{ check, ok }`,最后一行 `{ summary }`,有失败退出码 1):
+ * Acceptance criteria (one `{ check, ok }` line per item, final line `{ summary }`, exit code 1 on failure):
  *
- * `run --kind av --expect light`(改后的代码):
- *   V1 有声动效卡的片段有成本身份、有声明的帧模式;
- *   V2 第一次出现就测:测量日志里有它,成本记录按它的身份键写进去了;
- *   V3 测量期间不出声:从打开页面到测完,没有新建音频上下文、没有元素开始播放、没有声源启动;
- *   V4 测完判轻:分派表里它在自己的位置上是轻、不在预渲染集合里;
- *   V5 活渲:播放到它的位置时它不在被抑制的集合里,舞台上它的包裹层里是活组件,没有显示占位符,
- *      页面上没有「需要本地 PC 渲染辅助」;
- *   V6 重开不重测:刷新页面、载入同一个项目,测量日志里没有它;
- *   V7 导出成功,成片文件在。
- * `run --expect legacy`(改前的代码,只为留下对照,不算验收):记下有声动效卡有没有身份、判轻还是判重。
- * `run --kind plain`:不含有声动效卡的项目,只做导出(V7)。
+ * `run --kind av --expect light` (post-change code):
+ *   V1 Audio motion card clip has cost identity and declared frame mode;
+ *   V2 Measured on first appearance: present in measurement log, cost record written by its identity key;
+ *   V3 Silent during measurement: from opening page to measurement completion, no new audio context
+ *      created, no elements start playing, no sound sources started;
+ *   V4 Classified as light after measurement: light in its position in dispatch table, not in prerender set;
+ *   V5 Live render: not in suppressed set when playing to its position, live component inside its
+ *      wrapper layer on stage, no placeholder shown, page has no "Requires local PC render assistance";
+ *   V6 Reopening does not re-measure: refresh page and load the same project, absent from measurement log;
+ *   V7 Export succeeds, final video file exists.
+ * `run --expect legacy` (pre-change code, only kept for comparison, not counted as acceptance): record
+ * whether audio motion card has identity, classified as light or heavy.
+ * `run --kind plain`: project without audio motion cards, only does export (V7).
  * `compare`:
- *   C1 两边每个成片文件帧数相同、逐帧 sha256 相同。
+ *   C1 Frame count and per-frame sha256 match for every final video file on both sides.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -74,13 +82,13 @@ try {
 } catch (e) {
   console.log(JSON.stringify({ summary: { mode: MODE, checks: results.length, error: String(e?.stack ?? e).slice(0, 1500), fails: results.filter((r) => !r.ok).map((r) => r.check) } }));
 } finally {
-  for (const fn of cleanups.reverse()) { try { await fn(); } catch { /* 尽力清 */ } }
+  for (const fn of cleanups.reverse()) { try { await fn(); } catch { /* Best-effort cleanup */ } }
 }
 process.exit(exitCode);
 
 /* ================================================================== run */
 
-/** 页面里任何可能出声的动作都记一笔(同 `sound-ab-probe.mjs`) */
+/** Log any action on the page that could produce sound (same as `sound-ab-probe.mjs`) */
 function AUDIO_HOOK() {
   if (window.__pcAudioLog) return;
   const logged = (window.__pcAudioLog = []);
@@ -108,7 +116,7 @@ async function run() {
   fs.mkdirSync(OUT, { recursive: true });
   const dirs = { exportDir: path.join(OUT, 'export'), dataDir: path.join(OUT, 'data'), projectsDir: path.join(OUT, 'projects') };
   for (const d of Object.values(dirs)) fs.mkdirSync(d, { recursive: true });
-  // 那一份检出自己的 dev server 辅助(它的 REPO 就是那一份检出)
+  // That checkout's own dev server helper (its REPO is that checkout)
   const { startDevServer } = await import(pathToFileURL(path.join(TREE, 'scripts', 'lib', 'dev-server.mjs')).href);
   log('Start dev server', TREE, PORT);
   const server = await startDevServer({ port: PORT, logFile: path.join(OUT, 'vite.log'), log,
@@ -128,7 +136,7 @@ async function run() {
   };
   await open();
 
-  /* ---- 摆项目(或载入另一趟留下的那一份,片段 id 才相同) */
+  /* ---- Arrange project (or load the one left from another pass, so clip ids match) */
   let project;
   if (PROJECT) {
     project = JSON.parse(fs.readFileSync(path.resolve(PROJECT), 'utf8'));
@@ -138,7 +146,7 @@ async function run() {
       const { actions, getState } = window.__pcStore;
       actions.newProject(`av-card-cost ${kind}`);
       actions.setProjectMeta({ width: 640, height: 360, fps: 30 });
-      // 总时长跟着内容走:一张 4 秒的无声卡把时间轴撑到 4 秒
+      // Total duration follows content: a 4-second silent card stretches timeline to 4 seconds
       actions.addCardClip('punch-pill', 0, { duration: 4 });
       if (kind === 'av') {
         actions.addCardClip('av-pulse', 0.5, { duration: 1.0, params: { frequency: 880, gain: 0.5, duration: 0.6 } });
@@ -155,7 +163,7 @@ async function run() {
   const avClips = cardClips.filter((c) => c.cardId === 'av-pulse');
   note('Project', { kind: KIND, clips: cardClips.map((c) => [c.id, c.cardId, c.start, c.end]) });
 
-  /** 页面这一侧此刻的判定:身份、测量日志、成本记录、分派表 */
+  /** Current determination on page side: identity, measurement log, cost record, dispatch table */
   const judged = () => page.evaluate(async (ids) => {
     const CI = await import('/src/editor/costIdentity.ts');
     const D = await import('/src/editor/planDispatch.ts');
@@ -180,7 +188,7 @@ async function run() {
     };
   }, cardClips.map((c) => c.id));
   const settled = async (what) => {
-    // 测量跑完:不在跑、而且连着两次看测量日志没再长
+    // Measurement finished: not running, and measurement log stopped growing across two checks
     let last = -1;
     return until(what, async () => {
       const j = await judged();
@@ -202,14 +210,14 @@ async function run() {
   if (KIND === 'av' && EXPECT === 'light') {
     check('V1 Clips of the audio motion graphics card have a cost identity and a declared frame mode', av.length === avClips.length && av.every((c) => typeof c.identityKey === 'string' && c.frameMode === 'direct'), { av });
     const probedIds = new Set(first.probeRun.probed.map((e) => e[0]));
-    // 同一个身份键只测一次:两段参数、时长不同,键不同,各测各的
+    // Same identity key measured only once: two clips with different parameters and durations have different keys, measured separately
     const keys = new Set(av.map((c) => c.identityKey));
     check('V2 Measured on first appearance: it is in the measurement log, and the cost record was written under its identity key', av.every((c) => c.record) && [...keys].length === first.probeRun.probed.filter((e) => e[1] === 'av-pulse').length && av.some((c) => probedIds.has(c.id)),
       { probed: first.probeRun.probed, records: av.map((c) => [c.id, c.record]) });
     check('V3 Silent during measurement: no new audio context, no element started playing, no sound source started', audioLog.length === 0, { audioLog });
     check('V4 Judged light after measurement: light in the dispatch table, not in the prerender set', av.every((c) => c.verdict === 'light' && c.inPrerenderSet === false), { av: av.map((c) => [c.id, c.verdict, c.inPrerenderSet]) });
 
-    /* ---- V5 活渲 */
+    /* ---- V5 Live render */
     const target = avClips[0];
     const live = await page.evaluate(async (at) => {
       const { actions } = window.__pcStore;
@@ -242,7 +250,7 @@ async function run() {
       !live.suppressedWhilePlaying.includes(target.id) && !live.text && stageDom.some((s) => s.ring && s.ring.width > 20 && !s.placeholderShown && !s.suppressed),
       { live, stageDom });
 
-    /* ---- V6 重开不重测 */
+    /* ---- V6 Reopening does not re-measure */
     await open();
     await page.evaluate((p) => window.__pcStore.actions.loadProject(p), project);
     const again = await settled('Round after reopening finished');
@@ -252,7 +260,7 @@ async function run() {
     }
   }
 
-  /* ---- V7 导出 */
+  /* ---- V7 Export */
   log('Export');
   const exported = await page.evaluate(async () => {
     const stages = [];
@@ -279,7 +287,7 @@ async function run() {
 /* ================================================================== compare */
 
 async function frameHashes(ffmpeg, file) {
-  // 解成 rgba 原始像素,按帧切、逐帧 sha256(带 alpha 的 overlay.mov 也照此)
+  // Decode into raw rgba pixels, slice by frame, per-frame sha256 (overlay.mov with alpha handled same way)
   const probe = await new Promise((resolve) => {
     const c = spawn(ffmpeg, ['-hide_banner', '-i', file], { windowsHide: true });
     let err = '';

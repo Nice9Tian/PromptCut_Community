@@ -15,15 +15,19 @@ import { usePreviewZoom, zoomFor } from "./previewZoom";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 左栏「部件库」里的一格:和卡片格(CardCell)同一个壳(PreviewCard)、同一套悬停预览。
+ * One cell in the left rail's "Parts library": same shell (PreviewCard) and same hover preview as the card
+ * cell (CardCell).
  *
- * 预览的做法:把这个部件按它的 defaultFrame 放进一张 1920×1080 的组合卡画布,用舞台上
- * 真正渲染组合卡的 PartTree 跑一遍 —— 预览里看到的就是加到时间轴上会看到的。悬停期间
- * t 按时钟往前走,跟着 t 走的部件(Lottie、打字机、章节条)也动得起来。
- * 缩放按动效跑完整段时的最大包围盒,量一次缓存(previewZoom.ts)。
+ * How the preview works: place this part into a 1920×1080 composite card canvas at its defaultFrame, and
+ * run it through the PartTree that actually renders composite cards on the stage. What you see in the
+ * preview is what you would see after adding it to the timeline. While hovering, t advances with the clock,
+ * so parts that follow t (Lottie, typewriter, chapter bar) animate too.
+ * Zoom uses the largest bounding box over the full run of the motion graphics, measured once and cached
+ * (previewZoom.ts).
  *
- * 点一下:当前选中的是组合卡就把部件加进去;否则在播放头新建一张组合卡,里面就这一个部件。
- * 部件不能单独上时间轴,它一定住在组合卡里。
+ * Click: if a composite card is currently selected, add the part to it; otherwise create a new composite
+ * card at the playhead containing just this one part.
+ * A part cannot go on the timeline on its own; it always lives inside a composite card.
  */
 export function PartCell({ def, fill, aspect }: { def: PartDef<any>; fill?: boolean; aspect?: number }) {
   const [msg, setMsg] = useState<string | null>(null);
@@ -36,7 +40,8 @@ export function PartCell({ def, fill, aspect }: { def: PartDef<any>; fill?: bool
 
   const flash = (text: string) => { setMsg(text); setTimeout(() => setMsg(null), 1800); };
 
-  // 预览用的实例:默认参数 + 默认框,和 add_part 不传参数时加出来的一模一样
+  // Instance used for the preview: default parameters + default frame, identical to what add_part produces
+  // when called without parameters
   const preview = useMemo<PartInstance[]>(
     () => [{ id: "preview", partId: def.id, params: { ...def.defaults }, ...(def.defaultFrame ? { frame: { ...def.defaultFrame } } : {}) }],
     [def],
@@ -52,7 +57,8 @@ export function PartCell({ def, fill, aspect }: { def: PartDef<any>; fill?: bool
     }
   }, [hot]);
 
-  // 悬停期间 t 跟着时钟走:PartTree 靠 t 决定挂载和跟时间轴走的部件的进度(测量跑期间按 t = 0 量)
+  // While hovering, t follows the clock: PartTree uses t to decide mounting and the progress of parts that
+  // follow the timeline (during the measurement run, measure at t = 0)
   useEffect(() => {
     if (!hot || zoom.measuring) { setT(0); return; }
     const t0 = performance.now();
@@ -104,7 +110,8 @@ export function PartCell({ def, fill, aspect }: { def: PartDef<any>; fill?: bool
               height: project.height,
               transform: `scale(${scale})`,
               transformOrigin: "0 0",
-              // 测量跑藏起来要用 opacity 而不是 visibility:visibility 会继承到每个子元素,量包围盒的人看谁都是 hidden,什么都量不到
+              // Hide the measurement run with opacity, not visibility: visibility is inherited by every child element,
+              // so whoever measures the bounding box sees everything as hidden and measures nothing
               opacity: zoom.measuring ? 0 : 1,
             }}
           >
@@ -138,11 +145,11 @@ export function PartCell({ def, fill, aspect }: { def: PartDef<any>; fill?: bool
   );
 }
 
-/** 部件的动画时长(毫秒):settleMs 按默认参数算,没有就 1500 */
+/** Animation duration of the part (milliseconds): settleMs computed with default parameters, else 1500 */
 function animMsOf(def: PartDef<any>): number {
   try {
     const v = def.settleMs?.(def.defaults);
     if (typeof v === "number" && Number.isFinite(v) && v > 0) return v;
-  } catch { /* 算炸了按默认 */ }
+  } catch { /* Computation blew up, use defaults */ }
   return 1500;
 }

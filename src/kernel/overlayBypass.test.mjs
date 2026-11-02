@@ -1,11 +1,13 @@
 /**
- * 叠加卡的停用(`workflow/editing.md`「叠加卡」、`product/project-model.md`「片段」)。
+ * Disabling overlay cards (`workflow/editing.md` "Overlay card", `product/project-model.md` "Clip").
  *
- * 停用 = 挂载和逐段参数都留着,这一段上不生效。闸门只在三个解析口上:
- * `filterOfClip`、`pixelMapOfClip`、`audioFxOfClip` —— 预览、导出、ffmpeg 链、缓存签名
- * 全都从这三处取,各处自己判一遍必然漏一处。
+ * Disabling = mounts and per-clip parameters are retained, but inactive on this clip. The gate is
+ * only at three resolvers: `filterOfClip`, `pixelMapOfClip`, `audioFxOfClip`: preview, export,
+ * ffmpeg chains, and cache signatures all read from these three places; checking independently
+ * in each place would inevitably miss one.
  *
- * 这里守的就是「闸门在解析口上」这件事:停用之后解析口给 null,而挂载本身一个字段都没少。
+ * What is guarded here is "gates at the resolvers": after disabling, resolvers return null,
+ * while the mount itself does not lose a single field.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -47,7 +49,8 @@ test("Audio effect: once disabled it is treated as not attached, and the per-fra
 test("Disabling does not touch the attachment itself: the definitions in the library and the per-segment params are still there", () => {
   const c = clip({ filter: { id: "f1", params: { amount: 0.4 }, off: true } });
   assert.equal(filterOfClip(project, c), null);
-  // 这一段上不生效,但「挂的是哪一条、参数是多少」一个字都没少 —— 启用回来不用重填
+  // Inactive on this clip, but "which one is mounted and what the parameters are" is completely
+  // preserved: no need to refill when re-enabled
   assert.deepEqual(c.filter, { id: "f1", params: { amount: 0.4 }, off: true });
   assert.equal(project.filters.length, 1);
 });

@@ -1,8 +1,10 @@
 /**
- * M6a 共享项目：空间隔离、本机声明、集群令牌（契约 `docs/plan/auth-contract.md` 第 5、6、10 节，用例 AU9、AU11）。
- * 跑：node --test server/test/auth-spaces.test.mjs
+ * M6a shared project: space isolation, local declaration, cluster token (contract
+ * `docs/plan/auth-contract.md` sections 5, 6, and 10, test cases AU9, AU11).
+ * Run: node --test server/test/auth-spaces.test.mjs
  *
- * 只照契约写，不看实现。起服务的接口是测试方的假设，集中在 `auth-kit.mjs` 文件头。
+ * Written strictly against the contract, ignoring implementation. Service startup interfaces
+ * are test assumptions, centralized in the `auth-kit.mjs` file header.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -58,7 +60,7 @@ test('AU9 members of two shared projects each publish, subscribe and write to th
   await write(mq, 'Q');
   assert.deepEqual(await quietP, [], 'the reverse direction also receives 0 messages');
 
-  // 同名键各是各的
+  // Keys with the same name remain separate
   const gp = await ask(mp, { type: 'content.get', kind: 'card-source', key: 'same-key' }, 'content.item');
   const gq = await ask(mq, { type: 'content.get', kind: 'card-source', key: 'same-key' }, 'content.item');
   const gl = await ask(local, { type: 'content.get', kind: 'card-source', key: 'same-key' }, 'content.item');
@@ -67,14 +69,14 @@ test('AU9 members of two shared projects each publish, subscribe and write to th
   assert.equal(gl.missing, true, 'local space cannot see what the shared space wrote');
   assert.equal(gp.rev, 1, 'rev starts from 1 in each');
   assert.equal(gq.rev, 1);
-  // 同名项目各自的版本号
+  // Respective version numbers for projects with the same name
   const sp = await ask(mp, { type: 'project.open', projectId: 'same-project' }, 'project.state');
   const sq = await ask(mq, { type: 'project.open', projectId: 'same-project' }, 'project.state');
   assert.equal(sp.projectRev, 1);
   assert.equal(sq.projectRev, 1);
   assert.notEqual(sp.digest, sq.digest);
 
-  // local 写的共享空间也看不到
+  // Shared spaces cannot see writes by local either
   await write(local, 'L');
   const gp2 = await ask(mp, { type: 'content.get', kind: 'card-source', key: 'same-key' }, 'content.item');
   assert.deepEqual(gp2.body, { tag: 'P' });
@@ -106,7 +108,8 @@ test('AU9 render queue is isolated per space: nodes of another project cannot se
 
   const nodeQ = await join(env, Q, { username: 'quinn', role: 'render', remote: R(5) });
   await ask(nodeQ, { type: 'node.hello', nodeId: 'n-q', profile: 'host' }, 'node.welcome');
-  // M6c X3：host 的 watch 'all' 只回摘要；这里要比对快照内容，改 watch 任务所在的项目（原为 'all'）
+  // M6c X3: host watch 'all' returns only summaries; to compare snapshot contents here,
+  // changed to watching the project where the task resides (previously 'all')
   const snap = await ask(nodeQ, { type: 'queue.watch', projects: [task.source.projectId] }, 'queue.snapshot');
   assert.equal(snap.type, 'queue.snapshot', JSON.stringify(snap));
   assert.ok(!JSON.stringify(snap).includes(task.id), `the snapshot of another space should not contain this task: ${JSON.stringify(snap).slice(0, 400)}`);
@@ -122,7 +125,7 @@ test('AU9 render queue is isolated per space: nodes of another project cannot se
   await ask(nodeP, { type: 'node.hello', nodeId: 'n-p', profile: 'host' }, 'node.welcome');
   const ok = await ask(nodeP, { type: 'task.claim', id: task.id, expectVersion: 1 }, ['task.claimed', 'task.claim-rejected']);
   assert.equal(ok.type, 'task.claimed', `this space: ${JSON.stringify(ok)}`);
-  // 任务的 source 取自连接的 principal
+  // Task source is taken from the connection's principal
   const d = env.service.describe();
   void d;
 });
@@ -167,7 +170,7 @@ test('AU9 LAN host: the creator page (local claim) and members land in the same 
 
 // ------------------------------------------------------------------ AU11
 
-/** 管理身份发这些数据面消息，一律 forbidden */
+/** Data plane messages sent with admin identity are all forbidden */
 const DATA_PLANE = [
   { type: 'node.hello', nodeId: 'n-admin', profile: 'host' },
   { type: 'publisher.hello', publisherId: 'pub-admin' },
@@ -206,7 +209,8 @@ test('AU11 cluster token: a connection with the token is an admin identity; send
   const w = await ask(admin, { type: 'service.watch' }, 'service.endpoints');
   assert.equal(w.type, 'service.endpoints', JSON.stringify(w));
 
-  // 成员：service.announce 回 forbidden；service.watch 能看到管理身份登记的地址
+  // Member: service.announce returns forbidden; service.watch can see addresses registered by
+  // admin identity
   const P = await createProject(env, { mode: 'free' });
   const m = await join(env, P, { username: 'zoe', remote: R(20) });
   const ma = await ask(m, { type: 'service.announce', announcerId: 'x', kind: 'asset', urls: ['http://10.0.0.2:1/'] }, 'service.announced');
@@ -217,7 +221,7 @@ test('AU11 cluster token: a connection with the token is an admin identity; send
   const mwd = await ask(m, { type: 'service.withdraw', announcerId: 'asset-1', kind: 'asset' }, 'service.withdrawn');
   assert.deepEqual([mwd.type, mwd.reason], ['error', 'forbidden'], `member withdraws: ${JSON.stringify(mwd)}`);
 
-  // local 身份也能登记
+  // The local identity can also register
   const local = await env.open([PROTOCOL]);
   const la = await ask(local, { type: 'service.announce', announcerId: 'asset-local', kind: 'asset', urls: ['http://127.0.0.1:9001/'] }, 'service.announced');
   assert.equal(la.type, 'service.announced', JSON.stringify(la));
@@ -248,7 +252,7 @@ test('AU11 mounted mode: a handshake from a non-loopback source with a cluster t
   for (const remote of ['192.168.1.70', '10.1.2.3', '203.0.113.9']) {
     assert.equal((await env.handshake([PROTOCOL, `promptcut.token.${token}`], remote)).status, 401, remote);
   }
-  // 回环来源不带任何东西仍是本机身份，可登记地址
+  // Loopback origin without credentials is still local identity and can register addresses
   const local = await env.open([PROTOCOL]);
   const la = await ask(local, { type: 'service.announce', announcerId: 'lan-asset', kind: 'asset', urls: ['http://192.168.1.10:5190/'] }, 'service.announced');
   assert.equal(la.type, 'service.announced', JSON.stringify(la));

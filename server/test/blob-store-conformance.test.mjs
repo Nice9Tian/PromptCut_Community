@@ -1,11 +1,15 @@
 /**
- * 素材数据层 BlobStore 的一致性用例（契约 `docs/plan/asset-store-contract.md` 第 2 节，用例 K1～K16）。
- * 跑：node --test server/test/blob-store-conformance.test.mjs
+ * Conformance test cases for the asset data layer BlobStore (contract
+ * `docs/plan/asset-store-contract.md` section 2, test cases K1~K16).
+ * Run: node --test server/test/blob-store-conformance.test.mjs
  *
- * 同一套用例对 fs（临时目录，hooks 用本文件里的最小测试实现）和 memory（chunkSize 调小）各跑一遍。
- * 只照契约写，不看实现。分片长度一律取 `store.chunkSize`：fs 没有 chunkSize 选项，就是 8 MiB。
+ * The same test suite runs once each for fs (temporary directory, hooks using the minimal test
+ * implementation in this file) and memory (smaller chunkSize). Written strictly to the contract
+ * without looking at implementations. Chunk lengths always take `store.chunkSize`: fs has no
+ * chunkSize option, which is 8 MiB.
  *
- * 数据层模块用动态 import 载入：载不进来时每条用例各自失败、报同一个原因，而不是整个文件一条错。
+ * Data layer modules are loaded via dynamic import: when failing to load, each test case fails
+ * individually reporting the same reason, rather than the whole file producing a single error.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -33,7 +37,7 @@ after(() => fs.rmSync(TMP, { recursive: true, force: true }));
 const MEM_CHUNK = 1024;
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
-/** 确定性的伪随机字节，每个用例一份不同的内容 */
+/** Deterministic pseudo-random bytes, with different content for each test case */
 function bytesOf(size, seed) {
   const out = Buffer.alloc(size);
   let x = (seed * 2654435761) >>> 0 || 1;
@@ -44,7 +48,7 @@ function bytesOf(size, seed) {
   return out;
 }
 
-/** fs 实现的 hooks：最小的测试实现，照契约第 2 节「hooks 由调用方注入」 */
+/** fs implementation hooks: minimal test implementation, per contract section 2 "hooks are injected by the caller" */
 const CT = { mp4: 'video/mp4', webm: 'video/webm', png: 'image/png', wav: 'audio/wav' };
 function makeHooks(dir) {
   const stored = [];
@@ -79,8 +83,11 @@ const KINDS = {
     const store = need().createBlobStore({ kind: 'memory', chunkSize: MEM_CHUNK });
     return { store };
   },
-  // SP（`docs/plan/shared-project-contract.md` 第 1 节）：托管组合用的分目录布局，不注入 resolveFile（按布局自己找）。
-  // 不回 `dir`：K11 里按原布局查文件路径的两条断言只对原布局成立，分目录布局的路径另在 sp-hosting 的 SPH 用例里查
+  // SP (`docs/plan/shared-project-contract.md` section 1): subdirectory layout used by hosted
+  // composites, does not inject resolveFile (locates files on its own by layout).
+  // Does not return `dir`: the two assertions in K11 checking file paths against the original
+  // layout hold only for the original layout; paths in the subdirectory layout are checked
+  // separately in sp-hosting SPH test cases
   'fs-shard'() {
     const dir = path.join(TMP, `shard-${++seq}`);
     fs.mkdirSync(dir, { recursive: true });
@@ -88,18 +95,18 @@ const KINDS = {
     return { store };
   },
 };
-/** 用例标签 → 实现报的 `kind`（分目录布局仍是 fs 实现） */
+/** Test case label → implementation-reported `kind` (subdirectory layout is still an fs implementation) */
 const kindOf = (label) => (label === 'fs-shard' ? 'fs' : label);
 
 /* ------------------------------------------------------------------ *
- * 小工具
+ * Utilities
  * ------------------------------------------------------------------ */
 
 const count = (size, cs) => Math.max(1, Math.ceil(size / cs));
 const sliceOf = (buf, n, cs) => buf.subarray(n * cs, Math.min(buf.length, (n + 1) * cs));
-/** 可读流形式的 source */
+/** Source in readable stream form */
 const streamOf = (buf) => Readable.from([Buffer.from(buf)]);
-/** 异步可迭代形式的 source，分小块、每块之间让出事件循环，方便并发交错 */
+/** Source in async iterable form, split into small chunks, yielding event loop between chunks for concurrent interleaving */
 async function* piecesOf(buf, piece = 257) {
   for (let i = 0; i < buf.length; i += piece) {
     await new Promise((r) => setImmediate(r));
@@ -122,7 +129,7 @@ async function putAll(store, hash, buf, ext = 'mp4') {
 const unknownChunks = (cs) => ({ size: null, chunkSize: cs, received: [], complete: false });
 
 /* ------------------------------------------------------------------ *
- * K15（与实现种类无关，只跑一次）
+ * K15 (independent of implementation kind, runs only once)
  * ------------------------------------------------------------------ */
 
 test('K15 createBlobStore: oss throws not-implemented; an unknown kind throws TypeError; BLOB_CHUNK_SIZE is 8 MiB', () => {
@@ -143,7 +150,7 @@ test('K15 createBlobStore: oss throws not-implemented; an unknown kind throws Ty
 });
 
 /* ------------------------------------------------------------------ *
- * K1～K14：同一套对两种实现各跑一遍
+ * K1~K14: same suite runs once for each of the two implementations
  * ------------------------------------------------------------------ */
 
 for (const [kind, make] of Object.entries(KINDS)) {
@@ -183,11 +190,11 @@ for (const [kind, make] of Object.entries(KINDS)) {
     const buf = bytesOf(cs + 10, 3);
     const h = sha256(buf);
     assert.equal((await store.putChunk(h, 1, { size: buf.length, ext: 'mp4' }, streamOf(sliceOf(buf, 1, cs)))).status, 'ok');
-    // 第 0 片在 size+1 下长度仍是整片，不会先撞上长度检查
+    // Under size+1, chunk 0 is still a full chunk in length and will not hit the length check first
     const r = await store.putChunk(h, 0, { size: buf.length + 1, ext: 'mp4' }, streamOf(sliceOf(buf, 0, cs)));
     assert.deepEqual(r, { status: 'size-mismatch', size: buf.length });
     assert.deepEqual(await store.chunks(h), { size: buf.length, chunkSize: cs, received: [1], complete: false });
-    // 原 size 照常能传完、收尾
+    // The original size can finish uploading and finalize as usual
     assert.equal((await store.putChunk(h, 0, { size: buf.length, ext: 'mp4' }, streamOf(sliceOf(buf, 0, cs)))).status, 'ok');
     assert.equal((await store.complete(h)).status, 'ok');
   });
@@ -199,25 +206,28 @@ for (const [kind, make] of Object.entries(KINDS)) {
     const h = sha256(buf);
     const meta = { size: buf.length, ext: 'mp4' };
 
-    // 最后一片：少了、多了
+    // Last chunk: too short, too long
     assert.deepEqual(await store.putChunk(h, 1, meta, streamOf(sliceOf(buf, 1, cs).subarray(0, 9))), { status: 'length', expected: 10, got: 9 });
     assert.deepEqual(await store.putChunk(h, 1, meta, streamOf(Buffer.alloc(11, 7))), { status: 'length', expected: 10, got: 11 });
     assert.deepEqual((await store.chunks(h)).received, []);
 
-    // 先收下第 1 片，再让第 0 片超长：超出的字节不能写进第 1 片的位置
+    // Accept chunk 1 first, then make chunk 0 oversized: excess bytes must not be written into
+    // chunk 1's position
     assert.equal((await store.putChunk(h, 1, meta, streamOf(sliceOf(buf, 1, cs)))).status, 'ok');
     const long = Buffer.concat([sliceOf(buf, 0, cs), Buffer.alloc(5, 0xee)]);
     assert.deepEqual(await store.putChunk(h, 0, meta, streamOf(long)), { status: 'length', expected: cs, got: cs + 5 });
     assert.deepEqual((await store.chunks(h)).received, [1]);
 
-    // 已收到的一片，重传时长度不对：这一片变回「没收到」
+    // For an already received chunk, retransmitting with an invalid length reverts this chunk to
+    // "not received"
     assert.equal((await store.putChunk(h, 0, meta, streamOf(sliceOf(buf, 0, cs)))).status, 'ok');
     assert.deepEqual((await store.chunks(h)).received, [0, 1]);
     assert.deepEqual(await store.putChunk(h, 0, meta, piecesOf(sliceOf(buf, 0, cs).subarray(0, cs - 1), 997)), { status: 'length', expected: cs, got: cs - 1 });
     assert.deepEqual((await store.chunks(h)).received, [1], 'The chunk whose re-send failed had its "received" mark removed');
     assert.deepEqual((await store.complete(h)).missing, [0]);
 
-    // 补齐后收尾：字节完整（超长那次没写坏第 1 片）
+    // Finalize after filling missing parts: bytes are intact (the oversized write did not corrupt
+    // chunk 1)
     assert.equal((await store.putChunk(h, 0, meta, streamOf(sliceOf(buf, 0, cs)))).status, 'ok');
     assert.deepEqual(await store.complete(h), { status: 'ok', size: buf.length, ext: 'mp4' });
     assert.deepEqual(await readAll(await store.read(h)), buf);
@@ -243,7 +253,7 @@ for (const [kind, make] of Object.entries(KINDS)) {
   test(`K6 ${kind}: complete with chunks missing → incomplete, missing is correct, chunks already received are left alone`, async () => {
     const { store } = make();
     const cs = store.chunkSize;
-    const buf = bytesOf(cs * 3 + 17, 6); // 4 片
+    const buf = bytesOf(cs * 3 + 17, 6); // 4 chunks
     const h = sha256(buf);
     const meta = { size: buf.length, ext: 'mp4' };
     for (const n of [0, 2]) assert.equal((await store.putChunk(h, n, meta, streamOf(sliceOf(buf, n, cs)))).status, 'ok');
@@ -260,7 +270,7 @@ for (const [kind, make] of Object.entries(KINDS)) {
     const buf = bytesOf(cs + 100, 7);
     const h = sha256(buf);
     const bad = Buffer.from(buf);
-    bad[cs + 50] ^= 0xff; // 篡改第 1 片里的一个字节
+    bad[cs + 50] ^= 0xff; // Tamper with one byte in chunk 1
     const meta = { size: buf.length, ext: 'mp4' };
     for (let n = 0; n < 2; n++) assert.equal((await store.putChunk(h, n, meta, streamOf(sliceOf(bad, n, cs)))).status, 'ok');
     assert.deepEqual((await store.chunks(h)).received, [0, 1]);
@@ -272,7 +282,7 @@ for (const [kind, make] of Object.entries(KINDS)) {
     assert.equal(await store.stat(h), null);
     assert.equal(await store.read(h), null);
     assert.deepEqual(await store.complete(h), { status: 'unknown' });
-    // 从头重传正确字节可以入库
+    // Retransmitting the correct bytes from the beginning can be stored
     await putAll(store, h, buf);
     assert.equal((await store.complete(h)).status, 'ok');
   });
@@ -280,7 +290,7 @@ for (const [kind, make] of Object.entries(KINDS)) {
   test(`K8 ${kind}: all chunks arrived → ok; stat is correct; read returns correct bytes for the whole file and for ranges`, async () => {
     const { store } = make();
     const cs = store.chunkSize;
-    const buf = bytesOf(cs * 2 + 321, 8); // 3 片
+    const buf = bytesOf(cs * 2 + 321, 8); // 3 chunks
     const h = sha256(buf);
     const t0 = Date.now();
     await putAll(store, h, buf, 'mp4');
@@ -309,7 +319,7 @@ for (const [kind, make] of Object.entries(KINDS)) {
     assert.deepEqual(await readAll(await store.read(h, { start: buf.length - 10 })), buf.subarray(buf.length - 10), 'end defaults to the end of the file');
     assert.deepEqual(await readAll(await store.read(h, { start: cs + 7 })), buf.subarray(cs + 7), 'Start across a chunk boundary, through to the end');
 
-    // 没有扩展名、contentType 回落
+    // No file extension, contentType falls back
     const plain = bytesOf(50, 88);
     const hp = sha256(plain);
     await putAll(store, hp, plain, '');
@@ -331,7 +341,8 @@ for (const [kind, make] of Object.entries(KINDS)) {
     async function* garbage() { yield Buffer.alloc(cs, 0x55); drained = true; }
     assert.deepEqual(await store.putChunk(h, 0, { size: buf.length, ext: 'png' }, garbage()), { status: 'complete' });
     assert.ok(drained, 'The request body is fully read');
-    // 入库后：size 不同、长度不对、越界之外的任何分片也都回 complete
+    // After being stored: any chunk other than size mismatch, invalid length, or out-of-bounds also
+    // returns complete
     assert.deepEqual(await store.putChunk(h, 1, { size: buf.length, ext: 'mp4' }, streamOf(Buffer.alloc(1))), { status: 'complete' });
     assert.deepEqual(await store.putChunk(h, 0, { size: buf.length + 9, ext: 'png' }, streamOf(Buffer.alloc(2))), { status: 'complete' });
 
@@ -342,7 +353,7 @@ for (const [kind, make] of Object.entries(KINDS)) {
   });
 
   test(`K10 ${kind}: putChunk on all chunks concurrently, then complete: the result is the same as writing in order`, async () => {
-    const buf = bytesOf((kind === 'memory' ? MEM_CHUNK : 8 * 1024 * 1024) * 3 + 77, 10); // 4 片
+    const buf = bytesOf((kind === 'memory' ? MEM_CHUNK : 8 * 1024 * 1024) * 3 + 77, 10); // 4 chunks
     const h = sha256(buf);
 
     const seqEnv = make();
@@ -363,7 +374,8 @@ for (const [kind, make] of Object.entries(KINDS)) {
     assert.deepEqual({ size: a.size, ext: a.ext, contentType: a.contentType }, { size: b.size, ext: b.ext, contentType: b.contentType });
     assert.equal(sha256(await readAll(await store.read(h))), h);
 
-    // 同一片被并发写两次（重传与原传赛跑）也不坏
+    // Writing the same chunk concurrently twice (retransmission races with original transmission) does
+    // not corrupt it
     const buf2 = bytesOf(cs * 2 + 5, 11);
     const h2 = sha256(buf2);
     const meta2 = { size: buf2.length, ext: 'webm' };
@@ -388,7 +400,7 @@ for (const [kind, make] of Object.entries(KINDS)) {
     assert.equal(await store.remove(h), false);
     if (dir) assert.ok(!fs.existsSync(path.join(dir, `${h}.mp4`)), 'fs: the whole file is deleted');
 
-    // 只有暂存的哈希也能删
+    // Hashes that only have staged data can also be deleted
     const part = bytesOf(cs + 1, 13);
     const hp = sha256(part);
     assert.equal((await store.putChunk(hp, 1, { size: part.length, ext: 'mp4' }, streamOf(sliceOf(part, 1, cs)))).status, 'ok');
@@ -397,7 +409,7 @@ for (const [kind, make] of Object.entries(KINDS)) {
     assert.equal(await store.remove(hp), false);
     if (dir) assert.ok(!fs.existsSync(path.join(dir, '.chunks', hp)), 'fs: the staging directory is deleted');
 
-    // 删掉之后同一哈希可以重新上传
+    // After deletion, the same hash can be re-uploaded
     await putAll(store, h, buf, 'mp4');
     assert.equal((await store.complete(h)).status, 'ok');
     assert.deepEqual(await readAll(await store.read(h)), buf);
@@ -418,17 +430,17 @@ for (const [kind, make] of Object.entries(KINDS)) {
     assert.deepEqual(await store.usage(), { blobs: 0, bytes: 0, staging: 2 });
     assert.equal((await store.complete(hb)).status, 'ok');
     assert.deepEqual(await store.usage(), { blobs: 1, bytes: 300, staging: 1 });
-    // hash-mismatch 丢掉暂存
+    // hash-mismatch discards staged data
     const wrong = sha256(Buffer.from('k12-wrong'));
     await putAll(store, wrong, c, 'png');
     assert.deepEqual(await store.usage(), { blobs: 1, bytes: 300, staging: 2 });
     assert.equal((await store.complete(wrong)).status, 'hash-mismatch');
     assert.deepEqual(await store.usage(), { blobs: 1, bytes: 300, staging: 1 });
-    // 入库第二个
+    // Store the second one
     assert.equal((await store.putChunk(ha, 1, { size: a.length, ext: 'mp4' }, streamOf(sliceOf(a, 1, cs)))).status, 'ok');
     assert.equal((await store.complete(ha)).status, 'ok');
     assert.deepEqual(await store.usage(), { blobs: 2, bytes: 300 + a.length, staging: 0 });
-    // 同一内容再传不算两份
+    // Uploading the same content again does not count as two copies
     assert.equal((await store.putChunk(hb, 0, { size: b.length, ext: 'png' }, streamOf(b))).status, 'complete');
     assert.deepEqual(await store.usage(), { blobs: 2, bytes: 300 + a.length, staging: 0 });
     await putAll(store, hc, c, 'png');
@@ -441,7 +453,7 @@ for (const [kind, make] of Object.entries(KINDS)) {
   test(`K13 ${kind}: ext is the first non-empty value registered and does not change afterwards`, async () => {
     const { store } = make();
     const cs = store.chunkSize;
-    const buf = bytesOf(cs * 2 + 1, 13); // 3 片
+    const buf = bytesOf(cs * 2 + 1, 13); // 3 chunks
     const h = sha256(buf);
     const size = buf.length;
     assert.equal((await store.putChunk(h, 0, { size, ext: '' }, streamOf(sliceOf(buf, 0, cs)))).status, 'ok');
@@ -453,7 +465,7 @@ for (const [kind, make] of Object.entries(KINDS)) {
     assert.equal(st.ext, 'mp4');
     assert.equal(st.contentType, 'video/mp4');
 
-    // 从头到尾都没给扩展名
+    // No file extension was provided from start to finish
     const plain = bytesOf(40, 131);
     const hp = sha256(plain);
     assert.equal((await store.putChunk(hp, 0, { size: 40, ext: '' }, streamOf(plain))).status, 'ok');
@@ -493,7 +505,7 @@ for (const [kind, make] of Object.entries(KINDS)) {
 }
 
 /* ------------------------------------------------------------------ *
- * K16：只对 fs
+ * K16: fs only
  * ------------------------------------------------------------------ */
 
 test('K16 fs: the directory layout is the same as today (staging .chunks/<hash>/ contains meta.json, data and <n>.ok; after storing it is <hash>.<ext> and the staging is deleted)', async () => {
@@ -522,7 +534,7 @@ test('K16 fs: the directory layout is the same as today (staging .chunks/<hash>/
   assert.equal(sha256(fs.readFileSync(whole)), h);
   assert.ok(!fs.existsSync(staging), '.chunks/<hash> does not exist');
 
-  // onStored 收到入库信息（file 是文件名，契约第 8 节第 3 条）
+  // onStored receives stored information (file is file name, contract section 8 item 3)
   assert.equal(stored.length, 1);
   const e = stored[0];
   assert.equal(e.hash, h);
@@ -531,7 +543,7 @@ test('K16 fs: the directory layout is the same as today (staging .chunks/<hash>/
   assert.equal(e.size, buf.length);
   assert.equal(e.contentType, 'video/mp4', 'contentType uses hooks.contentTypeForExt');
 
-  // 没有扩展名：<dir>/<hash>
+  // No file extension: <dir>/<hash>
   const plain = bytesOf(99, 161);
   const hp = sha256(plain);
   assert.equal((await store.putChunk(hp, 0, { size: 99, ext: '' }, streamOf(plain))).status, 'ok');
@@ -562,7 +574,7 @@ test('K16 fs: a legacy whole-file import (placed directly at <dir>/<hash>.<ext>,
 });
 
 /* ------------------------------------------------------------------ *
- * K17、K18：契约第 8 节第 7、8 条
+ * K17, K18: contract section 8, items 7 and 8
  * ------------------------------------------------------------------ */
 
 test('K17 memory: size over 256 MiB returns size-mismatch and is not registered', async () => {
@@ -576,7 +588,7 @@ test('K17 memory: size over 256 MiB returns size-mismatch and is not registered'
     assert.deepEqual(await store.chunks(h), unknownChunks(store.chunkSize), 'Not registered');
     assert.deepEqual(await store.usage(), { blobs: 0, bytes: 0, staging: 0 });
   }
-  // 正常大小照常
+  // Normal size behaves as usual
   const buf = bytesOf(100, 17);
   const h = sha256(buf);
   assert.equal((await store.putChunk(h, 0, { size: 100, ext: '' }, streamOf(buf))).status, 'ok');
@@ -591,7 +603,7 @@ test('K18 fs: usage counts only files shaped like <hash> and <hash>.<ext>; index
   const before = await store.usage();
   assert.deepEqual(before, { blobs: 1, bytes: 321, staging: 0 });
 
-  // 媒体索引（vite-plugin-media 写在 <mediaDir>/index.json）和其它杂项文件
+  // Media index (written by vite-plugin-media to <mediaDir>/index.json) and other miscellaneous files
   fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify({ version: 1, items: { [h]: { file: `${h}.mp4`, ext: 'mp4', size: 321, contentType: 'video/mp4' } } }, null, 2));
   fs.writeFileSync(path.join(dir, 'notes.txt'), 'x'.repeat(1000));
   fs.writeFileSync(path.join(dir, `${'a'.repeat(63)}.mp4`), 'short-hash');

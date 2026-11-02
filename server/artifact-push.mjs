@@ -1,25 +1,39 @@
 /**
- * 预渲染产物的无条件推送队列(C6.4,`docs/plan/manifest-contract.md` 第 4 节;`cloud-task.md` A3b、A5)。
+ * Unconditional push queue for prerender outputs (C6.4, Section 4 of `docs/plan/manifest-contract.md`;
+ * `cloud-task.md` A3b, A5).
  *
- * 本机预渲染进程自己产的产物 —— 不经渲染任务队列的那些也算 —— 按段(与队列细任务的切分一一对应)
- * 排进这里,在后台推到素材服务,再把这一段的清单写进文档服务的内容库。别的机器按键查得到清单、
- * 按哈希拉块,不用重新预渲染(换机取用,第 5 节)。
+ * Outputs produced by the local prerender process itself, including those that do not go through
+ * the render queue, are queued here by segment (in 1:1 correspondence with queue fine-grained task
+ * splits), pushed in the background to the asset service, and this segment's manifest is then
+ * written to the document service content store. Other machines can look up the manifest by key
+ * and pull chunks by hash, without needing to prerender again (cross-machine retrieval, Section 5).
  *
- *   进队:`enqueue(unit, priority)`。`unit = { kind: 'snapshot' | 'stream', tier?, resultKey, dirKey?, entryKey?, range, canvasHeavy? }`;
- *         同一段(`<kind>:<resultKey>:<from>-<to>`)已经在队里就不重复,只合并优先级;正在推的那一段又进队,
- *         推完再推一遍(推的时候读的是旧的帧库,新写的帧要补上)。
- *   优先级:数字越小越先推 —— 0 `normal`、1 `low`、2 `lowest`。卡级(调用方给的 `priority`,以及这一段自己看得出的:
- *         流、本地档、`canvasHeavy` 一律至少 1)与块级(这一段 `data:image` 字节过半 → 1;有超体积帧 → 2)取低的那个。
- *         块级在这一段轮到之前读帧库算(`index.json` 的 `oversize`,帧文件的 `data:image` 占比)。
- *   执行:并发 `concurrency` 段;每段 `collect*` → `pushResult` → `content.put` 清单。失败的段按指数退避重试
- *         (5 s、30 s、120 s,之后每 10 min),不放弃。清单超过 256 KiB 的段永远写不进内容库,记日志后丢掉。
- *         段的键目录已不在帧库里(按上限淘汰或「清理缓存」删了,`frame-library-storage.mjs`)的,推之前、推空了、
- *         推失败时各判一次,不在就丢掉、记 `push.evicted`,不重试(存储占用计划 `docs/plan/storage-plan.md`)。
- *   落盘:`<dir>/push-queue.json`(`dir` 是帧库根),每次进队、完成时经 `atomic` 写回;重启时读回接着推;
- *         已完成的段不留在文件里。
+ *   Enqueue: `enqueue(unit, priority)`. `unit = { kind: 'snapshot' | 'stream', tier?, resultKey, dirKey?, entryKey?, range, canvasHeavy? }`;
+ *         if the same segment (`<kind>:<resultKey>:<from>-<to>`) is already in the queue, it is
+ *         not duplicated, only merging priorities; if the segment currently being pushed is
+ *         enqueued again, push it once more after it finishes (pushing reads the old frame store,
+ *         so newly written frames must be caught up).
+ *   Priority: smaller numbers are pushed first: 0 `normal`, 1 `low`, 2 `lowest`. Take the lower
+ *         priority of card level (caller-given `priority`, plus what can be inferred from this
+ *         segment: stream, local tier, `canvasHeavy` are all at least 1) and chunk level (over
+ *         half the bytes in this segment are `data:image` → 1; has oversized frames → 2). Chunk
+ *         level is computed by reading the frame store before this segment's turn (`oversize` in
+ *         `index.json`, `data:image` proportion in frame files).
+ *   Execution: run `concurrency` segments concurrently; each segment does `collect*` → `pushResult`
+ *         → `content.put` manifest. Failed segments are retried with exponential backoff (5 s, 30 s,
+ *         120 s, then every 10 min) without giving up. Segments whose manifest exceeds 256 KiB can
+ *         never be written to the content store, and are dropped after logging. If a segment's
+ *         key directory is no longer in the frame store (evicted by limit or deleted by
+ *         "clear cache", `frame-library-storage.mjs`), check once each before push, when push
+ *         yields nothing, and on push failure; if absent, drop it, log `push.evicted`, and do not
+ *         retry (storage plan `docs/plan/storage-plan.md`).
+ *   Persistence: `<dir>/push-queue.json` (`dir` is the frame store root), written back via `atomic`
+ *         on each enqueue and completion; read back on restart to resume pushing; completed segments
+ *         are not kept in the file.
  *
- * 推送在后台跑,预渲染的每一帧不等它;这里不开 Chrome、不渲染。素材服务客户端(`createAssetClient`)和
- * 内容库客户端(`createContentClient`)都由调用方传进来。
+ * Pushing runs in the background, and prerendering frames does not wait for it; Chrome is not
+ * opened here, and no rendering is performed. Both the asset service client (`createAssetClient`)
+ * and the content store client (`createContentClient`) are passed in by the caller.
  */
 import fsSync from 'node:fs';
 import path from 'node:path';
@@ -28,14 +42,14 @@ import { rangeHas } from './snapshot-store.mjs';
 import { collectSnapshotResult, collectStreamResult, pushResult, manifestKindOf, manifestKeyOf, assertResultSize, layerMapKeyOf, mergedForWrite } from './artifact-transfer.mjs';
 import { sharedBandwidthGate } from './bandwidth-gate.mjs';
 
-/** 优先级:数字越小越先推 */
+/** Priority: smaller numbers are pushed first */
 export const PUSH_PRIORITY = Object.freeze({ normal: 0, low: 1, lowest: 2 });
 const PRIORITY_NAMES = ['normal', 'low', 'lowest'];
-/** 失败后的退避:第 1、2、3 次失败后等 5 s、30 s、120 s,之后每次 10 min */
+/** Backoff on failure: wait 5 s, 30 s, 120 s after failures 1, 2, 3, then 10 min each time thereafter */
 export const PUSH_BACKOFF_MS = Object.freeze([5_000, 30_000, 120_000, 600_000]);
-/** 判不了范围、先扣在内存里的段最多这么多(满了丢最早的) */
+/** Maximum number of segments held in memory when range cannot be determined (drop oldest when full) */
 export const PUSH_DEFERRED_MAX = 5000;
-/** 队列文件名(在帧库根下) */
+/** Queue file name (under frame store root) */
 export const PUSH_QUEUE_FILE = 'push-queue.json';
 const FILE_VERSION = 1;
 
@@ -44,13 +58,14 @@ const SAFE_KEY_RE = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 const safeKey = value => typeof value === 'string' && SAFE_KEY_RE.test(value) && value !== '.' && value !== '..';
 
 /**
- * 一段 HTML 里 `data:image` 占了多少字节。算法照抄 `scripts/probes/snapshot-size-probe.mjs` 的 `dataImageBytes`
- * (按匹配串的长度计;这些串全是 ASCII,长度就是字节数)。不引用探针。
+ * How many bytes `data:image` occupies in an HTML segment. Algorithm copies `dataImageBytes`
+ * from `scripts/probes/snapshot-size-probe.mjs` (counted by matched string length; these strings
+ * are all ASCII, so length is byte count). Does not import the probe.
  */
 const DATA_IMG = /data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/g;
 export const dataImageBytes = s => { let n = 0; for (const m of (s || '').match(DATA_IMG) || []) n += m.length; return n; };
 
-/** `'normal' | 'low' | 'lowest' | 0 | 1 | 2` → 0～2;认不出的当 0 */
+/** `'normal' | 'low' | 'lowest' | 0 | 1 | 2` → 0-2; unrecognized values become 0 */
 export function priorityOf(value) {
   if (typeof value === 'string') {
     const at = PRIORITY_NAMES.indexOf(value);
@@ -60,12 +75,12 @@ export function priorityOf(value) {
   return Number.isFinite(n) ? Math.max(0, Math.min(2, n)) : 0;
 }
 
-/** 段的标识:与渲染任务 id 同形(`<kind>:<resultKey>:<from>-<to>`) */
+/** Segment identifier: same format as render task id (`<kind>:<resultKey>:<from>-<to>`) */
 export function unitId(unit) {
   return `${unit.kind}:${unit.resultKey}:${unit.range.from}-${unit.range.to}`;
 }
 
-/** 校验并整理一段;不合格回 null(不猜) */
+/** Validate and normalize a segment; returns null if invalid (no guessing) */
 export function normalizeUnit(unit) {
   if (!unit || typeof unit !== 'object') return null;
   const { kind, resultKey } = unit;
@@ -86,7 +101,7 @@ export function normalizeUnit(unit) {
   return { kind, tier, resultKey, dirKey: unit.dirKey, entryKey: unit.entryKey, range: { from, to }, canvasHeavy: unit.canvasHeavy === true };
 }
 
-/** 这一段自己看得出的卡级下限:流、本地档、`canvasHeavy` 至少 `low`(A5;流一律按 1) */
+/** Card-level lower bound identifiable from this segment: stream, local tier, `canvasHeavy` are at least `low` (A5; streams are always 1) */
 function unitFloor(unit) {
   if (unit.kind === 'stream') return PUSH_PRIORITY.low;
   if (unit.tier === 'local' || unit.canvasHeavy) return PUSH_PRIORITY.low;
@@ -94,8 +109,9 @@ function unitFloor(unit) {
 }
 
 /**
- * 块级优先级(A3b):有超体积帧 → 2;`data:image` 字节占全部 HTML 字节一半以上 → 1;否则 0。
- * 只看快照;流回 0(流的卡级已经是 1)。读不到当 0,不挡推送。
+ * Chunk-level priority (A3b): oversized frames exist → 2; `data:image` bytes account for over half
+ * of total HTML bytes → 1; otherwise 0. Only checks snapshots; streams return 0 (a stream's
+ * card-level priority is already 1). Treated as 0 if unreadable, without blocking the push.
  */
 export async function blockPriorityOf(pipeline, unit) {
   if (unit.kind !== 'snapshot') return PUSH_PRIORITY.normal;
@@ -116,8 +132,9 @@ export async function blockPriorityOf(pipeline, unit) {
 }
 
 /**
- * 这一段在帧库里的键目录:快照 = `snapshots().dir(...)`(共享档 `controls-html/<dirKey>`、本地档
- * `controls-local/<entryKey>/<dirKey>`);流 = `<帧库>/streams/<resultKey>`。算不出回 null(不判,当它在)。
+ * Key directory of this segment in the frame store: snapshots = `snapshots().dir(...)` (shared tier
+ * `controls-html/<dirKey>`, local tier `controls-local/<entryKey>/<dirKey>`); streams =
+ * `<frame-store>/streams/<resultKey>`. Returns null if unable to compute (assumes it exists).
  */
 export function unitDirOf(pipeline, unit) {
   try {
@@ -128,8 +145,9 @@ export function unitDirOf(pipeline, unit) {
 }
 
 /**
- * 这一段的键目录是不是已经不在了(帧库按上限淘汰、或「清理缓存」删掉了它,`frame-library-storage.mjs`)。
- * 只有确实 ENOENT 才算不在;别的错(没权限、被占)不算,照常重试。
+ * Whether this segment's key directory is no longer present (evicted by frame store capacity cap,
+ * or deleted by "Clear cache", `frame-library-storage.mjs`). Only confirmed ENOENT counts as missing;
+ * other errors (permission denied, locked) do not count, retrying as usual.
  */
 export async function unitEvicted(pipeline, unit) {
   const dir = unitDirOf(pipeline, unit);
@@ -140,25 +158,37 @@ export async function unitEvicted(pipeline, unit) {
 
 /**
  * @param {object} options
- * @param {any} options.pipeline  `FramePipeline`(用它的帧库 `snapshots()` 与 `root`)
- * @param {any} options.client  素材服务客户端(`put` / `has` / `get`)
- * @param {any} [options.content]  内容库客户端(`put` / `get` / `list`);不给就只推块、不写清单
- * @param {string} [options.dir]  队列文件所在目录,缺省帧库根 `pipeline.root`
+ * @param {any} options.pipeline  `FramePipeline` (uses its frame store `snapshots()` and `root`)
+ * @param {any} options.client  Asset service client (`put` / `has` / `get`)
+ * @param {any} [options.content]  Content store client (`put` / `get` / `list`); if omitted, only
+ *        pushes chunks without writing manifests
+ * @param {string} [options.dir]  Directory where queue file resides, defaults to frame store root
+ *        `pipeline.root`
  * @param {(event: string, fields: object) => void} [options.log]
- * @param {number} [options.concurrency]  同时推几段,缺省 2
- * @param {number[]} [options.backoff]  退避表,缺省 `PUSH_BACKOFF_MS`(最后一项一直沿用)
- * @param {number} [options.settleMs]  一段最后一次进队后静置多久才推,缺省 0(接线里给正值,免得边渲边推)
- * @param {{ now?: () => number, setTimeout?: Function, clearTimeout?: Function }} [options.clock]  注入时钟(测试)
- * @param {() => number} [options.now]  同 `clock.now`
- * @param {Function} [options.setTimeout]  同 `clock.setTimeout`
- * @param {Function} [options.clearTimeout]  同 `clock.clearTimeout`
- * @param {boolean} [options.attach]  建好后挂到 `pipeline.pushQueue`(管线的钩子只认这一个),缺省 true
- * @param {any} [options.gate]  带宽闸(C6.6,`bandwidth-gate.mjs`),缺省本进程共用的那一个;`false` 不接。
- *        产物从不等闸,只登记「在推」与「还有几段等着推」,让素材上传队列排在后面
+ * @param {number} [options.concurrency]  How many segments to push concurrently, defaults to 2
+ * @param {number[]} [options.backoff]  Backoff table, defaults to `PUSH_BACKOFF_MS` (last entry is
+ *        reused indefinitely)
+ * @param {number} [options.settleMs]  How long a segment settles after its last enqueue before
+ *        pushing, defaults to 0 (pass a positive value in wiring to avoid pushing while rendering)
+ * @param {{ now?: () => number, setTimeout?: Function, clearTimeout?: Function }} [options.clock]
+ *        Injected clock (testing)
+ * @param {() => number} [options.now]  Same as `clock.now`
+ * @param {Function} [options.setTimeout]  Same as `clock.setTimeout`
+ * @param {Function} [options.clearTimeout]  Same as `clock.clearTimeout`
+ * @param {boolean} [options.attach]  Attached to `pipeline.pushQueue` after creation (pipeline
+ *        hooks only recognize this one), defaults to true
+ * @param {any} [options.gate]  Bandwidth gate (C6.6, `bandwidth-gate.mjs`), defaults to the one
+ *        shared by this process; `false` to disconnect.
+ *        Artifacts never wait on the gate, only registering "pushing" and "how many segments are
+ *        waiting to push", putting the asset upload queue behind them
  * @param {{ accepts(unit: object): boolean | null, acceptsProject(projectId: string): boolean | null, describe?(): any } | null} [options.scope]
- *        只推绑定项目的(`push-scope.mjs`):进队时判这一段属不属于绑定项目,不属于的不进队(留在本机);
- *        判不了(null,绑定项目的文档 id 还没到)的先扣在内存里,`rescope()` 时再判(最多扣 `PUSH_DEFERRED_MAX` 段)。
- *        层表同样按项目 id 判。不给 = 不限(原来的行为)。重启时从队列文件读回的段不再判(文件按项目分目录)
+ *        Only pushes bound projects (`push-scope.mjs`): on enqueue, determines whether this
+ *        segment belongs to a bound project; those that do not are not enqueued (kept locally);
+ *        those that cannot be determined (null, bound project document id has not arrived yet) are
+ *        held in memory first and re-evaluated during `rescope()` (holds up to
+ *        `PUSH_DEFERRED_MAX` segments). Layer tables are likewise evaluated by project id.
+ *        Omitted = unlimited (original behavior). Segments read back from the queue file on
+ *        restart are not re-evaluated (files are partitioned by project directory)
  */
 export function createPushQueue({
   pipeline, client, content = null, dir, log = () => {}, concurrency = 2,
@@ -175,9 +205,12 @@ export function createPushQueue({
   const settle = Math.max(0, Number(settleMs) || 0);
   const root = dir ?? pipeline.root;
   const file = typeof root === 'string' && root ? path.join(root, PUSH_QUEUE_FILE) : null;
-  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志出错不影响推送 */ } };
+  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* Logging errors do not affect pushing */ } };
 
-  /** id → item。item = { id, unit, priority(卡级), block(块级,null = 还没算), seq, attempts, nextAt, readyAt, inflight, again } */
+  /**
+   * id → item. item = { id, unit, priority (card-level), block (block-level, null = not yet
+   * computed), seq, attempts, nextAt, readyAt, inflight, again }
+   */
   const items = new Map();
   let seq = 0;
   let running = false;
@@ -191,9 +224,12 @@ export function createPushQueue({
   const waiters = [];
   const counters = { enqueued: 0, merged: 0, pushed: 0, failures: 0, uploaded: 0, skipped: 0, manifests: 0, dropped: 0, restored: 0, layerMaps: 0,
     outOfScope: 0, layerMapsOutOfScope: 0, deferredDropped: 0, evicted: 0 };
-  /** 判不了范围、先扣着的段:id → { unit, priority }(只在内存里;按进队先后,满了丢最早的) */
+  /**
+   * Segments whose scope cannot be determined and are held temporarily: id → { unit, priority }
+   * (in memory only; in enqueue order, drops the oldest when full)
+   */
   const deferred = new Map();
-  /** 范围判定:true 进队、false 不进、null 扣着;没给 scope 一律 true */
+  /** Scope evaluation: true enqueued, false not enqueued, null held; always true if scope is omitted */
   const judge = unit => {
     if (!scope || typeof scope.accepts !== 'function') return true;
     try { const v = scope.accepts(unit); return v === true ? true : v === false ? false : null; } catch { return false; }
@@ -201,7 +237,8 @@ export function createPushQueue({
   let outOfScopeLogged = 0;
   const noteOutOfScope = unit => {
     counters.outOfScope++;
-    // 别的项目边渲边写,每批都会来一次:只记前几条和之后每 500 条一条
+    // Other projects write while rendering and arrive once per batch: only log the first few entries
+    // and one every 500 entries thereafter
     if (outOfScopeLogged < 3 || counters.outOfScope % 500 === 0) {
       outOfScopeLogged++;
       say('push.out-of-scope', { id: unitId(unit), count: counters.outOfScope });
@@ -211,16 +248,21 @@ export function createPushQueue({
 
   const effective = item => Math.max(item.priority, unitFloor(item.unit), item.block ?? 0);
 
-  // 带宽闸(C6.6):登记「还有几段等着推」—— 在推的、等着轮到的、静置中的都算,退避中的不算(失败的段不挡素材)
+  // Bandwidth gate (C6.6): registers "how many segments are waiting to push": those pushing, waiting
+  // for their turn, and settling all count; those in backoff do not count (failed segments do not
+  // block assets)
   const gate = gateOpt === false ? null : (gateOpt ?? sharedBandwidthGate());
   let unregisterDemand = () => {};
 
-  /* ---------------- 落盘 ---------------- */
+  /* ---------------- Persistence ---------------- */
 
   /**
-   * 写回串成一条链(契约第 9 节第 1 条):`pending` 是排在链尾、还没开始的那次写入 —— 它开始时才取队列的快照,
-   * 所以在它开始之前的所有改动都由它一并写下,这期间调 `persist()` 的都拿到它。已经开始的写入不再收新改动,
-   * 之后的改动另排一次。于是每次 `persist()` 回的 promise 都在「包含了调用那一刻状态」的写入完成后才兑现。
+   * Writebacks are chained into a single chain (contract section 9, item 1): `pending` is the write
+   * queued at the end of the chain that has not started yet: it only takes a snapshot of the queue
+   * when it begins, so all changes before it begins are written together by it, and any caller
+   * invoking `persist()` during this time receives it. Writes that have already started accept no new
+   * changes; subsequent changes are scheduled separately. Thus each promise returned by `persist()`
+   * resolves only after a write that "included the state at the moment of the call" completes.
    */
   let chain = Promise.resolve();
   let pending = null;
@@ -233,7 +275,8 @@ export function createPushQueue({
     if (pending) return pending;
     const write = chain.then(async () => {
       if (pending === write) pending = null;
-      // 快照在这里(写入开始时)同步取,之后的改动归下一次写入
+      // Snapshots are taken synchronously here (when the write begins); subsequent changes belong to
+      // the next write
       try { await atomic(file, snapshotFile()); }
       catch (error) { say('push.persist-failed', { message: String(error?.message ?? error) }); }
     });
@@ -259,7 +302,7 @@ export function createPushQueue({
   };
   restore();
 
-  /* ---------------- 调度 ---------------- */
+  /* ---------------- Scheduling ---------------- */
 
   const settleWaiters = () => {
     if (items.size) return;
@@ -301,7 +344,8 @@ export function createPushQueue({
     try {
       do {
         pumpAgain = false;
-        // 块级优先级在这一段轮到之前算(读帧库);算过的不再算,直到它再进队
+        // Block-level priority is computed before this segment's turn (reads the frame store); once
+        // computed it is not recomputed until it is enqueued again
         for (const item of [...items.values()]) {
           if (!running) return;
           if (item.block !== null || !eligible(item, now())) continue;
@@ -339,8 +383,9 @@ export function createPushQueue({
   }
 
   /**
-   * 键目录被淘汰了:这一段在本机已经没有可推的,丢掉、不重试,也不挡队里别的段。日志只记前几条和之后每 100 条一条
-   * (一次淘汰可能带走很多段)。
+   * The key directory was evicted: this segment has nothing left to push locally, so drop it, do not
+   * retry, and do not block other segments in the queue. Logs only record the first few entries and
+   * one every 100 entries thereafter (a single eviction may remove many segments).
    */
   let evictedLogged = 0;
   function dropEvicted(item) {
@@ -364,7 +409,8 @@ export function createPushQueue({
       const { result } = collected;
       const empty = result.kind === 'snapshot' ? !result.frames.length : !Object.keys(result.segments ?? {}).length;
       if (empty) {
-        // 帧库里这一段什么都没有(被清掉了,或者进队的只是超出实际长度的空段):没有可推的,不写空清单
+        // Nothing exists in the frame store for this segment (cleared, or what was enqueued was merely
+        // an empty segment exceeding the actual length): nothing to push, do not write an empty manifest
         if (await unitEvicted(pipeline, unit)) { dropEvicted(item); return; }
         finish(item, { dropped: true });
         say('push.empty', { id: item.id });
@@ -375,7 +421,8 @@ export function createPushQueue({
       counters.skipped += pushed.skipped;
       if (content && typeof content.put === 'function') {
         assertResultSize(result);
-        // 流清单先和内容库里已有的那一份合并(不降级:别的节点补过的满密度分段、本机还没产到的分段都留着)
+        // Merge the stream manifest first with the existing copy in the content store (no downgrade:
+        // full-density segments filled by other nodes and segments not yet produced locally are preserved)
         await content.put(manifestKindOf(result.kind), manifestKeyOf(result), await mergedForWrite(content, result));
         counters.manifests++;
       }
@@ -386,13 +433,14 @@ export function createPushQueue({
       const code = error?.code ?? error?.reason ?? null;
       lastError = { id: item.id, code, message: String(error?.message ?? error), at: now() };
       if (code === 'result-too-large' || code === 'too-large') {
-        // 永远写不进内容库(第 1 节),重试也没用
+        // Can never be written to the content store (section 1); retrying is also useless
         say('push.too-large', { id: item.id, bytes: error?.bytes ?? null });
         counters.dropped++;
         finish(item, { dropped: true });
         return;
       }
-      // 推到一半键目录被淘汰(文件读不到、流清单没了):丢掉,不按失败无限重试
+      // Key directory evicted halfway through pushing (file unreadable, stream manifest missing):
+      // drop it, do not retry indefinitely as a failure
       if (await unitEvicted(pipeline, unit)) { dropEvicted(item); return; }
       counters.failures++;
       item.attempts++;
@@ -403,7 +451,10 @@ export function createPushQueue({
     }
   }
 
-  /** 一段推完(或丢掉):推的时候又进过队就留着再推一遍,否则出队 */
+  /**
+   * A segment finished pushing (or was dropped): if it was re-enqueued while pushing, keep it to push
+   * again; otherwise dequeue
+   */
   function finish(item, { dropped = false } = {}) {
     if (item.again && !dropped) {
       item.again = false;
@@ -417,11 +468,14 @@ export function createPushQueue({
     settleWaiters();
   }
 
-  /* ---------------- c10a 第 9 节:给在线页面的层表 ---------------- */
+  /* ---------------- c10a section 9: layer table for online pages ---------------- */
 
   /**
-   * 最新的一份层表(`artifact-transfer.mjs` 的 `layerMapOf`),后写的赢:攒 300 ms 再写,失败按同一张退避表重试,
-   * 期间来了更新的就只写更新的。和段清单同类(`snapshot-manifest`),键 `layers:<项目 id>`。内容相同(不算 `at`)就不重写。
+   * The latest layer table (`layerMapOf` in `artifact-transfer.mjs`), last write wins: batches for
+   * 300 ms before writing; on failure, retries using the same backoff table; if a newer one arrives
+   * in the meantime, only the newer one is written. Same kind as segment manifests
+   * (`snapshot-manifest`), key `layers:<project id>`. If the content is identical (excluding `at`),
+   * it is not rewritten.
    */
   let layerMap = null;
   let layerMapTimer = null;
@@ -458,16 +512,18 @@ ${layerMapSig(job.body)}`;
     }
   }
 
-  /* ---------------- 对外 ---------------- */
+  /* ---------------- External ---------------- */
 
   const queue = {
     get client() { return client; },
     get content() { return content; },
     get file() { return file; },
     /**
-     * 进队(契约第 9 节第 1 条)。进队本身同步生效(同一段已在队里就只合并优先级);回的 promise 在
-     * 包含这一次进队的队列文件写回完成后才兑现。钩子里不 `await` 它;测试和要确认落盘的调用方 `await`。
-     * 不合格的段不进队,回一个已兑现的 promise(记日志)。
+     * Enqueue (contract section 9, item 1). Enqueueing itself takes effect synchronously (if the same
+     * segment is already in the queue, only its priority is merged); the returned promise resolves
+     * only after the queue file writeback containing this enqueue completes. Hooks do not `await` it;
+     * tests and callers that need to confirm persistence `await` it. Ineligible segments are not
+     * enqueued, returning an already resolved promise (logs an entry).
      * @returns {Promise<void>}
      */
     enqueue(unit, priority = PUSH_PRIORITY.normal) {
@@ -475,7 +531,8 @@ ${layerMapSig(job.body)}`;
       if (!normalized) { say('push.bad-unit', { unit: unit ?? null }); return Promise.resolve(); }
       const id = unitId(normalized);
       const level = priorityOf(priority);
-      // 只推绑定项目的:已经在队里的段不再判(进队时判过);不在队里的先判范围
+      // Only push bound projects: segments already in the queue are not re-evaluated (evaluated on
+      // enqueue); those not in the queue evaluate scope first
       if (!items.has(id)) {
         const verdict = judge(normalized);
         if (verdict === false) { deferred.delete(id); noteOutOfScope(normalized); return Promise.resolve(); }
@@ -524,9 +581,11 @@ ${layerMapSig(job.body)}`;
       schedule();
     },
     /**
-     * 停止派新活,等队列文件写完就返回。**不等在推的段**:它们可能卡在网络上(W4 就是在推的段卡住时停),
-     * 它们之后自己收尾 —— 成功就出队、失败就留在文件里,都照常写回;不再派下一段。
-     * 队里没推完的段留在文件里,下次重建时接着推。
+     * Stop dispatching new work and return after the queue file finishes writing. **Does not wait for
+     * segments being pushed**: they may be stuck on the network (W4 stops when segments being pushed
+     * get stuck); they finish up on their own later: dequeued on success, kept in the file on failure,
+     * both written back as usual; no subsequent segments are dispatched. Unfinished segments in the
+     * queue remain in the file and resume pushing on the next rebuild.
      */
     async stop() {
       running = false;
@@ -539,13 +598,15 @@ ${layerMapSig(job.body)}`;
       for (const resolve of waiters.splice(0)) resolve();
     },
     /**
-     * c10a 第 9 节:写一份层表(后写的赢,攒 300 ms;见上)。没给内容库、项目没有 id 回 false。
+     * c10a section 9: write a layer table (last write wins, batches for 300 ms; see above). Returns
+     * false if content store is omitted or project has no id.
      * @returns {boolean}
      */
     putLayerMap(projectId, body) {
       const key = layerMapKeyOf(projectId);
       if (!content || typeof content.put !== 'function' || !key || !body) return false;
-      // 只写绑定项目的层表(判不了的也不写:知道项目文档 id 之后补推时会再写一次)
+      // Only write layer tables for bound projects (do not write if indeterminate: rewritten during
+      // catch-up push once the project document id is known)
       if (scope && typeof scope.acceptsProject === 'function') {
         let v = null;
         try { v = scope.acceptsProject(projectId); } catch { v = false; }
@@ -555,11 +616,12 @@ ${layerMapSig(job.body)}`;
       armLayerMap(300);
       return true;
     },
-    /** 立即重排一次(测试或调用方拨快了时钟之后用) */
+    /** Reschedule immediately once (used in tests or after callers advance the clock) */
     poke() { schedule(); },
     /**
-     * 扣着的段再判一次范围(绑定项目的文档 id 到了之后调):属于的进队,不属于的丢掉,仍判不了的继续扣着。
-     * 回 `{ queued, dropped, held }`。
+     * Re-evaluate scope for held segments (called after the bound project's document id arrives):
+     * those that belong are enqueued, those that do not are dropped, and those still indeterminate
+     * remain held. Returns `{ queued, dropped, held }`.
      */
     rescope() {
       let queued = 0, dropped = 0;
@@ -574,7 +636,7 @@ ${layerMapSig(job.body)}`;
       if (queued || dropped) say('push.rescope', { queued, dropped, held: deferred.size });
       return { queued, dropped, held: deferred.size };
     },
-    /** 等队列空(全部推完或丢掉);已停止的队列立即返回 */
+    /** Wait for the queue to empty (all pushed or dropped); stopped queues return immediately */
     drain() {
       if (!items.size || stopped) return Promise.resolve();
       return new Promise(resolve => waiters.push(resolve));

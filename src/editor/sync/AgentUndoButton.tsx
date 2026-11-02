@@ -1,9 +1,9 @@
 /**
- * AI 栏操作卡上的「撤销这步」(c65-undo-draft.md 第 4 节;c65-design.md 第 8 节裁定)。
+ * "Undo this step" on an AI panel action card (c65-undo-draft.md section 4; ruled in c65-design.md section 8).
  *
- * 只在改过项目的操作上出现:文档服务的「完成」事件(`events.event`)带了这次提交的 `opId`(c65-agent 那一路发)
- * 才算改过项目;按事件里的 `callId`(或 eventId)对上 AI 栏的这次工具调用。不需要二次确认,不是最新一步也能点;
- * 撤成功后变成灰的「已撤销」。以页面身份提交逆操作 + `undoOf`,进用户自己的撤销栈;冲突照撤销的规矩处理。
+ * It appears only on actions that changed the project: the document service's "completed" event (`events.event`) carrying the `opId` of this commit (sent by the c65-agent side)
+ * counts as having changed the project; the AI panel's tool call is matched by the event's `callId` (or eventId). No second confirmation, and it is clickable even if it is not the latest step;
+ * after a successful undo it turns into a gray "Undone". The inverse operation is submitted as the page's identity + `undoOf`, into the user's own undo stack; conflicts are handled by the usual undo rules.
  */
 import { agentOpFor, revertAgentOp, useSync } from "./syncManager";
 import { tr } from "../../i18n/index.ts";

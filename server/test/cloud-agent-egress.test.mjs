@@ -1,28 +1,51 @@
 /**
- * 云端 Agent 的出网闸与按「项目 × 对话」隔离的工作区(`server/agent/service/egress.mjs`、`workspace.mjs`)。
- * 任务书 `docs/plan/cloud-agent-task.md` J;契约 `docs/plan/cloud-agent-contract.md` 第 9.5、9.6 节。
- * 跑:node scripts/test-suite.mjs server/test/cloud-agent-egress.test.mjs
+ * Cloud Agent egress gate and workspace isolated by "project × chat"
+ * (`server/agent/service/egress.mjs`, `workspace.mjs`).
+ * Task brief `docs/plan/cloud-agent-task.md` J; contract `docs/plan/cloud-agent-contract.md`
+ * Sections 9.5 and 9.6.
+ * Run: node scripts/test-suite.mjs server/test/cloud-agent-egress.test.mjs
  *
- *   CA-EGRESS-01  地址黑名单:回环、链路本地(含 169.254.169.254)、私有网段、运营商级 NAT、保留与组播段、本机网卡地址,
- *                 以及 IPv6 的对应范围与各种把 IPv4 包进去的写法,全拒;公网地址放行
- *   CA-EGRESS-02  地址的各种写法:十进制、十六进制、八进制、缺段的 IPv4,带方括号的 IPv6,结尾带点的主机名——规范化后照样被拒;
- *                 非 http(s)、带用户名口令、不在清单里的端口被拒
- *   CA-EGRESS-03  主机名解析:解析结果里有一个内网地址就整个拒(混合记录);解析不了的拒
- *   CA-EGRESS-04  按解析结果连接,不二次解析(防 DNS 重绑定):解析函数第一次回放行的地址、之后回内网地址,请求只连第一次核过的那个,
- *                 解析函数在一跳里只被调一次
- *   CA-EGRESS-05  重定向每一跳重查:放行的地址 302 到回环、到内网、到 file:,都被拒,而且根本没有连过去;跳数有上限;
- *                 跨源的跳不带鉴权头
- *   CA-EGRESS-06  响应体上限:声明长度超了不读,边读边超了当场断;时限到了报超时
- *   CA-EGRESS-07  测试例外只认点了名的「IP:端口」:同一地址别的端口照拒;没给例外时一条都不放
- *   CA-EGRESS-08  给子进程的正向代理:CONNECT 与明文 HTTP 的目标都过同一道闸,回环与内网 403,例外放行的能通
- *   CA-WORK-01    路径字面检查:绝对路径、盘符、UNC、设备路径、`..`、NUL、保留设备名、备用数据流、结尾的点与空格,全拒
- *   CA-WORK-02    两个对话、两个项目的工作目录互不可见:各自写的文件对方读不到,路径里拼对方的目录名也出不去
- *   CA-WORK-03    符号链接(junction)指到工作目录外面:经它读、写都被拒,外面的文件没被动
- *   CA-WORK-04    总量上限:单个文件、对话、项目、文件个数,超了拒写;逐块写超了当场删掉半个文件
- *   CA-WORK-05    子进程:工作目录是对话目录;环境变量按白名单重建,`PROMPTCUT_*`、代理与任意别的变量都不带;临时目录在对话目录里
- *   CA-WORK-06    对话删除、项目删除后目录没了,别的项目的还在
+ *   CA-EGRESS-01  Address blacklist: loopback, link-local (including 169.254.169.254), private
+ *                 subnets, carrier-grade NAT, reserved and multicast ranges, local network
+ *                 interface addresses, and corresponding IPv6 ranges and various formats embedding
+ *                 IPv4, all rejected; public addresses allowed
+ *   CA-EGRESS-02  Various address formats: decimal, hexadecimal, octal, omitted-segment IPv4,
+ *                 bracketed IPv6, hostnames ending with a dot: still rejected after normalization;
+ *                 non-http(s), with username/passphrase, ports not on manifest rejected
+ *   CA-EGRESS-03  Hostname resolution: if resolution results contain any intranet address, reject
+ *                 entirely (mixed records); unresolvable rejected
+ *   CA-EGRESS-04  Connect using resolution results, no secondary resolution (prevents DNS
+ *                 rebinding): resolver returns allowed address first time, returns intranet address
+ *                 afterward, request connects only to the one verified the first time, resolver is
+ *                 called only once per hop
+ *   CA-EGRESS-05  Recheck each redirect hop: allowed addresses that 302 to loopback, intranet, or
+ *                 file: are all rejected and never connected to; hop count has an upper limit;
+ *                 cross-origin hops do not carry authorization headers
+ *   CA-EGRESS-06  Response body limit: does not read if declared length exceeds limit, aborts
+ *                 immediately if exceeded while reading; reports timeout when time limit is reached
+ *   CA-EGRESS-07  Test exceptions only recognize explicitly named "IP:port": other ports on the same
+ *                 address are still rejected; allows nothing when no exception is given
+ *   CA-EGRESS-08  Forward proxy for child processes: CONNECT and plaintext HTTP targets both pass
+ *                 through the same gate, loopback and intranet return 403, allowed exceptions can
+ *                 connect
+ *   CA-WORK-01    Path literal checks: absolute paths, drive letters, UNC, device paths, `..`, NUL,
+ *                 reserved device names, alternate data streams, trailing dots and spaces, all
+ *                 rejected
+ *   CA-WORK-02    Working directories of two chats and two projects are mutually invisible: files
+ *                 written by each cannot be read by the other, concatenating the other's directory
+ *                 name in paths cannot escape
+ *   CA-WORK-03    Symbolic link (junction) pointing outside working directory: reading and writing
+ *                 through it are both rejected, outside files are not touched
+ *   CA-WORK-04    Total limits: single file, chat, project, file count, writing is rejected when
+ *                 exceeded; writing chunk by chunk deletes partial file immediately when exceeded
+ *   CA-WORK-05    Child process: working directory is the chat directory; environment variables
+ *                 rebuilt from whitelist, omitting `PROMPTCUT_*`, proxy, and any other variables;
+ *                 temporary directory is inside chat directory
+ *   CA-WORK-06    Directory is removed after chat deletion and project deletion, while other projects
+ *                 remain
  *
- * 全部不出网:目标都是本测试在 127.0.0.1 上起的服务,经测试例外放行;假凭证只用占位字符串。
+ * Completely no network egress: all targets are services started by this test on 127.0.0.1, allowed
+ * via test exceptions; fake credentials use placeholder strings only.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -58,7 +81,8 @@ test('CA-EGRESS-01 address blocklist', () => {
     '169.254.169.254', '169.254.0.1', '100.64.0.1', '100.127.255.255', '192.0.0.1', '198.18.0.1', '224.0.0.1', '240.0.0.1', '255.255.255.255',
     '::1', '::', 'fe80::1', 'fc00::1', 'fd12:3456::1', 'ff02::1', '::ffff:127.0.0.1', '::ffff:7f00:1', '::ffff:10.0.0.1', '::ffff:a9fe:a9fe',
     '64:ff9b::7f00:1', '2002:7f00:1::1', '2001::1', '::127.0.0.1',
-    // 本机网卡地址(这里给的是公网段的假地址:就算网卡上是公网地址,也不许连回自己)
+    // Local network interface address (fake public IP given here: even if the interface has a public
+    // IP, connecting back to self is disallowed)
     '8.8.4.4', '2606:4700::99',
   ];
   for (const ip of blocked) assert.equal(gate.addressRefusal(ip), 'blocked-address', `${ip} should be rejected`);
@@ -105,11 +129,12 @@ test('CA-EGRESS-04 connect by the resolved result, no second resolution', async 
   let internalHits = 0;
   const internal = await listen((_req, res) => { internalHits += 1; res.end(FAKE); });
   t.after(() => internal.close());
-  // 「测试专用外部地址」:127.0.0.1:<good 端口> 经例外放行;internal 的端口不在例外里
+  // "Test-only external address": 127.0.0.1:<good port> is allowed via exception; internal port is
+  // not in exception
   let calls = 0;
   const gate = createEgressGate({
     testAllow: [`127.0.0.1:${good.port}`],
-    // 第一次回放行的那个;之后(重绑定)回一个内网地址
+    // Returns the allowed one the first time; returns an intranet address afterward (rebinding)
     resolve: async () => { calls += 1; return calls === 1 ? [{ address: '127.0.0.1', family: 4 }] : [{ address: '10.0.0.9', family: 4 }]; },
   });
   const r = await gate.request(`http://rebind.example:${good.port}/a`);
@@ -117,7 +142,7 @@ test('CA-EGRESS-04 connect by the resolved result, no second resolution', async 
   assert.equal(r.body.toString(), `ok rebind.example:${good.port}`);
   assert.equal(calls, 1, 'Only one resolution per hop');
   assert.equal(hits, 1);
-  // 第二次请求重新解析,这回是内网地址:拒,且没有连接发出去
+  // Second request re-resolves, this time an intranet address: rejected, and no connection was sent
   await refusedWith(gate.request(`http://rebind.example:${good.port}/b`), 'port');
   assert.equal(hits, 1);
   assert.equal(internalHits, 0);
@@ -140,7 +165,7 @@ test('CA-EGRESS-05 every redirect hop is re-checked', async (t) => {
   t.after(() => other.close());
   const gate = createEgressGate({ testAllow: [`127.0.0.1:${hop.port}`, `127.0.0.1:${other.port}`], maxRedirects: 3 });
   const base = `http://127.0.0.1:${hop.port}`;
-  // 跳到同机别的端口(没点名):拒,没连过去
+  // Jump to another port on the same machine (not named): rejected, did not connect
   await refusedWith(gate.request(`${base}/?to=${encodeURIComponent(`http://127.0.0.1:${secret.port}/`)}`), 'port');
   await refusedWith(gate.request(`${base}/?to=${encodeURIComponent('http://169.254.169.254/latest/meta-data/')}`), 'blocked-address');
   await refusedWith(gate.request(`${base}/?to=${encodeURIComponent('http://[::1]/')}`), 'blocked-address');
@@ -148,7 +173,7 @@ test('CA-EGRESS-05 every redirect hop is re-checked', async (t) => {
   await refusedWith(gate.request(`${base}/?to=${encodeURIComponent('file:///etc/passwd')}`), 'protocol');
   assert.equal(secretHits, 0, 'The rejected hop was never connected to at all');
   await refusedWith(gate.request(`${base}/loop`), 'redirects');
-  // 同源的跳带着鉴权头,跨源的不带
+  // Same-origin hops carry authorization headers, cross-origin ones do not
   seen.length = 0;
   const same = await gate.request(`${base}/?to=${encodeURIComponent('/landed')}`, { headers: { authorization: `Bearer ${FAKE}` } });
   assert.equal(same.body.toString(), 'landed');
@@ -164,7 +189,7 @@ test('CA-EGRESS-06 response body limit and time limit', async (t) => {
   const srv = await listen((req, res) => {
     if (req.url === '/declared') { res.writeHead(200, { 'content-length': '5000' }); return res.end(Buffer.alloc(5000, 1)); }
     if (req.url === '/stream') { res.writeHead(200); const iv = setInterval(() => res.write(Buffer.alloc(1024, 2)), 2); res.on('close', () => clearInterval(iv)); return; }
-    if (req.url === '/slow') return; // 不回
+    if (req.url === '/slow') return; // Does not respond
     res.end('small');
   });
   t.after(() => srv.close());
@@ -173,7 +198,7 @@ test('CA-EGRESS-06 response body limit and time limit', async (t) => {
   await refusedWith(gate.request(`${base}/declared`), 'too-large');
   await refusedWith(gate.request(`${base}/stream`), 'too-large');
   await refusedWith(gate.request(`${base}/slow`, { timeoutMs: 150 }), 'timeout');
-  // 这次请求自己给的上限不能超过闸的上限
+  // The limit provided by this request cannot exceed the gate's limit
   await refusedWith(gate.request(`${base}/declared`, { maxBytes: 1024 * 1024 }), 'too-large');
   const chunks = [];
   const r = await gate.request(`${base}/ok`, { onChunk: (c) => { chunks.push(c); } });
@@ -249,11 +274,11 @@ test('CA-EGRESS-08 the forward proxy given to the subprocess goes through the sa
   assert.equal((await connect('localhost:443')).status, 403);
 });
 
-/* ---------------- 工作区 ---------------- */
+/* ---------------- Workspace ---------------- */
 
 const tmpRoot = (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-ca-work-'));
-  t.after(() => { try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 }); } catch { /* 留给系统清 */ } });
+  t.after(() => { try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 }); } catch { /* Left for the system to clean */ } });
   return dir;
 };
 const OWNER_A = 'a'.repeat(32);
@@ -284,7 +309,7 @@ test('CA-WORK-02 the working directories of two chats and two projects are invis
   assert.equal(p1c1.read('note.txt').toString(), `one-${FAKE}`);
   assert.equal(p2c1.read('note.txt').toString(), 'two');
   bad(() => p1c2.read('note.txt'), 'not-found');
-  // 拼对方的目录名也出不去
+  // Concatenating the other's directory name also cannot escape
   for (const p of [`../c1/note.txt`, `../../${OWNER_A}/c1/note.txt`, `../../../proj-1/${OWNER_A}/c1/note.txt`, path.join(p1c1.dir(), 'note.txt')]) {
     bad(() => p2c1.read(p), 'bad-path');
     bad(() => p1c2.read(p), 'bad-path');
@@ -292,11 +317,12 @@ test('CA-WORK-02 the working directories of two chats and two projects are invis
   }
   assert.deepEqual(p1c1.list(), [{ path: 'note.txt', size: `one-${FAKE}`.length }]);
   assert.deepEqual(p1c2.list(), []);
-  // 身份不合法的开不出工作区(项目、主人键、对话 id 都只来自服务端,这里验形状)
+  // Invalid identity cannot create a workspace (project, owner key, chat id come only from server;
+  // validates shape here)
   bad(() => ws.open({ projectId: '../x', ownerKey: OWNER_A, conversationId: 'c1' }), 'bad-path');
   bad(() => ws.open({ projectId: 'proj-1', ownerKey: '../../x', conversationId: 'c1' }), 'bad-path');
   bad(() => ws.open({ projectId: 'proj-1', ownerKey: OWNER_A, conversationId: '../c2' }), 'bad-path');
-  // 项目 id 里的冒号折成下划线,目录仍在 work/ 之下
+  // Colons in project id are folded into underscores, directory remains under work/
   const colon = ws.open({ projectId: 'p:1', ownerKey: OWNER_A, conversationId: 'c1' });
   assert.ok(isInside(ws.root, colon.dir()));
 });
@@ -323,7 +349,7 @@ test('CA-WORK-03 a link pointing outside the working directory: reads and writes
   assert.equal(fs.existsSync(path.join(outside, 'new.txt')), false);
   assert.equal(fs.existsSync(path.join(outside, 'sub')), false);
   assert.equal(fs.readFileSync(path.join(outside, 'secret.txt'), 'utf8'), FAKE);
-  // 列目录不跟链接,体积不把外面的算进来
+  // Directory listing does not follow links, size does not count outside files
   assert.ok(!w.list().some((f) => f.path.includes('secret')));
   assert.equal(w.usage().bytes, 0);
 });
@@ -338,10 +364,10 @@ test('CA-WORK-04 total size limit', (t) => {
   bad(() => a.write('3.bin', Buffer.alloc(100)), 'quota');
   b.write('1.bin', Buffer.alloc(100));
   b.write('2.bin', Buffer.alloc(100));
-  // 项目级:两个对话加起来 400,再写一个字节也不行
+  // Project level: two chats sum to 400, cannot write even one more byte
   bad(() => b.write('3.bin', Buffer.alloc(1)), 'quota');
   assert.equal(ws.projectUsage('proj-1').bytes, 400);
-  // 逐块写:超了当场删掉半个文件
+  // Writing chunk by chunk: deletes partial file immediately when exceeded
   const other = ws.open({ projectId: 'proj-2', ownerKey: OWNER_B, conversationId: 'c1' });
   const wr = other.writer('dl.bin');
   wr.write(Buffer.alloc(60));
@@ -350,7 +376,7 @@ test('CA-WORK-04 total size limit', (t) => {
   const fine = other.writer('ok.bin');
   fine.write(Buffer.alloc(40));
   assert.deepEqual(fine.end(), { path: 'ok.bin', size: 40 });
-  // 文件个数
+  // File count
   for (let i = 0; i < 5; i += 1) other.write(`n${i}.txt`, 'x');
   bad(() => other.write('n9.txt', 'x'), 'quota');
 });
@@ -369,7 +395,7 @@ test('CA-WORK-05 subprocess: working directory and environment variables locked 
   assert.equal(env.MY_TOOL_OPTION, 'yes');
   assert.equal(env.PROMPTCUT_SNEAK, undefined);
   assert.ok(isInside(w.dir(), env.TEMP) && isInside(w.dir(), env.TMPDIR));
-  // 真起一个子进程核对
+  // Actually spawn a child process to verify
   const child = w.spawn(process.execPath, ['-e', 'process.stdout.write(JSON.stringify({ cwd: process.cwd(), env: process.env }))']);
   let out = '';
   child.stdout.on('data', (d) => { out += d; });
@@ -395,7 +421,8 @@ test('CA-WORK-06 after a chat is deleted or a project is deleted, the directory 
   ws.removeProject('proj-1');
   assert.equal(fs.existsSync(path.join(ws.root, 'proj-1')), false);
   assert.equal(c.read('x.txt').toString(), 'c');
-  // 没有数据目录的进程(只给不碰文件的测试):工作区不可用,开不出来
+  // Processes without a data directory (for tests that do not touch files): workspace unavailable,
+  // cannot be created
   const none = createWorkspaces({ dataDir: null });
   assert.equal(none.available, false);
   bad(() => none.open({ projectId: 'proj-1', ownerKey: OWNER_A, conversationId: 'c1' }), 'not-found');

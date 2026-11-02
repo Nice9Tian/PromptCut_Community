@@ -1,6 +1,8 @@
 /**
- * 手机版缩略时间轴的主要内容(`mainContent.ts` 文件头的两步取法):任何项目形状都取得出块、两端都有块、
- * 同一时刻只有一块、块按时间排、当前帧标记的换算不坏。任务书 `docs/plan/mobile-thumbstrip-task.md` 验收 1～4。
+ * Main content of mobile app mini timeline (the two-step extraction at the top of `mainContent.ts`):
+ * blocks can be extracted for any project shape, blocks exist at both ends, only one block at any
+ * moment, blocks ordered by time, current-frame marker conversion does not break. Task brief
+ * `docs/plan/mobile-thumbstrip-task.md` acceptance checks 1-4.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +18,11 @@ const clip = (id, start, end, extra = {}) => ({ id, cardId: 'c', start, end, par
 const vid = (id, start, end, extra = {}) => clip(id, start, end, { cardId: '', mediaId: 'mv', ...extra });
 const span = (cs) => cs.map((c) => [c.id, c.start, c.end]);
 
-/** 每个形状都要成立的几条:不空、第一块从可见内容的起点开始、最后一块到结尾、按时间排、互不交叉(溶解的两段除外) */
+/**
+ * Invariants that must hold for every shape: non-empty, first block starts from visible content
+ * start, last block extends to end, ordered by time, non-overlapping (except for two crossfading
+ * clips)
+ */
 function shapeOk(p, label, { overlapOk = false } = {}) {
   const m = mainClipsOf(p);
   assert.ok(m.length > 0, `${label}: should not be empty`);
@@ -27,7 +33,8 @@ function shapeOk(p, label, { overlapOk = false } = {}) {
     assert.ok(m[i].start >= m[i - 1].start, `${label}: sorted by time`);
     if (!overlapOk) assert.ok(m[i].start >= m[i - 1].end - 1e-6, `${label}: only one block at any moment`);
   }
-  // 当前帧标记:两端的时刻落在第一块开头、最后一块结尾;中间的换算来回一致
+  // Current frame marker: endpoints fall on first block start and last block end; middle conversion
+  // is round-trip consistent
   assert.equal(timeAtCardPos(m, 0), m[0].start);
   assert.equal(timeAtCardPos(m, m.length), m[m.length - 1].end);
   if (!overlapOk) {
@@ -71,10 +78,12 @@ test('MCA4 There are gaps between clips: if another clip lies in a gap, fill it 
   const m = shapeOk(p, 'Gap');
   assert.deepEqual(span(m), [['intro', 0, 2], ['v1', 2, 6], ['mid', 6, 8], ['v2', 8, 12], ['outro', 12, 14]]);
   assert.equal(mainTrackOf(p).id, 't2');
-  // 没有东西可补的空档:不补,块之间照旧有空档(标记落在空档里算下一段开头)
+  // Gaps with nothing to fill: do not fill, keep gaps between blocks as before (marker falling in
+  // a gap counts as start of next clip)
   const bare = project([{ id: 't', name: 's', clips: [vid('a', 0, 2), vid('b', 5, 7)] }]);
   assert.deepEqual(span(mainClipsOf(bare)), [['a', 0, 2], ['b', 5, 7]]);
-  // 补进来的视频段剪掉了开头,入点跟着往后挪,缩略图取的是这一截开头那一帧
+  // Filled-in video clip has its start trimmed, in point moves back accordingly, thumbnail is
+  // taken from first frame of this slice
   const pip = project([
     { id: 't1', name: 'Upper', clips: [vid('over', 0, 6, { mediaOffset: 1 })] },
     { id: 't2', name: 'Lower', clips: [vid('main', 0, 3)] },
@@ -148,19 +157,22 @@ test('MCA10 one long backing card can fill several gaps with a slice each, with 
 });
 
 test('MCA11 a speed change shortens a clip on the main track: the leftover gap is still filled with chunks, and the long card used to fill takes only that slice', () => {
-  // 速度（claude/clip-speed，用户 2026-10-23 定）：变短时尾部留空、后面的段不动。
-  // 这里模拟 b 由 4～10 提速到 4～7，主轨上留下 7～10 的空档；底下垫着一张 0～10 的卡片。
+  // Speed (claude/clip-speed, user decision, 2026-10-23): leaves a gap at the tail when shortened,
+  // following clips do not move.
+  // Here simulates b sped up from 4-10 to 4-7, leaving a 7-10 gap on the main track; an underlying
+  // 0-10 card lies beneath.
   const p = project([
     { id: 't1', name: 'Bottom', clips: [clip('bg', 0, 10)] },
     { id: 't2', name: 'Main', clips: [vid('a', 0, 4), vid('b', 4, 7, { speed: 2 })] },
   ]);
   assert.equal(mainTrackOf(p).id, 't2');
-  // 空档只补那一截（7～10），不是整张 0～10；同一时刻仍然只有一块
+  // The gap only fills that slice (7-10), not the entire 0-10; still only one block at any moment
   assert.deepEqual(span(shapeOk(p, 'speed change leaves gap')), [['a', 0, 4], ['b', 4, 7], ['bg', 7, 10]]);
 });
 
 test('MCA12 a speed change creates a gap in the middle of the main track: with no other track covering it, it stays empty, and both ends still have chunks', () => {
-  // 同样是变短留空，但底下没有垫着的卡片：空档没得补，块数不变、不报错、两端照常有块
+  // Also shortened leaving a gap, but with no card underneath: the gap cannot be filled,
+  // block count remains unchanged, no error thrown, and both ends have blocks as usual
   const p = project([
     { id: 't1', name: 'Main', clips: [vid('a', 0, 4), vid('b', 4, 7, { speed: 2 }), vid('c', 10, 14)] },
   ]);
@@ -168,8 +180,9 @@ test('MCA12 a speed change creates a gap in the middle of the main track: with n
 });
 
 test('MCA13 the gate for a short project is 5% of total length: seams smaller than the gate are not filled, only seams larger than the gate are', () => {
-  // 总长 4 秒 → 门槛 min(0.5, 4×0.05) = 0.2 秒。
-  // 0.1 秒的缝（相邻两段之间的误差）不该补出碎块；0.5 秒的缝（例如 1 秒的素材改成 2×）该补。
+  // Total duration 4 seconds → gate min(0.5, 4×0.05) = 0.2 seconds.
+  // A 0.1-second gap (error between two adjacent segments) should not produce fragmented blocks;
+  // a 0.5-second gap (e.g. 1-second asset changed to 2×) should be filled.
   const tiny = project([
     { id: 't1', name: 'Bottom', clips: [clip('bg', 0, 4)] },
     { id: 't2', name: 'Main', clips: [vid('a', 0, 2), vid('b', 2.1, 4)] },

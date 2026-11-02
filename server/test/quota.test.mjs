@@ -1,4 +1,5 @@
-// node --test server/test/quota.test.mjs —— 额度熔断:解析和判定都不碰真 CLI
+// node --test server/test/quota.test.mjs: quota circuit break:
+// parsing and determination do not touch the real CLI
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -108,7 +109,7 @@ test('note: no check while the accumulated bytes have not reached the threshold;
   assert.equal(v.blocked, true);
   assert.match(v.message, /88%/);
   assert.equal(g.bytesSince('claude'), 0);
-  // 之后的 gate 直接按新结果拦,不用再查
+  // Subsequent gates block directly based on the new result, no need to check again
   await assert.rejects(() => g.gate('claude', {}), /88%/);
   assert.equal(calls.length, 2);
 });
@@ -121,10 +122,11 @@ test('concurrent refresh calls check only once', async () => {
 });
 
 /*
- * 模型专属窗口不该拦别的模型。
+ * A model-specific window should not block other models.
  *
- * claude 的 /usage 同时报「本周(全部模型)」和「本周(Fable)」。原来是拿所有窗口里最高的
- * 那个比阈值,于是 Fable 一栏涨到 75%,跑 opus 的对话也被熔断 —— 而那条路的额度还剩一半。
+ * claude's /usage reports both "This week (all models)" and "This week (Fable)". Previously it
+ * compared the highest value across all windows against the threshold, so when Fable rose to 75%,
+ * chats running opus were also circuit-broken, even though half the quota remained on that path.
  */
 test('decidingWindows: session and "all models" always count; week-<model> counts only when that model is running', () => {
   const w = parseClaudeUsage(CLAUDE_TEXT);

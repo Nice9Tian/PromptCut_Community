@@ -4,25 +4,29 @@ import { invalidateScopes, localCardImports, peekScopes, usedCardIds } from "../
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 定制卡跟着 .proc 走。
+ * Custom cards travel with the .proc.
  *
- * Agent 用 create_card 写的卡落在 src/cards/user/ —— 那是**这台机器的全局目录**,不在项目文件里。
- * 以前 .proc 只存 cardId,于是拷走一份 .proc、换台机器、或者本机的卡被别的项目覆盖掉,
- * 片子里的地图卡、片头卡就只剩一个找不到的名字。
+ * Cards the Agent writes with create_card land in src/cards/user/, which is **this machine's global
+ * directory** and not in the project file. Previously the .proc stored only the cardId, so if a .proc
+ * was copied away, moved to another machine, or this machine's card was overwritten by another project,
+ * the map card and title card in the video were left with just a name that could not be found.
  *
- * 现在:存盘时把项目用到的(以及归属表上记在本项目名下的)定制卡源码一起打包进 .proc 的 cards 段;
- * 打开时交给服务端装回 src/cards/user/。装之前走和 create_card 同一道审查(.proc 可能是别人发来的,
- * 里面的源码会在编辑器里执行);和本机版本不同时**以项目里存的为准**,本机那份先备份到
- * .pc-work/card-history/ 再覆盖 —— 打开一个项目看到的应该是它存下来的样子。
+ * Now: on save, the source of the custom cards the project uses (and those the ownership table records
+ * under this project's name) is packed together into the cards section of the .proc;
+ * on open, it is handed to the server to be reinstalled into src/cards/user/. Before installing, it goes
+ * through the same review as create_card (a .proc may be sent by someone else, and the source inside
+ * will run in the editor); when it differs from this machine's version, **the one stored in the project wins**,
+ * and this machine's copy is first backed up to .pc-work/card-history/ and then overwritten:
+ * opening a project should show it as it was saved.
  */
 
-/** 打进 .proc 的一个文件。id = src/cards/user/ 下的文件名(不含 .tsx),通常就是卡片 id */
+/** A file packed into the .proc. id = the file name under src/cards/user/ (without .tsx), usually the card id */
 export interface BundledCard {
   id: string;
   source: string;
 }
 
-/** 当前项目该带走哪些定制卡:时间轴上用到的 + 归属表记在本项目名下的,再顺着同目录 import 补齐依赖 */
+/** Which custom cards the current project should take along: those used on the timeline + those the ownership table records under this project's name, then complete the dependencies by following same-directory imports */
 export function collectProjectCards(p: Project): BundledCard[] {
   const { files: userCardFiles, fileOf: userCardFileOf } = userCardSources();
   const queue: string[] = [];
@@ -30,7 +34,7 @@ export function collectProjectCards(p: Project): BundledCard[] {
     const file = userCardFileOf[cardId];
     if (file) queue.push(file);
   }
-  // 建了还没摆上时间轴的卡也算本项目的。归属表没加载过就只带用到的 —— 存盘等不了一次请求
+  // Cards that were created but not yet placed on the timeline also count as this project's. If the ownership table was never loaded, take only the used ones: saving cannot wait for a request
   const scopes = peekScopes();
   if (scopes && p.id) {
     for (const [cardId, e] of Object.entries(scopes)) {
@@ -49,7 +53,7 @@ export function collectProjectCards(p: Project): BundledCard[] {
   return [...out.keys()].sort().map((id) => ({ id, source: out.get(id)! }));
 }
 
-/** 从 .proc 文档里取出 cards 段。形状不对的条目丢掉,不抛错 —— 坏一张卡不该让整个项目打不开 */
+/** Extract the cards section from the .proc document. Entries with the wrong shape are dropped without throwing: one bad card should not make the whole project unopenable */
 export function bundledCardsOf(doc: unknown): BundledCard[] {
   const list = (doc as { cards?: unknown } | null)?.cards;
   if (!Array.isArray(list)) return [];
@@ -65,15 +69,16 @@ export interface CardRestoreResult {
   backup?: string;
 }
 
-/** 最近一次装卡的结果,给排查用(控制台里 window.__pcCardRestore 看得到) */
+/** Result of the most recent card install, for troubleshooting (visible in the console as window.__pcCardRestore) */
 let lastRestore: CardRestoreResult[] = [];
 export function lastCardRestore(): CardRestoreResult[] {
   return lastRestore;
 }
 
 /**
- * 把 .proc 里带的卡装回本机。异步、不阻塞打开项目:装完 vite 热更新,卡自己出现在舞台和卡库里。
- * projectId 用来给本机原来没有的卡盖归属戳。
+ * Reinstall the cards carried in the .proc onto this machine. Asynchronous, and does not block opening the project:
+ * after install, vite hot-updates and the cards show up in the stage and the card library on their own.
+ * projectId is used to stamp ownership on cards this machine did not have before.
  */
 export async function restoreProjectCards(cards: BundledCard[], projectId: string | null): Promise<CardRestoreResult[]> {
   if (cards.length === 0) return [];
@@ -84,7 +89,7 @@ export async function restoreProjectCards(cards: BundledCard[], projectId: strin
       body: JSON.stringify({
         cards,
         projectId: projectId ?? undefined,
-        // 只报内置卡的 id:同名的用户卡是「更新」,同名的内置卡才是撞车
+        // Report only the ids of built-in cards: a same-named user card is an "update", while a same-named built-in card is a collision
         existingIds: allCards().filter((c) => c.source !== "user").map((c) => c.id),
       }),
     });
@@ -103,7 +108,7 @@ export async function restoreProjectCards(cards: BundledCard[], projectId: strin
   return lastRestore;
 }
 
-/** 从 .proc 文本里取卡并装回。解析不了就什么都不做(那种文本 parseProc 早就报过错了) */
+/** Take the cards from the .proc text and reinstall them. If it cannot be parsed, do nothing (parseProc would already have reported an error for such text) */
 export function restoreCardsFromProcText(text: string, projectId: string | null): Promise<CardRestoreResult[]> {
   let doc: unknown = null;
   try {

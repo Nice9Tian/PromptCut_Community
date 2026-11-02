@@ -1,10 +1,11 @@
 import type { Clip } from "../kernel/types";
 
 /**
- * 新项目塞的演示片段(`Editor.tsx`)。**纯数据,不 import 任何卡片模块**:
- * 编辑器页面从这里取,改一张卡的热更新就不会顺着「卡片 → native/index.ts → Editor.tsx」冒到编辑器上
- * (那会让 Editor、Preview 的 effect 在 Fast Refresh 里重跑,把舞台的 RPC 客户端清掉;C6.6 集成 3b)。
- * `cards/native`、`cards/magicui` 仍按原名转出这两份。
+ * The demo clips stuffed into a new project (`Editor.tsx`). **Pure data, importing no card module**:
+ * the editor page takes them from here, so hot updates of a card do not bubble up to the editor along
+ * "card → native/index.ts → Editor.tsx" (that would make the effects of Editor and Preview rerun
+ * during Fast Refresh and clear the stage's RPC client; C6.6 integration 3b).
+ * `cards/native` and `cards/magicui` still re-export these two under their original names.
  */
 export const magicuiDemoClips: Clip[] = [
   { id: "mu-1", cardId: "mu-number-ticker", start: 0, end: 2, params: {} },

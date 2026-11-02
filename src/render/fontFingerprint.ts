@@ -1,22 +1,27 @@
 /**
- * 字体指纹(I0)—— 共享快照键(A3a)里代表「这台机器当时手上有哪些字体」的那一项。
+ * Font fingerprint (I0): the entry in the shared snapshot key (A3a) representing "what fonts this
+ * machine had on hand at the time".
  *
- * 定义:`document.fonts` 里**已加载**(`status === 'loaded'`)的 family 名,
- * 去重、排序、换行拼接,再哈希。为什么是这三步:
- *   - 只取已加载的:声明了但没真正下下来的 @font-face 不影响这一帧的排版;
- *   - 去重:同一个 family 的多个字重/字形是多个 FontFace,但排版落到的是同一族;
- *   - 排序:FontFaceSet 的迭代顺序跟加载先后有关,不排序两台机器必然算出不同的键。
+ * Definition: Deduplicated, sorted, newline-joined, and hashed family names in `document.fonts` that
+ * are **loaded** (`status === 'loaded'`). Why these three steps:
+ *   - Only take loaded ones: declared @font-face rules not yet actually downloaded do not affect
+ *     typography of this frame;
+ *   - Deduplicate: multiple weights/styles of the same family are multiple FontFaces, but typography
+ *     resolves to the same family;
+ *   - Sort: FontFaceSet iteration order depends on loading sequence; without sorting, two machines
+ *     inevitably compute different keys.
  *
- * 用同步哈希(FNV-1a 两轮,16 位十六进制)而不是 `crypto.subtle.digest`:
- * 这个值要在 `window.__pcCardPlan()` 这种同步取值里返回,`subtle` 是异步的。
- * 它不做安全用途,只要跨机器确定、碰撞概率低到可以忽略即可。
+ * Use synchronous hashing (two rounds of FNV-1a, 16-character hex) instead of `crypto.subtle.digest`:
+ * this value must be returned in synchronous evaluations like `window.__pcCardPlan()`, whereas
+ * `subtle` is asynchronous. It is not used for security, only requiring deterministic results across
+ * machines with collision probability low enough to ignore.
  */
 export interface FontLike {
   family: string;
   status: string;
 }
 
-/** 已加载的 family 名:去重 + 排序。键里真正被哈希的就是这个列表。 */
+/** Loaded family names: deduplicated + sorted. This list is what actually gets hashed in the key. */
 export function fontFamilyNames(fonts: Iterable<FontLike> | null | undefined): string[] {
   const names = new Set<string>();
   if (fonts && typeof (fonts as any)[Symbol.iterator] === "function") {
@@ -39,13 +44,14 @@ function fnv1a(text: string, seed: number): string {
 }
 
 /**
- * 纯函数,不碰 `document` —— 舞台页、导出页和测试各自把自己的 FontFaceSet 递进来。
- * 一个字体都没加载时返回的是空列表的哈希(一个确定值),不是空串:
- * 「没有字体」和「没算过」必须是两件事。
+ * Pure function, does not touch `document`: stage page, export page, and tests each pass in their
+ * own FontFaceSet. When no fonts have loaded, returns the hash of an empty list (a deterministic
+ * value), not an empty string: "no fonts" and "not computed" must be two distinct things.
  */
 export function fontFingerprintOf(fonts: Iterable<FontLike> | null | undefined): string {
-  // 每个族名先 JSON 转义再拼:直接 join("\n") 的话,族名里本来就带换行的一个字体
-  // 会和两个字体拼出同一个串(`new FontFace("A\nB", …)` 是合法的)。
+  // JSON-escape each family name before joining: directly calling join("\n") would produce the same
+  // string for a single font whose family name contains a newline as for two separate fonts
+  // (`new FontFace("A\nB", …)` is valid).
   const list = fontFamilyNames(fonts).map(name => JSON.stringify(name)).join("\n");
   return fnv1a(list, 0x811c9dc5) + fnv1a(list, 0x9e3779b9);
 }

@@ -1,8 +1,8 @@
-// 工具 schema 送到模型手里长什么样。
-// 这里挡住的是一个真实发生过的失败:add_clip 的 params 被规范成
-// { type:"object", properties:{} },意思变成「这个对象没有任何字段」,
-// 模型因此一个卡片参数都传不出去,建出来的卡永远是 params: {}。
-// 跑法:node --test server/test/tool-schema.test.mjs
+// What the tool schema looks like when delivered to the model.
+// This guards against a real failure that actually occurred: add_clip's params was normalized into
+// { type:"object", properties:{} }, meaning "this object has no fields", so the model could not
+// pass any card parameters at all, and created cards always had params: {}.
+// Run: node --test server/test/tool-schema.test.mjs
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -12,7 +12,7 @@ import { TOOL_ROUTES } from '../../src/mcp/routes.mjs';
 import { modelToolName } from '../tools/ui-names.mjs';
 import { buildParamsSchema, injectCardParams, injectPartParams, buildPartParamsSchema } from '../card-params-schema.mjs';
 
-/** 两张形状不同的卡,够覆盖 text / number / select / required */
+/** Two cards with different shapes, sufficient to cover text / number / select / required */
 const CARDS = [
   {
     id: 'caption-track',
@@ -31,7 +31,7 @@ const CARDS = [
   },
 ];
 
-// ── sanitizeSchema:自由对象不能被改写成「没有字段」 ──────────────
+// ── sanitizeSchema: free-form objects cannot be rewritten into "no fields" ──────
 test('Nested free-form objects stay free-form and are no longer forced into properties: {}', () => {
   const out = sanitizeSchema({ type: 'object', properties: { blob: { type: 'object' } } }, 'openai');
   assert.notDeepEqual(out.properties.blob.properties, {}, 'An empty properties tells the model "there are no fields to fill in"');
@@ -57,7 +57,7 @@ test('gemini does not support additionalProperties, so it falls back to an empty
   assert.deepEqual(out.properties.blob.properties, {});
 });
 
-// ── buildParamsSchema:每张卡的真实字段 ───────────────────────────
+// ── buildParamsSchema: real fields of each card ─────────────────────────────────
 test('One branch per card, with matching field names and types', () => {
   const schema = buildParamsSchema(CARDS);
   const caption = schema.anyOf.find((b) => b.title === 'caption-track');
@@ -78,7 +78,7 @@ test('Returns null when the cards cannot be obtained, and the caller falls back 
   assert.equal(buildParamsSchema(undefined), null);
 });
 
-// ── 端到端:模型最终收到的 add_clip ───────────────────────────────
+// ── End-to-end: add_clip ultimately received by the model ───────────────────────
 function sentToModel(cards) {
   const tools = mcpTools
     .filter((t) => ['add_clip', 'update_clip'].includes(t.name))
@@ -100,7 +100,8 @@ test('update_clip is injected the same way', () => {
 });
 
 test('Regression: without injection, params is no longer "an object with no fields"', () => {
-  // 就算注入失败,也不能再退化成 properties:{} —— 那是模型交不出参数的根因
+  // Even if injection fails, do not regress to properties:{}: that is the root cause
+  // of the model failing to supply parameters
   const params = sentToModel(null).add_clip.properties.params;
   assert.notDeepEqual(params.properties, {}, 'An empty properties would let the model submit only {}');
   assert.equal(params.additionalProperties, true);
@@ -112,16 +113,19 @@ test('Injection does not pollute the shared mcpTools constant', () => {
   assert.equal(raw.inputSchema.properties.params.anyOf, undefined, 'mcpTools is shared at module level and must not be modified in place');
 });
 
-// ── 三处声明必须对齐 ──────────────────────────────────────────────────
-// 一个工具要能被调用，得同时出现在三个地方：mcp-tools.mjs 的声明、mcpExecutor 的
-// 分发、EditorApi 的实现。缺哪一处都是「模型看得见但调不动」，而且只在模型真的
-// 去调的时候才暴露 —— 那时候一次任务已经跑废了。
-// 一对一转发的那一百来个工具现在走 src/mcp/routes.mjs 的路由表,不再是逐个 tool === 分支;
-// 对账的细账在 server/test/mcp-routes.test.mjs,这里只守「声明了就得有地方接住」。
+// ── Declarations in three places must be aligned ───────────────────────
+// For a tool to be callable, it must appear in three places simultaneously: the declaration in
+// mcp-tools.mjs, dispatch in mcpExecutor, and implementation in EditorApi. Missing any one means
+// "the model sees it but cannot invoke it", which only surfaces when the model actually tries to
+// call it: by then a task run is already wasted.
+// The hundred-odd one-to-one forwarded tools now go through the route table in src/mcp/routes.mjs
+// instead of individual tool === branches; detailed reconciliation is in
+// server/test/mcp-routes.test.mjs; here we only guard "if declared, somewhere must handle it".
 test('Every browser tool in mcp-tools has a matching dispatch branch in the executor', () => {
   const src = readFileSync(new URL('../../src/ai/mcpExecutor.ts', import.meta.url), 'utf8');
-  // web_* 走的是前缀分发 + runWebTool 里的 switch，不是逐个 tool === 分支。守卫的意思没变：
-  // 声明了就必须真有地方接住，所以这里也认 case "web_x": 这种形式。
+  // web_* uses prefix dispatch + switch in runWebTool, not individual tool === branches.
+  // The guard's intent is unchanged: if declared, somewhere must genuinely handle it, so
+  // case "web_x": is also accepted.
   const missing = mcpTools
     .filter((t) => t.side === 'page' || t.side === 'agent')
     .map((t) => t.name)
@@ -137,19 +141,24 @@ test('Every tool name dispatched by the executor is actually declared in mcp-too
     ...[...src.matchAll(/tool === "([a-z_]+)"/g)].map((m) => m[1]),
     ...[...src.matchAll(/case "(web_[a-z_]+)":/g)].map((m) => m[1]),
   ];
-  // 页面执行器里网页接管按旧的内部操作名分支(case "web_handoff"),进门先换成新名(server/tools/ui-names.mjs):认它对应的新名
+  // In page executor, web handoff branches on old internal operation name (case "web_handoff"),
+  // translated to new name on entry (server/tools/ui-names.mjs): recognize its corresponding new name
   const orphans = dispatched.filter((n) => !declared.has(n) && !declared.has(modelToolName(n)));
   assert.deepEqual(orphans, [], `Tools dispatched by the executor but not declared: ${orphans.join(', ')}`);
 });
 
-// 放宽超时的名单要**逐个**是有意加的:桥的超时一旦先到,真正的报错信息就被盖掉,
-// Agent 只看得到「超时」两个字。所以这里钉死名单,加新的必须改这一行。
-// 三个都要当场起一个 Chrome 渲染(vite-plugin-vision):see_frames 渲单帧(timeline)或一整张拼图(media),
-// get_gif 一趟渲 8 帧再编动图,bake_card 渲单帧。
-// 第四个是自定义测量 measure_audio_js(计划 A6):解码(最多 30 秒)+ 起沙箱 Chrome + 代码(最多 30 秒)+ 看门狗余量,超过桥缺省的 60 秒。
+// Making the list of relaxed timeouts **item-by-item** is intentional: if the bridge timeout hits
+// first, the real error message is masked and the Agent only sees "timeout". So the list is pinned
+// down here; adding a new one requires editing this line.
+// Three of them must spin up a Chrome render on the spot (vite-plugin-vision): see_frames renders
+// a single frame (timeline) or a full sheet (media), get_gif renders 8 frames in one pass and
+// encodes an animated GIF, and bake_card renders a single frame.
+// The fourth is custom measurement measure_audio_js (Plan A6): decoding (up to 30s) + launching
+// sandboxed Chrome + code (up to 30s) + watchdog margin, which exceeds the bridge default of 60s.
 test('Render, custom measurement and sound effect generation tools with relaxed timeouts have an explicit budget', async () => {
   const withTimeout = mcpTools.filter((t) => t.timeoutMs);
-  // 只钉名单,不钉顺序:工具表按领域拆进 server/tools/ 之后,先后次序由聚合顺序决定,没有含义
+  // Pin only the list, not the order: after tool tables were split by domain into server/tools/,
+  // the sequence is determined by aggregation order and has no semantic meaning
   assert.deepEqual(withTimeout.map((t) => t.name).sort(), ['bake_card', 'get_gif', 'measure_audio_js', 'render_card_audio', 'see_frames', 'sound_generate']);
   for (const t of withTimeout.filter((x) => !['measure_audio_js', 'sound_generate', 'render_card_audio'].includes(x.name))) assert.ok(t.timeoutMs > 120000, `${t.name} must be greater than the 120-second render limit in vite-plugin-vision`);
   assert.ok(withTimeout.find(t => t.name === 'sound_generate').timeoutMs >= 120000, 'The sound effect tool waits for Worker synthesis and asset ingestion, keeping a 120-second budget');
@@ -160,10 +169,11 @@ test('Render, custom measurement and sound effect generation tools with relaxed 
   assert.ok(js.timeoutMs > PCM_LIMITS.decodeTimeoutMs + SANDBOX_LIMITS.maxTimeoutMs + SANDBOX_LIMITS.graceMs + 15000, 'measure_audio_js must exceed decoding + code time limit + watchdog margin + Chrome launch');
 });
 
-// ── 枚举值必须是字符串 ─────────────────────────────────────────────
-// 诊断报告里抓到的真失败:collect_probe 的 quality 写了数字枚举 [2160, 1440, …],
-// Gemini 的 OpenAI 兼容接口回 400「enum[0] (TYPE_STRING), 2160」,整个请求被拒,
-// agent 一个工具都调不了。取值范围写进 description,服务端用白名单兜底。
+// ── Enum values must be strings ────────────────────────────────────────
+// Real failure captured in a diagnostic report: collect_probe had quality written as numeric
+// enum [2160, 1440, …]; Gemini's OpenAI-compatible endpoint returned 400 "enum[0] (TYPE_STRING), 2160",
+// rejecting the entire request and preventing the agent from calling any tools. The allowed values
+// are placed in description, and the server falls back to an allowlist.
 test('All tools\' enum values are strings (Gemini accepts only string enums)', () => {
   const bad = [];
   const walk = (node, where) => {
@@ -194,7 +204,7 @@ test('All types are single strings (Gemini does not accept array types, and sani
   assert.deepEqual(bad, []);
 });
 
-// ── 部件:add_part / set_part 的 params 与 add_composite 的 parts ───────────────
+// ── Parts: params of add_part / set_part and parts of add_composite ────────────
 const PARTS = [
   { id: 'text-title', controls: [{ key: 'text', label: 'Title', type: 'text', required: true }, { key: 'size', label: 'Font size', type: 'number' }] },
   { id: 'list-pins', controls: [{ key: 'items', label: 'Key points', type: 'text' }] },
@@ -221,7 +231,8 @@ test('sanitizeSchema: compat and vendor are decoupled: openai can also be saniti
   const openaiCompat = sanitizeSchema(schema, 'openai', { compat: true });
   assert.equal(openaiCompat.additionalProperties, undefined);
   assert.deepEqual(openaiCompat.properties.params, { type: 'object', properties: {} });
-  // default 是 Gemini 认的字段,兼容模式**不该**删它(以前删了,是过度设限)
+  // default is a field recognized by Gemini; compatibility mode should **not** delete it
+  // (previously deleted, which was overly restrictive)
   assert.equal(openaiCompat.properties.n.default, 1);
   const openaiPlain = sanitizeSchema(schema, 'openai');
   assert.equal(openaiPlain.properties.params.additionalProperties, true);
@@ -230,11 +241,13 @@ test('sanitizeSchema: compat and vendor are decoupled: openai can also be saniti
 });
 
 /**
- * 兼容模式到底该删什么 —— 这一组钉的是「删得准」,不是「删得多」。
+ * What compatibility mode should actually delete: this group pins down "deleting accurately",
+ * not "deleting aggressively".
  *
- * 依据是 Gemini v1beta discovery 契约里 Schema 的字段清单。多删的代价是实打实的能力损失:
- * `title` 那条删出过真实损害 —— card-params-schema 把卡片参数展开成 anyOf 分支、
- * 用 title 标明是哪张卡,删了模型就认不出该填哪张卡的参数(见下一条测试)。
+ * The reference is the Schema field list in the Gemini v1beta discovery contract. The cost of
+ * over-deletion is genuine capability loss: deleting `title` caused real harm: card-params-schema
+ * expanded card parameters into anyOf branches using title to indicate which card it was; deleting
+ * it prevented the model from recognizing which card's parameters to fill (see next test).
  */
 test('Compat mode removes only what Gemini truly does not accept: additionalProperties / $schema / exclusive* go, title / default / minItems / maxItems stay', () => {
   const src = {
@@ -249,17 +262,17 @@ test('Compat mode removes only what Gemini truly does not accept: additionalProp
   };
   const out = sanitizeSchema(src, 'gemini', { compat: true });
 
-  // 真不认的:删掉
+  // Truly unsupported: delete
   assert.equal(out.$schema, undefined, '$schema is not in Gemini\'s Schema list');
   assert.equal(out.additionalProperties, undefined, 'additionalProperties is the only hard restriction');
 
-  // 认的:必须留下
+  // Supported: must keep
   assert.equal(out.properties.keep.title, 'To keep', 'title is accepted by Gemini, and removing it would strip the card labels from the anyOf branches');
   assert.equal(out.properties.keep.minItems, 1);
   assert.equal(out.properties.keep.maxItems, 9);
   assert.equal(out.properties.keep.items.default, 'x', 'Those nested inside items must be kept too');
 
-  // 没有对应字段的:改写,不是丢掉
+  // Without matching fields: rewrite, do not discard
   assert.equal(out.properties.num.exclusiveMinimum, undefined);
   assert.equal(out.properties.num.exclusiveMaximum, undefined);
   assert.equal(out.properties.num.minimum, 3, 'An open interval degrades to a closed-interval approximation, which beats losing the whole constraint');
@@ -286,8 +299,9 @@ test('Compat mode format: values Gemini accepts are kept, and only those it does
 });
 
 /**
- * 这一条钉的是那个真实的损害:卡片参数的 anyOf 分支靠 `title: card.id` 标明是哪张卡,
- * 而兼容模式曾经把 title 删了 —— 于是模型面对一堆没有标签的分支,认不出该填哪张卡的参数。
+ * This pins down that real-world harm: anyOf branches of card parameters rely on `title: card.id`
+ * to indicate which card it is, but compatibility mode previously deleted title: leaving the model
+ * facing a bunch of unlabeled branches unable to tell which card's parameters to fill.
  */
 test('Card-parameter anyOf branches that have been through compat mode can still be identified by card', () => {
   const cards = [
@@ -300,7 +314,8 @@ test('Card-parameter anyOf branches that have been through compat mode can still
   assert.deepEqual(out.anyOf.map((b) => b.title), ['stat-proof', 'mu-number-ticker']);
 });
 
-// ── update_clip 的 params 是增量补丁(线上 2026-10-21:模型带回旧整份参数,把用户刚撤销的颜色写回去) ──
+// ── update_clip params is a delta patch (production 2026-10-21: model returned full old
+// parameters, writing back the color the user just reverted) ──
 test('The update_clip tool description states that params is an incremental patch: pass only the keys to change, keys not passed stay as they are, do not bring the full set back from memory', () => {
   const desc = mcpTools.find((t) => t.name === 'update_clip').description;
   assert.match(desc, /params is an incremental patch/);

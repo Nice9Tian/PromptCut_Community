@@ -1,12 +1,14 @@
 /**
- * canvas 卡函数那一半的注册表(R9 M1)。
+ * Registry for the function half of canvas cards (R9 M1).
  *
- * 每张迁进共享渲染器的卡在自己文件旁边放一个 `<id>.gl.ts`,导出 `program`(`CanvasCardProgram`)。
- * 这里用 `import.meta.glob` 一次收齐:**Worker 和主线程退路 import 的是同一张表**,
- * 所以两条路画出来的是同一份代码。`eager: true` —— Worker 里不做代码分割,一个 bundle 带齐。
+ * Each card migrated into the shared renderer places an `<id>.gl.ts` next to its own file, exporting
+ * `program` (`CanvasCardProgram`). Collected all at once here with `import.meta.glob`: **the Worker
+ * and the main-thread fallback import the same table**, so both paths render the same code.
+ * `eager: true`: no code splitting in the Worker, one bundle carries everything.
  *
- * 键 = 文件名去掉 `.gl.ts`(和卡 id 一致);`.gl.ts` 里也可以显式导出 `programId` 覆盖。
- * 用户卡的 `.gl.ts` 在桌面运行环境里由 vite 照常服务;在线浏览器模式只有内置卡。
+ * Key = filename without `.gl.ts` (matches card id); `.gl.ts` can also explicitly export `programId`
+ * to override. User cards' `.gl.ts` is served as usual by vite in the desktop runtime environment;
+ * online browser mode only has built-in cards.
  */
 import type { CanvasCardProgram } from "./CanvasCardProgram";
 

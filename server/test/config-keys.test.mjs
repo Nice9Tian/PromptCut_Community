@@ -1,6 +1,7 @@
 // node --test server/test/config-keys.test.mjs
-// 两路 Key(自定义 / Router)各自加密、各自成文件、不能混用;「清理密钥」删文件。
-// 用 PROMPTCUT_AI_CONFIG 指到临时目录,不碰真配置。
+// Both key channels (custom / Router) are encrypted into separate files and cannot be mixed;
+// "Clear keys" deletes the file.
+// Point PROMPTCUT_AI_CONFIG to a temporary directory, not touching real config.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -17,7 +18,8 @@ async function withConfig(fn) {
   const previous = process.env.PROMPTCUT_AI_CONFIG;
   process.env.PROMPTCUT_AI_CONFIG = file;
   try {
-    // 环境变量要在模块读取路径之前生效,所以这里才 import;查询串让每个用例拿到独立实例
+    // Environment variables must take effect before the module reads paths, so import here;
+    // query string gives each test case an isolated instance
     const mod = await import(`../ai-config.mjs?keys=${encodeURIComponent(file)}`);
     await fn({ ...mod, dir, file });
   } finally {
@@ -39,7 +41,8 @@ test("The two sources' ciphertexts have different prefixes, decrypting with the 
   assert.equal(openKey(r, "router"), ROUTER);
   assert.equal(openKey(c, "router"), "", "custom ciphertext cannot be decrypted with the router scheme");
   assert.equal(openKey(r, "custom"), "", "router ciphertext cannot be decrypted with the custom scheme");
-  // 同一份明文,两路密文不能互相认:连体积以外的任何一位都不该相同
+  // For the same plaintext, the two ciphertexts cannot recognize each other: not a single byte
+  // besides size should match
   assert.notEqual(sealKey(CUSTOM, "router").slice(7), c.slice(7));
 });
 
@@ -96,7 +99,7 @@ test("Switching only source without a key: switches back to the custom source; i
 test("If the file is swapped for the other source's ciphertext, treat it as no key set, no mixing", async () => {
   await withConfig(({ writeConfig, readConfig, keyFilePath }) => {
     writeConfig({ api: { apiKey: ROUTER, source: "router" } });
-    // 有人把 custom 的密文拷到 router.key 里
+    // Someone copied custom ciphertext into router.key
     fs.writeFileSync(keyFilePath("router"), sealKey(CUSTOM, "custom"));
     assert.equal(readConfig().api.apiKey, "");
     assert.equal(readConfig().api.source, "");
@@ -116,7 +119,7 @@ test("Clear key: deletes that source's file; deleting the active source falls ba
     assert.deepEqual(publicConfig().keys.router, { set: false, last4: "" });
     assert.equal(publicConfig().keys.custom.set, true);
 
-    // 切回自定义那一路照常能用;再清掉它就两路都空
+    // Switching back to the custom channel works as usual; clearing it leaves both channels empty
     writeConfig({ api: { source: "custom" } });
     assert.equal(readConfig().api.apiKey, CUSTOM);
     clearKey("custom");
@@ -138,7 +141,7 @@ test("Old versions wrote ciphertext in ai.json: it can be read, and the next con
     assert.ok(!fs.readFileSync(file, "utf8").includes("PCENC1"), "After the move, ai.json no longer keeps ciphertext");
     assert.equal(readConfig().api.apiKey, CUSTOM);
 
-    // 老版本的 Key 也能被清理掉,不会从 ai.json 里再冒出来
+    // Keys from older versions are also cleaned up and will not reappear from ai.json
     clearKey("custom");
     assert.equal(readConfig().api.apiKey, "");
     assert.equal(publicConfig().keys.custom.set, false);
@@ -156,14 +159,15 @@ test("apiKey: null clears the active source (same effect as the clear button)", 
 
 test("Each source has its own connection config: the custom page and the Router import do not overwrite each other, top-level fields follow the active source", async () => {
   await withConfig(({ writeConfig, readConfig, publicConfig }) => {
-    // 自定义页:显式写 profiles.custom + Key
+    // Custom page: explicitly write profiles.custom + Key
     writeConfig({ api: { profiles: { custom: { vendor: "openai", baseUrl: "https://x.example", model: "gpt-4o|gpt-4o-mini" } }, apiKey: CUSTOM, source: "custom" } });
     let cfg = readConfig();
     assert.equal(cfg.api.source, "custom");
     assert.equal(cfg.api.model, "gpt-4o|gpt-4o-mini", "custom is active, the top-level model mirrors it");
     assert.equal(cfg.api.vendor, "openai");
 
-    // Router 导入(老写法:顶层字段 + source router)写进 router 那一路,custom 那份原样
+    // Router import (legacy format: top-level field + source router) writes to router channel,
+    // leaving custom intact
     writeConfig({ api: { vendor: "anthropic", baseUrl: "", model: "claude-sonnet-4-5", apiKey: ROUTER, source: "router" } });
     cfg = readConfig();
     assert.equal(cfg.api.source, "router");
@@ -172,19 +176,19 @@ test("Each source has its own connection config: the custom page and the Router 
     assert.equal(cfg.api.profiles.custom.model, "gpt-4o|gpt-4o-mini", "The custom source was not overwritten by the Router import");
     assert.equal(cfg.api.profiles.custom.baseUrl, "https://x.example");
 
-    // Router 页改模型清单:只动 router 那一路
+    // Modifying model manifest on Router page: affects only the router channel
     writeConfig({ api: { profiles: { router: { model: "claude-sonnet-4-5|claude-haiku-4-5" } } } });
     cfg = readConfig();
     assert.equal(cfg.api.model, "claude-sonnet-4-5|claude-haiku-4-5");
     assert.equal(cfg.api.profiles.router.vendor, "anthropic", "Fields not passed are left untouched");
 
-    // 当前生效的是 Router 时改自定义页:custom 那一路变了,顶层(生效)不变
+    // Modifying Custom page when Router is active: custom channel changes, top-level (active) unchanged
     writeConfig({ api: { profiles: { custom: { model: "gpt-5" } } } });
     cfg = readConfig();
     assert.equal(cfg.api.profiles.custom.model, "gpt-5");
     assert.equal(cfg.api.model, "claude-sonnet-4-5|claude-haiku-4-5");
 
-    // 切回 custom:顶层跟着切
+    // Switch back to custom: top-level switches along with it
     writeConfig({ api: { source: "custom" } });
     cfg = readConfig();
     assert.equal(cfg.api.source, "custom");
@@ -202,7 +206,7 @@ test("An ai.json from an old version without profiles: the top-level copy moves 
     assert.equal(cfg.api.profiles.custom.model, "gemini-2.0-flash|gemini-2.0-pro");
     assert.equal(cfg.api.profiles.custom.vendor, "gemini");
     assert.equal(cfg.api.profiles.router.model, "");
-    // 写一次之后落盘的形状就是新的,再读还一样
+    // Once written, the shape persisted to disk is the new one, and reading again returns the same
     writeConfig({ toolProtocol: true });
     cfg = readConfig();
     assert.equal(cfg.api.model, "gemini-2.0-flash|gemini-2.0-pro");

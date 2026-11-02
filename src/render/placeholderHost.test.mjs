@@ -1,9 +1,12 @@
 /**
- * 占位平面舞台一侧的纯逻辑(`placeholderHost.ts`)。跑:node --test src/render/placeholderHost.test.mjs
+ * Pure logic on stage side of placeholder plane (`placeholderHost.ts`).
+ * Run: node --test src/render/placeholderHost.test.mjs
  *
- * 钉的是:T1~T4 谁显示、显隐只切槽位的 `hidden`(contract 的 `setPlaceholderShown`)、
- * 几何的三级来源(流清单实体框 → 墨迹框 → 徽标)、缺省关着(导出页 / 预渲染 / 后台舞台从不打开),
- * 以及平面样式表放过占位平面。挂载与截图 / 命中的排除要浏览器,在 `preview-fallback-probe.mjs` 里验。
+ * Pinned behaviors: which of T1~T4 are shown, visibility only toggles slot's `hidden`
+ * (`setPlaceholderShown` of contract), three-tier geometry source (stream manifest entity box →
+ * ink box → badge), disabled by default (export page / prerender / background stage never opened),
+ * and plane stylesheet exempts placeholder plane. Mounting and screenshot / hit exclusion require
+ * a browser, verified in `preview-fallback-probe.mjs`.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -17,7 +20,7 @@ import { PLANE_CSS } from "./planeStyle.ts";
 import { PLACEHOLDER_ATTR } from "./placeholder/contract.ts";
 
 const set = (...ids) => new Set(ids);
-/** 槽位的假件:`hidden` + 属性表(`applyPlaceholders` 只用这几样) */
+/** Mock slot: `hidden` + property table (only these are used by `applyPlaceholders`) */
 function fakeSlot(attrs = {}) {
   return {
     hidden: true, attrs: { ...attrs },
@@ -59,16 +62,18 @@ test("T2 waiting for snapshot, T3 invisible frame catch-up (when no snapshot is 
 });
 
 test("T2: if this card's stream is drawing this beat (single-card stream, every member of a group stream), do not show; if the stream is not drawing or the snapshot has not arrived, show as before; layers over budget that send no stream are shown as before", () => {
-  // 组流起播:两张卡都被抑制、都在等这一帧的快照,组流已经在画(`showingClips` 把组流算到每个成员头上)
+  // Group stream playback starts: both cards are suppressed and waiting for this frame's snapshot;
+  // group stream is already rendering (`showingClips` attributes group stream to each member)
   const drawing = placeholderWanted({ ...base, suppressed: set("a", "b"), awaiting: set("a", "b"), streamShowing: set("a", "b") });
   assert.equal(drawing.size, 0, "Stream drawing: placeholder not shown");
-  // 只有 a 的流在画:b 的流没画、快照也没到,照旧显示
+  // Only a's stream is rendering: b's stream is not rendering and snapshot hasn't arrived, still shown
   const half = placeholderWanted({ ...base, suppressed: set("a", "b"), awaiting: set("a", "b"), streamShowing: set("a") });
   assert.deepEqual([...half], [["b", "awaiting"]]);
-  // 没被抑制(暂停着放播放头)也一样按流在不在画判
+  // Not suppressed (scrubbing playhead while paused) is likewise judged by whether stream is rendering
   assert.equal(placeholderWanted({ ...base, awaiting: set("a"), streamShowing: set("a") }).size, 0);
   assert.equal(placeholderWanted({ ...base, awaiting: set("a") }).get("a"), "awaiting");
-  // 超出预算的层没有轨道,不在 streamShowing 里:被抑制的显示(T1),在等快照的显示(T2);同一组只留最上面那张
+  // Layers exceeding budget have no track and are not in streamShowing: suppressed ones are shown (T1),
+  // those waiting for snapshots are shown (T2); keep only the topmost one in the same group
   const over = placeholderWanted({ ...base, suppressed: set("o1", "o2", "s"), awaiting: set("o2", "s"), streamShowing: set("s") });
   assert.deepEqual([...over], [["o1", "no-data"], ["o2", "awaiting"]]);
   assert.deepEqual([...keepTopOfGroups(over, [["o1", "o2"]])], [["o2", "awaiting"]]);
@@ -115,7 +120,7 @@ test("The plane stylesheet leaves the placeholder plane alone: none of the four 
   }
 });
 
-/* ---------------------------------------------------------------- P3:同屏上限、本机跑不了的卡的显隐与判定 */
+/* ---------------------------------------------------------------- P3: On-screen limit, visibility and evaluation for cards that cannot run locally */
 
 import { localOnlyClipIds, needsLocalPc, setMaxAnimated, setOnlineBrowserMode, unsupportedHere } from "./placeholderHost.ts";
 import { PLACEHOLDER_FIXED_ATTR, PLACEHOLDER_STATIC_ATTR } from "./placeholder/contract.ts";
@@ -143,7 +148,7 @@ test("The hourglass of a card that cannot run on this machine enters the visibil
   assert.equal(slot.getAttribute("data-pc-placeholder-reason"), "awaiting");
   applyPlaceholders(new Map(), slotOf);
   assert.equal(slot.hidden, true, "Snapshot or stream arrived: removed if not wanted this beat");
-  // 旧的常驻标记不再有特权:带着它也照样被调度
+  // The legacy resident flag is no longer privileged: it is scheduled as usual even with the flag
   const legacy = fakeSlot({ [PLACEHOLDER_FIXED_ATTR]: "" });
   legacy.hidden = false;
   applyPlaceholders(new Map([["x", "awaiting"]]), () => legacy);
@@ -168,11 +173,12 @@ test("placeholderWanted: a card that cannot run on this machine with no snapshot
   assert.equal(wanted.has("w"), false, "Stream drawing this beat: not shown");
   assert.equal(wanted.get("b"), "no-data", "Built-in cards unchanged");
   assert.equal(wanted.get("a"), "awaiting");
-  // 不在抑制、不等快照(暂停)也显示沙漏:它在本机没有活渲,等渲染节点的结果
+  // Displays hourglass even when not suppressed and not waiting for snapshot (paused):
+  // it has no live render locally, waiting for results from render node
   const idle = { suppressed: new Set(), snapshots: new Map(), awaiting: new Set(), settling: new Map(), streamShowing: new Set(), unsupported: new Set(["p"]) };
   assert.equal(placeholderWanted(idle).get("p"), "awaiting", "Also an hourglass when paused");
   for (const r of [...wanted.values(), ...placeholderWanted(idle).values()]) assert.notEqual(r, "unsupported");
-  // 不给 unsupported:与以前逐项相同
+  // Without unsupported: identical to before item by item
   const old = placeholderWanted({ suppressed: new Set(["u"]), snapshots: new Map(), awaiting: new Set(), settling: new Map(), streamShowing: new Set(), isLight: () => false });
   assert.deepEqual([...old], [["u", "no-data"]]);
 });
@@ -240,7 +246,7 @@ test("unsupported: only in online browser mode, and only for user cards and medi
   }
 });
 
-/* ---------------------------------------------------------------- 占位符在屏幕上的大小(纯函数在 placeholderFit.test.mjs) */
+/* ---------------------------------------------------------------- Placeholder size on screen (pure function in placeholderFit.test.mjs) */
 
 import { placeholderFitFor, placeholderViewScale, setPlaceholderViewScale } from "./placeholderHost.ts";
 

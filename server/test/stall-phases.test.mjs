@@ -1,20 +1,33 @@
 /**
- * 活着、在干活的节点不该被判停滞(`docs/archive/agent-reports/AGENT-stall-phases.md`;契约 `docs/plan/render-queue-contract.md` A.12〔裁〕)。
- * 跑:npm test,或 node --test server/test/stall-phases.test.mjs
+ * Alive, active nodes should not be classified as stalled
+ * (`docs/archive/agent-reports/AGENT-stall-phases.md`; contract
+ * `docs/plan/render-queue-contract.md` A.12 [ruling]).
+ * Run: npm test, or node --test server/test/stall-phases.test.mjs
  *
- * M8 的 C1(放云端)里,连接活着、续约照发的两台独立渲染主机各丢了 6、7 次认领,一个任务满 3 次尝试永久失败。
- * 队列的停滞规则(A.8 第 2 项)只看帧数 `done`:节点在「排队等预渲染间」「推产物」这些帧数不变的阶段超过 STALL_MS,
- * 就被当成卡死收回。这里用真队列 + 真节点编排(`createLocalNode` / `createRenderHost`)+ 真执行器(`prerender-executor.mjs`,
- * 管线换成按假时钟走、只有一条串行 lane 的替身)+ 按假时钟推块的产物库,复现并验证:
+ * In M8 C1 (move to the cloud), two standalone render hosts with alive connections and lease
+ * renewals sent as usual each lost 6 or 7 claims, and a task failed permanently after reaching
+ * 3 attempts. The queue's stall rule (A.8 item 2) only checks the frame count `done`: when a node
+ * exceeds STALL_MS during stages where the frame count does not change, such as "queuing for
+ * prerender" and "pushing outputs", it is treated as hung and reclaimed. Here, real queue + real node
+ * arrangement (`createLocalNode` / `createRenderHost`) + real executor (`prerender-executor.mjs`,
+ * with pipeline replaced by a mock that runs on a fake clock and has only a single serial lane) +
+ * artifact store pushing chunks on a fake clock are used to reproduce and verify:
  *
- *   S1  推产物超过 STALL_MS(60 块、每块 10 s、并发 4 ≈ 150 s):改前按停滞收回、满 3 次永久失败;改后推送中每推完一块
- *       算进度(`task.progress.step`),一次完成、没有 lease-lost
- *   S2  主机 maxConcurrent 2、一条串行 lane:第二段排在第一段后面(第一段 135 s),改前排队中被判停滞;
- *       改后主机只在 lane 空出来时认领快照(闲时认领),两段都一次完成
- *   S3  S2 的主机:前一段推产物时,下一段照样认领、渲染(推送与渲染重叠)
- *   S4  卡死仍被收回(I8 的延伸):产物库的 put 永不报进度、永不返回 → STALL_MS 后按 stalled 收回
- *   S5  新节点对旧队列(丢掉 step 字段)照旧工作
- *   Q1  队列:step 变了重起停滞计时;step 不变(只有续约)照旧按停滞收回;不带 step 的旧节点行为不变;step 不是数回 bad-message
+ *   S1  Pushing outputs exceeds STALL_MS (60 chunks, 10 s each, concurrency 4 ≈ 150 s): before the
+ *       fix, reclaimed as stalled and permanently failed after 3 attempts; after the fix, progress
+ *       is counted after pushing each chunk (`task.progress.step`), completing in one shot with no
+ *       lease-lost
+ *   S2  Host maxConcurrent 2, one serial lane: second segment queues behind first (first segment
+ *       135 s), classified as stalled while queuing before the fix; after the fix, host only
+ *       claims snapshots when the lane is free (idle claim), both segments complete in one shot
+ *   S3  S2 host: while previous segment pushes outputs, next segment still claims and renders as
+ *       usual (pushing and rendering overlap)
+ *   S4  Hangs are still reclaimed (an extension of I8): put in artifact store never reports
+ *       progress and never returns → reclaimed as stalled after STALL_MS
+ *   S5  New node works as usual with old queue (dropping the step field)
+ *   Q1  Queue: resets stall timer when step changes; reclaimed as stalled as usual when step is
+ *       unchanged (renewals only); behavior of old nodes without step unchanged; returns
+ *       bad-message when step is not a number
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -34,7 +47,7 @@ const CV = 'c0de-stall';
 const STEP_MS = 500;
 const STALL_MS = 120_000;
 
-/* ------------------------------------------------------------------ 夹具 */
+/* ------------------------------------------------------------------ Fixtures */
 
 const CONTENT_KEY = sha256('ck:title');
 const RESULT_KEY = resultKeyOf(CONTENT_KEY, FP);
@@ -52,8 +65,9 @@ function fineTask(from, to, { projectId = 'proj-a' } = {}) {
 }
 
 /**
- * 管线替身:只有 `'queue'` 那一条串行 lane(同 `FramePipeline.runQueueTask`:等前一个 → 干活 → 还),每 4 帧一批、
- * 每批 `batchMs`(假时钟),每批报一次进度。`laneLog` 记每段进 lane / 出 lane 的时刻。
+ * Pipeline mock: only has that single serial `'queue'` lane (same as `FramePipeline.runQueueTask`:
+ * wait for previous → work → return), 4 frames per batch, `batchMs` per batch (fake clock),
+ * reporting progress once per batch. `laneLog` records the time each segment enters/exits the lane.
  */
 function fakePipeline(clock, { batchMs }) {
   let chain = Promise.resolve();
@@ -91,8 +105,10 @@ function fakePipeline(clock, { batchMs }) {
 }
 
 /**
- * 产物库替身:`has` 看自己收全过没有;`put` 按块推(每块 `blockMs`,并发 4,假时钟),每推完一块经 `report` 报一次。
- * `hang: true` 时 put 永不报进度、永不返回。`puts` 记每次推送的开始与结束。
+ * Artifact store mock: `has` checks whether it received everything; `put` pushes in chunks
+ * (`blockMs` per chunk, concurrency 4, fake clock), reporting once via `report` after each chunk.
+ * When `hang: true`, put never reports progress and never returns. `puts` records start and end of
+ * each push.
  */
 function fakeSink(clock, { blocks = 60, blockMs = 10_000, hang = false } = {}) {
   const stored = new Set();
@@ -126,13 +142,13 @@ function projectsStub() {
   return { get: async () => ({ id: 'proj-a', tracks: [{ clips: [] }], duration: 10, fps: 30 }) };
 }
 
-/** 一个项目空间:队列 + 环回 + 页面发布方 */
+/** One project space: queue + loopback + page publisher */
 function space(clock, { transformIn = null } = {}) {
   const lb = createLoopback();
   const queue = createRenderQueue({
     now: clock.now, send: lb.queueSend, epoch: 'epoch-stall',
   });
-  // S5:模拟旧队列 —— 入站消息先丢掉它不认的字段再交给队列
+  // S5: simulate old queue: inbound messages drop unrecognized fields before being passed to the queue
   if (transformIn) lb.attach({ ...queue, handle: (connId, message) => queue.handle(connId, transformIn(message)) });
   else lb.attach(queue);
   const page = lb.connect('page', { userId: 'alice', tenantId: 'proj-a' });
@@ -160,7 +176,7 @@ async function settle(sp) {
   throw new Error('message round trips do not converge');
 }
 
-/** 驱动:settle → 节点 tick → 队列 tick → 推进假时钟,直到 until() 或步数上限 */
+/** Driver: settle → node tick → queue tick → advance fake clock, until until() or step limit */
 async function drive(sp, clock, tick, until, maxSteps = 4000) {
   for (let i = 0; i < maxSteps; i++) {
     await settle(sp);
@@ -253,7 +269,7 @@ test('S2 host with maxConcurrent 2 and one serial lane (135 s per segment): a qu
 
 test('S3 host: while the previous segment pushes its output, the next segment is still claimed and rendered (push and render overlap)', async () => {
   const tasks = [fineTask(0, 59), fineTask(60, 119)];
-  // 渲一段 15 s、推一段 60 s(8 块、每块 30 s、并发 4)
+  // Render a segment for 15 s, push a segment for 60 s (8 chunks, 30 s each, concurrency 4)
   const { sp, sink, pipeline, ids } = await hostRun({ batchMs: 1_000, push: { blocks: 8, blockMs: 30_000 }, tasks });
   for (const id of ids) assert.equal(sp.task(id).state, 'done');
   const first = sink.puts.find((p) => p.id === ids[0]) ?? sink.puts[0];
@@ -289,7 +305,7 @@ test('S4 a hang is still reclaimed: the output store put never reports progress 
 
 test('S5 new node against an old queue (the queue drops the step field): completes as before, no error', async () => {
   const clock = createTimerClock();
-  // 旧队列只认 id / token / done:把 step 去掉
+  // Old queue only recognizes id / token / done: remove step
   const sp = space(clock, { transformIn: (m) => { if (m?.type !== 'task.progress') return m; const { step, ...rest } = m; return rest; } });
   const pipeline = fakePipeline(clock, { batchMs: 500 });
   const executor = createPrerenderExecutor({ pipeline, projects: projectsStub() });
@@ -320,7 +336,8 @@ test('Q1 queue: a changed step restarts the stall timer; a lease renewal without
   q.handle('n', { type: 'task.claim', id: b.id, expectVersion: 1 });
   const at = (v) => { t = v; q.tick(); };
   const T0 = 1_000_000;
-  // a:新节点,帧数停在 60,step 每 10 s 加一(在推块);b:旧节点,只续约不带 step
+  // a: new node, frame count stays at 60, step increments every 10 s (pushing chunks); b: old node,
+  // renews only without step
   q.handle('n', { type: 'task.progress', id: a.id, token: 2, done: 60, step: 1 });
   q.handle('n', { type: 'task.progress', id: b.id, token: 2, done: 60 });
   for (let s = 10; s <= 300; s += 10) {
@@ -333,7 +350,7 @@ test('Q1 queue: a changed step restarts the stall timer; a lease renewal without
   assert.equal(view(a.id).claim.progress.step, 31);
   assert.equal(view(b.id).state, 'open', 'old node\'s frame count does not move: reclaimed as stalled as before');
   assert.equal(view(b.id).lastError, 'stalled');
-  // a 之后只续约、step 不再变:STALL_MS 之后收回
+  // After that, a only renews lease and step stops changing: reclaimed after STALL_MS
   const since = t;
   for (let s = 10; s <= 130; s += 10) {
     at(since + s * 1000);
@@ -341,7 +358,7 @@ test('Q1 queue: a changed step restarts the stall timer; a lease renewal without
   }
   assert.equal(view(a.id).state, 'open', 'reclaimed as stalled when step does not move (a hang is still reclaimed)');
   assert.equal(view(a.id).lastError, 'stalled');
-  // 格式
+  // Format
   sent.length = 0;
   q.handle('n', { type: 'task.progress', id: a.id, token: 2, done: 1, step: 'x', reqId: 'bad' });
   assert.equal(sent.at(-1).msg.type, 'error');

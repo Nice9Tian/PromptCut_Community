@@ -1,31 +1,33 @@
 import { tr } from "../i18n/index.ts";
 /**
- * 网页操作的前端胶水。
+ * Frontend glue for web operations.
  *
- * 这一层特别薄，因为浏览器整个跑在服务端（server/web/），前端只是把工具调用转成
- * 一次 POST。之所以还要经过前端，是为了和别的工具走同一条路：MCP 桥 → 编辑台页面
- * → 服务端。好处是 skill-gate、编辑台所有权令牌、工具调用的事件流这些都不用再实现
- * 一遍；坏处只是多一跳本机 HTTP，可以忽略。
+ * This layer is especially thin, because the browser runs entirely on the server (server/web/), and
+ * the frontend merely turns a tool call into one POST. The reason it still goes through the frontend
+ * is to take the same path as the other tools: MCP bridge → editor page → server. The benefit is that
+ * skill-gate, the editor ownership token and the tool-call event stream need not be implemented
+ * again; the only cost is one extra local HTTP hop, which can be ignored.
  *
- * 返回体里的 `__image` 原样往回传——harness/agent.mjs 和 mcp-server.mjs 都认这个形状，
- * 会把 base64 摘出来变成消息里的图片块。这里千万不要动它，一旦被 JSON.stringify 成
- * 普通字段，几十万字符的 base64 会直接把上下文撑爆。
+ * The `__image` in the response body is passed back unchanged: harness/agent.mjs and mcp-server.mjs
+ * both recognize this shape and pull the base64 out into an image block in the message. Do not touch
+ * it here: once it is JSON.stringify'd into an ordinary field, several hundred thousand characters of
+ * base64 would blow up the context outright.
  */
 
-/** 元素在返回图上的包围盒 [x1,y1,x2,y2]，单位是图的像素 */
+/** The element's bounding box on the returned image [x1,y1,x2,y2], in the image's pixels */
 export type WebBox = [number, number, number, number];
 
 export interface WebClickable {
-  /** 调用 web_click 时用的 id。**只对最近一次截图有效** */
+  /** The id used when calling web_click. **Valid only for the most recent screenshot** */
   u: string;
-  /** 标签名 */
+  /** Tag name */
   t: string;
-  /** 可见文字 / aria-label */
+  /** Visible text / aria-label */
   n: string;
   b: WebBox;
-  /** input / textarea 当前的值 */
+  /** The current value of input / textarea */
   v?: string;
-  /** input 的 type */
+  /** The type of input */
   it?: string;
 }
 
@@ -38,7 +40,7 @@ export interface WebView {
   omitted?: number;
   note?: string;
   hint?: string;
-  /** 检测到的「该交给人」的东西：login / captcha / qrcode / consent */
+  /** Things detected that "should be handed to a person": login / captcha / qrcode / consent */
   wall?: string[];
   wallNote?: string;
   error?: string;

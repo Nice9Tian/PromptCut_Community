@@ -1,14 +1,21 @@
 /**
- * 守门:页面(编辑器页与舞台页,入口 `src/main.tsx`)的静态依赖链里不许出现 Node 内置模块(`node:*` 或 `fs`、`crypto` 这类裸名)。
- * 跑:node --test src/pageNodeImports.test.mjs
+ * Gatekeeper: Node built-in modules (`node:*` or bare names like `fs`, `crypto`) are not allowed
+ * in static dependency chains of pages (editor page and stage page, entry point `src/main.tsx`).
+ * Run: node --test src/pageNodeImports.test.mjs
  *
- * 为什么(M7 探针 P6,主会话裁定):页面引 `server/render-node/*.mjs`(纯浏览器节点的会话、过滤、细任务编排)时,只要链上有一个模块
- * 静态引了 `node:crypto`,**在线构建不会失败**(摇树摇掉、只剩一条警告),但**开发服务器里整页白屏**
- * (`Module "node:crypto" has been externalized for browser compatibility`,`main.tsx` 之后什么都不执行)。
- * 这种依赖加一行 import 就悄悄长出来,只有这里拦得住。
+ * Why (M7 probe P6, lead session ruling): when a page imports `server/render-node/*.mjs` (session,
+ * filtering, and fine-grained task arrangement for pure browser nodes), if even a single module
+ * on the chain statically imports `node:crypto`, the **online build will not fail** (tree-shaken
+ * away, leaving only a warning), but **the development server suffers a full-page white screen**
+ * (`Module "node:crypto" has been externalized for browser compatibility`, nothing executes after
+ * `main.tsx`). Such dependencies quietly crop up with a single line of import, and only this test
+ * can catch them.
  *
- * 做法:从 `src/main.tsx` 出发,顺着**静态** import / re-export(`import type`、`export type` 不算;`import()` 是按需载入、不跟)
- * 走遍会被载入的仓库内模块(`src/` 与 `server/` 都跟),遇到 Node 内置模块就判红,并给出引用链。包名(`react` 等)不跟。
+ * Approach: starting from `src/main.tsx`, follow **static** import / re-export (`import type` and
+ * `export type` do not count; `import()` is on-demand loading and is not followed), traverse all
+ * in-repo modules that will be loaded (following both `src/` and `server/`); flag as red whenever
+ * a Node built-in module is encountered and provide the reference chain. Package names (`react`, etc.)
+ * are not followed.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -29,12 +36,12 @@ function resolveFrom(fromAbs, spec) {
   const base = clean.startsWith("/") ? path.join(ROOT, clean) : path.resolve(path.dirname(fromAbs), clean);
   for (const e of EXTS) {
     const p = base + e;
-    try { if (fs.statSync(p).isFile()) return p; } catch { /* 下一个 */ }
+    try { if (fs.statSync(p).isFile()) return p; } catch { /* Next */ }
   }
   return null;
 }
 
-/** 源码里的静态 import / re-export(不含 `import type`、`export type`) */
+/** Static import / re-export in source code (excluding `import type`, `export type`) */
 function staticSpecs(text) {
   const out = [];
   const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");

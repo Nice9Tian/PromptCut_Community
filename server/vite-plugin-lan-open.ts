@@ -5,18 +5,25 @@ import { fromLocalClient } from "./http-guard.mjs";
 import { LAN_OPEN_PATH, lanOpenInfo } from "./lan-open.mjs";
 
 /**
- * 「在手机上打开」这条问答（语义 `docs/semantics/mechanism/platforms.md`「局域网里的第二块屏」）。
+ * The "Open on mobile" query (semantics `docs/semantics/mechanism/platforms.md` "Second screen on
+ * LAN").
  *
  *   `GET /api/lan-open` → `{ lanHost, port, command, addresses: [{ name, address }] }`
  *
- * 只答一件事：这台机器的编辑器现在绑在局域网上没有、局域网地址是哪几个。跨设备进项目走的是共享项目的
- * 邀请链接，链接与二维码由页面自己拼（`src/editor/LanOpenDialog.tsx`），所以这里不碰项目、不签任何码。
+ * Only answers one thing: whether this machine's editor is currently bound to the LAN, and which
+ * LAN addresses it has. Accessing projects across devices uses invite links for shared projects;
+ * the link and QR code are constructed by the page itself (`src/editor/LanOpenDialog.tsx`), so this
+ * endpoint does not touch projects or sign any tokens.
  *
- * **只答回环的请求**：这条信息是给桌面那台机器上的编辑页面看的。局域网里的别人不需要知道本机有哪几个
- * 网段。判回环用 `http-guard.mjs` 的 `fromLocalClient`，和别的管理口同一把尺。
+ * **Only responds to loopback requests**: this information is intended for the editor page on the
+ * desktop machine. Others on the LAN do not need to know which subnets this machine has. Loopback
+ * check uses `fromLocalClient` in `http-guard.mjs`, applying the same standard as other management
+ * endpoints.
  *
- * 地址列表现取：网卡会插拔、会换网段，缓存只会给出过期的地址。`selectInterfaces` 已经排掉回环、
- * 链路本地（169.254/16）和没启用的网卡。绑没绑局域网按实际监听地址判，见 `lan-open.mjs` 的 `boundToLan`。
+ * Address lists are fetched on the fly: network interfaces may be plugged or unplugged and change
+ * subnets, so caching would only yield stale addresses. `selectInterfaces` already filters out
+ * loopback, link-local (169.254/16), and disabled interfaces. Whether it is bound to the LAN is
+ * determined by the actual listening address; see `boundToLan` in `lan-open.mjs`.
  */
 export function lanOpenPlugin(): Plugin {
   return {

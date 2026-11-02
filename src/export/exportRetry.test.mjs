@@ -1,15 +1,23 @@
 /**
- * 在线导出请渲染节点的那一段「等得到头」(审查后补的;`src/export/exportFrames.ts` 文件头「怎么等」)。
- * 跑:node --test src/export/exportRetry.test.mjs
+ * Online export requesting render nodes has a bounded wait (added after review; see "how to wait"
+ * in the file header of `src/export/exportFrames.ts`).
+ * Run: node --test src/export/exportRetry.test.mjs
  *
- *   XR-01 计划已经失败:回包的 `failed` 当失败报出来,不当「没有渲染节点在线」
- *   XR-02 计划做完了却不带索引:等过一轮就报失败,不一直「正在准备」
- *   XR-03 等清单时任务已经失败(页面没收到过通知):核对任务时回包是 `failed`,报失败
- *   XR-04 等清单时任务不在了(页面断线太久被删):原样再发布,队列重建,节点接着做,导出照常到齐
- *   XR-05 节点切完计划就退出:没有进展满时限就报失败并说明;有节点认领着就不算没进展
- *   XR-06 失败之后再点导出:计划带新的标识(新的计划 id、`input.exportSalt`);没失败过不带;队列的入站校验收它
- *   XR-07 不带输入签名的不用:索引里没有签名的片段报失败;层表里没有签名的流在导出时不取
- *   XR-08 解出来的宽度和清单里的矩形对不上:报错,不裁
+ *   XR-01 Plan already failed: report `failed` in the response as failure, not as "no render nodes
+ *         online"
+ *   XR-02 Plan completed without index: report failure after waiting one round, instead of staying
+ *         at "preparing" forever
+ *   XR-03 Task already failed while waiting for manifest (page never received notification): response
+ *         is `failed` when checking task, report failure
+ *   XR-04 Task is gone while waiting for manifest (deleted after page disconnected too long):
+ *         republish as is, queue rebuilds, node resumes, export arrives as usual
+ *   XR-05 Node exits right after switching plan: report failure with explanation when time limit is
+ *         reached with no progress; being claimed by a node is not considered no progress
+ *   XR-06 Click export again after failure: plan carries new identifier (new plan id,
+ *         `input.exportSalt`); never-failed ones do not carry it; queue inbound validation accepts it
+ *   XR-07 Do not use those without input signature: clips without signatures in the index report
+ *         failure; streams without signatures in the layer table are not fetched during export
+ *   XR-08 Decoded width does not match rectangle in manifest: report error, do not crop
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import { test } from "node:test";
@@ -28,7 +36,7 @@ const indexOf = (over = {}) => ({ v: 1, projectRev: 7, unsupported: [], streams:
   originFrame: 12, lastFrame: 20, lastSegment: 0, segmentsPerTask: 8, fps: 30, rect: { x: 0, y: 0, w: 64, h: 32 }, offset: { x: 0, y: 0 }, inputSig: "s1-abc", tasks: [derived(0, 0)], ...over }] });
 const manifest = () => ({ v: 1, kind: "export-frames", resultKey: RK, range: { from: 0, to: 0 }, header: {}, frames: Array.from({ length: 9 }, (_, i) => [12 + i, hashOf(12 + i), 10]) });
 
-/** 假的文档服务:`states` 是任务 id → 回包里的状态(函数或字符串);`clock` 每睡一次往前走 `tick` 毫秒 */
+/** Mock document service: `states` is task id → status in response (function or string); `clock` advances `tick` ms on each sleep */
 function service({ tick = 1000 } = {}) {
   const listeners = new Set();
   const manifests = new Map();
@@ -55,7 +63,7 @@ function service({ tick = 1000 } = {}) {
 }
 const request = (svc, over = {}) => F.requestExportFrames({ projectId: "p1", projectRev: 7, project: {}, clips: ["s"], deps: svc.deps, signal: new AbortController().signal, ...over });
 const planOf = () => F.exportPlanTask({ projectId: "p1", projectRev: 7, clips: ["s"], salt: F.exportRetrySalt() });
-/** 计划做完、索引随 `task.done` 到 */
+/** Plan completed, index arrives with `task.done` */
 const finishPlan = (svc, index = indexOf()) => { const plan = planOf(); svc.states.set(plan.id, "done"); svc.emit({ type: "task.done", id: plan.id, result: { exportIndex: index } }); };
 
 test("XR-01 The plan has already failed: report the failure, do not treat it as \"no render node online\"", async () => {
@@ -92,7 +100,7 @@ test("XR-04 The task is gone while waiting for the manifest: republish it unchan
   svc.hooks.onSleep = async () => {
     rounds++;
     if (rounds === 1) finishPlan(svc);
-    // 任务被重新发布之后节点才接着做完
+    // Node only resumes and finishes after the task is republished
     if (svc.published.some((ids) => ids[0] === `stream:${RK}:0-0`) && rounds >= 3) svc.manifests.set(`${RK}:0-0`, manifest());
   };
   const got = await request(svc);
@@ -106,7 +114,7 @@ test("XR-04 The task is gone while waiting for the manifest: republish it unchan
 
 test("XR-05 The node has exited: report failure once the no-progress time limit is reached; it does not count while a node has claimed it", async () => {
   F.resetExportRetry();
-  // 任务一直是 open(没人接):每睡一次走 1 秒,时限 5 秒
+  // Task stays open (nobody accepts): advances 1 second per sleep, 5-second timeout
   const svc = service({ tick: 1000 });
   svc.hooks.onSleep = async () => { if (svc.published.length === 1) finishPlan(svc); };
   const statuses = [];
@@ -114,7 +122,7 @@ test("XR-05 The node has exited: report failure once the no-progress time limit 
     (e) => e.message === T.ONLINE_EXPORT_TEXT.nodeStalled(5000) && /no progress for 5 s/.test(e.message));
   assert.ok(statuses.filter((p) => p === "rendering").length >= 4, "Until the time limit, it keeps showing as rendering");
   assert.match(T.ONLINE_EXPORT_TEXT.nodeStalled(F.EXPORT_STALL_MS), /no progress for 3 min/);
-  // 有节点认领着:走过两倍时限也不报,清单到了就到齐
+  // Claimed by a node: no error even after twice the timeout, complete once manifest arrives
   F.resetExportRetry();
   const busy = service({ tick: 1000 });
   busy.states.set(`stream:${RK}:0-0`, "claimed");
@@ -133,7 +141,7 @@ test("XR-06 Clicking export again after a failure: the plan carries a new identi
   await assert.rejects(request(svc));
   const salt = F.exportRetrySalt();
   assert.match(salt, /^[0-9a-z]{1,32}$/);
-  // 下一次:新的计划 id、带标识;队列收它
+  // Next time: new plan id, with identifier; queue accepts it
   const again = service();
   let seen = null;
   again.hooks.onSleep = async () => { seen = again.published[0][0]; finishPlan(again); again.manifests.set(`${RK}:0-0`, manifest()); };
@@ -152,7 +160,7 @@ test("XR-07 Those without an input signature are not used", async () => {
   const svc = service();
   svc.hooks.onSleep = async () => { if (svc.published.length === 1) finishPlan(svc, indexOf({ inputSig: undefined })); };
   await assert.rejects(request(svc), (e) => e.message === T.ONLINE_EXPORT_TEXT.nodeFailed("no-input-signature"));
-  // 层表里的流:没带签名的行导出时不取
+  // Streams in layer table: rows without signatures are not fetched during export
   const init = "0123456789abcdef";
   const row = (extra) => ({ clipIds: ["a"], topClipId: "a", kind: "card", plane: "local", contentKey: "ck", candidates: [{ envFingerprint: "f".repeat(16), resultKey: RK }], originFrame: 12, lastSegment: 0, segmentsPerTask: 8, ...extra });
   const deps = (streams) => ({
@@ -181,24 +189,24 @@ test("XR-09 Concurrency and throttling for export-only plans: concurrent runs fr
   let release = null;
   const holding = new Promise((r) => { release = r; });
   svc.hooks.onSleep = async () => {
-    // 第一次进入 sleep 时模拟正在执行/等待节点
+    // Simulate executing/waiting for node upon entering sleep for the first time
     if (release) await holding;
   };
   const firstP = request(svc);
-  // 等它进入执行
+  // Wait for it to enter execution
   await new Promise((r) => setImmediate(r));
-  // 此时并发发起第二个请求：必须被限流拦截
+  // Concurrently initiate a second request at this point: must be blocked by rate limiting
   await assert.rejects(
     request(svc),
     (err) => err.throttled === true && /already has an export plan waiting or running/.test(err.message)
   );
-  // 释放第一个请求让它失败结束
+  // Release the first request to let it end in failure
   const rel = release;
   release = null;
   svc.states.set(planOf().id, "failed");
   rel();
   await assert.rejects(firstP);
-  // resetExportRetry 后限流状态清空
+  // Rate limiting state cleared after resetExportRetry
   F.resetExportRetry();
   const state = F.exportPlanThrottleState("p1", svc.deps.publisherId);
   assert.equal(state, null, "resetExportRetry clears the throttle state");

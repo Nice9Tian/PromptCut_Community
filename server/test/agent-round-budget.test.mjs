@@ -1,19 +1,24 @@
 /**
- * 两道通用闸(2026-10-24 用户定,起因见 docs/plan/agent-blind-stop.md):
+ * Two general gates (user decision, 2026-10-24; background in docs/plan/agent-blind-stop.md):
  *
- * 1. **轮次预算提示**:屏幕上的「第 N/M 轮」不进模型上下文,模型于是按「时间无限」干活 ——
- *    一次实跑里它把一张卡的源码打磨了 18 轮,`create_card` 一次没调到就撞上限,时间轴是空的。
- *    过半和只剩四分之一时各提醒一次。deepAuto 下一条都不发(那个开关的全部意思就是不跟模型谈轮次)。
- * 2. **同一个工具 + 同一个错误连成串**:第 2 次给硬提示,第 3 次停。现有的重复操作检测按整轮指纹算,
- *    一轮里只要还有别的调用指纹就不同,拦不住「同一个能力反复要」。
+ * 1. **Round budget notice**: "Round N/M" on the screen does not enter model context, so the model
+ *    works as if "time is infinite": in one actual run it spent 18 rounds polishing a card's
+ *    source code, hitting the limit without calling `create_card` even once, and the timeline
+ *    was empty. Reminds once when past half and once when only one quarter is left. Nothing sent
+ *    under deepAuto (the entire point of that toggle is not to discuss rounds with the model).
+ * 2. **Same tool + same error chained together**: hard prompt on the 2nd time, stop on the 3rd.
+ *    Existing repeat detection calculates by whole-round fingerprint, and as long as there are
+ *    other calls in a round the fingerprint differs, failing to stop "repeatedly asking for the
+ *    same capability".
  *
- * 断言都落在**模型看得见的那份上下文**(history)上,不落在 progress 事件上 —— 理由同 deep-auto.test.mjs。
+ * Assertions all fall on **the context visible to the model** (history), not on progress
+ * events: same reason as deep-auto.test.mjs.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Agent, failureKey } from '../harness/agent.mjs';
 
-/** 永远只调工具、从不收尾:拿它把循环逼到上限。每轮 input 不同,免得撞上整轮重复检测 */
+/** Always only calls tools, never finishes: pushes the loop to the limit. Different input per round avoids whole-round repeat detection */
 function neverStops(toolName = 'noop') {
   let n = 0;
   return { name: 'never', async *stream() {
@@ -29,7 +34,7 @@ const noopTool = {
   execute: async (input) => ({ ok: true, seq: input.n }),
 };
 
-/** 永远用同一个代号失败的工具:模拟「这个能力这次拿不到」 */
+/** A tool that always fails with the same code: simulates "this capability is unavailable this time" */
 const deadTool = {
   name: 'see_frames',
   inputSchema: { type: 'object', properties: { n: { type: 'number' } } },
@@ -50,11 +55,11 @@ async function run(opts, tools = [noopTool], provider = neverStops()) {
 
 const count = (text, re) => (text.match(re) ?? []).length;
 
-// ── 轮次预算提示 ───────────────────────────────────────────────
+// ── Round budget notice ───────────────────────────────────────────────
 
 test('remind once at the halfway point and once when only a quarter is left, each sent only once', async () => {
   const { text } = await run({ maxIterations: 8 });
-  // 8 轮:过半线是剩 4 轮(第 4 轮末),四分之一线是剩 2 轮(第 6 轮末)
+  // 8 rounds: half line is 4 rounds left (end of round 4), one-quarter line is 2 rounds left (end of round 6)
   assert.match(text, /4 model round trips left \(/);
   assert.match(text, /Only 2 model round trips left/);
   assert.equal(count(text, /\d+ model round trips left \(/g), 1, 'the halfway hint is sent only once');
@@ -66,7 +71,7 @@ test('remind once at the halfway point and once when only a quarter is left, eac
 test('the budget hint is not written into the last round: that round is meant to wrap up anyway', async () => {
   const { out, text } = await run({ maxIterations: 4 });
   assert.equal(out.outcome, 'round_limit');
-  // 4 轮:过半线剩 2 轮(第 2 轮末)、四分之一线剩 1 轮(第 3 轮末);第 4 轮末 left 为 0,不提
+  // 4 rounds: half line leaves 2 rounds (end of round 2), one-quarter line leaves 1 round (end of round 3); at end of round 4 left is 0, not mentioned
   assert.match(text, /2 model round trips left \(/);
   assert.match(text, /Only 1 model round trips left/);
   assert.match(text, /Reached the limit of 4 model round trips/);
@@ -91,7 +96,7 @@ test('unlimited rounds: there is no denominator to compute with, so no budget hi
   assert.doesNotMatch(userText(agent.history.get()), /model round trips/);
 });
 
-// ── 同一个工具 + 同一个错误连成串 ──────────────────────────────
+// ── Same tool + same error chained together ──────────────────────────────
 
 test('the same error 2 times in a row: give a hard hint that names the capability as unavailable this time and offers two options', async () => {
   const { text } = await run({ maxIterations: 2 }, [deadTool], neverStops('see_frames'));
@@ -110,7 +115,7 @@ test('the same error 3 times in a row: stop right away, and the stop reason name
 });
 
 test('one success in between breaks the streak: no hard hint, no stop', async () => {
-  // 失败、失败、成功、失败:第 2 轮发一次硬提示,之后清零,不该停
+  // Fail, fail, succeed, fail: send a hard prompt once in round 2, reset afterward, should not stop
   const script = [false, false, true, false, true, true];
   let n = 0;
   const flaky = {

@@ -1,14 +1,16 @@
 /**
- * server/web/ 的单元测试。
+ * Unit tests for server/web/.
  *
- * 这里**不起真浏览器** —— 起一个有头 Chrome 要几百毫秒、还要联网才有页面可测,
- * 放进 npm test 会让整套测试从 6 秒变成分钟级。真浏览器的验证走 scripts/web-check.mjs
- * (手动跑,联网)。这里测的是不依赖浏览器的那半:坐标换算、拒绝话术、参数校验,
- * 以及 page 被换成假对象之后动作层的行为。
+ * Here we **do not launch a real browser**: launching a headed Chrome takes hundreds of
+ * milliseconds and requires network access to have pages to test; putting it into npm test
+ * would turn the entire test suite from 6 seconds into minutes. Verification of the real browser
+ * goes through scripts/web-check.mjs (run manually, with network). What is tested here is the
+ * half that does not depend on a browser: coordinate conversion, rejection phrasing, parameter
+ * validation, and the behavior of the action layer after page is replaced with a fake object.
  *
- * 假 page 只实现被用到的那几个方法。**故意不做成通用 mock**:哪天 session.mjs 多调了
- * 一个 puppeteer 的方法,这里会直接 TypeError 炸掉,而不是悄悄返回 undefined 让测试
- * 假装通过。
+ * The fake page only implements those few methods that are used. **Intentionally not made into
+ * a generic mock**: if session.mjs ever calls an extra puppeteer method someday, this will blow
+ * up directly with a TypeError instead of silently returning undefined to let tests pretend to pass.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,18 +19,19 @@ import { scaleOf, captureView, liveViewport } from '../web/view.mjs';
 import { explain } from '../web/hit.mjs';
 import * as session from '../web/session.mjs';
 
-// ── 坐标换算 ──────────────────────────────────────────────────────────
-// 这一组是整个模块的地基:图上的坐标要能唯一还原回页面坐标。等比(单个 scale)
-// 是前提 —— 一旦两个轴的比例不同,模型报的坐标就没法反算。
+// ── Coordinate conversion ──────────────────────────────────────────────
+// This group is the foundation of the whole module: coordinates on the image must uniquely map
+// back to page coordinates. Uniform scaling (a single scale) is the prerequisite: once the aspect
+// ratios of the two axes differ, coordinates reported by the model cannot be reversed.
 
 test('The long side is scaled to 800, the short side proportionally', () => {
   assert.equal(scaleOf({ width: 1280, height: 800 }), 800 / 1280);
-  // 竖着的视口:长边是高,按高算
+  // Portrait viewport: long edge is height, calculated by height
   assert.equal(scaleOf({ width: 600, height: 1200 }), 800 / 1200);
 });
 
 test('When the viewport is smaller than 800, it is given as is, without upscaling', () => {
-  // 放大只会让图更大更贵,一个像素的信息都不会多
+  // Upscaling only makes images larger and more expensive without adding a single pixel of information
   assert.equal(scaleOf({ width: 640, height: 480 }), 1);
   assert.equal(scaleOf({ width: 800, height: 600 }), 1);
 });
@@ -41,11 +44,13 @@ test('Both axes share one scale: the aspect ratio is unchanged', () => {
     'The image and the viewport must have the same aspect ratio, otherwise the coordinates reported by the model, mapped back, would be off by different amounts on the two axes');
 });
 
-// ── 截图不许动视口 ────────────────────────────────────────────────────
-// 这条是回归测试。上一版为了缩放去改 deviceScaleFactor,有头窗口下那是一次真实的
-// 窗口 resize —— 页面正在跳转时会挂住,实测 web_view 卡满 45 秒超时才返回。换成
-// clip.scale 之后视口一动不动。视口一旦被动过,elementFromPoint 的坐标系就跟着变,
-// 命中检测会集体偏,所以这件事必须锁死。
+// ── Screenshots must not touch the viewport ──────────────────────────
+// This is a regression test. The previous version modified deviceScaleFactor for scaling, which
+// in a headed window was a real window resize: it hung while the page was navigating, and in actual
+// tests web_view stalled for the full 45-second timeout before returning. After switching to
+// clip.scale, the viewport does not budge at all. Once the viewport is touched, the coordinate
+// system of elementFromPoint changes with it, throwing off all hit detection, so this must be
+// locked down tight.
 
 test('captureView never calls setViewport; scaling relies on clip.scale', async () => {
   const calls = [];
@@ -88,15 +93,17 @@ test('The shape of __image must be the one the harness recognizes', async () => 
     screenshot: async () => 'ZmFrZQ==',
   };
   const out = await captureView(page);
-  // agent.mjs 和 mcp-server.mjs 都按 __image.base64 / __image.mime 摘图,
-  // 换个字段名就等于把 base64 当普通文本灌进历史,几十万字符撑爆上下文
+  // Both agent.mjs and mcp-server.mjs extract images by __image.base64 / __image.mime; changing field
+  // names is equivalent to dumping base64 into history as plain text, blowing up the context with
+  // hundreds of thousands of characters
   assert.equal(typeof out.__image.base64, 'string');
   assert.match(out.__image.mime, /^image\//);
 });
 
-// ── 拒绝话术 ──────────────────────────────────────────────────────────
-// 命中检测拒绝的时候,回给模型的那句话就是它下一步的全部依据。测它的意思不是
-// 测措辞,是测**每种拒绝都给出了可执行的下一步**。
+// ── Rejection phrasing ──────────────────────────────────────────────────
+// When hit detection rejects, the sentence returned to the model is its sole basis for the next step.
+// Testing it is not about testing phrasing, but testing that **every kind of rejection provides an
+// actionable next step**.
 
 test('Coordinates reported before any screenshot: tell it to run web_view first', () => {
   const msg = explain({ ok: false, reason: 'no_snapshot' });
@@ -143,10 +150,11 @@ test('No message is produced when the hit succeeds', () => {
   assert.equal(explain({ ok: true, pick: { u: 'e1' } }), null);
 });
 
-// ── 动作层的参数校验 ──────────────────────────────────────────────────
+// ── Parameter validation of the action layer ─────────────────────────
 
 test('web_click given neither u nor coordinates: rejected on the spot, without touching the page', async () => {
-  // page 传 null:一旦实现里先去动页面再校验,这里会 TypeError 而不是拿到干净的错误
+  // Passing null for page: if the implementation touches the page before validating, this throws
+  // TypeError instead of getting a clean error
   const r = await session.click(null, {});
   assert.equal(r.ok, false);
   assert.match(r.error, /u/);
@@ -173,7 +181,7 @@ test('When web_click gets a number that does not exist, it likewise explains the
   assert.match(r.error, /web_view/);
 });
 
-// ── 串行队列 ──────────────────────────────────────────────────────────
+// ── Serial queue ──────────────────────────────────────────────────────
 
 test('enqueue is strictly serial: the next one must wait for the previous one to finish', async () => {
   const order = [];
@@ -193,7 +201,7 @@ test('An error thrown by the previous one does not jam the queue', async () => {
   assert.equal(r, 'still alive');
 });
 
-// ── 交接 ──────────────────────────────────────────────────────────────
+// ── Handoff ────────────────────────────────────────────────────────────
 
 test('web_handoff moves the window into view and explicitly requires the agent to stop', async () => {
   const calls = [];
@@ -208,7 +216,8 @@ test('web_handoff moves the window into view and explicitly requires the agent t
   assert.match(r.message, /Bilibili QR code login/);
   assert.match(r.message, /Do not keep calling tools/, 'The agent must stop and wait for a person, and must not keep clicking on its own');
 
-  // 实测 Windows 上直接挪回屏幕内窗口仍是隐藏的:必须先 minimized 再 normal(见 showWindow 注释)
+  // Tested on Windows: moving the window back onscreen directly leaves it hidden: must do minimized
+  // first then normal (see showWindow comment)
   assert.equal(calls[0].s, 'minimized', 'The first step must be minimized, otherwise the window cannot be seen even if its position is right');
   assert.ok(calls.some((c) => c.s === 'normal'), 'It must be restored to normal');
   const placed = calls.find((c) => typeof c.left === 'number');
@@ -219,17 +228,19 @@ test('web_handoff moves the window into view and explicitly requires the agent t
 });
 
 /**
- * **状态和位置绝不能塞进同一次 setWindowBounds。**
+ * **State and position must never be crammed into the same setWindowBounds.**
  *
- * 这不是风格问题,是 CDP 的实际行为:两者同时给时它只认状态、把位置整个丢掉。
- * 实测(Windows 11,逐步打过 bounds):
- *   minimized 之后            {"left":-32000,...,"windowState":"minimized"}
- *   normal + left:120 一次发   {"left":-32000,...,"windowState":"normal"}   ← 位置没生效
- *   还原之后再单独发 bounds    {"left":120,"top":80,...}                     ← 这才对
+ * This is not a matter of style, but CDP's actual behavior: when both are given together, it only
+ * recognizes state and drops position entirely.
+ * Verified in practice (Windows 11, logged bounds step by step):
+ *   After minimized                   {"left":-32000,...,"windowState":"minimized"}
+ *   normal + left:120 sent at once    {"left":-32000,...,"windowState":"normal"}   ← Position did not take effect
+ *   Send bounds separately after restore  {"left":120,"top":80,...}                 ← Only then is it correct
  *
- * 犯了这个错的后果是**静默**的:showWindow 里窗口留在屏幕外,agent 却以为已经交给用户了;
- * hideWindow 里(用户最大化过之后)窗口留在屏幕上,agent 却以为已经藏好了。
- * 两边都不报错,所以只能靠这条测试守着。
+ * The consequence of making this mistake is **silent**: in showWindow the window stays offscreen,
+ * while the agent thinks it was already handed over to the user; in hideWindow (after user
+ * maximized) the window stays onscreen, while the agent thinks it is hidden. Neither side throws
+ * an error, so only this test stands guard.
  */
 function noStateWithPosition(calls) {
   for (const c of calls) {
@@ -250,15 +261,18 @@ test('web_handoff hide:true hides the window back off-screen', async () => {
   assert.equal(r.visible, false);
   const placed = calls.find((c) => typeof c.left === 'number');
   assert.ok(placed && placed.left < 0, 'Hiding it again must use negative coordinates');
-  // 用户在接管期间可能把窗口最大化过,那时 hide 是一次真的状态变更 —— 同样不能和位置一起发
+  // The user may have maximized the window during takeover, when hide is a real state change:
+  // likewise cannot be sent together with position
   noStateWithPosition(calls);
 });
 
-// ── 热重启后的浏览器接管 ──────────────────────────────────────────────
-// 起因是并行的那个会话报的真 bug:dev 下 Vite 一热重启就把 browser.mjs 换掉一份新的,
-// 模块级的 instance 归零,**但上一份起的 Chrome 还活着、还握着 out/web-profile**。
-// 之后所有 web_* 全部报「被另一个实例占着」,直到手动去杀那个 Chrome。已复现并修掉。
-// 这里锁住的是「怎么分辨孤儿和别人正在用的」这条判据 —— 判错了就是替别人把浏览器关了。
+// ── Browser takeover after hot restart ────────────────────────────────
+// The cause was a real bug reported by that parallel session: under dev, Vite hot restart replaces
+// browser.mjs with a new copy, resetting the module-level instance to zero, **but the Chrome
+// launched by the previous copy is still alive and still holds out/web-profile**. Afterward, all
+// web_* report "occupied by another instance" until manually killing that Chrome. Reproduced and
+// fixed. What is locked here is the criterion for "how to distinguish orphans from those being used
+// by others": judging wrong means closing someone else's browser.
 
 test('closeBrowser only disconnects a shared instance and does not close the browser on behalf of others', async () => {
   const acts = [];
@@ -267,7 +281,8 @@ test('closeBrowser only disconnects a shared instance and does not close the bro
     close: async () => acts.push('close'),
     disconnect: async () => acts.push('disconnect'),
   };
-  // 直接构造一个 shared 实例来验分支:真起浏览器太慢,而这里要锁的就是分支本身
+  // Directly construct a shared instance to test the branch: launching a real browser is too slow,
+  // and what needs to be locked here is the branch itself
   const mod = await import('../web/browser.mjs?shared-test=1');
   await mod.getBrowser({
     dataDir: null,
@@ -287,8 +302,9 @@ test('closeBrowser only disconnects a shared instance and does not close the bro
 });
 
 test('A taken-over instance carries userDataDir so that close can also clean up the stale endpoint file', async () => {
-  // 实测:Chrome 干净退出后 DevToolsActivePort 并不会自己消失(Windows 上如此)。
-  // 留着不出错(下次连不上会退回 launch),但每次会话开头白花一个连接往返。
+  // Verified: after Chrome exits cleanly, DevToolsActivePort does not disappear on its own (true on
+  // Windows). Leaving it behind causes no errors (fails to connect next time and falls back to launch),
+  // but wastes a connection round-trip at the start of every session.
   const mod = await import('../web/browser.mjs?udd-test=1');
   const inst = await mod.getBrowser({
     dataDir: null,
@@ -305,16 +321,17 @@ test('A taken-over instance carries userDataDir so that close can also clean up 
       }),
     },
   });
-  // dataDir 为 null 时不该造 profile 目录,userDataDir 也就是 undefined
+  // When dataDir is null, profile directory should not be created, so userDataDir is undefined
   assert.equal(inst.userDataDir, undefined, 'Passing null for dataDir means nothing is written to disk, so the login state must not remain');
   assert.equal(inst.shared, false);
   await mod.closeBrowser();
 });
 
-// ── 壳模式:agent 的浏览器是 Tauri 主窗口里的子 webview ──────────────────
-// 桌面壳给 WebView2 开了 --remote-debugging-port,端口通过 PROMPTCUT_AGENT_CDP 交过来。
-// getBrowser 在这个变量存在时 connect 而不是 launch,按初始地址认出 agent 那块;
-// 显示 / 隐藏不再动窗口(壳里没有窗口可动),只回 shell 标记让前端 invoke 壳的命令。
+// ── Shell mode: agent browser is a child webview in Tauri main window ────
+// The desktop shell enables --remote-debugging-port for WebView2, passing the port via
+// PROMPTCUT_AGENT_CDP. When this variable exists, getBrowser connects instead of launches,
+// recognizing the agent part by initial URL; show / hide no longer touches the window (there is no
+// window to touch in the shell), only returning a shell flag to let the frontend invoke shell commands.
 
 function fakeShellPuppeteer(acts, pagesList) {
   return {
@@ -330,7 +347,7 @@ function fakeShellPuppeteer(acts, pagesList) {
     },
   };
 }
-/** agent 为 true 的页带着壳注入的 window.__PROMPTCUT_AGENT__ 标记 */
+/** Pages with agent true carry the window.__PROMPTCUT_AGENT__ flag injected by the shell */
 const fakePage = (url, agent = false) => ({
   url: () => url,
   evaluate: async () => agent,
@@ -347,14 +364,14 @@ test('Shell mode: connect to the debugging port via PROMPTCUT_AGENT_CDP, recogni
     const mod = await import('../web/browser.mjs?shell-test=1');
     const inst = await mod.getBrowser({
       dataDir: null,
-      // agent 那块已经导航到 B 站,只有标记还在;编辑台主页面没标记
+      // The agent part has navigated to Bilibili, with only the flag remaining; main editor page has no flag
       puppeteer: fakeShellPuppeteer(acts, [fakePage('http://127.0.0.1:5210/'), fakePage('https://www.bilibili.com/', true)]),
     });
     assert.deepEqual(acts, [['connect', 'http://127.0.0.1:9333']]);
     assert.equal(inst.shell, true);
     assert.equal(inst.shared, true, 'The browser belongs to the shell, so on close it can only disconnect itself');
     assert.equal(inst.page.url(), 'https://www.bilibili.com/', 'It recognizes the marked agent pane, not the editor\'s main page');
-    // 显示 / 隐藏只回标记
+    // Show / hide only returns the flag
     assert.deepEqual(await mod.showWindow(inst), { shell: true });
     assert.deepEqual(await mod.hideWindow(inst), { shell: true });
     await mod.closeBrowser();
@@ -399,12 +416,14 @@ test('In shell mode handoff carries the shell flag, and the wording no longer sa
   assert.equal(h.visible, false);
 });
 
-// ── 壳模式:视口仿真解除时的尺寸来源 ────────────────────────────────────
-// 起因是并行会话的提醒:壳模式下 web_handoff 把面板交给用户时会 setViewport(null),
-// 这时 page.viewport() 返回 null。原来截图和命中检测各自回退到常量 1280x800,
-// 会出两种坏法 —— 截图 clip 出界把仿真套回去(用户正在看的画面当场错位)、
-// 命中检测按错的尺寸反算(**点击静默落到错误位置**,比错位更坏)。
-// 现在两边都走 liveViewport,这几条锁住它。
+// ── Shell mode: size source when viewport emulation is cleared ────────
+// The cause was a reminder from a parallel session: in shell mode, when web_handoff hands the panel
+// to the user it calls setViewport(null), at which point page.viewport() returns null. Originally
+// screenshots and hit detection each fell back to constant 1280x800, causing two types of failure:
+// screenshot clip went out of bounds and reapplied emulation (the screen the user was looking at
+// shifted immediately), and hit detection calculated inversely with the wrong dimensions (**clicks
+// silently landed on the wrong position**, which is worse than shifting). Now both go through
+// liveViewport; these tests lock it down.
 
 test('With emulation active, use the emulated size directly instead of asking the page', async () => {
   let asked = false;
@@ -431,8 +450,9 @@ test('Fall back to the constant only when measuring fails, and do not throw', as
 });
 
 test('The screenshot and hit detection must derive the same scale: otherwise clicks are all offset', async () => {
-  // 这是这组测试的重点:两边**共用一个尺寸来源**。各自回退常量时，
-  // 960 宽的面板上截图按 1280 算，模型报的坐标反算回去会横向偏 33%。
+  // This is the focus of this test group: both sides **share a single size source**. When each fell
+  // back to constants, screenshots on a 960-wide panel were calculated as 1280, and coordinates
+  // reported by the model drifted horizontally by 33% when reversed.
   const panel = { width: 960, height: 620 };
   const page = { viewport: () => null, evaluate: async () => panel };
   const fromView = scaleOf(await liveViewport(page));
@@ -442,8 +462,9 @@ test('The screenshot and hit detection must derive the same scale: otherwise cli
 });
 
 test('The clip of captureView follows the measured size, so it never goes out of bounds', async () => {
-  // clip 比真实视口大时 puppeteer 会打开 captureBeyondViewport,那会把设备指标
-  // 仿真套回去 —— 正是用户操作面板时画面错位的直接原因
+  // When clip is larger than the real viewport, puppeteer enables captureBeyondViewport, which
+  // reapplies device metrics emulation: the exact direct cause of screen shifting when the user
+  // operates the panel
   let clip;
   const page = {
     viewport: () => null,

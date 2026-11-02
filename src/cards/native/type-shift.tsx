@@ -79,7 +79,8 @@ export const typeShift: CardDef<Params> = {
   useWhen: "Use for title transitions when you want a draft-like feel of text re-flowing automatically. **Content must be multi-line with hierarchy**: the first line is the main title, a line starting with `*` is a secondary point, a line starting with `—` is a credit. A single-line title won't show the re-flow effect.",
   tags: ["typography","Transition","Title","re-flow"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,

@@ -1,16 +1,25 @@
 /**
- * 在线构建里看 AI 栏的开始页与手机版 Agent 分页(配合 agent-tabs-start-probe.mjs:那支只测桌面编辑台的本机 AI 栏)。
- * 全程在本机:本机托管组合 + 仿 nginx 的代理(`lib/mobile-env.mjs`),在线构建当页面,不连真正的托管端。
+ * Verifies AI panel start page and mobile app Agent tab in online build (paired with
+ * agent-tabs-start-probe.mjs: that one only tests the local AI panel of desktop editor).
+ * Entirely local: local hosted setup + nginx-like proxy (`lib/mobile-env.mjs`), online build served
+ * as page, does not connect to the real hosted side.
  *
  *   npx vite build --mode online
  *   node scripts/probes/agent-tabs-start-mobile-probe.mjs [--dist dist-online] [--out out/agent-tabs-start-mobile-probe] [--base-port 5980] [--doc-port 5983] [--asset-port 5987]
  *
- * 验收(每项一行 JSON,最后一行 { summary },有失败退出码 1):
- *   O1 在线桌面界面(?layout=desktop)的 AI 栏走「云端」接入方式:没有会话时同样是开始页(竖栏「开始」一项、预设按钮),带引导动画。
- *      (这台本机托管组合没有云端 Agent 服务,云端面板的输入框要等对话权限读回来才出现,所以点预设、发送那一段不在这里测;本机 AI 栏的那一段见 agent-tabs-start-probe.mjs。)
- *   M1 手机版(安卓仿真、窄屏):Agent 分页照演示稿重画(`src/mobile/AgentPage.tsx`),没有会话时同桌面一样是开始页:
- *      只有「开始」一项标签、预设按钮、输入框,占满分页、没有页面错误、不白屏;不再是桌面那套云端对话面板。截图 mobile-agent.png。
- *      (点预设、点发送建会话、引用、清空后无动画等在 `mobile-agent-probe.mjs`。)
+ * Acceptance check (one JSON line per item, last line { summary }, exit code 1 on failure):
+ *   O1 AI panel in online desktop UI (?layout=desktop) uses "Cloud" connection type: also shows
+ *      start page when there are no sessions (single "Start" item on vertical rail, preset buttons),
+ *      with guidance animation.
+ *      (This local hosted setup has no Cloud Agent service; input box in cloud panel only appears
+ *      after chat permissions are read back, so clicking presets and sending are not tested here;
+ *      see agent-tabs-start-probe.mjs for the local AI panel part.)
+ *   M1 Mobile app (Android emulation, narrow screen): Agent tab redrawn per demo
+ *      (`src/mobile/AgentPage.tsx`), like desktop, shows start page when there are no sessions:
+ *      only a single "Start" tab, preset buttons, and input box, filling tab with no page errors
+ *      and no blank screen; no longer the desktop cloud chat panel. Screenshot: mobile-agent.png.
+ *      (Clicking presets, clicking send to create sessions, quotes, no animation after clearing,
+ *      etc. are in `mobile-agent-probe.mjs`.)
  */
 import puppeteer from 'puppeteer';
 import fs from 'node:fs';
@@ -53,7 +62,7 @@ try {
   check('seeded', !/error|reject/i.test(`${seeded.opened}${seeded.seeded}`), seeded);
   browser = await puppeteer.launch({ headless: true, protocolTimeout: 600_000, args: [...PROBE_CHROME_ARGS, '--no-first-run'] });
 
-  /* O1 在线桌面界面:云端接入方式的开始页 */
+  /* O1 Online desktop UI: start page for Cloud connection type */
   {
     const p = await env.newPage(browser, 'desktop');
     await env.enter(p, { layout: 'desktop' });
@@ -66,14 +75,17 @@ try {
       cloudPanel: !!document.querySelector('[data-pc="cloud-ai-panel"]'),
       guide: document.querySelector('[data-pc="ai-composer"]')?.getAttribute('data-pc-guide') ?? null,
     }));
-    // 这台本机托管组合没有云端 Agent 服务:云端面板里输入框要等「对话权限」读回来才出现(现有行为),所以这里不点预设、不看输入框,只看开始页本身
+    // This local hosted setup has no Cloud Agent service: the input box in the cloud panel only
+    // appears after "chat permissions" are read back (existing behavior), so here we do not click
+    // presets or check the input box, only inspecting the start page itself
     check('O1.cloud-start-page', rail.length === 1 && rail[0].draft && rail[0].label === 'Start' && st.animated && st.orb && st.cloudPanel, { rail, st });
     await p.screenshot({ path: path.join(OUT, 'online-desktop-start.png') });
     check('O1.no-page-errors', p.errors.length === 0, { errors: p.errors.slice(0, 3) });
     await p.browserContext().close();
   }
 
-  /* M1 手机版 Agent 分页:2026-10-22 起照演示稿重画,没有会话时也是开始页(同桌面共用 agentTabs;细节见 mobile-agent-probe.mjs) */
+  /* M1 Mobile app Agent tab: redrawn per demo as of 2026-10-22; also shows start page when
+   * there are no sessions (shares agentTabs with desktop; see mobile-agent-probe.mjs for details) */
   {
     const p = await env.newPage(browser, 'phone');
     await env.enter(p);

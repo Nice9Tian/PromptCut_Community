@@ -1,32 +1,32 @@
 import { tr } from "../i18n/index.ts";
 /**
- * 手机版片段上的叠加卡角标。
+ * The overlay card badge on a clip in the mobile app.
  *
- * # 为什么手机上不画桌面那条带
+ * # Why the phone does not draw the desktop strip
  *
- * 手机片段只有 30px 高(`mobile.css` 的 `.clip`)。按桌面的比例切一条 13px 的带,
- * 剩 17px 放名字已经勉强,而带里每张卡只有 13px 高、40px 宽 —— 低于任何能点中的触摸目标。
- * 所以手机上只留一个计数角标(位置和尺寸跟现有的「已静音」角标一样),
- * 真要改在点片段本来就会弹出的「调整」表单里。
+ * A phone clip is only 30px high (`.clip` in `mobile.css`). Cutting a 13px strip at the desktop's proportion
+ * leaves 17px for the name, which is already barely enough, and each card in the strip is only 13px high and 40px wide, below any touch target that can be hit.
+ * So the phone keeps only a count badge (its position and size are like the existing "muted" badge),
+ * and real edits go in the "Adjust" form that tapping a clip pops up anyway.
  *
- * # 最窄那一档的角标不吃点击
+ * # The badge at the narrowest tier does not take clicks
  *
- * 名字都挤没了的时候,角标几乎就是整个片段:用户多半是想选中这一段,手指一歪却进了叠加卡。
- * 那一档把整块热区还给片段,入口交给子导航里的「叠加层」。
+ * When the name has been squeezed out entirely, the badge is almost the whole clip: users mostly want to select this clip, but a slip of the finger lands in an overlay card.
+ * At that tier the whole hit area is given back to the clip, and the entry is left to "Overlay" in the sub-navigation.
  */
 
-/** 这个宽度以上角标写「叠加 N」,以下只写数字 */
+/** At or above this width the badge reads "Overlay N"; below it, only the number */
 export const OVM_WIDE_PX = 120;
-/** 这个宽度以下角标只是个记号,不吃点击 —— 它占掉了片段三分之一还多 */
+/** Below this width the badge is just a marker and does not take clicks: it takes up more than a third of the clip */
 export const OVM_TAP_PX = 64;
 
 export interface OverlayBadgePlan {
   text: string;
-  /** 点得动吗。点不动时整块热区归片段 */
+  /** Whether it can be clicked. When not, the whole hit area belongs to the clip */
   tappable: boolean;
 }
 
-/** 这一段上挂了 `count` 张、片段宽 `widthPx` 时,角标怎么画;没挂就不画 */
+/** How to draw the badge when this clip has `count` cards attached and the clip width is `widthPx`; draw nothing if none are attached */
 export function planOverlayBadge(widthPx: number, count: number): OverlayBadgePlan | null {
   if (!(count > 0)) return null;
   return {

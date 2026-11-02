@@ -1,56 +1,77 @@
 /**
- * 把此刻的舞台**生成一份快照** —— 一份自给自足的 HTML(HTML 采样缓存,见 scripts/replay-frames.mjs)。
+ * **Generate a snapshot** of the stage at this moment: a self-contained HTML document (HTML sample
+ * cache, see scripts/replay-frames.mjs).
  *
- * 原来写在 `scripts/export-frames.mjs`(引擎现为 `server/bakery/chrome.mjs`)的 `PAGE_PRELUDE` 里、
- * 由 `evaluateOnNewDocument` 注入;现在是页面 bundle 的一部分,导出页(`ExportView`)和
- * 舞台页(`StageView`)共用同一份实现,两页的场景根都是 `[data-pc-scene]`,
- * 所以调用点不再写死 `#root.firstElementChild`。
+ * Originally written in `PAGE_PRELUDE` of `scripts/export-frames.mjs` (engine is now
+ * `server/bakery/chrome.mjs`) and injected via `evaluateOnNewDocument`; now it is part of the page
+ * bundle, shared between the export page (`ExportView`) and stage page (`StageView`), where both
+ * pages have `[data-pc-scene]` as their scene root, so call sites no longer hardcode
+ * `#root.firstElementChild`.
  *
- * # 五步(任务书 3.8)
+ * # Five steps (task brief 3.8)
  *
- *   `cloneScene`      复制 DOM
- *   `inlineDOMStyles` 读计算样式、按差异口径写进 `style`(`snapshot/inlineStyles.ts`)
- *   `rasterizeCanvas` 读像素、压成图片、写实体框(`snapshot/rasterizeCanvas.ts`)
- *   `stripMedia`      素材层只留占位属性
- *   `serializeScene`  相邻文本节点插注释、`outerHTML`、整场景的 id 改名(`snapshot/renameSceneIds.ts`)、逐控件取包裹层 `innerHTML`
+ *   `cloneScene`      clone DOM
+ *   `inlineDOMStyles` read computed styles and write into `style` using differential criteria
+ *                     (`snapshot/inlineStyles.ts`)
+ *   `rasterizeCanvas` read pixels, compress into images, and write entity boxes (`snapshot/rasterizeCanvas.ts`)
+ *   `stripMedia`      retain only placeholder attributes on the media layer
+ *   `serializeScene`  insert empty comments between adjacent text nodes, `outerHTML`,
+ *                     rename whole-scene ids (`snapshot/renameSceneIds.ts`), extract wrapper
+ *                     layer `innerHTML` per control
  *
- * 中间两步各自一个文件、**互不 import**:canvas 换 `<img>` 时要按 IMG 的基线另算一份
- * 样式串,那个衔接写在这里(`inlineDOMStyles` 交出 `styleAs`,转给 `rasterizeCanvas`)。
+ * The two middle steps reside in separate files and **do not import each other**: when canvas is
+ * replaced with `<img>`, a separate style string must be calculated according to the IMG baseline,
+ * and that bridging is written here (`inlineDOMStyles` yields `styleAs`, passed to `rasterizeCanvas`).
  *
- * # 四件实测踩过的事
+ * # Four issues encountered in practice
  *
- *   - 样式内联并写死 animation:none / transition:none —— 注入后不能再有任何还在走的钟;
- *   - 整场景 html 的 id 统一改名并同步改掉 url(#…) / href="#…" —— SVG 渐变按 id 引用,
- *     重放页里要是还能解析到别的同名元素,填充整片错掉(growth-curve 实测);
- *   - canvas 换成同尺寸的图 —— 克隆出来的画布是空的,粒子和三维画面会整个消失;
- *   - 相邻的文本节点之间插一个空注释(`keepTextBoundaries`)—— HTML 序列化再解析会把它们并成一个。
- *     React 渲 `{n}%` 是「75」「%」两个文本节点、两段文字,各自先画阴影再画字,「%」的模糊
- *     `text-shadow` 压在「5」上;并成一段后阴影全在字底下(mu-circular-progress 每帧差上千个通道,
- *     见 `replay-mismatch-report.md` §13)。空注释不产生任何排版对象,只保住分界。
+ *   - Styles are inlined and hardcoded with animation:none / transition:none: after injection,
+ *     there must not be any running clocks;
+ *   - Whole-scene HTML ids are renamed uniformly, simultaneously updating url(#…) / href="#…":
+ *     SVG gradients reference by id, so if the replay page can still resolve other elements with
+ *     the same name, entire fill areas will be broken (verified in growth-curve);
+ *   - canvas is replaced with an image of the same size: cloned canvases are empty, causing
+ *     particles and 3D scenes to disappear entirely;
+ *   - An empty comment is inserted between adjacent text nodes (`keepTextBoundaries`): HTML
+ *     serialization followed by parsing would merge them into one. React renders `{n}%` as two
+ *     text nodes and two text spans, "75" and "%", each drawing shadow before text, with the
+ *     blurred `text-shadow` of "%" overlapping "5"; merged into a single run, the shadow falls
+ *     entirely underneath the text (mu-circular-progress differed by thousands of channels per
+ *     frame, see `replay-mismatch-report.md` §13). Empty comments produce no layout objects and
+ *     only preserve the boundary.
  *
- * 素材(video / img)只剥 `src`,`data-pc-media-*` 原样留着:重放时由 `__pcPrepareFrameMedia`
- * 按 `data-pc-media-src` / `data-pc-media-time` 把那一帧装回来。判据是 `dataset.pcMediaSrc`,
- * 所以卡片内部自带 `src` 的 `<img>` 不受影响、原样保留。
+ * Media (video / img) only strips `src`, leaving `data-pc-media-*` as is: during replay,
+ * `__pcPrepareFrameMedia` restores the media for that frame and seeks into position according to
+ * `data-pc-media-src` / `data-pc-media-time`. The criterion is `dataset.pcMediaSrc`, so `<img>`
+ * elements with their own `src` inside cards remain unaffected and intact.
  *
- * control 快照只记**包裹层的 innerHTML**(卡片组件自己的子树),不含包裹层本身
- * (位置 / opacity / filter / zIndex / isolation —— 挂回时由 Stage 用当前片段照常生成),
- * 不含 `[data-pc-proxy-plane]` 兄弟,也不含素材层(`[data-pc-media]`)。
- * **id 保持原样**:同一份快照会挂到多个片段上,改名在消费侧做(见 `snapshotRename.ts`)。
+ * Control snapshots only record the **wrapper layer's innerHTML** (the card component's own
+ * subtree), excluding the wrapper layer itself (position / opacity / filter / zIndex / isolation:
+ * regenerated as usual by Stage using the current clip upon remounting), excluding
+ * `[data-pc-proxy-plane]` siblings, and excluding the media layer (`[data-pc-media]`).
+ * **ids are kept as is**: the same snapshot will be mounted onto multiple clips, so renaming is
+ * performed on the consumer side (see `snapshotRename.ts`).
  *
- * # 三个耗时数(任务书 3.8)
+ * # Three timing values (task brief 3.8)
  *
- * `timing` 把生成快照拆成三段单独上报:`inlineMs`(样式内联)、`rasterMs`(画布栅格化)、
- * `serializeMs`(序列化)。它们**不进判重**(判重只看活渲的 `stepMs`),只用来排探针和
- * 预渲染的产能,并让「哪类卡超标」一眼可见:`inlineMs` 高 = DOM 太复杂,`rasterMs` 高 = 画布太大。
+ * `timing` splits snapshot generation into three separate reported stages: `inlineMs` (style
+ * inlining), `rasterMs` (canvas rasterization), and `serializeMs` (serialization). They **do not
+ * enter classification as heavy** (classification as heavy only looks at live render `stepMs`),
+ * and are only used to schedule throughput for probes and prerender, making "which category of
+ * card exceeds budget" visible at a glance: high `inlineMs` = DOM too complex, high `rasterMs` =
+ * canvas too large.
  *
- * 任务书只点名三个函数要计时,而五步里 `cloneScene` / `stripMedia` 也要花时间,
- * 又必须让 `inlineMs + rasterMs + serializeMs` 覆盖整趟(3.8 的产能估算是四个数相加)。
- * 这里的归属:**`cloneScene` 并进 `inlineMs`**(同样按元素数线性增长,和「DOM 太复杂」
- * 是同一个病因)、**`stripMedia` 并进 `serializeMs`**(它只扫素材层,量级可以忽略)。
+ * The task brief only calls out three functions to be timed, whereas `cloneScene` / `stripMedia`
+ * among the five steps also take time, and `inlineMs + rasterMs + serializeMs` must cover the entire
+ * pass (the throughput estimation in 3.8 sums four numbers). The attribution here: **`cloneScene`
+ * is merged into `inlineMs`** (which also grows linearly with element count, sharing the same cause
+ * as "DOM too complex"), and **`stripMedia` is merged into `serializeMs`** (it only scans the media
+ * layer, negligible in magnitude).
  *
- * 计时用 `window.__pcRealNow`(舞台页由 `stageClock` 挂):导出页把 `performance.now`
- * 改写成了虚拟时间(`kernel/exportClock.ts`),直接用会量出 0。导出页没挂 `__pcRealNow`,
- * 退回 `Date.now()` —— 那一侧不上报这三个数,精度无所谓。
+ * Timing uses `window.__pcRealNow` (attached by `stageClock` on the stage page): the export page
+ * overrides `performance.now` with virtual time (`kernel/exportClock.ts`), which would measure 0
+ * if used directly. The export page does not mount `__pcRealNow` and falls back to `Date.now()`:
+ * that side does not report these three numbers, so precision does not matter.
  */
 
 import { inlineDOMStyles, HTML_NS } from "./snapshot/inlineStyles";
@@ -63,23 +84,23 @@ export interface ControlSnapshot {
   id: string;
   /** data-pc-local-frame */
   frame: number;
-  /** 包裹层的 innerHTML,id 原样 */
+  /** Wrapper layer innerHTML, ids as is */
   html: string;
 }
 
-/** 生成快照的三段耗时(毫秒)。都不进判重,见文件头。 */
+/** Three durations of snapshot generation (milliseconds). None enter classification as heavy, see file header. */
 export interface SnapshotTiming {
-  /** 复制 DOM + 样式内联 */
+  /** Clone DOM + style inlining */
   inlineMs: number;
-  /** 画布栅格化(没有画布的卡是 0) */
+  /** Canvas rasterization (0 for cards without canvas) */
   rasterMs: number;
-  /** 素材层占位 + 序列化 + id 改名 + 逐控件切子树 */
+  /** Media layer placeholders + serialization + id renaming + slicing subtrees per control */
   serializeMs: number;
 }
 
 export interface SceneSnapshot {
   html: string;
-  /** 读不出像素、只能留空画布的 canvas 数 */
+  /** Number of canvases whose pixels could not be read and can only be left blank */
   lossy: number;
   controls: ControlSnapshot[];
   timing: SnapshotTiming;
@@ -88,11 +109,13 @@ export interface SceneSnapshot {
 const nowMs = (): number => (window.__pcRealNow ?? Date.now)();
 
 /**
- * 第一步:复制 DOM。返回 live 与克隆体一一对应的两个数组。
+ * Step one: clone DOM. Returns two one-to-one corresponding arrays of live and cloned elements.
  *
- * **占位平面不进快照**(product/rendering.md「兜底顺序」:导出、预渲染、Agent 看到的画面永远没有它)。
- * 它只挂在预览舞台上,但舞台页的 `__pcCreateSnapshot` 同样走这里 —— 克隆体里整棵摘掉,
- * 两个数组里对应的项一起剔除(保持一一对应),样式内联、栅格化、序列化都看不到它。
+ * **The placeholder plane is excluded from snapshots** (product/rendering.md "Fallback order":
+ * never present in scenes seen by export, prerender, or Agent). It is only mounted on the preview
+ * stage, but `__pcCreateSnapshot` on the stage page also runs through here: the entire tree is
+ * pruned in the clone, and corresponding items in both arrays are removed together (maintaining
+ * one-to-one correspondence), hiding it from style inlining, rasterization, and serialization.
  */
 function cloneScene(root: Element): { clone: Element; orig: Element[]; copy: Element[] } {
   const orig = [root, ...root.querySelectorAll("*")];
@@ -110,11 +133,12 @@ function cloneScene(root: Element): { clone: Element; orig: Element[]; copy: Ele
 }
 
 /**
- * 第四步:素材层只留占位属性。
+ * Step four: retain only placeholder attributes on the media layer.
  *
- * 只剥 src:快照本身不带外部素材(HTML 重放不能因为这一下就去拉视频),
- * 但 data-pc-media-src / data-pc-media-hidden / data-pc-media-time 必须留着 ——
- * 重放时 __pcPrepareFrameMedia 正是靠它们把这一帧的素材装回来并 seek 到位。
+ * Only src is stripped: snapshots do not carry external media themselves (HTML replay must not
+ * fetch videos because of this), but data-pc-media-src / data-pc-media-hidden / data-pc-media-time
+ * must be preserved: during replay, __pcPrepareFrameMedia relies on them to restore that frame's
+ * media and seek into position.
  */
 function stripMedia(orig: Element[], copy: Element[]): void {
   for (let i = 0; i < orig.length; i++) {
@@ -127,12 +151,14 @@ function stripMedia(orig: Element[], copy: Element[]): void {
   }
 }
 
-/** 内容按原始文本解析的 HTML 元素:往里插注释,重放时会变成字面文字 */
+/** HTML elements whose content is parsed as raw text: inserting comments inside turns them into literal text during replay */
 const RAW_TEXT_TAGS = new Set(["STYLE", "SCRIPT", "TEXTAREA", "TITLE", "XMP", "IFRAME", "NOEMBED", "NOFRAMES", "NOSCRIPT", "PLAINTEXT"]);
 
 /**
- * 相邻的文本节点之间插一个空注释,序列化再解析后仍是两个文本节点(文件头「四件实测踩过的事」)。
- * 在克隆体上改,live DOM 不动;`orig` / `copy` 只数元素,注释不影响两者的对应。
+ * Insert an empty comment between adjacent text nodes, which remain two text nodes after
+ * serialization and parsing (see file header "Four issues encountered in practice").
+ * Modified on the clone, leaving the live DOM untouched; `orig` / `copy` only count elements,
+ * so comments do not affect their correspondence.
  */
 function keepTextBoundaries(clone: Element): void {
   const walker = document.createTreeWalker(clone, NodeFilter.SHOW_TEXT);
@@ -147,18 +173,23 @@ function keepTextBoundaries(clone: Element): void {
 }
 
 /**
- * 第五步:`outerHTML` + 整场景的 id 改名 + 逐控件取包裹层 `innerHTML`。
- * `flatControls`:剪辑段里的卡(嵌套场景里挂 `data-pc-flat-clip` 的包裹层)也各算一个控件,id 取 `data-pc-flat-clip`(摊平出来的虚拟片段 id)。
- * 只有浏览器节点替剪辑段里的卡产流时要(`StageView.tsx` 的 `bakeFrame`,〔裁〕R02);缺省不收,别的调用方拿到的控件一个不多。
+ * Step five: `outerHTML` + whole-scene id renaming + extracting wrapper layer `innerHTML` per control.
+ * `flatControls`: cards inside cut segments (wrapper layers with `data-pc-flat-clip` in nested
+ * scenes) also count as one control each, with id taken from `data-pc-flat-clip` (the flattened
+ * virtual clip id).
+ * Only needed when browser nodes produce streams for cards inside cut segments (`bakeFrame`
+ * in `StageView.tsx`, [ruling] R02); omitted by default, giving other callers no extra controls.
  */
 function serializeScene(root: Element, clone: Element, flatControls = false): { html: string; controls: ControlSnapshot[] } {
   keepTextBoundaries(clone);
-  // 顺序要紧(连环改名的结果取决于它):文档序去重,根元素的 id 排最后。改名见 `snapshot/renameSceneIds.ts`。
+  // Order matters (the outcome of chained renaming depends on it): deduplicate in document order,
+  // with the root element's id placed last. For renaming, see `snapshot/renameSceneIds.ts`.
   const ids = new Set(
     [...root.querySelectorAll("[id]")].map((e) => e.id).concat(root.id ? [root.id] : []),
   );
   const html = renameSceneIds(clone.outerHTML, ids);
-  // `:not([data-pc-media])` 排除 FrameScene 的素材层 —— 它也带 data-pc-clip + data-pc-local-frame。
+  // `:not([data-pc-media])` excludes the media layer of FrameScene: it also carries data-pc-clip
+  // + data-pc-local-frame.
   const selector = flatControls
     ? "[data-pc-clip][data-pc-local-frame]:not([data-pc-media]), [data-pc-flat-clip][data-pc-local-frame]"
     : "[data-pc-clip][data-pc-local-frame]:not([data-pc-media])";
@@ -179,9 +210,13 @@ export function createSnapshot(root: Element | null, opts?: { flatControls?: boo
 
   const t0 = nowMs();
   const { clone, orig, copy } = cloneScene(root);
-  // "IMG":canvas 换 <img> 那一支要按 IMG 的基线另算(见 rasterizeCanvas.ts)。
-  // 基线在这里预热,免得 rasterizeCanvas 第一次问的时候才去挂探针、把时间算进 rasterMs。
-  // 剪辑段里的卡也当控件取时(`flatControls`),它们包裹层的直接子节点同样一律内联继承属性(`inlineStyles.ts` 的 `isFlatClipWrapper`)
+  // "IMG": the branch replacing canvas with <img> must calculate separately against the IMG baseline
+  // (see rasterizeCanvas.ts).
+  // Baselines are prewarmed here, so rasterizeCanvas does not attach probes on first query and count
+  // that time into rasterMs.
+  // When cards in cut segments are also extracted as controls (`flatControls`), direct children of
+  // their wrapper layers likewise inline inherited properties without exception (`isFlatClipWrapper`
+  // in `inlineStyles.ts`).
   const styles = inlineDOMStyles(root, orig, copy, ["IMG"], { flatWrappers: opts?.flatControls === true });
   const t1 = nowMs();
 

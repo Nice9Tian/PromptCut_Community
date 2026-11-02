@@ -1,9 +1,12 @@
 /**
  * node --test src/ai/handoff.test.mjs
  *
- * 换模型接手时要把前面几轮摘给新模型。来自诊断报告 对话诊断-20260910-204342:
- * 前半段 Gemini 被用户骂「根本没有视频和图片」,换成 Opus 后它只收到一句「你来接替继续」,
- * 看不到那句不满,于是按项目现状自己找活干,还去磁盘上翻交接笔记。
+ * When switching models for takeover, extract previous rounds for the new model. From diagnostic
+ * report chat-diagnostic-20260910-204342:
+ * In the first half, Gemini was scolded by the user that "there are no videos or images at all";
+ * after switching to Opus it only received "you take over and continue", unable to see that
+ * complaint, so it found work on its own based on the project status and even searched disk for
+ * handoff notes.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -47,7 +50,8 @@ test("Messages still running do not count", () => {
   assert.equal(buildHandoff(h, "claude", false), "");
 });
 
-// 改版后 Agent 可能一个字不写、只交 report_progress。回退后要靠前情把做过的事带给新会话
+// After the revamp, the Agent may write nothing and only submit report_progress.
+// After a rewind, previous context must carry what was done to the new session
 const report = (input, name = "mcp__promptcut__report_progress") => ({ kind: "tool", name, input });
 
 test("When the text is empty, use the progress report instead: join only the non-empty groups, with the stage name", () => {

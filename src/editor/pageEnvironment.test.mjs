@@ -1,13 +1,16 @@
 /**
- * 页面上报渲染环境（契约 `docs/plan/render-queue-contract.md` F.4，测试表 F.5 的 W1～W2）。
- * 跑：node --experimental-test-module-mocks --test src/editor/pageEnvironment.test.mjs
+ * Page reports render environment (contract `docs/plan/render-queue-contract.md` F.4, test table F.5
+ * W1-W2).
+ * Run: node --experimental-test-module-mocks --test src/editor/pageEnvironment.test.mjs
  *
- * 只照契约 F.4 写，不看实现。被测模块 `src/editor/pageEnvironment.mjs` 是 F.4 新建的，按需动态引入：
- * 它不存在时这几条用例失败，不影响别的文件。
+ * Written strictly according to contract F.4, without looking at implementation. The tested module
+ * `src/editor/pageEnvironment.mjs` is newly created in F.4 and dynamically imported on demand:
+ * if it does not exist, these test cases fail without affecting other files.
  *
- * 假的 `navigator` / `document` / WebGL 只实现契约写明的调用：
- *   `document.createElement('canvas')`、`canvas.getContext('webgl2' | 'webgl')`、
- *   `gl.getExtension('WEBGL_debug_renderer_info' | 'WEBGL_lose_context')`、`gl.getParameter(...)`、`loseContext()`。
+ * Mock `navigator` / `document` / WebGL only implements calls specified in the contract:
+ *   `document.createElement('canvas')`, `canvas.getContext('webgl2' | 'webgl')`,
+ *   `gl.getExtension('WEBGL_debug_renderer_info' | 'WEBGL_lose_context')`, `gl.getParameter(...)`,
+ *   `loseContext()`.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,8 +24,9 @@ const VENDOR = 0x1F00;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
 
 /**
- * 假的 WebGL 环境。`contexts`：{ webgl2?: glOptions, webgl?: glOptions }，没给的类型 getContext 回 null。
- * glOptions：{ debug = true, unmasked = ['U-R', 'U-V'], masked = ['M-R', 'M-V'] }。
+ * Mock WebGL environment. `contexts`: { webgl2?: glOptions, webgl?: glOptions }; types not provided
+ * return null for getContext.
+ * glOptions: { debug = true, unmasked = ['U-R', 'U-V'], masked = ['M-R', 'M-V'] }.
  */
 function fakeDom({ contexts = {}, getContextThrows = false, createThrows = false, getParameterThrows = false } = {}) {
   const log = { created: [], tried: [], extensions: [], params: [], lost: 0, appended: 0 };
@@ -154,10 +158,10 @@ test('W2 getContext throws, createElement throws, getParameter throws, or there 
     assert.doesNotThrow(() => { env = readPageEnvironment({ navigator: nav(), document }); }, label);
     assert.deepEqual(env, { platform: 'Win32', userAgent: UA, renderer: '', vendor: '' }, label);
   }
-  // navigator 本身缺失也不抛
+  // Does not throw even if navigator itself is missing
   let env;
   assert.doesNotThrow(() => { env = readPageEnvironment({ navigator: undefined, document: fakeDom().document }); });
   assert.deepEqual(env, { platform: '', userAgent: '', renderer: '', vendor: '' });
-  // 四项都是字符串
+  // All four items are strings
   for (const value of Object.values(env)) assert.equal(typeof value, 'string');
 });

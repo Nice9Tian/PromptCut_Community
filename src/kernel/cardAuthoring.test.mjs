@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { applyCardDefinition, cloneCardClipInstance } from './cardAuthoring.mjs';
 import { projectCardGraph } from './cardGraph.mjs';
 
-/* 素材效果卡在仓库里是 src/cards/user/<id>.tsx 文件,定义永远从注册表取。测试里把三张卡
- * 写成普通对象,用一个 getCard 桩当注册表 —— 和浏览器侧传 src/kernel/registry 同一姿势。 */
+/* Media effect cards in repository are src/cards/user/<id>.tsx files, definitions are always
+ * taken from registry. In tests, three cards are written as plain objects using a getCard
+ * stub as registry: same posture as passing src/kernel/registry on browser side. */
 const invert = {
   id: 'invert', name: 'Invert colors', description: '', source: 'user', kind: 'filter', frameMode: 'direct',
   defaults: { amount: .5 }, controls: [],
@@ -43,13 +44,13 @@ test('One definition has independent instances; the clip gets cardId + nodeId, a
   const b = applyCardDefinition(a, { cardId: 'invert', clipId: 'b', nodeId: 'b-effect', params: { amount: .75 } }, getCard).project;
   const reopened = JSON.parse(JSON.stringify(b));
   const graph = projectCardGraph(reopened, getCard);
-  assert.equal(reopened.cardDefinitions, undefined); // 定义不进项目 JSON
+  assert.equal(reopened.cardDefinitions, undefined); // Definitions do not enter project JSON
   assert.equal(reopened.cardNodes.length, 2);
   assert.deepEqual(reopened.cardNodes.map(n => n.adapter), ['card', 'card']);
   assert.deepEqual(reopened.cardNodes.map(n => n.kind), ['filter', 'filter']);
   assert.deepEqual(reopened.cardNodes.map(n => n.params.amount), [.25, .75]);
   assert.equal(clipOf(reopened, 'a').cardId, 'invert');
-  assert.deepEqual(clipOf(reopened, 'a').params, { amount: .25 }); // 不照抄就是画面上静默丢参数
+  assert.deepEqual(clipOf(reopened, 'a').params, { amount: .25 }); // Not copying as-is means silently dropping parameters on screen
   assert.equal(graph.nodes.find(n => n.id === 'a-effect').inputs.source.nodeId, '@clip/a/source');
   assert.equal(graph.nodes.find(n => n.id === 'b-effect').inputs.source.nodeId, '@clip/b/source');
   assert.equal(base().cardNodes, undefined);
@@ -62,7 +63,8 @@ test('Applying two cards to the same clip in a row: the second card\'s input con
   assert.equal(clipOf(second, 'a').cardId, 'blur');
   assert.deepEqual(second.cardNodes.find(n => n.id === 'n2').inputs.source, { nodeId: 'n1', offset: 0, rate: 1 });
   assert.deepEqual(second.cardNodes.find(n => n.id === 'n1').inputs.source, { nodeId: '@clip/a/source', offset: 0, rate: 1 });
-  // 兜底那条不能再塞一条指向本卡自己的 source(clip.cardId 这时已经是素材效果卡 id)
+  // The fallback cannot insert another source pointing to this card itself (clip.cardId is already
+  // the media effect card id at this point)
   assert.equal(Object.keys(second.cardNodes.find(n => n.id === 'n2').inputs).length, 1);
 });
 
@@ -78,11 +80,11 @@ test('Passing the current clip.nodeId edits this instance in place: no chaining,
 test('Priority of params overrides: the node stores one copy, and for the node a clip points to, clip.params wins in the graph', () => {
   const applied = applyCardDefinition(base(), { cardId: 'invert', clipId: 'a', nodeId: 'n1', params: { amount: .25 } }, getCard).project;
   const outer = applyCardDefinition(applied, { cardId: 'blur', clipId: 'a', nodeId: 'n2', params: { radius: 5 } }, getCard).project;
-  // 右栏改参数改的是 clip.params
+  // Modifying parameters in the right rail changes clip.params
   clipOf(outer, 'a').params = { radius: 9 };
   const graph = projectCardGraph(outer, getCard);
   assert.deepEqual(graph.nodes.find(n => n.id === 'n2').params, { radius: 9 });
-  assert.deepEqual(graph.nodes.find(n => n.id === 'n1').params, { amount: .25 }); // 内层保留建卡时那份
+  assert.deepEqual(graph.nodes.find(n => n.id === 'n1').params, { amount: .25 }); // Inner layer retains the copy from card creation
 });
 
 test('One input of a transition card is the output of another media effect card, and the other input is a media clip', () => {
@@ -90,8 +92,8 @@ test('One input of a transition card is the output of another media effect card,
   const mixed = applyCardDefinition(first, { cardId: 'crossfade', trackId: 'track', start: 2, end: 3, newClipId: 'mix',
     nodeId: 'nmix', inputs: { A: { clipId: 'a' }, B: { clipId: 'b' } } }, getCard).project;
   const node = mixed.cardNodes.find(n => n.id === 'nmix');
-  assert.equal(node.inputs.A.nodeId, 'n1'); // 素材效果卡片段映射成它自己的输出节点
-  assert.equal(node.inputs.B.nodeId, '@clip/b/source'); // 素材段照旧
+  assert.equal(node.inputs.A.nodeId, 'n1'); // Media effect card clips map to their own output nodes
+  assert.equal(node.inputs.B.nodeId, '@clip/b/source'); // Media clips as before
   assert.doesNotThrow(() => projectCardGraph(mixed, getCard));
 });
 
@@ -104,7 +106,7 @@ test('A media effect card clip without a nodeId is first materialized into a pro
   assert.equal(result.project.cardNodes.length, 2);
   const inner = result.project.cardNodes.find(n => n.id !== 'n2');
   assert.equal(inner.adapter, 'card');
-  assert.deepEqual(inner.params, { amount: .4 }); // 物化用的是片段上那份参数
+  assert.deepEqual(inner.params, { amount: .4 }); // Materialization uses the parameters on the clip
   assert.deepEqual(result.project.cardNodes.find(n => n.id === 'n2').inputs.source, { nodeId: inner.id, offset: 0, rate: 1 });
 });
 
@@ -145,6 +147,6 @@ test('split clone continues card time and compensates its own media edge', () =>
   assert.equal(node.inputs.source.offset, -2);
   assert.equal(node.inputs.external.nodeId, '@clip/b/source');
   assert.equal(project.cardNodes.length, 1);
-  // 别的 adapter 一律原样返回
+  // Other adapters are all returned as-is
   assert.equal(cloneCardClipInstance({ cardNodes: [{ id: 'x', adapter: 'chrome' }] }, 'a', 'copy', 'x').nodeId, 'x');
 });

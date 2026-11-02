@@ -6,32 +6,36 @@ import { SUBMIT_URL, submitBlockedReason, submitReport } from "../../ai/reportSu
 import "./ReportDialog.css";
 import { tr } from "../../i18n/index.ts";
 
-/** 在线构建的编译期常量(写法与用意见 `src/online/pageFlag.ts` 的「在线构建剪枝」):在线构建里剪掉「请本机编辑器进程写盘」那条路 */
+/** Compile-time constant of the online build (see "online build pruning" in `src/online/pageFlag.ts` for how it is written and why): the online build prunes the "ask the local editor process to write to disk" path */
 const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
 
 /**
- * 诊断报告的子窗口:报告摆在文本框里,底下三个出口 —— 复制 / 保存为文件 / 提交。
+ * Sub-window for the diagnostic report: the report sits in a text box, with three exits below:
+ * copy / save as file / submit.
  *
- * 以前是「点一下 Debugger,报告自己按长度选了条路走掉」。用户看不到报告长什么样,
- * 也没得挑:短的进剪贴板,长的直接落盘弹个文件夹。这里改成先把东西摆出来,
- * 三条路各是一个按钮,走哪条由用户定。
+ * It used to be "click Debugger and the report picks a route by its length and leaves". Users could
+ * not see what the report looked like, and had no choice: short ones went to the clipboard, long
+ * ones were written straight to disk and popped up a folder. Now the content is laid out first,
+ * each of the three routes is a button, and the user decides which one to take.
  *
- * 太长的报告**锁住复制**:几百 KB 粘进聊天框既贴不动也没人看,与其让用户
- * 复制成功却发不出去,不如当场说清楚「请改用保存为文件」。
+ * Reports that are too long **lock copy**: pasting several hundred KB into a chat box neither works
+ * nor gets read, so rather than let the user copy successfully but be unable to send it, say so
+ * plainly on the spot: "use save as file instead".
  */
 export function ReportDialog(props: {
   open: boolean;
-  /** 窗口标题,比如「环境诊断」 */
+  /** Window title, e.g. "Environment diagnostics" */
   title: string;
-  /** 报告正文;为空表示还在收集 */
+  /** Report body; empty means still being collected */
   text: string;
-  /** 存文件时的文件名前缀,不给就用 title */
+  /** Filename prefix when saving to a file; falls back to title if not given */
   label?: string;
-  /** 顶上那句说明这份报告里有什么 */
+  /** The sentence at the top saying what is in this report */
   hint?: string;
   /**
-   * 「保存为文件」的做法;不给时:桌面版请本机编辑器写盘并打开所在文件夹,在线页面在浏览器里下载一份
-   * (在线页面不请求编辑器进程的 `/api/*`)。返回给用户看的回执。
+   * How "Save as file" works; when not given: the desktop app asks the local editor to write to disk
+   * and open the containing folder, the online page downloads a copy in the browser (the online page
+   * does not request the editor process's `/api/*`). Returns the receipt shown to the user.
    */
   saveFile?: (text: string, label: string) => Promise<string> | string;
   onClose: () => void;
@@ -43,13 +47,13 @@ export function ReportDialog(props: {
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
 
-  // 每次重新打开都从干净状态开始,免得上次那句「已复制」还挂着
+  // Start from a clean state on every reopen, so the previous "Copied" message does not linger
   useEffect(() => {
     if (open) { setBusy(""); setMsg(null); }
   }, [open]);
 
-  // Esc 关掉子窗口。捕获阶段拦下来并 stopPropagation:外层 AI 设置对话框自己也听
-  // Esc,不拦的话按一下会把两层一起关掉。
+  // Esc closes the sub-window. Intercept it in the capture phase and call stopPropagation: the outer
+  // AI settings dialog also listens for Esc, and without this one press would close both layers.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -96,7 +100,7 @@ export function ReportDialog(props: {
   const doSubmit = () => run("submit", () => submitReport(text, label));
 
   return createPortal(
-    // 盖在 AI 设置对话框上面,所以 z-index 要比它高一档(那边是 10000)
+    // Sits on top of the AI settings dialog, so its z-index must be one tier higher (that one is 10000)
     <div className="rpt-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="rpt-dialog" role="dialog" aria-modal="true" aria-label={title}>
         <div className="rpt-head">

@@ -68,7 +68,8 @@ export const quoteLockup: CardDef<Params> = {
   useWhen: "When the narration contains exact words in quotation marks or a famous quote, lock it into a quote layout with a primary-color vertical bar on the left and an author credit. Split the body into 2 to 3 short lines with `|`. For very short slogans use punch-pill; for emphasis sentences use blur-text.",
   tags: ["quotable line","quote","quotation marks","lockup"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,

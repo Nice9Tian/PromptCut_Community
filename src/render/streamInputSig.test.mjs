@@ -1,6 +1,8 @@
 /**
- * 轨道流的输入签名(`streamInputSig.mjs`):层表 `streams` 表每行记一份,页面按当前项目算同一个,对不上的流不播。
- * 跑:node --test src/render/streamInputSig.test.mjs
+ * Input signature for track streams (`streamInputSig.mjs`): recorded per row in layer table
+ * `streams` table; page computes the same from current project, streams that do not match are not
+ * played.
+ * Run: node --test src/render/streamInputSig.test.mjs
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -39,15 +41,16 @@ test('member not in the project, or no members: returns null (no comparison)', (
 test('single-card stream: changes to params, whole-frame shift of the clip, or duration count as a change; position, opacity, fade in/out do not', () => {
   const base = streamInputSig(project(), card);
   assert.notEqual(streamInputSig(edit((p) => { clipOf(p, 'a').params.text = 'b'; }), card), base, 'Parameters');
-  // 快照层的签名不管整帧平移(快照按本地帧取);流按全局帧号分段,平移了每一帧都对不上
+  // Snapshot layer signature ignores whole-frame translation (snapshots are fetched by local frame);
+  // streams are segmented by global frame number, so every frame mismatches after translation
   const moved = edit((p) => { const c = clipOf(p, 'a'); c.start += 1; c.end += 1; });
   assert.equal(clipInputSig(moved, 'a'), clipInputSig(project(), 'a'), 'control: the snapshot layer signature is unchanged');
   assert.notEqual(streamInputSig(moved, card), base, 'whole-frame shift');
   assert.notEqual(streamInputSig(edit((p) => { clipOf(p, 'a').end = 3.5; }), card), base, 'Duration');
-  // 单卡流画在包裹层自己的坐标里,这些由舞台的包裹层加
+  // Single-card stream is drawn in wrapper layer's own coordinates; these are added by stage wrapper layer
   assert.equal(streamInputSig(edit((p) => { const c = clipOf(p, 'a'); c.frame.x = 500; c.frame.y = 9; c.opacity = 0.5; c.fadeIn = 0.3; }), card), base, 'position, opacity, fade in');
   assert.notEqual(streamInputSig(edit((p) => { clipOf(p, 'a').frame.w = 800; }), card), base, 'frame width and height');
-  // 别的片段怎么改都不相干
+  // Modifications to other clips are irrelevant
   assert.equal(streamInputSig(edit((p) => { clipOf(p, 'b').params.seed = 9; clipOf(p, 'b').start = 0.5; }), card), base);
 });
 
@@ -64,11 +67,11 @@ test('group stream: member placement, stacking order, and another layer inserted
   assert.notEqual(streamInputSig(edit((p) => { clipOf(p, 'b').fadeOut = 0.4; }), group), base, 'Fade out');
   assert.notEqual(streamInputSig(edit((p) => { clipOf(p, 'b').params.seed = 9; }), group), base, 'member params');
   assert.notEqual(streamInputSig(edit((p) => { p.tracks = [p.tracks[1], p.tracks[0], p.tracks[2]]; }), group), base, 'two members swapped top and bottom');
-  // 往两个成员中间插一条序列(时间上重叠):组流的上下关系不对了
+  // Inserting a track between two members (temporally overlapping): group stream z-order is invalidated
   const between = edit((p) => { p.tracks.splice(1, 0, { id: 't-new', clips: [{ id: 'x', cardId: 'odometer', start: 2, end: 2.5 }] }); });
   assert.notEqual(streamInputSig(between, group), base, 'a layer inserted in between');
   assert.deepEqual(streamInputs(between, group).between, ['x']);
-  // 插在外面、或者中间那层时间上不重叠、或者是隐藏的序列:不相干
+  // Inserted outside, or intermediate layer does not temporally overlap, or is a hidden track: irrelevant
   assert.equal(streamInputSig(edit((p) => { p.tracks.unshift({ id: 't-new', clips: [{ id: 'x', cardId: 'odometer', start: 2, end: 2.5 }] }); }), group), base, 'inserted at the very top');
   assert.equal(streamInputSig(edit((p) => { p.tracks.splice(1, 0, { id: 't-new', clips: [{ id: 'x', cardId: 'odometer', start: 6, end: 7 }] }); }), group), base, 'the middle layer does not overlap in time');
   assert.equal(streamInputSig(edit((p) => { p.tracks.splice(1, 0, { id: 't-new', hidden: true, clips: [{ id: 'x', cardId: 'odometer', start: 2, end: 2.5 }] }); }), group), base, 'the middle one is a hidden track');
@@ -87,11 +90,12 @@ test('stream depending on lower layers: the target card\'s appearance, and each 
   assert.deepEqual(inputs.below.map((m) => m.id), ['v', 'b'], 'painter\'s order: lower ones first');
   assert.equal(inputs.below[1].sig, clipInputSig(project(), 'b'));
   assert.deepEqual(inputs.members[0].window, { firstFrame: 30, count: 60, last: 89 });
-  // 目标卡:这种流按舞台坐标产,位置和外观画进流里(单卡流不看这些)
+  // Target card: this kind of stream is produced in stage coordinates, position and appearance
+  // are baked into the stream (single-card streams ignore these)
   assert.notEqual(streamInputSig(edit((p) => { clipOf(p, 'a').frame.x = 500; }), below), base, 'target card position');
   assert.notEqual(streamInputSig(edit((p) => { clipOf(p, 'a').opacity = 0.5; }), below), base, 'target card opacity');
   assert.notEqual(streamInputSig(edit((p) => { clipOf(p, 'a').params.text = 'b'; }), below), base, 'target card params');
-  // 下层
+  // Lower layer
   assert.notEqual(streamInputSig(edit((p) => { clipOf(p, 'b').params.seed = 9; }), below), base, 'lower layer params');
   assert.notEqual(streamInputSig(edit((p) => { clipOf(p, 'b').frame = { x: 1, y: 2, w: 300, h: 200 }; }), below), base, 'lower layer position');
   assert.notEqual(streamInputSig(edit((p) => { clipOf(p, 'b').start = 0.5; }), below), base, 'lower layer time');
@@ -100,15 +104,15 @@ test('stream depending on lower layers: the target card\'s appearance, and each 
   assert.notEqual(streamInputSig(edit((p) => { p.tracks.push({ id: 't-new', clips: [{ id: 'x', cardId: 'odometer', start: 2, end: 2.5 }] }); }), below), base, 'one more layer below');
   assert.notEqual(streamInputSig(edit((p) => { p.tracks.pop(); }), below), base, 'one layer fewer below');
   assert.notEqual(streamInputSig(edit((p) => { p.tracks[1].hidden = true; }), below), base, 'the track below is hidden');
-  // 上面的层、时间上不重叠的下层:不相干
+  // Upper layers, or lower layers that do not temporally overlap: irrelevant
   assert.equal(streamInputSig(edit((p) => { p.tracks.unshift({ id: 't-new', clips: [{ id: 'x', cardId: 'odometer', start: 0, end: 9, params: { n: 1 } }] }); }), below), base, 'one layer added above');
   assert.equal(streamInputSig(edit((p) => { p.tracks.push({ id: 't-new', clips: [{ id: 'x', cardId: 'odometer', start: 6, end: 7 }] }); }), below), base, 'the layer below does not overlap in time');
   assert.equal(streamInputSig(edit((p) => { p.tracks.push({ id: 't-new', hidden: true, clips: [{ id: 'x', cardId: 'odometer', start: 0, end: 9 }] }); }), below), base, 'the track below is hidden');
-  // 算不出:成员不止一张、目标不在项目里、目标所在的序列隐藏了
+  // Cannot compute: more than one member, target is not in project, track containing target is hidden
   assert.equal(streamInputSig(project(), { clipIds: ['a', 'b'], kind: 'below' }), null);
   assert.equal(streamInputSig(project(), { clipIds: ['nope'], kind: 'below' }), null);
   assert.equal(streamInputSig(edit((p) => { p.tracks[0].hidden = true; }), below), null);
-  // 别的种类不受影响:不写 kind、写 card 的单成员照旧是单卡流的签名
+  // Other kinds are unaffected: single members with omitted kind or kind "card" still use single-card stream signatures
   assert.equal(streamInputSig(project(), { clipIds: ['a'] }), streamInputSig(project(), card));
 });
 

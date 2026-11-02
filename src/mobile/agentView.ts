@@ -1,10 +1,14 @@
 /**
- * 手机版 Agent 分页的视图模型(语义 `workflow/editing.md`「手机版界面」;交互以 `prototypes/mobile-ui-demo/` 的 Agent 页为准)。
+ * View model for the mobile app Agent tab (semantics: `workflow/editing.md` "Mobile app UI";
+ * for interaction, the Agent page of `prototypes/mobile-ui-demo/` is the reference).
  *
- * 纯函数,不碰 React、不碰 store,好让 node 直接跑测试(`agentView.test.mjs`):
- *   - 引用:输入框上方的「引用标记条」里放的是引用项(`QuoteRef`);发送时把它们按桌面「引用到 AI」同一个写法
- *     `@卡片 名字(片段 id)` 放在正文前面(Agent 认的就是这个写法),消息气泡上再把开头的这几串认出来,画成标记;
- *   - 一轮回复(`ChatMessage`)拆成:对用户说的话(气泡)、操作卡片里的条目(每次工具调用一条)、本轮 / 阶段小结。
+ * Pure functions, no React and no store, so node can run the tests directly (`agentView.test.mjs`):
+ *   - Quotes: the "quote chip bar" above the input box holds quote items (`QuoteRef`); on send they
+ *     are placed before the body text in the same format as the desktop "Quote to AI",
+ *     `@card name(clip id)` (this is the format the Agent recognizes), and the message bubble then
+ *     recognizes these leading strings again and draws them as chips;
+ *   - One reply turn (`ChatMessage`) is split into: what is said to the user (bubble), the entries
+ *     in the action card (one per tool call), and the turn / stage summary.
  */
 import type { ChatMessage, MessagePart, ToolCallInfo } from "../ai/types.ts";
 import { isReportTool, parseProgressReport, type ProgressReport } from "../ai/progressReport.ts";
@@ -12,21 +16,22 @@ import { isUserMessageCall, sayingsOf, type Saying } from "../ai/userMessages.ts
 import { KIND_LABEL, bareToolName, toolKind } from "../editor/right/chat/iconRuns.ts";
 import { tr } from "../i18n/index.ts";
 
-/* ---------------- 引用 ---------------- */
+/* ---------------- Quotes ---------------- */
 
 export interface QuoteRef {
-  /** 被引用的片段 id(转场则是转场 id;叠加卡是「片段 id#种类:定义 id」) */
+  /** Id of the quoted clip (the transition id for a transition; for an overlay card it is "clip id#kind:definition id") */
   id: string;
-  /** 给人看的名字 */
+  /** The human-readable name */
   label: string;
   /**
-   * 引的是哪一级。缺省「卡片」= 整段,和以前一字不差;
-   * 引单张叠加卡时写「叠加卡」—— 一段上挂两张同名的压暗很常见,不指明哪一张 Agent 只能反问。
+   * Which level is quoted. The default "card" = the whole segment, identical to before;
+   * when quoting a single overlay card write "overlay card" —— two dim cards with the same name on one
+   * segment are common, and without saying which one, the Agent can only ask back.
    */
   kind?: string;
 }
 
-/** 一条引用在正文里的写法:同桌面 AI 栏「引用到 AI」插进输入框的那串 */
+/** How a quote is written in the body text: the same string that desktop AI panel "Quote to AI" inserts into the input box */
 /** Quote kind for a single overlay card inside a clip; part of the wire format like the token itself */
 // i18n-allow: wire format agents are told about, not interface text
 export const OVERLAY_QUOTE_KIND = "叠加卡";
@@ -36,7 +41,7 @@ export function quoteToken(q: QuoteRef): string {
   return `@${q.kind || "卡片"} ${q.label}(${q.id})`;
 }
 
-/** 发送时的正文:引用在前、空格隔开,再接用户写的话 */
+/** Body text on send: quotes first, separated by spaces, followed by what the user wrote */
 export function withQuotes(text: string, quotes: readonly QuoteRef[]): string {
   const body = text.trim();
   if (!quotes.length) return body;
@@ -46,7 +51,7 @@ export function withQuotes(text: string, quotes: readonly QuoteRef[]): string {
 // i18n-allow: the quote token is a wire format agents are told about, not interface text
 const QUOTE_RE = /^@卡片 (.+?)\(([^()\s]+)\)(?:[ \t]+|$)/;
 
-/** 把一条用户消息开头的引用串认出来(桌面发的、手机发的写法一样);余下的是用户写的话 */
+/** Recognize the leading quote strings of a user message (desktop and phone use the same form); the rest is what the user wrote */
 export function splitQuotes(text: string): { quotes: QuoteRef[]; rest: string } {
   let rest = text.replace(/^\s+/, "");
   const quotes: QuoteRef[] = [];
@@ -59,14 +64,14 @@ export function splitQuotes(text: string): { quotes: QuoteRef[]; rest: string } 
   return { quotes, rest };
 }
 
-/** 往引用条里加一项:同一个 id 不重复放(重复点「引用」只是再确认一下) */
+/** Add one item to the quote bar: the same id is not added twice (tapping "Quote" repeatedly just confirms again) */
 export function addQuote(list: readonly QuoteRef[], q: QuoteRef): QuoteRef[] {
   return list.some((x) => x.id === q.id) ? [...list] : [...list, q];
 }
 
-/* ---------------- 一轮回复 ---------------- */
+/* ---------------- One round of reply ---------------- */
 
-/** 取一条消息的有序片段(同桌面 AgentBubble 的 partsOf:旧历史没有 parts 时按「文字 → 状态 → 工具」兜底) */
+/** Get the ordered parts of a message (same as `partsOf` in desktop AgentBubble: old history without parts falls back to "text → status → tool") */
 export function partsOf(m: ChatMessage): MessagePart[] {
   if (m.parts && m.parts.length > 0) return m.parts;
   const legacy: MessagePart[] = [];
@@ -76,19 +81,19 @@ export function partsOf(m: ChatMessage): MessagePart[] {
   return legacy;
 }
 
-/** 操作卡片里一条的状态:做完 / 在做 / 还没做(这一轮收了尾也没出结果的) / 失败 */
+/** Status of one entry in the action card: done / running / not done (still no result when the round ended) / failed */
 export type OpState = "done" | "run" | "todo" | "err";
 
 export interface OpItem {
   key: string;
   state: OpState;
-  /** 动作类别的中文(新增、修改、读取……) */
+  /** Chinese names of the action categories (add, modify, read...) */
   kind: string;
-  /** 工具名(去掉服务器前缀) */
+  /** Tool name (with the server prefix removed) */
   name: string;
 }
 
-/** 小结里的一行:已完成 / 待办 / 问题 */
+/** One line in the summary: done / to do / issues */
 export interface ReportRow {
   state: "done" | "todo" | "ask";
   text: string;
@@ -100,17 +105,17 @@ export interface ReportView {
 }
 
 export interface RoundView {
-  /** 这是第几轮(对话里第几条助手回复,从 1 数) */
+  /** Which round this is (which assistant reply in the chat, counting from 1) */
   ordinal: number;
-  /** 第一次操作之前说的话 */
+  /** What was said before the first action */
   before: Saying[];
-  /** 第一次操作之后说的话 */
+  /** What was said after the first action */
   after: Saying[];
   items: OpItem[];
   reports: ReportView[];
-  /** 操作卡片标题:「第 1 轮 · 5 项操作」 */
+  /** Action card title: "Round 1 · 5 actions" */
   title: string;
-  /** 有没有操作卡片可画 */
+  /** Whether there is an action card to draw */
   hasCard: boolean;
 }
 
@@ -125,15 +130,17 @@ function reportView(r: ProgressReport): ReportView {
   return { title: reportTitle(r), rows };
 }
 
-/** 话在这一轮片段里的位置(`Saying.key` 是 `s<片段下标>` 或 `t<片段下标>`) */
+/** Position of a saying within the parts of this round (`Saying.key` is `s<part index>` or `t<part index>`) */
 function sayingIndex(s: Saying): number {
   const n = Number(s.key.slice(1));
   return Number.isFinite(n) ? n : 0;
 }
 
 /**
- * 把一轮回复拆开。顺序按演示稿的对话页:先是动手之前说的话,然后是这一轮的操作卡片,再是动手之后说的话。
- * 操作条目不含对用户说话的 `send_message` 和 `report_progress`(后者变成小结)。
+ * Split one round of reply. The order follows the chat page of the demo: first what was said before
+ * acting, then the action card of this round, then what was said after acting.
+ * Action entries exclude `send_message`, which talks to the user, and `report_progress` (the latter
+ * becomes the summary).
  */
 export function roundView(m: ChatMessage, ordinal: number): RoundView {
   const parts = partsOf(m);
@@ -168,7 +175,7 @@ export function roundView(m: ChatMessage, ordinal: number): RoundView {
   };
 }
 
-/** 对话里每条助手回复是第几轮 */
+/** Which round each assistant reply in the chat is */
 export function ordinals(messages: readonly ChatMessage[]): Map<string, number> {
   const out = new Map<string, number>();
   let n = 0;
@@ -176,7 +183,7 @@ export function ordinals(messages: readonly ChatMessage[]): Map<string, number> 
   return out;
 }
 
-/** 这条用户消息要不要画气泡:其他 Agent 递来的(`inbound`)不画,同桌面 */
+/** Whether to draw a bubble for this user message: ones handed over by other Agents (`inbound`) are not drawn, same as desktop */
 export function isUserBubble(m: ChatMessage): boolean {
   return m.role === "user" && !(m.inbound && m.inbound.length > 0);
 }

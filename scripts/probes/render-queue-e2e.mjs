@@ -1,41 +1,58 @@
 /**
- * 渲染任务队列的端到端探针：经真 WebSocket 接文档服务，按发布方、渲染节点或两者的身份跑一轮假任务。
- * 能在两台机器上各跑一半（一台 --role publisher，另一台 --role node）。
- * 依据：`docs/plan/render-queue-contract.md` G.8。
+ * End-to-end probe for render queue: connects to document service via real WebSocket, runs
+ * a round of dummy tasks as publisher, render node, or both. Can run half on each of two
+ * machines (one with --role publisher, the other with --role node).
+ * Basis: `docs/plan/render-queue-contract.md` G.8.
  *
- * 跑：
- *   node scripts/probes/render-queue-e2e.mjs --url <ws://…> --role publisher|node|both
+ * Run:
+ *   node scripts/probes/render-queue-e2e.mjs --url <ws://...> --role publisher|node|both
  *     [--tasks 50] [--project <id>] [--node-id <id>] [--task-ms 200] [--max-concurrent 2]
  *     [--exit-after-claim] [--announce <http-url>] [--watch-endpoints] [--timeout-ms 120000] [--transport auto|ws]
  *
- * 凭证（M6a，`docs/plan/auth-contract.md` 第 5、11 节；集群令牌已退出数据面，本探针不再读它）：
- * - 设了环境变量 PROMPTCUT_SHARED_CONFIG（共享项目配置 JSON）：取第一项，凭项目证明进入，节点连接用 `render` 角色、
- *   发布方连接用 `page` 角色；每次（重）连前现取挑战。任务都在这个共享项目的空间里；
- * - 没设：不带凭证，连本机回环时是本机身份（`local` 空间），连别的机器会被 401。
- * `--announce` 是管理接口（服务地址登记）：本机身份能登记，共享项目的成员会被拒（forbidden）。
- * 配置里的口令、派生密钥与证明都不打印。
+ * Credentials (M6a, `docs/plan/auth-contract.md` sections 5 and 11; cluster token has been retired
+ * from data plane, this probe no longer reads it):
+ * - PROMPTCUT_SHARED_CONFIG environment variable is set (shared project config JSON): takes first
+ *   entry, enters with project proof, node connection uses `render` role, publisher connection uses
+ *   `page` role; fetches challenge anew before each (re)connection. All tasks are in this shared
+ *   project's namespace;
+ * - Not set: unauthenticated, uses local identity (`local` namespace) when connecting to local
+ *   loopback, connecting to other machines gets 401.
+ * `--announce` is admin interface (service address registration): local identity can register,
+ * shared project members will be rejected (forbidden).
+ * Passphrase, derived keys, and proofs in config are never printed.
  *
- * - node 角色：createLocalNode + createDocEndpoint（会话，HT-a）；执行器按 --task-ms 睡眠，产物库用内存版
- *   （复用 server/test/ 的假件：探针不是生产代码）。同时 queue.watch：看到别人认领某任务（task.taken）的
- *   时刻 t1、自己认领到同一任务的时刻 t2，takeovers 记 t2 − t1（两个时刻都是本机时钟）。
- *   --exit-after-claim：第一次认领成功后立刻退出，退出码 3（测「干净断开」）。
- *   --announce：连上后以本节点身份登记这个地址（service.announce，kind 为 render-node）。
- *   --watch-endpoints：订阅全部服务地址，最后输出 endpoints。
- *   单独跑 node 角色时一直干到 --timeout-ms 或 Ctrl+C，然后输出结果。
- * - publisher 角色：publisher.hello，发布 --tasks 个假细任务（kind snapshot、tier shared，结果键随机、带运行 id），
- *   数 task.done（每个 id 第一次记完成，再来的记重复）；看到 epoch 变了、或重连上，就把没完成的重新发布（发布是幂等的）。
- *   全部完成就结束；到 --timeout-ms 还没完成算失败。
- * - both：同一进程两者都跑（两条连接）。
+ * - node role: createLocalNode + createDocEndpoint (session, HT-a); executor sleeps for --task-ms,
+ *   output store uses in-memory version (reuses mock files from server/test/: probe is not
+ *   production code). At the same time queue.watch: observes time t1 when another claimed a task
+ *   (task.taken), time t2 when claiming the same task itself, takeovers records t2 - t1 (both
+ *   timestamps use local clock).
+ *   --exit-after-claim: exits immediately after first successful claim, exit code 3 (tests
+ *   "clean disconnect").
+ *   --announce: registers this address as this node after connecting (service.announce, kind
+ *   is render-node).
+ *   --watch-endpoints: subscribes to all service addresses, outputs endpoints at the end.
+ *   When running node role alone, runs continuously until --timeout-ms or Ctrl+C, then outputs results.
+ * - publisher role: publisher.hello, publishes --tasks dummy fine-grained tasks (kind snapshot, tier
+ *   shared, random result key, with run id), counts task.done (records completion on first appearance
+ *   of each id, duplicates thereafter); when seeing epoch change or upon reconnecting, republishes
+ *   unfinished tasks (publish is idempotent). Completes when all are done; fails if not finished by
+ *   --timeout-ms.
+ * - both: runs both in the same process (two connections).
  *
- * 输出：最后一行 JSON
+ * Output: last line JSON
  *   { ok, role, url, epochs, published, completed, duplicateDone, claims, claimsById,
  *     doneLatencyMs: { p50, p95 }, takeovers: [{ id, ms }], endpoints?, sessions, fails }
- *   `sessions`：每条连接实际用的传输、接续次数、是否对着没有会话层的旧服务端（不含会话号）。
+ *   `sessions`: transport actually used by each connection, resume count, whether connected to old
+ *   server without session layer (session id omitted).
  *
- * 传输（契约 `docs/plan/http-transport-contract.md` 第 4.3 节第 6 条）：连接是一个会话（`createDocEndpoint`）。
- * `--transport` 是开发者强制参数，不给时读环境变量 `PROMPTCUT_TRANSPORT`，再缺省自动（HT-a 的自动就是 WebSocket）；
- * `ws` 只走 WebSocket；`http` 在 HT-a 未启用（退出码 2）。`--url` 收 ws(s):// 或 http(s)://。
- * 退出码：0 全过；1 有断言失败；2 连不上（或参数不对）；3 --exit-after-claim 的预期退出。
+ * Transport (contract `docs/plan/http-transport-contract.md` section 4.3 rule 6): connection is
+ * a session (`createDocEndpoint`).
+ * `--transport` is a developer override flag; if omitted, reads environment variable
+ * `PROMPTCUT_TRANSPORT`, defaulting to auto (auto in HT-a means WebSocket);
+ * `ws` uses WebSocket only; `http` is not enabled in HT-a (exit code 2). `--url` accepts ws(s)://
+ * or http(s)://.
+ * Exit codes: 0 all passed; 1 assertion failure; 2 connection failure (or invalid arguments);
+ * 3 expected exit for --exit-after-claim.
  */
 import { randomBytes } from 'node:crypto';
 
@@ -104,7 +121,8 @@ if (args.announce !== undefined) {
   try { new URL(args.announce); } catch { usage('--announce must be an http(s):// address'); }
 }
 
-// 被测模块和假件按需动态引入：参数不对时只打用法，不因模块缺失而崩
+// Dynamically import module under test and mock files on demand:
+// print usage only when arguments are invalid, without crashing due to missing modules
 const here = new URL('.', import.meta.url);
 const [{ createDocEndpoint, transportOf }, { watchServiceEndpoints }, { createLocalNode }, { createArtifactSink }, { createSleepExecutor, snapshotTaskInput }] = await Promise.all([
   import(new URL('../../server/render-node/session-link.mjs', here)),
@@ -156,20 +174,21 @@ function finish(code) {
     const s = ep.stats();
     return { mode: s.mode ?? null, transport: s.transport ?? null, resumes: s.resumes ?? 0, fallbacks: s.fallbacks ?? 0, legacy: s.legacy === true, opens: s.opens ?? 0 };
   });
-  // 先等连着的连接关干净（最多 CLOSE_WAIT_MS）再退出：关闭握手没完成就 process.exit，
-  // Windows 上 libuv 会断言 UV_HANDLE_CLOSING 崩掉（对远端必现）
+  // Wait for active connections to close cleanly (at most CLOSE_WAIT_MS) before exiting:
+  // calling process.exit before close handshake completes causes libuv on Windows to assert
+  // UV_HANDLE_CLOSING and crash (consistently reproduces against remotes)
   closeEndpoints().then(() => {
     process.stdout.write(`${JSON.stringify(result)}\n`, () => process.exit(code));
   });
 }
 
 const CLOSE_WAIT_MS = 3_000;
-/** 关掉全部连接；连着的等到 onClose，最多 CLOSE_WAIT_MS */
+/** Close all connections; wait for active ones until onClose, at most CLOSE_WAIT_MS. */
 function closeEndpoints() {
   const waits = [];
   for (const ep of endpoints) {
     if (ep.connected) waits.push(new Promise((resolve) => ep.onClose(resolve)));
-    try { ep.close(); } catch { /* 已关 */ }
+    try { ep.close(); } catch { /* Closed */ }
   }
   if (waits.length === 0) return Promise.resolve();
   return new Promise((resolve) => {
@@ -179,7 +198,8 @@ function closeEndpoints() {
 }
 
 function openEndpoint(label) {
-  // 共享项目：节点连接是 render，发布方连接是 page（node.hello 只许 render 连接）
+  // Shared project: node connection is render, publisher connection is page
+  // (node.hello only allows render connections)
   const protocols = sharedEntry ? sharedProtocols(sharedEntry, { role: label === 'node' ? 'render' : 'page' }) : undefined;
   const ep = createDocEndpoint({ url, ...(protocols ? { protocols } : {}), ...transportOption, log: (event, fields) => log(`${label}.${event}`, fields) });
   endpoints.push(ep);
@@ -188,7 +208,7 @@ function openEndpoint(label) {
   return ep;
 }
 
-// ---------------------------------------------------------------- 发布方
+// ---------------------------------------------------------------- Publisher
 
 function runPublisher() {
   const ep = openEndpoint('publisher');
@@ -228,14 +248,14 @@ function runPublisher() {
     if (m.type === 'task.published') {
       for (const r of m.results ?? []) if (r.error) result.fails.push(`publish ${r.id}: ${r.error}`);
     } else if (m.type === 'task.done') {
-      if (!firstPublishAt.has(m.id)) return; // 不是本轮的
+      if (!firstPublishAt.has(m.id)) return; // Not from this round
       if (doneAt.has(m.id)) { result.duplicateDone += 1; return; }
       doneAt.set(m.id, Date.now());
       result.completed = doneAt.size;
       latencies.push(Date.now() - firstPublishAt.get(m.id));
       if (doneAt.size === tasks.length) {
         log('publisher.all-done', { completed: doneAt.size });
-        // 稍等一下再收尾，好数到迟到的重复完成
+        // Wait a moment before finalizing, to catch late duplicate completions
         setTimeout(() => finish(), 300);
       }
     } else if (m.type === 'task.failed') {
@@ -247,7 +267,7 @@ function runPublisher() {
   return ep;
 }
 
-// ---------------------------------------------------------------- 渲染节点
+// ---------------------------------------------------------------- Render node
 
 function runNode() {
   const ep = openEndpoint('node');
@@ -294,7 +314,7 @@ function runNode() {
   return ep;
 }
 
-// ---------------------------------------------------------------- 主流程
+// ---------------------------------------------------------------- Main flow
 
 log('start', { role, url, runId, projectId, nodeId, tasks: taskCount, credential: sharedEntry ? 'shared-project' : 'none' });
 const eps = [];
@@ -314,7 +334,7 @@ setTimeout(() => {
   if (role !== 'node') result.fails.push(`Not all tasks completed within ${timeoutMs} ms (completed ${result.completed}/${taskCount})`);
   finish();
 }, timeoutMs).unref?.();
-timers.push(setInterval(() => {}, 1 << 30)); // 保持进程存活，直到 finish
+timers.push(setInterval(() => {}, 1 << 30)); // Keep process alive until finish
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {

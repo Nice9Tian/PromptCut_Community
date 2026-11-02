@@ -1,12 +1,15 @@
 /**
- * 轨道流分段编码器的原始像素输入(渲染重构「己一」,`docs/plan/prerender-products-contract.md` 第 6.2 节左栏):
- * `server/bakery/ffmpeg.mjs` 的 `streamSegmentArgs({ raw })` / `openStreamSegmentEncoder({ raw })`。
- * 跑:`npm test -- server/test/stream-encode-raw.test.mjs`
+ * Raw pixel input for track stream segment encoder (render refactor "Ji-1",
+ * `docs/plan/prerender-products-contract.md` section 6.2 left rail):
+ * `streamSegmentArgs({ raw })` / `openStreamSegmentEncoder({ raw })` in `server/bakery/ffmpeg.mjs`.
+ * Run: `npm test -- server/test/stream-encode-raw.test.mjs`
  *
- *   - 命令行只换输入那一段(`rawvideo`、`rgba`、宽高),后面的滤镜链和编码参数一个字不变;PNG 那一种命令行逐项不变;
- *   - 同样的像素,喂原始 RGBA 和喂 PNG 编出来的 fMP4 逐字节相同(所以画布直取和截图那条路在像素相同时产出同一个分段);
- *   - 预先拉起的进程按宽高各算一种,空等的最多留 3 个。
- * 需要 ffmpeg 的几条在没有 ffmpeg 的机器上跳过。
+ *   - Command line changes only the input part (`rawvideo`, `rgba`, width and height), downstream
+ *     filterchain and encoding parameters unchanged word for word; PNG command line unchanged item by item;
+ *   - For identical pixels, fMP4 encoded from raw RGBA is byte-for-byte identical to that from PNG
+ *     (so canvas direct capture and screenshot route produce the same segment for identical pixels);
+ *   - Pre-spawned processes count each width/height as a distinct type, keeping at most 3 idle ones.
+ * Cases requiring ffmpeg are skipped on machines without ffmpeg.
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,7 +22,7 @@ const ffmpegOk = spawnSync('ffmpeg', ['-version'], { windowsHide: true }).status
 after(() => dropStreamEncoderSpares());
 const settle = () => new Promise((r) => setTimeout(r, 50));
 
-/** 合成帧(straight RGBA):随机带、渐变带、半透明块、全透明区 */
+/** Synthetic frame (straight RGBA): random bands, gradient bands, translucent blocks, transparent areas */
 function synthFrames(width, height, count) {
   let seed = 9;
   const rnd = () => { seed = (seed * 1103515245 + 12345) >>> 0; return (seed >>> 16) & 255; };
@@ -32,7 +35,7 @@ function synthFrames(width, height, count) {
       if (band === 0) { data[i] = rnd(); data[i + 1] = rnd(); data[i + 2] = rnd(); data[i + 3] = rnd(); }
       else if (band === 1) { data[i] = (x * 3 + f * 7) & 255; data[i + 1] = (y * 5) & 255; data[i + 2] = (x ^ y) & 255; data[i + 3] = x & 255; }
       else if (band === 2) { if (x >= width / 2) { data[i] = 200; data[i + 1] = 30; data[i + 2] = 90 + f; data[i + 3] = 255; } }
-      // band 3:全透明
+      // band 3: fully transparent
     }
     out.push(data);
   }
@@ -99,7 +102,7 @@ test('Pre-started process: each width and height of raw pixels counts as its own
   const warm = await run(true);
   assert.equal(Buffer.compare(cold, first), 0);
   assert.equal(Buffer.compare(cold, warm), 0, 'Output of the pre-started process is byte-identical to the on-demand one');
-  // 换五种宽高各开一次:空等的不超过 3 个
+  // Open once for each of 5 width/height combinations: no more than 3 idle ones
   for (const w of [50, 52, 54, 56, 58]) {
     const enc = openStreamSegmentEncoder('ffmpeg', { encoder: 'libx264', fps: 30, prewarm: true, raw: { width: w, height: 32 } });
     await enc.abort();

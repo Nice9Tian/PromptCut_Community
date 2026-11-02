@@ -1,9 +1,10 @@
 /**
- * 「站点登录」弹窗的开关。
+ * Toggle for the "Site login" dialog.
  *
- * 弹窗要从两个地方打开:开始页的「素材收集」卡(用户自己点),和 MCP 工具 collect_login
- * (agent 调)。后者跑在 index.tsx 的执行器里,拿不到任何组件的 setState,所以开关放在
- * 模块级,组件用 useSyncExternalStore 订阅。
+ * The dialog opens from two places: the "Media collection" card on the start page (clicked by the
+ * user), and the MCP tool collect_login (called by the agent). The latter runs in the executor in
+ * index.tsx and cannot access any component's setState, so the toggle is placed at the module level
+ * and components subscribe via useSyncExternalStore.
  */
 import { useSyncExternalStore } from "react";
 
@@ -13,7 +14,7 @@ export interface CollectLoginState {
   open: boolean;
   site: string;
   method: LoginMethod;
-  /** 打开的序号,每开一次加一,组件用它重置内部状态 */
+  /** Open sequence number, incremented on each open; components use it to reset internal state */
   seq: number;
 }
 

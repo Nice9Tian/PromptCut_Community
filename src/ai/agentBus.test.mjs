@@ -1,17 +1,19 @@
 /**
- * 多 Agent 公告板的页面一侧(agentBus)的单测。跑:node --test src/ai/agentBus.test.mjs
+ * Unit tests for page-side multi-Agent bulletin board (agentBus). Run: node --test src/ai/agentBus.test.mjs
  *
- * 公告板本身搬到了编辑器进程(server/agent/agent-board.mjs,单测在 server/test/multi-agent.test.mjs);
- * 页面这边钉死:范围差分(页面与服务端共用 src/kernel/agentScopes.mjs)算得对;SSE 推来的 agent.board 改页签名、标未读;
- * spawn_agent 开的页签带角色名、对话 ID 是服务端给的那个、驱动沿用父对话;投递消息的排版。用例 MA-P1～MA-P5。
+ * The bulletin board itself moved to the editor process (server/agent/agent-board.mjs, unit tests in
+ * server/test/multi-agent.test.mjs); page-side pins down: scope diffing (page and server share
+ * src/kernel/agentScopes.mjs) calculates correctly; agent.board pushed via SSE updates tab name and
+ * marks unread; tabs opened by spawn_agent include role name, chat ID matches the server-provided
+ * one, driver inherits from parent chat; delivery message layout. Test cases MA-P1~MA-P5.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 
-// 浏览器里才有的东西:agentTabs 读 localStorage、react 的 useSyncExternalStore 只是引用
+// Browser-only items: agentTabs reads localStorage, react useSyncExternalStore is only a reference
 const store = new Map();
 globalThis.localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
-// handleSpawn 回话用的 fetch:记下来,不真的发
+// fetch used by handleSpawn to reply: recorded, not actually sent
 const posted = [];
 globalThis.fetch = async (url, init) => { posted.push({ url, body: JSON.parse(init.body) }); return { json: async () => ({ ok: true, messages: [] }) }; };
 
@@ -40,7 +42,7 @@ test("MA-P1 diffScopes: only reports tracks whose clips array changed reference,
 });
 
 test("MA-P2 agent.board: the tab name follows the scope and the tab shows unread; the number of auto-deliverable items determines hasAutoDeliverable", () => {
-  // 清单按项目分开之后,没有会话时只有开始页占位页;先让用户「点发送」建出第一个会话,再开第二页
+  // After manifests are split by project, only the start page placeholder page exists when there are no sessions; user must first "click send" to create the first session before opening a second tab
   tabs.commitDraft(tabs.getActiveTabId());
   const t = tabs.addTab();
   tabs.setTabConversation(t.id, "conv-p2");
@@ -68,14 +70,14 @@ test("MA-P3 agent.spawn: opens a tab with the role name, the chat ID is given by
   assert.equal(localStorage.getItem(`pcChatId:${t.id}`), "sub-abc", "When the page mounts, useChatHistory reads this chat ID");
   assert.equal(tabs.getActiveTabId(), active, "Does not steal focus from the current tab");
   assert.deepEqual(posted.find((p) => p.url === "/api/agent/spawned")?.body, { reqId: "s1", ok: true });
-  // 同角色第二个编号;声明范围后页签名是「角色 · 范围」
+  // Second number for the same role; tab name after declaring scope is "role · scope"
   await bus.handleSpawn({ reqId: "s2", conversationId: "sub-def", role: "director", roleName: "Editing director", parent: "conv-main", provider: "claude", creativity: "high" });
   assert.equal(tabs.findTabByConversation("sub-def").title, "Editing director 2");
   tabs.setScopeByConversation("sub-abc", "Cut 1->Track 1");
   assert.equal(tabs.findTabByConversation("sub-abc").title, "Editing director · Cut 1->Track 1");
   tabs.setScopeByConversation("sub-abc", null);
   assert.equal(tabs.findTabByConversation("sub-abc").title, "Editing director");
-  // 对话 ID 不合法:回话 ok:false
+  // Invalid chat ID: reply ok:false
   await bus.handleSpawn({ reqId: "s3", conversationId: "bad id!", role: "director", roleName: "Editing director" });
   assert.equal(posted.find((p) => p.body.reqId === "s3")?.body.ok, false);
 });

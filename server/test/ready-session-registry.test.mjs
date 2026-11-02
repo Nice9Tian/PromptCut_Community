@@ -1,6 +1,7 @@
 /**
- * Item 4 方案 A:编辑器进程的会话版本登记,和预渲染进程重启后的 preload 重放。
- * 跑:node --test server/test/ready-session-registry.test.mjs
+ * Item 4 Option A: Session version registration for the editor process, and preload replay after
+ * prerender process restart.
+ * Run: node --test server/test/ready-session-registry.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,8 +22,8 @@ test('registration: the most recently reported goes first; when over the limit, 
   let now = 0;
   const registry = createReadySessionRegistry({ max: 3, now: () => ++now });
   for (const id of ['a', 'b', 'c']) registry.record(id, 1);
-  registry.record('a', 2);                                   // a 刚活跃过
-  registry.record('d', 1);                                   // 超上限:丢最久没动的 b
+  registry.record('a', 2);                                   // a was just active
+  registry.record('d', 1);                                   // Exceeded limit: drop b, which has been inactive the longest
   assert.deepEqual(registry.list().map(item => item.session), ['d', 'a', 'c']);
   assert.equal(READY_REGISTRY_MAX, 64);
 });
@@ -32,7 +33,7 @@ test('replay: serial, only one preload in flight at a time; the most recently ac
   registry.record('old', 4);
   registry.record('gone', 1);
   registry.record('fresh', 7);
-  const mirror = { fresh: [5, 6, 7], old: [9, 10] };          // old 记的 4 已经滑出窗口
+  const mirror = { fresh: [5, 6, 7], old: [9, 10] };          // The 4 recorded in old has already slid out of the window
   let flying = 0, peak = 0;
   const sent = [];
   const results = await replayReadySessions({
@@ -65,7 +66,7 @@ test('replay: one session failing does not affect the ones after it; stops when 
     preload: async ({ session }) => {
       sent.push(session);
       if (session === 'a') throw new Error('409');
-      current = false;                                         // 发完 b 之后它又崩了
+      current = false;                                         // After sending b, it crashed again
       return { ok: true };
     },
     isCurrent: () => current,

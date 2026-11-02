@@ -1,9 +1,13 @@
 /**
- * 在线页面的流字节怎么到舞台(`streamPlayer.ts` 的 `StreamPlaneSender` / `PushedStreamSource`;`docs/plan/browser-stream-task.md` 第七处):
- * 父页发流平面时带上清单和这台舞台还没有的块,舞台只从推来的块里取,不去问预渲染进程。
- * 跑:node --test src/render/streamPush.test.mjs
+ * How stream bytes reach the stage on the online page (`StreamPlaneSender` / `PushedStreamSource`
+ * in `streamPlayer.ts`; `docs/plan/browser-stream-task.md` item 7):
+ * When parent page sends stream planes, it includes manifests and chunks not yet on this stage;
+ * stage only takes from pushed chunks, without querying prerender process.
+ * Run: node --test src/render/streamPush.test.mjs
  *
- * 解码与合成要浏览器;这里用假的 root / canvas,只钉「字节按哈希取」「缺块怎么办」「两边的账对不对」「带清单的平面不碰别的字节源」。
+ * Decoding and compositing require a browser; fake root / canvas is used here, only pinning down
+ * "bytes retrieved by hash", "what to do on missing chunks", "whether both sides reconcile", and
+ * "planes with manifests do not touch other byte sources".
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +20,10 @@ const buf = (...bytes) => new Uint8Array(bytes);
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 const INIT = H(0x1), INIT_ID = INIT.slice(0, 16);
-/** 一条流在父页手里的样子:清单只列 `segs` 这几段,`blocks` 是这些段和开头文件的字节 */
+/**
+ * What a stream looks like in parent page's hands: manifest lists only `segs` segments, and
+ * `blocks` are bytes for these segments and head file
+ */
 function planeData(key, segs, { drop = [] } = {}) {
   const segments = {};
   const blocks = new Map([[INIT, buf(9, 9)]]);
@@ -57,13 +64,13 @@ test('Fetch by hash: the first time carries the manifest and all chunks; the sta
   assert.deepEqual([...new Uint8Array(await stage.init('K', INIT_ID))], [9, 9]);
   assert.deepEqual([...new Uint8Array(await stage.segment('K', H(0x101)))], [1, 1, 1]);
   assert.equal(stage.size, 3);
-  // 下一拍没变:清单照带,块一块都不重发
+  // Next tick unchanged: manifest included as usual, not a single chunk re-sent
   const again = sender.decorate([plane([0, 1])]);
   assert.equal(again[0].manifest, data.manifest);
   assert.equal('blocks' in again[0], false);
   stage.accept(again);
   assert.equal(stage.size, 3, 'The chunks held by the stage are still there');
-  // 多取到一段:只发新的那一块
+  // Fetched one more segment: only send that new chunk
   data = planeData('K', [0, 1, 2]);
   const more = sender.decorate([plane([0, 1, 2])]);
   assert.deepEqual(Object.keys(more[0].blocks), [H(0x102)]);
@@ -77,20 +84,20 @@ test('Bookkeeping on both sides: chunks the manifest no longer uses are dropped 
   const sender = new StreamPlaneSender(() => data);
   const stage = new PushedStreamSource();
   stage.accept(sender.decorate([plane([0, 1])]));
-  // 播放头走了,父页的窗口里只剩第 1、2 段
+  // Playhead advanced, only segments 1 and 2 remain in parent page's window
   data = planeData('K', [1, 2]);
   const next = sender.decorate([plane([1, 2])]);
   assert.deepEqual(Object.keys(next[0].blocks), [H(0x102)]);
   stage.accept(next);
   assert.equal(stage.has(H(0x100)), false, 'Segment 0 is no longer used by anyone: dropped');
   assert.equal(stage.has(H(0x101)) && stage.has(H(0x102)) && stage.has(INIT), true);
-  // 往回拖:第 0 段又要了,父页认得舞台手里没有它
+  // Scrub backwards: segment 0 needed again, parent page knows stage does not have it
   data = planeData('K', [0, 1]);
   const back = sender.decorate([plane([0, 1])]);
   assert.deepEqual(Object.keys(back[0].blocks), [H(0x100)]);
   stage.accept(back);
   assert.equal(stage.has(H(0x100)), true);
-  // 暂停:父页发空表,舞台全丢;再播全部重发
+  // Pause: parent page sends empty list, stage drops all; re-sends all when playback resumes
   stage.accept(sender.decorate([]));
   assert.equal(stage.size, 0);
   assert.equal(sender.heldCount, 0);
@@ -98,7 +105,7 @@ test('Bookkeeping on both sides: chunks the manifest no longer uses are dropped 
 });
 
 test('Missing chunks: a manifest, init file or segment the stage does not hold is rejected immediately on fetch (that beat falls back to the snapshot), without waiting', async () => {
-  const data = planeData('K', [0, 1], { drop: [H(0x101)] });   // 清单列着第 1 段,字节却不在父页手里
+  const data = planeData('K', [0, 1], { drop: [H(0x101)] });   // Manifest lists segment 1, but bytes are not in parent page's hands
   const sender = new StreamPlaneSender(() => data);
   const stage = new PushedStreamSource();
   const sent = sender.decorate([plane([0, 1])]);
@@ -109,7 +116,7 @@ test('Missing chunks: a manifest, init file or segment the stage does not hold i
   await assert.rejects(stage.init('K', 'ffffffffffffffff'), (e) => e.status === 404);
   await assert.rejects(new PushedStreamSource().init('K', INIT_ID), (e) => e.status === 404);
   assert.deepEqual([...new Uint8Array(await stage.segment('K', H(0x100)))], [0, 0, 0], 'Other segments are fetched as usual');
-  // 父页认为舞台没有这一块:字节到了之后补发
+  // Parent page considers stage missing this chunk: re-sent after bytes arrive
   data.blocks.set(H(0x101), buf(1, 1, 1));
   assert.deepEqual(Object.keys(sender.decorate([plane([0, 1])])[0].blocks), [H(0x101)]);
 });
@@ -122,7 +129,7 @@ test('The parent page has no manifest for this stream (not fetched yet): the pla
   data = planeData('K', [0]);
   assert.equal(Object.keys(sender.decorate([plane([0])])[0].blocks).length, 2);
   assert.equal('blocks' in sender.decorate([plane([0])])[0], false);
-  sender.reset();   // 这一次没送到(舞台在重载)
+  sender.reset();   // Not delivered this time (stage is reloading)
   assert.equal(Object.keys(sender.decorate([plane([0])])[0].blocks).length, 2);
 });
 
@@ -137,7 +144,7 @@ test('Two planes use the same chunk (the same stream attached to two cards): sen
   assert.equal(stage.size, 2);
 });
 
-/* ---------------- 播放器:带清单的平面不碰别的字节源 ---------------- */
+/* ---------------- Player: planes with manifests do not touch other byte sources ---------------- */
 
 const fakeCanvas = () => ({ getContext: () => null, style: { getPropertyValue: () => '', setProperty() {} }, width: 0, height: 0, parentElement: null });
 const fakeRoot = (canvases) => ({ querySelector(sel) { const m = /^\[data-pc-clip="(.+?)"\] > canvas\[data-pc-stream-plane\]$/.exec(sel); return m ? canvases[m[1]] ?? null : null; } });
@@ -164,7 +171,7 @@ test('Stream plane with a manifest: the manifest takes effect immediately, segme
   assert.deepEqual(asked, [H(0x100)], 'segment 0 asks for the pushed chunk by hash');
   assert.deepEqual(http.calls, [], 'a plane that carries a manifest does not touch the prerender process address');
   assert.deepEqual(player.diag().pushed, { blocks: 3, bytes: 2 + 3 + 3 });
-  // 暂停:父页发空表,流关掉,推来的块全丢
+  // Pause: parent page sends empty list, stream closed, pushed chunks all dropped
   player.setPlanes([], 30);
   assert.deepEqual(player.diag().pushed, { blocks: 0, bytes: 0 });
   assert.equal(player.diag().tracks.length, 0);
@@ -181,12 +188,13 @@ test('parent page brings a new manifest (more segments): the same track is swapp
   player.present(0);
   await flush();
   const seeks = player.diag().tracks[0].seeks;
-  // 播到第 1 段:清单里还没有它(父页还没取到)→ 这一拍没有流画面,不出错
+  // Play reaches segment 1: not yet in manifest (parent page not fetched yet) → no stream frame this
+  // tick, no error
   player.setPlanes(sender.decorate([{ clipIds: ['a'], key: 'K', ranges: [[0, 1]], originFrame: 0 }]), 30);
   player.present(15 / 30);
   await flush();
   assert.deepEqual([...player.showingClips()], []);
-  // 父页取到了第 1 段,带着新清单再发一次
+  // Parent page fetched segment 1, re-sends with new manifest
   data = planeData('K', [0, 1]);
   player.setPlanes(sender.decorate([{ clipIds: ['a'], key: 'K', ranges: [[0, 1]], originFrame: 0 }]), 30);
   player.present(16 / 30);

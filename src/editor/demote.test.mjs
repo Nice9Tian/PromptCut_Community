@@ -1,9 +1,11 @@
 /**
- * K6 父页那一半(`demote.ts`)的单测。跑:
+ * Unit test for the parent page half of K6 (`demote.ts`). Run:
  *   node --experimental-test-module-mocks --test src/editor/demote.test.mjs
  *
- * 钉三件事:整条 PUT 带 `capped` + `demoted`、各测量值保留旧值;先并进手里的 costs、
- * 记进 pendingDemote(就绪前照常活渲);同一张卡本次会话只降一次,查不到身份或记录不 PUT。
+ * Lock down three things: entire PUT includes `capped` + `demoted`, keeping old values for each
+ * measurement; merged into local costs first, recorded into pendingDemote (live render proceeds as
+ * usual before ready); the same card is downgraded only once in this session; do not PUT if identity
+ * or record cannot be found.
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import { test, mock, beforeEach } from "node:test";

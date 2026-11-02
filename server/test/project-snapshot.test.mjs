@@ -1,24 +1,28 @@
 /**
- * 项目快照（契约 `docs/plan/render-queue-contract.md` J.1、J.2，J.7 用例 J1～J4）。
- * 跑：node --test server/test/project-snapshot.test.mjs
+ * Project snapshots (contract `docs/plan/render-queue-contract.md` J.1, J.2; J.7 test cases J1–J4).
+ * Run: node --test server/test/project-snapshot.test.mjs
  *
- * 只照契约写，不看实现。
+ * Written strictly against contract, without looking at implementation.
  *
- * 约定：
- *   - 真文档服务：独立模式、端口 0、`autoTick: false`，挂 C6.3 的项目模块 `projectModule({ store, now })`；
- *     存储用 memory，或临时目录上的文件存储（J3 重启）。
- *   - 线上协议照 J.1：
+ * Conventions:
+ *   - Real document service: standalone mode, port 0, `autoTick: false`, mounts C6.3 project module
+ *     `projectModule({ store, now })`;
+ *     storage uses memory, or file storage in a temporary directory (J3 restart).
+ *   - Wire protocol follows J.1:
  *       `project.snapshot.put { projectId, projectRev, digest, index, count, data }`
- *         → `project.snapshot.stored { projectId, projectRev, received, count, complete }` 或 `error { reason }`；
+ *         → `project.snapshot.stored { projectId, projectRev, received, count, complete }` or `error { reason }`;
  *       `project.snapshot.get { projectId, projectRev }`
- *         → 若干 `project.snapshot.part { …, index, count, data }`（index 升序），最后 `project.snapshot.end { …, digest }`；
- *         没有这份快照时回 `project.snapshot.part { …, missing: true }`。
- *     回包都带请求的 `reqId`，测试按 `reqId` 收。
- *   - 摘要 = 项目 JSON 全文的 sha256 十六进制；版本先经 `project.announce` 登记（C6.3 第 1 节）。
- *   - 客户端 `createProjectClient(endpoint, { timeoutMs })`（J.2），端点用 M5a 的 `createWsEndpoint`。
- *     「服务端不回」用一个吞掉 `project.*` 的假模块，或者一个只记下发出消息的假端点。
+ *         → multiple `project.snapshot.part { …, index, count, data }` (ascending index),
+ *           finally `project.snapshot.end { …, digest }`;
+ *         returns `project.snapshot.part { …, missing: true }` when this snapshot does not exist.
+ *     Responses include request `reqId`, test receives by `reqId`.
+ *   - digest = SHA-256 hex of the full project JSON; version registered via `project.announce` first (C6.3 Section 1).
+ *   - Client `createProjectClient(endpoint, { timeoutMs })` (J.2), endpoint uses M5a `createWsEndpoint`.
+ *     "Server does not reply" uses a mock module swallowing `project.*`, or a mock endpoint only
+ *     recording outgoing messages.
  *
- * 被测模块（项目模块的快照部分、`project-client.mjs`）还没有时，每条用例各自失败、报原因。
+ * When the module under test (snapshot part of project module, `project-client.mjs`) does not exist yet,
+ * each test case fails individually and reports the reason.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -32,7 +36,7 @@ const T0 = 1_700_000_000_000;
 const sha256 = (text) => createHash('sha256').update(text, 'utf8').digest('hex');
 const CHUNK_MAX = 512 * 1024;
 
-/** 起一台只挂项目模块的文档服务 */
+/** Start a document service that only mounts the project module */
 async function start({ store, dir } = {}) {
   const { createMemoryStore, createFileStore } = await loadStore();
   const makeProject = await loadProject();
@@ -42,13 +46,13 @@ async function start({ store, dir } = {}) {
   return { ...env, store: s };
 }
 
-/** 一段项目 JSON 文本（`size` 大约多少字符；`seed` 换内容） */
+/** Project JSON text snippet (`size` approx char count; `seed` varies content) */
 function projectText(seed, size = 2000, { cjk = false } = {}) {
   const filler = cjk ? '字幕轨道卡片'.repeat(Math.ceil(size / 6)).slice(0, size) : 'x'.repeat(size);
   return JSON.stringify({ id: `proj-${seed}`, seed, fps: 30, width: 1920, height: 1080, tracks: [{ id: 't1', clips: [] }], note: filler });
 }
 
-/** 按字符切成 n 片（只用 BMP 字符，不会切开代理对） */
+/** Split into n chunks by character (BMP characters only, will not split surrogate pairs) */
 function chunksOf(text, n) {
   const size = Math.ceil(text.length / n);
   const out = [];
@@ -59,7 +63,7 @@ function chunksOf(text, n) {
 let seq = 0;
 const put = (c, fields) => ask(c, { type: 'project.snapshot.put', ...fields });
 
-/** 发 get，按 reqId 收全部回包：part…end，或一条 missing；回 { parts, end, missing, replies } */
+/** Send get, receive all responses by reqId: part…end, or a missing; returns { parts, end, missing, replies } */
 async function getSnapshot(c, projectId, projectRev, ms = 5000) {
   const reqId = `get-${++seq}`;
   c.send({ type: 'project.snapshot.get', projectId, projectRev, reqId });
@@ -76,7 +80,7 @@ async function getSnapshot(c, projectId, projectRev, ms = 5000) {
   }
 }
 
-/** 把 get 的分片拼起来，顺带核对 J.1 的形状 */
+/** Assemble chunks from get, and check J.1 shape along the way */
 function assemble(got, projectId, projectRev) {
   assert.equal(got.missing, false, 'get finds it');
   assert.ok(got.end, 'the last one is project.snapshot.end');
@@ -97,14 +101,14 @@ function assemble(got, projectId, projectRev) {
   return text;
 }
 
-/** announce 这份文本的摘要，回 projectRev */
+/** announce the digest of this text, returns projectRev */
 async function announce(c, projectId, text) {
   const ack = await ask(c, { type: 'project.announce', projectId, digest: sha256(text) });
   assert.equal(ack.type, 'project.announced', `announce succeeded: ${JSON.stringify(ack)}`);
   return ack.projectRev;
 }
 
-/** 按给定顺序上传 chunks（`order` 是 index 列表，可以重复），回每条回包 */
+/** Upload chunks in given order (`order` is index list, may repeat); returns each response */
 async function upload(c, projectId, projectRev, text, chunks, order = chunks.map((_, i) => i), digest = sha256(text)) {
   const replies = [];
   for (const index of order) {
@@ -138,7 +142,7 @@ test('J1 after upload in parts, get receives all parts and end in order, and joi
   assert.equal(Buffer.compare(Buffer.from(back, 'utf8'), Buffer.from(text, 'utf8')), 0, 'joined together, byte-for-byte identical to the original');
   assert.ok(got.replies.every((m) => typeof m.reqId === 'string'), 'every reply to get carries reqId');
 
-  // 另一条连接（另一台节点）也取得到
+  // Also retrievable from another connection (another node)
   const d = await env.connect('bob');
   assert.equal(assemble(await getSnapshot(d, 'proj-j1', 1), 'proj-j1', 1), text);
 });
@@ -165,7 +169,7 @@ test('J1 out-of-order upload and re-upload of the same part: the result is the s
   assert.deepEqual(rest.map((r) => [r.received, r.complete]), [[3, false], [4, true]]);
   assert.equal(assemble(await getSnapshot(c, 'proj-j1b', rev), 'proj-j1b', rev), text, 'the text assembled after out-of-order upload and re-upload is the same as the original');
 
-  // 同一项目的下一版：各版各存一份，互不覆盖
+  // Next version of the same project: each version stores one copy, without overwriting each other
   const text2 = projectText('j1-shuffle-v2', 3000);
   const rev2 = await announce(c, 'proj-j1b', text2);
   assert.equal(rev2, rev + 1);
@@ -206,7 +210,7 @@ test('J2 a digest mismatch responds digest-mismatch and all parts received so fa
   const rev = await announce(c, 'proj-j2', text);
   const chunks = chunksOf(text, 3);
 
-  // 1. 数据被改过：全文的 sha256 对不上 digest
+  // 1. Data was modified: full-text sha256 does not match digest
   const tampered = [...chunks];
   tampered[1] = tampered[1].replace(/x/, 'y');
   const r1 = await upload(c, 'proj-j2', rev, text, tampered);
@@ -215,7 +219,7 @@ test('J2 a digest mismatch responds digest-mismatch and all parts received so fa
   assert.equal(r1[2].reason, 'digest-mismatch');
   assert.equal((await getSnapshot(c, 'proj-j2', rev)).missing, true, 'snapshots that fail validation are not kept');
 
-  // 已收的分片全部丢弃：重新上传从 received 1 起算
+  // All received chunks are discarded: re-upload counts from received 1
   const again = await put(c, { projectId: 'proj-j2', projectRev: rev, digest: sha256(text), index: 0, count: 3, data: chunks[0] });
   assert.equal(again.type, 'project.snapshot.stored');
   assert.equal(again.received, 1, `earlier parts were discarded: ${JSON.stringify(again)}`);
@@ -223,11 +227,12 @@ test('J2 a digest mismatch responds digest-mismatch and all parts received so fa
   assert.equal(rest.at(-1).complete, true);
   assert.equal(assemble(await getSnapshot(c, 'proj-j2', rev), 'proj-j2', rev), text);
 
-  // 2. 数据与自报的 digest 一致，但 digest 不是这一版 announce 登记的那个
+  // 2. Data matches self-reported digest, but digest is not the one registered by announce for this version
   const other = projectText('j2-other', 4000);
   const rev2 = await announce(c, 'proj-j2b', text);
   const r2 = await upload(c, 'proj-j2b', rev2, other, chunksOf(other, 2));
-  // 契约只说「收齐后校验」；实现也可以在第一片就拒。两种都接受，但必须报 digest-mismatch、不能收齐
+  // Contract only specifies "validate after receiving all"; implementation may also reject on first chunk.
+  // Both are accepted, but must report digest-mismatch and must not complete reception
   const errors = r2.filter((r) => r.type === 'error');
   assert.ok(errors.length >= 1, `digest differs from the digest registered by announce: must respond error: ${JSON.stringify(r2)}`);
   assert.ok(errors.every((e) => e.reason === 'digest-mismatch'), JSON.stringify(errors));
@@ -248,7 +253,7 @@ test('J2 a version that was never announced responds unknown-rev (a nonexistent 
   const r1 = await put(c, { projectId: 'proj-j2c', projectRev: rev + 1, digest: sha256(text), index: 0, count: 1, data: text });
   assert.equal(r1.type, 'error', JSON.stringify(r1));
   assert.equal(r1.reason, 'unknown-rev');
-  // 登记过的这一版照常
+  // The registered version behaves as usual
   const ok = await put(c, { projectId: 'proj-j2c', projectRev: rev, digest: sha256(text), index: 0, count: 1, data: text });
   assert.deepEqual([ok.type, ok.complete], ['project.snapshot.stored', true]);
 });
@@ -315,14 +320,14 @@ async function loadProjectClient() {
   return clientMod;
 }
 
-/** 起服务、连端点、建客户端 */
+/** Start service, connect endpoint, create client */
 async function clientRig(t, { modules, timeoutMs } = {}) {
   const { createProjectClient } = await loadProjectClient();
   let env;
   if (modules) env = await startStandalone({ modules });
   else env = await start();
   const endpoints = new Set();
-  t.after(async () => { for (const ep of endpoints) { try { ep.close(); } catch { /* 已关 */ } } await env.cleanup(); });
+  t.after(async () => { for (const ep of endpoints) { try { ep.close(); } catch { /* Closed */ } } await env.cleanup(); });
   const url = `ws://127.0.0.1:${env.port}/?user=node-a`;
   const endpoint = await connectEndpoint(url, { env: { endpoints } });
   const sent = [];
@@ -388,7 +393,7 @@ test('J4 two concurrent snapshots do not get mixed up: two projects announce, pu
   const [l, r] = await Promise.all(projects.map((p, i) => client.get(p.id, revs[i].projectRev)));
   assert.deepEqual(l, projects[0]);
   assert.deepEqual(r, projects[1]);
-  // 同一项目两个版本并发
+  // Two concurrent versions of the same project
   const v2 = { ...projects[0], seed: 'left-v2' };
   const t2 = JSON.stringify(v2);
   const rev2 = (await client.announce(v2.id, sha256(t2))).projectRev;
@@ -411,7 +416,7 @@ test('J4 putSnapshot rejected by the server (digest mismatch): throws, and the e
   assert.equal(u.error.reason, 'unknown-rev');
 });
 
-/** 吞掉 project.* 的模块：收到什么都不回 */
+/** Module swallowing project.*: does not reply to anything received */
 const silentProject = () => ({ name: 'silent-project', types: ['project.'], channels: [], handle() {} });
 
 test('J4 the server does not reply: a timeout throws code: timeout (for announce, putSnapshot and get alike)', async (t) => {
@@ -447,7 +452,7 @@ test('J4 disconnect: in-flight requests fail immediately with code: disconnected
   assert.equal(sent.length, before, 'not replayed after the disconnect');
 });
 
-/** 假端点：只记下发出的消息，由测试决定回什么 */
+/** Mock endpoint: only records outgoing messages; test decides what to return */
 function fakeEndpoint() {
   const handlers = { message: [], open: [], close: [] };
   const sent = [];
@@ -477,10 +482,10 @@ test('J4 get verifies the digest: rejects when the full text assembled from the 
   await until(() => ep.sent.length === 2, { timeoutMs: 2000 });
   const [reqBad, reqGood] = ep.sent;
   assert.notEqual(reqBad.reqId, reqGood.reqId);
-  // 无关消息
+  // Unrelated message
   ep.deliver({ type: 'project.snapshot.part', projectId: 'good', projectRev: 1, index: 0, count: 1, data: '{"wrong":true}', reqId: 'not-mine' });
   ep.deliver({ type: 'project.rev', projectId: 'good', projectRev: 2 });
-  // good 的分片与 bad 的分片交错
+  // Interleaving good chunks and bad chunks
   const half = Math.ceil(goodText.length / 2);
   ep.deliver({ type: 'project.snapshot.part', projectId: 'good', projectRev: 1, index: 0, count: 2, data: goodText.slice(0, half), reqId: reqGood.reqId });
   ep.deliver({ type: 'project.snapshot.part', projectId: 'bad', projectRev: 1, index: 0, count: 1, data: '{"a":1}', reqId: reqBad.reqId });

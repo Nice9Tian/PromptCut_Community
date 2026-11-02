@@ -1,17 +1,22 @@
 /**
- * M5b 队列部分：按节点指纹前置过滤、锁变更定向增量、拒绝限流（契约 `docs/plan/render-queue-contract.md` I 节，
- * 用例表 I.8 的 V1～V3、K1～K6）。
- * 跑：node --experimental-test-module-mocks --test server/test/render-queue-prefilter.test.mjs
+ * M5b queue part: node fingerprint prefiltering, lock change targeted delta, rejection rate limiting
+ * (contract `docs/plan/render-queue-contract.md` section I, test case table I.8 V1-V3, K1-K6).
+ * Run: node --experimental-test-module-mocks --test server/test/render-queue-prefilter.test.mjs
  *
- * 只照契约 I 节以及它引用的 A、B.5、D.3、F 节写，不看实现。队列只经 A.3 的公开接口驱动
- * （connect / handle / tick / describe），节点会话只经 B.5 的公开接口驱动。
+ * Written strictly against contract section I and referenced sections A, B.5, D.3, and F, without
+ * looking at implementation. Queue is driven only via A.3 public interfaces
+ * (connect / handle / tick / describe), and node sessions are driven only via B.5 public interfaces.
  *
- * 约定：
- *   - 有「过滤开 / 关」对比的用例，同一场景用 `constants: { PREFILTER: true }` 与 `{ PREFILTER: false }` 各跑一遍，
- *     两遍的原始数字都用 `t.diagnostic` 写进测试输出（I.8）。
- *   - 锁键 `snapshot:<contentKey>`（F.1）；结果键按 B.1 的公式自己算，任务 id 按 A.4 自己算，不借实现。
- *   - 指纹用 16 位小写十六进制的假值；节点都用 `host`，免得重度策略、纯浏览器按用户过滤掺进来。
- *   - K1～K3 用 D.3 的环回（`fake-loopback-transport.mjs`）把真队列和 B.5 的会话接起来，假时钟驱动，不起网络。
+ * Conventions:
+ *   - For test cases with "filter on / off" comparisons, run each scenario once with
+ *     `constants: { PREFILTER: true }` and once with `{ PREFILTER: false }`, writing raw numbers
+ *     from both runs into test output using `t.diagnostic` (I.8).
+ *   - Lock key `snapshot:<contentKey>` (F.1); result keys calculated manually per B.1 formula,
+ *     task ids calculated manually per A.4, without relying on implementation.
+ *   - Fingerprints use 16-character lowercase hex fake values; nodes all use `host` to prevent
+ *     heavy policies or pure browser user filtering from mixing in.
+ *   - K1-K3 use D.3 loopback (`fake-loopback-transport.mjs`) to connect the real queue with B.5
+ *     sessions, driven by fake clock, with no network started.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,18 +31,19 @@ const { createRenderQueue } = queueIndex;
 const FP_A = 'aaaaaaaaaaaaaaaa';
 const FP_B = 'bbbbbbbbbbbbbbbb';
 const FP_C = 'cccccccccccccccc';
-const SWEEP = 5_000;          // A.2 的 SWEEP_INTERVAL_MS 缺省值
-const RENEW = 10_000;         // A.2 的 RENEW_INTERVAL_MS 缺省值
-const LEASE = 30_000;         // A.2 的 LEASE_MS 缺省值（只给手写回包填 leaseUntil）
-const MODES = [false, true]; // PREFILTER 关（对照组）先跑、开（实验组）后跑：对照组的数字总能先写进输出
+const SWEEP = 5_000;          // Default value of SWEEP_INTERVAL_MS from A.2
+const RENEW = 10_000;         // Default value of RENEW_INTERVAL_MS from A.2
+const LEASE = 30_000;         // Default value of LEASE_MS from A.2 (only for populating leaseUntil in handwritten responses)
+const MODES = [false, true]; // PREFILTER off (control group) runs first, on (experimental group) runs second: control group numbers can always be written to output first
 const modeName = on => (on ? 'Filter on' : 'Filter off');
 
 const sha256 = text => crypto.createHash('sha256').update(text, 'utf8').digest('hex');
 const rk = (contentKey, fp) => sha256(`${contentKey}\n${fp ?? ''}`);
 
 /**
- * 一张卡某个环境的一段快照任务：`input.contentKey = ck`、`requires.envFingerprint = fp`
- * （`fp` 为 null 时不带指纹）、`resultKey = resultKeyOf(ck, fp)`（和 splitPlan 出的形状一致）。
+ * A snapshot task for a segment of a card in an environment: `input.contentKey = ck`,
+ * `requires.envFingerprint = fp` (without fingerprint when `fp` is null),
+ * `resultKey = resultKeyOf(ck, fp)` (consistent shape with splitPlan output).
  */
 function snap(ck, fp, seg = 0, { segLen = 60, projectId = 'p1', priority, contentKey = true } = {}) {
   const from = seg * segLen;
@@ -54,14 +60,15 @@ const ids = list => list.map(t => t.id).sort();
 const sorted = list => [...list].sort();
 const countBy = list => list.reduce((m, x) => m.set(x, (m.get(x) ?? 0) + 1), new Map());
 
-/* ================================================================== 队列单测的小工具 */
+/* ================================================================== Queue unit test helpers */
 
 function harness(prefilter, extra = {}) {
   return createQueueHarness(createRenderQueue, { constants: { PREFILTER: prefilter, ...extra } });
 }
-/** 报到并 watch 'all'；fp 为 null 时 hello 不带 envFingerprint。回这一步收到的 queue.snapshot 里的任务 id。 */
+/** Check in and watch 'all'; hello omits envFingerprint when fp is null. Return task ids in queue.snapshot received in this step. */
 function joinNode(h, conn, nodeId, fp) {
-  // M6c X3：host 的 watch 'all' 只收摘要；这里要的是全量可见性，节点改用 pc（原为 host）
+  // M6c X3: host's watch 'all' receives only summaries; full visibility needed here, node switched
+  // to pc (originally host)
   const out = h.node(conn, nodeId, { profile: 'pc', hello: fp ? { envFingerprint: fp } : {} });
   return ids(out.one(conn, 'queue.snapshot').tasks);
 }
@@ -72,7 +79,7 @@ function publishOk(h, conn, tasks) {
   for (const r of results) assert.equal(r.error, undefined, `Publishing ${r.id} should not error: ${JSON.stringify(r)}`);
   return out;
 }
-/** 某一步里发给 conn 的 task.opened 的任务 id（升序）。 */
+/** Task ids of task.opened sent to conn in a step (ascending). */
 const openedIds = (out, conn) => sorted(out.of(conn, 'task.opened').map(m => m.task.id));
 const closedOf = (out, conn) => out.of(conn, 'task.closed');
 
@@ -82,7 +89,7 @@ test('V1 A node sees tasks with a different fingerprint in neither queue.snapsho
   for (const on of MODES) {
     const h = harness(on);
     h.publisher('p', 'pub-p');
-    // 没有 contentKey：没有锁键，只考第 1 条（指纹相符）
+    // No contentKey: no lock key, tests only rule 1 (fingerprint match)
     const tA = snap('v1a', FP_A, 0, { contentKey: false });
     const tB = snap('v1b', FP_B, 0, { contentKey: false });
     const t0 = snap('v1n', null, 0, { contentKey: false });
@@ -93,7 +100,7 @@ test('V1 A node sees tasks with a different fingerprint in neither queue.snapsho
     const snapN = joinNode(h, 'n', 'node-N', null);
     t.diagnostic(`${modeName(on)}: snapshot count a=${snapA.length} b=${snapB.length} n=${snapN.length}`);
 
-    // 节点报到之后发布：看 task.opened 的收件人
+    // Publish after node checks in: inspect recipients of task.opened
     const tA2 = snap('v1a', FP_A, 1, { contentKey: false });
     const tB2 = snap('v1b', FP_B, 1, { contentKey: false });
     const t02 = snap('v1n', null, 1, { contentKey: false });
@@ -115,7 +122,7 @@ test('V1 A node sees tasks with a different fingerprint in neither queue.snapsho
       assert.deepEqual(openedIds(out, 'b'), all2);
     }
 
-    // task.taken / task.closed 的收件人同样按可见性（I.2 末段）
+    // Recipients of task.taken / task.closed likewise follow visibility (I.2, last paragraph)
     const c = h.claim('b', tB2.id, 1);
     const claimed = c.one('b', 'task.claimed');
     const takenA = c.of('a', 'task.taken').length, takenN = c.of('n', 'task.taken').length;
@@ -135,8 +142,8 @@ test('V2 When the lock is on another fingerprint, a node cannot see the tasks wi
   for (const on of MODES) {
     const h = harness(on);
     h.publisher('p', 'pub-p');
-    // ck1 锁在 B 上：A 指纹的任务 tA1（锁之前发布的）与不带指纹的 tN1
-    // ck2 锁在 A 上：A 指纹的任务 tA2 与不带指纹的 tN2
+    // ck1 locked to B: task tA1 with fingerprint A (published before the lock) and tN1 without fingerprint
+    // ck2 locked to A: task tA2 with fingerprint A and tN2 without fingerprint
     const tA1 = snap('v2-ck1', FP_A, 0), tN1 = snap('v2-ck1', null, 0);
     const tA2 = snap('v2-ck2', FP_A, 0), tN2 = snap('v2-ck2', null, 0);
     publishOk(h, 'p', [tA1, tN1, tA2, tN2]);
@@ -148,7 +155,8 @@ test('V2 When the lock is on another fingerprint, a node cannot see the tasks wi
     const snapN = joinNode(h, 'n', 'node-N', null);
     t.diagnostic(`${modeName(on)} snapshot a=${JSON.stringify(snapA.length)} b=${snapB.length} n=${snapN.length}`);
 
-    // 锁定之后再发布：不带指纹的任务不参与锁（F.1），照建；同指纹的也照建
+    // Publishing after locking: tasks without fingerprint do not participate in the lock (F.1) and
+    // are still created; those with the same fingerprint are also created as usual
     const tN1b = snap('v2-ck1', null, 1), tA2b = snap('v2-ck2', FP_A, 1);
     const out = publishOk(h, 'p', [tN1b, tA2b]);
     t.diagnostic(`${modeName(on)}: task.opened published after locking: a=${openedIds(out, 'a').length} b=${openedIds(out, 'b').length} n=${openedIds(out, 'n').length}`);
@@ -176,8 +184,9 @@ test('V3 The lock moves from X to Y (takeover): node X receives a withdrawal (hi
   for (const on of MODES) {
     const h = harness(on);
     h.publisher('p', 'pub-p');
-    // 同一张卡：X 指纹的 tX（open）与 tXc（被 x2 认领着）、Y 指纹的 tY（锁之前发布）、不带指纹的 tN（不参与锁）；
-    // 另一张卡 other 锁在 X 上，不受影响
+    // Same card: tX with fingerprint X (open) and tXc (claimed by x2), tY with fingerprint Y
+    // (published before the lock), tN without fingerprint (does not participate in the lock);
+    // another card other locked to X, unaffected
     const tX = snap('v3', FP_A, 0), tXc = snap('v3', FP_A, 1), tY = snap('v3', FP_B, 0), tN = snap('v3', null, 0);
     const oX = snap('v3-other', FP_A, 0);
     publishOk(h, 'p', [tX, tXc, tY, tN, oX]);
@@ -199,20 +208,22 @@ test('V3 The lock moves from X to Y (takeover): node X receives a withdrawal (hi
     t.diagnostic(`${modeName(on)}: y received ${JSON.stringify(summary('y'))}`);
 
     const hidden = out.ofType('task.closed').filter(e => e.message.state === 'hidden');
-    // tX 被接手作废（F.1：superseded → failed）
+    // tX is invalidated by takeover (F.1: superseded → failed)
     assert.equal(h.task(tX.id).state, 'failed');
     assert.equal(h.task(tX.id).lastError, 'superseded');
-    // 认领者照 F.1 收 lease-lost superseded（两种开关一样）
+    // Claimant receives lease-lost superseded per F.1 (identical for both toggles)
     const lost = out.of('x2', 'task.lease-lost');
     assert.deepEqual(lost.map(m => [m.id, m.token, m.reason]), [[tXc.id, claimedXc.token, 'superseded']], 'x2 gets exactly one lease-lost superseded');
     assert.equal(h.task(tXc.id).state, 'failed');
-    // 不带指纹的 tN 不参与锁：谁都收不到关于它的消息
+    // tN without fingerprint does not participate in the lock: no one receives messages about it
     assert.ok(!out.messages().some(m => (m.id ?? m.task?.id) === tN.id), 'A task without a fingerprint is not affected by the lock change');
     assert.ok(!out.messages().some(m => (m.id ?? m.task?.id) === oX.id), 'Other cards are not affected');
     const aboutTXc = m => (m.id ?? m.task?.id) === tXc.id;
     if (on) {
-      // tX 是 open：按变更前的可见性，X 指纹的节点（x、x2）收到 hidden / card-locked（I.10 第 2 条），不再另收 failed。
-      // 被认领着的 tXc 不是 open，契约只规定认领者的 lease-lost，这里不对别的节点关于它的 task.closed 下断言
+      // tX is open: per visibility before the change, nodes with fingerprint X (x, x2) receive
+      // hidden / card-locked (I.10 item 2), and do not receive failed separately.
+      // Claimed tXc is not open; the contract only specifies lease-lost for the claimant, so no
+      // assertions are made here for task.closed on other nodes regarding it
       for (const conn of ['x', 'x2']) {
         const rest = out.of(conn).filter(m => !aboutTXc(m) && m.type !== 'task.lease-lost');
         assert.deepEqual(rest.map(m => [m.type, m.id, m.state, m.reason]), [['task.closed', tX.id, 'hidden', 'card-locked']],
@@ -245,7 +256,7 @@ test('V4 Claiming a task with a mismatched fingerprint returns fingerprint-misma
     const plan = makeTaskInput({ projectId: 'p1', projectRev: 7, kind: 'plan', requires: { envFingerprint: FP_B } });
     publishOk(h, 'p', [tB, tB2, tN, tE, plan]);
     joinNode(h, 'a', 'node-A', FP_A);
-    h.node('e', 'node-E', { profile: 'pc', hello: { envFingerprint: '' } });   // 空串等同于没带（第 7 条）；M6c X3：原为 host
+    h.node('e', 'node-E', { profile: 'pc', hello: { envFingerprint: '' } });   // Empty string is equivalent to omitting it (item 7); M6c X3: originally host
 
     const r = h.claim('a', tB.id, 1);
     const outcome = r.of('a', 'task.claimed').length ? 'claimed' : r.one('a', 'task.claim-rejected').reason;
@@ -258,7 +269,7 @@ test('V4 Claiming a task with a mismatched fingerprint returns fingerprint-misma
     } else {
       assert.equal(outcome, 'claimed', 'Filter off: claims work as before');
     }
-    // 两种开关都照常认领的
+    // Claims proceed as usual under both toggles
     assert.equal(h.claim('a', tN.id, 1).one('a', 'task.claimed').id, tN.id, 'Task without a fingerprint: not checked');
     assert.equal(h.claim('a', tE.id, 1).one('a', 'task.claimed').id, tE.id, 'The task\'s fingerprint is an empty string: same as having none');
     assert.equal(h.claim('a', plan.id, 1).one('a', 'task.claimed').id, plan.id, 'Plan tasks are not checked for fingerprint');
@@ -280,9 +291,9 @@ test('V4 supplement: fingerprint-mismatch and card-locked count toward throttlin
 
     const reasons = [];
     const one = id => { const out = h.claim('a', id, 1); reasons.push(out.of('a', 'task.claimed').length ? 'claimed' : out.one('a', 'task.claim-rejected').reason); };
-    for (let i = 0; i < 11; i++) one(foreign[i].id);     // 11 次指纹不符
-    for (let i = 0; i < 10; i++) one(dead.id);           // 10 次 card-locked，共 21 次
-    one(foreign[11].id);                                  // 第 22 次
+    for (let i = 0; i < 11; i++) one(foreign[i].id);     // 11 fingerprint mismatches
+    for (let i = 0; i < 10; i++) one(dead.id);           // 10 card-locked, 21 in total
+    one(foreign[11].id);                                  // 22nd time
     one(mine.id);
     t.diagnostic(`${modeName(on)}: ${JSON.stringify(Object.fromEntries(countBy(reasons)))}, last two ${JSON.stringify(reasons.slice(-2))}`);
     if (on) {
@@ -310,9 +321,9 @@ test('V4 supplement: the session treats fingerprint-mismatch as taken, drops thi
   assert.notEqual(next[0].id, c[0].id);
 });
 
-/* ================================================================== 环回 × 会话的场景台（K1～K3） */
+/* =================================================== Loopback × session scenario harness (K1-K3) */
 
-/** 固定种子的伪随机数（mulberry32），[0, 1)。 */
+/** Fixed-seed pseudorandom number (mulberry32), [0, 1). */
 function seeded(seed) {
   let a = seed >>> 0;
   return () => {
@@ -325,13 +336,14 @@ function seeded(seed) {
 }
 
 const nodeDesc = fp => Object.freeze({
-  profile: 'pc', userId: 'u1', envFingerprint: fp, codeVersions: ['cv1'], cardSourceVersions: {},   // M6c X3：原为 host（host 的 watch 'all' 只收摘要）
+  profile: 'pc', userId: 'u1', envFingerprint: fp, codeVersions: ['cv1'], cardSourceVersions: {},   // M6c X3: originally host (watch 'all' on host only receives summaries)
   capabilities: { transcode: true, userCards: true, graphCards: true, memoryMB: 16_000 },
 });
 
 /**
- * 一个真队列、一条环回、一个发布方、若干 B.5 会话。`groups: [{ name, fp, count }]`。
- * 每步：时钟前进 → 队列 tick → 投递 → 节点报进度 / 报完成 → 投递 → 全部会话 tick → 投递。
+ * A real queue, one loopback, one publisher, several B.5 sessions. `groups: [{ name, fp, count }]`.
+ * Each step: advance clock → queue tick → delivery → nodes report progress / completion →
+ * delivery → all sessions tick → delivery.
  */
 function createRig({ prefilter, groups, workMs = n => 1_000 + (n % 4) * 250, maxConcurrent = 2 }) {
   const clock = createFakeClock(T0);
@@ -407,7 +419,7 @@ function createRig({ prefilter, groups, workMs = n => 1_000 + (n % 4) * 250, max
   const idle = () => nodes.every(n => n.work.size === 0 && n.session.held().length === 0);
   const doneIds = () => pubInbox.filter(m => m.type === 'task.done').map(m => m.id);
   const failedMsgs = () => pubInbox.filter(m => m.type === 'task.failed');
-  /** 从某个游标起的投递记录。 */
+  /** Delivery records starting from a cursor. */
   const mark = () => lb.log().length;
   const since = m => lb.log().slice(m);
   function runUntil(expectDone, maxSteps = 3_000) {
@@ -423,7 +435,7 @@ function createRig({ prefilter, groups, workMs = n => 1_000 + (n % 4) * 250, max
   return { clock, lb, queue, pub, pubInbox, nodes, byConn, publish, lock, start, step, idle, doneIds, failedMsgs, mark, since, runUntil };
 }
 
-/** 投递记录的统计：认领数、card-locked 拒绝、throttled。 */
+/** Delivery record statistics: claim count, card-locked rejections, throttled. */
 function claimStats(log) {
   const claims = log.filter(e => e.dir === 'in' && e.message.type === 'task.claim').length;
   const rejects = log.filter(e => e.dir === 'out' && e.message.type === 'task.claim-rejected');
@@ -437,13 +449,17 @@ function claimStats(log) {
   };
 }
 
-/* ------------------------------------------------------------------ K1 / K2 的场景 */
+/* ------------------------------------------------------------------ K1 / K2 scenarios */
 
 /**
- * 两种指纹各 4 个节点；20 张卡，每张卡两种指纹各 5 段（共 200 个任务）。
- * 卡 0～9 锁在 A 上，卡 10～19 锁在 B 上：每个节点看来都有一半的卡被另一种指纹锁住。
- * 顺序：节点报到 → 先发布「锁之后会被别的指纹锁住」的那 100 个任务（死任务：锁之前还能建，F.7）
- * → `card.lock` 20 张卡 → 再发布与锁同指纹的 100 个任务（活任务）→ 跑到活任务全部完成。
+ * 4 nodes for each of the two fingerprints; 20 cards, each card has 5 segments for each of the
+ * two fingerprints (200 tasks in total).
+ * Cards 0-9 are locked to A, cards 10-19 are locked to B: from each node's perspective, half
+ * the cards are locked by the other fingerprint.
+ * Order: nodes check in → first publish the 100 tasks that "will be locked by another fingerprint
+ * after locking" (dead tasks: can still be created before locking, F.7) → `card.lock` 20 cards →
+ * then publish the 100 tasks with the same fingerprint as the lock (live tasks) → run until all
+ * live tasks are completed.
  */
 const K1_CARDS = 20, K1_SEGS = 5;
 const k1Card = i => `k1-card-${String(i).padStart(2, '0')}`;
@@ -480,11 +496,12 @@ function runStorm(prefilter) {
   const log = rig.since(afterLock);
 
   const nodeFp = new Map(rig.nodes.map(n => [n.connId, n.fp]));
-  // 不匹配的节点（节点指纹 ≠ 卡的锁指纹）收到已锁卡任务的 task.opened（锁定之后）
+  // Mismatched nodes (node fingerprint != card's lock fingerprint) receive task.opened for tasks
+  // of locked cards (after locking)
   const openedMismatch = log.filter(e => e.dir === 'out' && e.message.type === 'task.opened'
     && nodeFp.has(e.connId) && info.get(e.message.task.id) && nodeFp.get(e.connId) !== info.get(e.message.task.id).lockFp).length;
   const openedTotal = log.filter(e => e.dir === 'out' && e.message.type === 'task.opened' && nodeFp.has(e.connId)).length;
-  // 锁定那一步：每个节点收到的 hidden 撤回
+  // At the locking step: hidden retractions received by each node
   const hiddenAtLock = new Map(rig.nodes.map(n => [n.connId, sorted(lockLog
     .filter(e => e.dir === 'out' && e.connId === n.connId && e.message.type === 'task.closed' && e.message.state === 'hidden')
     .map(e => e.message.id))]));
@@ -508,11 +525,11 @@ test('K1 Two fingerprints with 4 nodes each, 200 tasks, half of the cards locked
 
     assert.deepEqual(r.rig.lb.errors(), [], 'The endpoint handler threw no exception');
     assert.deepEqual(r.rig.lb.nonJson(), [], 'Every message survives a JSON round trip');
-    // 活任务全部完成，每个恰好一次 task.done
+    // All live tasks completed, each with exactly one task.done
     assert.deepEqual(sorted([...r.doneCount.keys()]), ids(r.live), `${modeName(on)}: all live tasks completed, and only those`);
     for (const [id, c] of r.doneCount) assert.equal(c, 1, `${id} received ${c} task.done messages`);
     assert.equal(r.rig.failedMsgs().length, 0, 'No task failed');
-    // 死任务（锁在别的指纹上）从没被认领过
+    // Dead tasks (locked to another fingerprint) have never been claimed
     const byId = new Map(r.view.tasks.map(x => [x.id, x]));
     for (const d of r.dead) {
       assert.equal(byId.get(d.id)?.state, 'open', `${d.id} should still be open`);
@@ -541,7 +558,8 @@ test('K2 Same scenario as K1: with the filter on, mismatched nodes receive 0 tas
     t.diagnostic(`${modeName(on)}: ${r.openedTotal} task.opened after locking, ${r.openedMismatch} of them to mismatched nodes; ${r.hiddenTotal} hidden withdrawals at lock time`);
     if (on) {
       assert.equal(r.openedMismatch, 0, 'Filter on: mismatched nodes receive 0 task.opened for tasks of locked cards');
-      // I.3（新建锁）：锁定前看得见、锁定后看不见的，就是本指纹、锁在别的指纹上的死任务
+      // I.3 (new lock): what is visible before locking and invisible after locking are dead tasks with
+      // this fingerprint locked to another fingerprint
       for (const n of r.rig.nodes) {
         const expect = ids(r.dead.filter(d => r.info.get(d.id).fp === n.fp));
         assert.deepEqual(r.hiddenAtLock.get(n.connId), expect, `The tasks withdrawn from ${n.nodeId} at lock time should be exactly the dead tasks of this fingerprint`);
@@ -561,19 +579,20 @@ test('K3 Moving the locks of 20 cards from X to Y during the run: node X receive
     const moving = Array.from({ length: 20 }, (_, i) => `k3-move-${String(i).padStart(2, '0')}`);
     const stableX = Array.from({ length: 10 }, (_, i) => `k3-sx-${i}`);
     const stableY = Array.from({ length: 10 }, (_, i) => `k3-sy-${i}`);
-    // 转移的卡优先级低：接手之前不会被认领，保证接手那一刻它们都是 open
+    // Transferred cards have low priority: they will not be claimed before takeover, ensuring they
+    // are all open at the moment of takeover
     const movingY = moving.flatMap(ck => [0, 1].map(s => snap(ck, FP_B, s, { priority: 0 })));
     const movingX = moving.flatMap(ck => [0, 1].map(s => snap(ck, FP_A, s, { priority: 0 })));
     const sX = stableX.flatMap(ck => [0, 1, 2].map(s => snap(ck, FP_A, s, { priority: 10 })));
     const sY = stableY.flatMap(ck => [0, 1, 2].map(s => snap(ck, FP_B, s, { priority: 10 })));
 
     rig.start();
-    rig.publish(movingY);                           // 锁之前发布（此后锁在 X 上，它们是死任务）
+    rig.publish(movingY);                           // Published before locking (locked to X thereafter, they are dead tasks)
     for (const ck of [...moving, ...stableX]) rig.lock(ck, FP_A);
     for (const ck of stableY) rig.lock(ck, FP_B);
     rig.lb.flush();
     rig.publish([...movingX, ...sX, ...sY]);
-    for (let i = 0; i < 3; i++) rig.step();         // 运行中
+    for (let i = 0; i < 3; i++) rig.step();         // Running
 
     const pre = rig.queue.describe();
     for (const x of movingX) assert.equal(pre.tasks.find(v => v.id === x.id).state, 'open', `${x.id} should be open before the takeover`);
@@ -617,7 +636,8 @@ test('K3 Moving the locks of 20 cards from X to Y during the run: node X receive
       }
     }
 
-    // 跑到完成：两张稳定卡组与转移后的 Y 任务各恰好一次 task.done；X 的转移任务作废
+    // Run to completion: two stable card groups and the transferred Y tasks each have exactly one
+    // task.done; transferred tasks of X are invalidated
     const expectDone = [...sX, ...sY, ...movingY];
     const steps = rig.runUntil(ids(expectDone));
     const done = countBy(rig.doneIds());
@@ -629,7 +649,7 @@ test('K3 Moving the locks of 20 cards from X to Y during the run: node X receive
     assert.deepEqual(sorted([...failed.keys()]), movingXIds, 'Exactly X\'s transferred tasks were invalidated');
     for (const x of rig.failedMsgs()) assert.equal(x.error, 'superseded');
     for (const [id, c] of failed) assert.equal(c, 1, `${id} received ${c} task.failed`);
-    // 转移后的 Y 任务只由 Y 节点做
+    // Transferred Y tasks are executed only by Y nodes
     const doneBy = new Map(rig.nodes.flatMap(n => n.completed.map(id => [id, n.group])));
     for (const id of movingYIds) assert.equal(doneBy.get(id), 'Y', `${id} should be completed by node Y`);
     const stats = claimStats(rig.since(m));
@@ -639,7 +659,10 @@ test('K3 Moving the locks of 20 cards from X to Y during the run: node X receive
 
 /* ================================================================== K4 */
 
-/** K4 的场景：rogue（A）无视过滤反复认领锁在 B 上的死任务；a2（A）、b（B）是正常节点。 */
+/**
+ * Scenario for K4: rogue (A) ignores filtering and repeatedly claims dead tasks locked to B;
+ * a2 (A) and b (B) are normal nodes.
+ */
 function k4Setup(on, extra = {}) {
   const h = harness(on, extra);
   h.publisher('p', 'pub-p');
@@ -680,7 +703,8 @@ test('K4 One node ignores the filter and repeatedly claims locked cards: after m
       assert.equal(info.cardLockedRejects, 21);
       assert.equal(info.throttled, true);
 
-      // 限流期间：认领可认领的任务也回 throttled，不看任务状态、不改状态；不存在的任务同样 throttled
+      // During rate limiting: claiming claimable tasks also returns throttled, without checking or
+      // modifying task state; nonexistent tasks are likewise throttled
       const r1 = rejectOf(h.claim('rogue', liveA[0].id, 1), 'rogue');
       assert.deepEqual([r1.id, r1.reason], [liveA[0].id, 'throttled']);
       assert.equal(h.task(liveA[0].id).state, 'open');
@@ -689,7 +713,8 @@ test('K4 One node ignores the filter and repeatedly claims locked cards: after m
       assert.deepEqual([gone.id, gone.reason], ['snapshot:nope:0-59', 'throttled']);
       assert.equal(connInfo(h, 'node-rogue').cardLockedRejects, 21, 'throttled is not counted in the card-locked count');
 
-      // 其它节点不受影响：同一周期里照常认领；它自己的 card-locked 单独计数
+      // Other nodes are unaffected: claiming as usual in the same period; its own card-locked is
+      // counted separately
       const a2 = h.claim('a2', liveA[1].id, 1);
       assert.equal(a2.one('a2', 'task.claimed').id, liveA[1].id);
       assert.equal(rejectOf(h.claim('a2', dead.id, 1), 'a2').reason, 'card-locked');
@@ -697,7 +722,7 @@ test('K4 One node ignores the filter and repeatedly claims locked cards: after m
       assert.deepEqual([connInfo(h, 'node-a2').cardLockedRejects, connInfo(h, 'node-a2').throttled], [1, false]);
       assert.deepEqual([connInfo(h, 'node-b').cardLockedRejects, connInfo(h, 'node-b').throttled], [0, false]);
 
-      // 下一次 tick() 后恢复
+      // Restored after the next tick()
       h.tick();
       assert.deepEqual([connInfo(h, 'node-rogue').cardLockedRejects, connInfo(h, 'node-rogue').throttled], [0, false], 'tick() resets to zero');
       assert.deepEqual([connInfo(h, 'node-a2').cardLockedRejects, connInfo(h, 'node-a2').throttled], [0, false]);
@@ -732,10 +757,10 @@ test('K5 Filter off: describe().prefilter === false, and lock creation, takeover
   joinNode(h, 'n', 'node-N', null);
   const tasks = [snap('k5', FP_A, 0), snap('k5', FP_B, 0), snap('k5', null, 0), snap('k5-2', FP_A, 0, { contentKey: false })];
   publishOk(h, 'p', tasks);
-  cardLock(h, 'p', { contentKey: 'k5', envFingerprint: FP_A });               // 新建
+  cardLock(h, 'p', { contentKey: 'k5', envFingerprint: FP_A });               // Create
   const c = h.claim('a', tasks[0].id, 1).one('a', 'task.claimed');
   h.complete('a', tasks[0].id, c.token, { ranges: [[0, 59]] });
-  cardLock(h, 'p', { contentKey: 'k5', envFingerprint: FP_B, takeover: true }); // 接手
+  cardLock(h, 'p', { contentKey: 'k5', envFingerprint: FP_B, takeover: true }); // Take over
   h.tick();
   const snapA = joinNode(h, 'a2', 'node-A2', FP_A);
 
@@ -745,7 +770,8 @@ test('K5 Filter off: describe().prefilter === false, and lock creation, takeover
   t.diagnostic(`Filter off: among all ${all.count} messages, ${hidden.length} are hidden`);
   assert.equal(hidden.length, 0, 'Filter off: no hidden messages');
   assert.equal(all.ofType('task.claim-rejected').filter(e => e.message.reason === 'throttled').length, 0);
-  // 过滤关：新连上的 A 节点看得见全部 open 任务（B 指纹的、锁在 B 上的都在）
+  // Filter disabled: newly connected node A sees all open tasks (both fingerprint B and locked
+  // to B are present)
   const openIds = h.describe().tasks.filter(x => x.state === 'open').map(x => x.id).sort();
   assert.deepEqual(snapA, openIds);
 });
@@ -757,7 +783,7 @@ test('K5 Constants and diagnostics (I.1, I.7): PREFILTER defaults to on, THROTTL
   assert.equal(QUEUE_ENV.PREFILTER, 'PROMPTCUT_QUEUE_PREFILTER');
   assert.equal(QUEUE_ENV.THROTTLE_REJECTS, 'PROMPTCUT_QUEUE_THROTTLE_REJECTS');
 
-  const h = createQueueHarness(createRenderQueue);   // 不给 constants：缺省开
+  const h = createQueueHarness(createRenderQueue);   // Without constants: enabled by default
   joinNode(h, 'a', 'node-A', FP_A);
   const d = h.describe();
   t.diagnostic(`Default describe().prefilter=${d.prefilter}; nodes[0]=${JSON.stringify(d.nodes[0])}`);
@@ -769,7 +795,7 @@ test('K5 Constants and diagnostics (I.1, I.7): PREFILTER defaults to on, THROTTL
 
 /* ================================================================== K6 */
 
-/** 会话单测：手写队列回包（形状照 A.6 / A.7）。 */
+/** Session unit tests: hand-crafted queue responses (shaped according to A.6 / A.7). */
 function sessionHarness(over = {}) {
   let t = 1_000;
   const sent = [];
@@ -804,14 +830,14 @@ const types = list => list.map(m => m.type);
 function k6Run(t, s, sweep) {
   const [v0, v1, v2] = ['k6-a', 'k6-b', 'k6-c'].map(n => sView(n));
   s.session.receive({ type: 'queue.snapshot', epoch: E, tasks: [v0, v1, v2] });
-  // 先认领一个并持有（用来看续约）
+  // Claim one first and hold it (used to observe lease renewals)
   const c0 = s.tick().filter(m => m.type === 'task.claim');
   assert.equal(c0.length, 1);
   const first = [v0, v1, v2].find(v => v.id === c0[0].id);
   s.session.receive(claimedMsg(first, 2, s.now));
   const heldAt = s.now;
 
-  // 9 秒后发第二个认领，回 throttled
+  // Send second claim after 9 seconds, returns throttled
   s.set(heldAt + 9_000);
   const c1 = s.tick().filter(m => m.type === 'task.claim');
   assert.equal(c1.length, 1, 'The second claim is sent');
@@ -820,7 +846,7 @@ function k6Run(t, s, sweep) {
   const throttledAt = s.now;
   assert.ok(s.session.known().some(v => v.id === candidate), 'A throttled candidate is not removed from the local view');
 
-  // 退避期间：续约照发，不发认领
+  // During backoff: lease renewals are sent as usual, claims are not sent
   s.set(heldAt + RENEW);
   assert.ok(s.now < throttledAt + sweep, 'Scenario self-check: still in the backoff period when the lease renewal is due');
   const during = s.tick();
@@ -882,7 +908,8 @@ test('K7 When the session receives an error with a reqId it does not clear the i
   assert.equal(c.length, 1);
   const first = [v0, v1, v2].find(v => v.id === c[0].id);
 
-  // 别的请求（内容库、发布）的错误回包：带 reqId，不是认领的回包
+  // Error responses for other requests (content store, publish): carries reqId, not a claim
+  // response
   s.session.receive({ type: 'error', epoch: E, reqId: 'lib-1', reason: 'bad-message', detail: 'x' });
   s.session.receive({ type: 'error', epoch: E, reqId: 7, reason: 'not-registered' });
   assert.equal(s.tick().filter(m => m.type === 'task.claim').length, 0, 'The claim is still in flight after an error with a reqId, so no second one is sent');
@@ -890,7 +917,7 @@ test('K7 When the session receives an error with a reqId it does not clear the i
   assert.deepEqual(started, [first.id], 'The claim reply is handled as usual');
   assert.deepEqual(s.session.held().map(x => x.id), [first.id]);
 
-  // 不带 reqId 的 error：照清在飞
+  // error without reqId: clears in-flight as usual
   const c2 = s.tick().filter(m => m.type === 'task.claim');
   assert.equal(c2.length, 1, 'The second claim is sent (maxConcurrent 2)');
   s.session.receive({ type: 'error', epoch: E, reason: 'bad-message', detail: 'y' });

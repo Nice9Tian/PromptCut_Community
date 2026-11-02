@@ -1,22 +1,27 @@
 /**
- * 草稿独占锁在「换草稿」时放的是哪一把(drafts.ts 的 setActiveDraftId + procLock.ts)。跑:
+ * Which exclusive draft lock is released when "switching drafts" (setActiveDraftId in drafts.ts +
+ * procLock.ts). Run:
  *   node --experimental-test-module-mocks --test src/editor/io/draftLock.test.mjs
  *
- * 钉死:开始页 open(id) 的顺序是先 openDraft(id)(里面抢到 id 的锁)再 setActiveDraftId(id)。
- * setActiveDraftId 里「换草稿就放上一份的锁」只能放上一份,绝不能把刚抢到的新锁放掉 ——
- * 否则「新建 → 回首页 → 开草稿」「开 A → 回首页 → 开 B」之后正在编辑的草稿没有锁,
- * 另一个 PromptCut 可以同时打开并整份覆盖它。
- * 同时钉住原来该放的照样放:新建项目、从文件打开(设成 null)、startNew(设成新 id)。
+ * Pin down: the order of open(id) on the start page is first openDraft(id) (which acquires the lock
+ * for id) then setActiveDraftId(id).
+ * In setActiveDraftId, "release the previous lock when switching drafts" can only release the
+ * previous one, and must never release the newly acquired lock:
+ * otherwise, after "New → Return to home → Open draft" or "Open A → Return to home → Open B",
+ * the draft currently being edited has no lock, and another PromptCut could open and overwrite it
+ * entirely at the same time.
+ * Also pin down that what should be released originally is still released: create new project,
+ * open from file (set to null), startNew (set to new id).
  *
- * fetch 和 Tauri invoke 都是假的,不起服务。
+ * Both fetch and Tauri invoke are fake; no services are started.
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import { test, mock, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
-/** 服务端 /api/skill-lock 的假账本:哪些草稿锁着 */
+/** Fake ledger for /api/skill-lock on the server: which drafts are locked */
 const serverLocks = new Set();
-/** 外壳那层锁着的路径 */
+/** Locked paths at the shell layer */
 const shellLocks = new Set();
 const calls = [];
 
@@ -65,17 +70,17 @@ globalThis.fetch = async (url, init = {}) => {
 const { openDraft, setActiveDraftId, getActiveDraftId, newDraftId } = await import(srcUrl("editor/io/drafts.ts"));
 const { lockedDraftId, releaseDraftLock } = await import(srcUrl("editor/io/procLock.ts"));
 
-/** setActiveDraftId 里的放锁不 await,让它跑完再看 */
+/** Lock release in setActiveDraftId is not awaited; inspect after it finishes running */
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
-/** 开始页 open(id) 的顺序 */
+/** Order of open(id) on the start page */
 async function startPageOpen(id) {
   await openDraft(id);
   setActiveDraftId(id);
   await settle();
 }
 
-/** 开始页 startNew 的那一句 */
+/** That statement for startNew on the start page */
 async function startNew() {
   setActiveDraftId(newDraftId());
   await settle();

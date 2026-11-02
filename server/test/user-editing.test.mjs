@@ -1,12 +1,17 @@
 /**
- * 「用户正在编辑」本机版的服务端一侧(计划 docs/plan/agent-workflow-plan.md A2)。用例 UE-S1～UE-S10。
+ * Server side of "User is editing" for desktop app (Plan docs/plan/agent-workflow-plan.md A2).
+ * Test cases UE-S1 to UE-S10.
  *
- * - 服务端记着的编辑状态:整份替换、合并、过期(拖动 / 文字编辑 15 秒没续期、「刚动过」按页面报的剩余毫秒);
- * - 这次调用碰到哪些片段:参数点名的、实际写到的(ops 路径)、读整个项目的;
- * - 端到端(真的文档服务 + 真的 src/mcp/handlers + createAgentSide):读工具、写工具的结果带 userEditing;
- *   覆盖了页面刚写的实体标「用户刚改过」,覆盖了别的 Agent 刚写的标「Agent <身份> 刚改过」。
+ * - Editing state remembered by server: full replacement, merge, expiration (scrub / text editing
+ *   not renewed for 15s, "just touched" based on remaining milliseconds reported by page);
+ * - Which clips this invocation touches: named in parameters, actually written (ops paths), reading
+ *   the whole project;
+ * - End-to-end (real document service + real src/mcp/handlers + createAgentSide): read tool and write
+ *   tool results include userEditing; overwriting an entity just written by the page marks "user
+ *   just modified", overwriting one just written by another Agent marks "Agent <identity>
+ *   just modified".
  *
- * 跑法:node --test server/test/user-editing.test.mjs
+ * Run: node --test server/test/user-editing.test.mjs
  */
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -25,7 +30,7 @@ import { wsClient } from './fake-ws-kit.mjs';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
-/* ------------------------------------------------------------------ 纯逻辑 */
+/* ------------------------------------------------------------------ Pure logic */
 
 test('UE-S1 numbers: dragging / text editing expires after 15 s without renewal; "recently touched" lasts at most 30 s', () => {
   assert.equal(USER_EDITING_DEFAULTS.ttlMs, 15_000);
@@ -38,8 +43,8 @@ test('UE-S2 recording and expiry: replaces this page\'s state as a whole; draggi
   assert.equal(b.report('page-1', [
     { clipId: 'c1', kind: 'drag' },
     { clipId: 'c2', kind: 'recent', remainingMs: 8_000 },
-    { clipId: 'c3', kind: 'recent' }, // 没带剩余毫秒:跳过
-    { clipId: 'c4', kind: 'hover' }, // 不认识的种类:跳过
+    { clipId: 'c3', kind: 'recent' }, // No remaining milliseconds provided: skip
+    { clipId: 'c4', kind: 'hover' }, // Unrecognized kind: skip
     { clipId: '', kind: 'text' },
     'x',
   ]), 2);
@@ -47,7 +52,7 @@ test('UE-S2 recording and expiry: replaces this page\'s state as a whole; draggi
   t += 8_000;
   assert.deepEqual(b.current().map((e) => e.clipId), ['c1'], '"Recently touched" expires');
   t += 6_000;
-  b.report('page-1', [{ clipId: 'c1', kind: 'drag' }]); // 心跳续期
+  b.report('page-1', [{ clipId: 'c1', kind: 'drag' }]); // Heartbeat renewal
   t += 14_000;
   const kept = b.current();
   assert.deepEqual(kept.map((e) => e.clipId), ['c1'], 'Renewed ones are still there');
@@ -105,7 +110,8 @@ test('UE-S5 how the notice is worded and placed: for an object result the notice
   const arr = annotateResult([1, 2], { userEditing: ue.slice(0, 1) });
   assert.deepEqual(arr.result, [1, 2]);
   assert.match(arr.notice, /User is editing/);
-  // 先有 overwrote(执行器放的)再补 userEditing(入口放的):两个字段都在,两句都在
+  // overwrote exists first (set by executor) then userEditing is appended (set by entry point):
+  // both fields exist, both sentences exist
   const ov = [{ entity: '/tracks/@t1/clips/@c1', clipId: 'c1', by: 'user', who: 'User', label: 'User just edited', rev: 2, agoMs: 3000 }];
   const both = annotateResult(annotateResult({ ok: true }, { overwrote: ov }), { userEditing: ue.slice(0, 1) });
   assert.deepEqual(both.overwrote, ov);
@@ -129,7 +135,7 @@ test('UE-S6 how the writer is labeled: local page = user; other members in a sha
   ]);
 });
 
-/* ------------------------------------------------------------------ 端到端 */
+/* ------------------------------------------------------------------ End-to-end */
 
 async function startEnv(t) {
   const server = http.createServer((req, res) => { res.statusCode = 404; res.end(); });
@@ -139,7 +145,7 @@ async function startEnv(t) {
   const vite = await createVite({ configFile: false, root: ROOT, logLevel: 'silent', server: { middlewareMode: true, hmr: false, ws: false, watch: null }, appType: 'custom', optimizeDeps: { noDiscovery: true, include: [] } });
   const closers = [];
   t.after(async () => {
-    for (const c of closers) { try { c(); } catch { /* 已关 */ } }
+    for (const c of closers) { try { c(); } catch { /* Closed */ } }
     await vite.close();
     await built.service.close();
     await new Promise((resolve) => server.close(resolve));
@@ -252,7 +258,7 @@ test('UE-S7~S10 end to end: userEditing of the read / write tools; overwriting w
       { entity: '/tracks/@t1/clips/@c1', clipId: 'c1', by: 'user', who: 'User', label: 'User just edited', rev: 2 });
     assert.ok(o.agoMs >= 0 && o.agoMs < 60_000);
     assert.match(w.notice, /^This write overwrote content someone else just wrote: clip c1\(User just edited,rev 2, \d+ s ago\)\. Something the user just edited was overwritten by this write/);
-    // 同一个对话紧接着再写 c1:上一次写入者就是自己,不再提示
+    // The same chat immediately writes c1 again: previous writer was itself, no notification
     const again = await s.callTool('update_clip', { clipId: 'c1', opacity: 0.4 }, { agent: 'conv-A' });
     assert.equal(again.overwrote, undefined);
   });
@@ -266,7 +272,7 @@ test('UE-S7~S10 end to end: userEditing of the read / write tools; overwriting w
     await s.callTool('get_project', {}, { agent: 'conv-B' });
     const b = await s.callTool('update_clip', { clipId: 'c2', opacity: 0.2 }, { agent: 'conv-B' });
     assert.equal(b.rev, 2);
-    // conv-A 读到的是 rev 1,先重读再写(否则是 stale)
+    // conv-A read rev 1; reread before writing (otherwise stale)
     await s.callTool('get_clip', { clipId: 'c2' }, { agent: 'conv-A' });
     const a = await s.callTool('update_clip', { clipId: 'c2', opacity: 0.9 }, { agent: 'conv-A' });
     assert.equal(a.rev, 3);

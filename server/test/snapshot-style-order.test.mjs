@@ -1,14 +1,20 @@
 /**
- * X6(`docs/plan/m6c-contract.md`):快照的内联 style 按属性名的确定顺序输出,与浏览器枚举
- * `CSSStyleDeclaration` 的顺序无关 —— 同样的内容在不同进程里得到同样的块哈希。
+ * X6(`docs/plan/m6c-contract.md`): inline styles of snapshots are output in a deterministic order
+ * of property names, independent of browser enumeration order of `CSSStyleDeclaration`: the same
+ * content gets the same chunk hash in different processes.
  *
- * 转译 `src/render/snapshot/inlineStyles.ts` 后直接跑,不起浏览器:`getComputedStyle` / `document`
- * 换成最小的假实现,同一份计算样式按不同的枚举顺序喂两遍,比克隆体上写出的 style 串。
- * 真浏览器、两个预渲染进程的逐张比对原先在 `scripts/probes/snapshot-hash-probe.mjs`；那支探针 2026-10-23 已删
- * （它要求 `snapshotTier() === 'shared'`，而每张卡的快照 2026-10-16 撤掉后该函数恒回 `'none'`，整支必然失败）。
- * 删除依据与当时的读数见 `docs/reports/AGENT-claude-probe-audit.md`。本文件的断言不依赖它。
+ * Runs directly after transpiling `src/render/snapshot/inlineStyles.ts` without starting a browser:
+ * `getComputedStyle` / `document` are replaced with minimal mock implementations, feeding the same
+ * computed styles twice in different enumeration orders and comparing style strings written on
+ * clones.
+ * Frame-by-frame comparison across a real browser and two prerender processes was originally in
+ * `scripts/probes/snapshot-hash-probe.mjs`; that probe was deleted on 2026-10-23 (it requires
+ * `snapshotTier() === 'shared'`, but after per-card snapshots were removed on 2026-10-16, that
+ * function always returns `'none'`, so the entire probe is bound to fail).
+ * For the deletion rationale and readings at that time, see
+ * `docs/reports/AGENT-claude-probe-audit.md`. Assertions in this file do not depend on it.
  *
- * 跑法:node --test server/test/snapshot-style-order.test.mjs
+ * Run: node --test server/test/snapshot-style-order.test.mjs
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -33,7 +39,7 @@ const { serializeDeclarations, inlineDOMStyles, STOP_CLOCKS } = await import(pat
 const HTML_NS = 'http://www.w3.org/1999/xhtml';
 const sha = text => createHash('sha256').update(text).digest('hex');
 
-/** 确定的伪随机洗牌(种子不同 → 顺序不同),不引依赖 */
+/** Deterministic pseudo-random shuffle (different seeds → different orders), no dependencies */
 function shuffled(list, seed) {
   const out = [...list];
   let s = seed >>> 0 || 1;
@@ -45,9 +51,9 @@ function shuffled(list, seed) {
   return out;
 }
 
-/* ------------------------------------------------------------------ 假 DOM */
+/* ------------------------------------------------------------------ Mock DOM */
 
-/** 计算样式:`entries` 的顺序就是枚举顺序 */
+/** Computed style: the order of `entries` is the enumeration order */
 function fakeComputed(entries) {
   const names = entries.map(([name]) => name);
   const values = new Map(entries);
@@ -82,7 +88,7 @@ class FakeElement {
   getAnimations() { return []; }
 }
 
-/** 同标签基线:探针元素的计算样式(`ensureBaselines` 经 `document.createElement` 造) */
+/** Same-tag baseline: computed style of probe element (`ensureBaselines` via `document.createElement`) */
 const BASELINE = {
   DIV: [['color', 'rgb(0, 0, 0)'], ['display', 'block'], ['opacity', '1'], ['position', 'static'], ['will-change', 'auto']],
   SPAN: [['color', 'rgb(0, 0, 0)'], ['display', 'inline'], ['opacity', '1'], ['position', 'static'], ['will-change', 'auto']],
@@ -100,8 +106,10 @@ function installDom() {
 }
 
 /**
- * 一张小卡:场景根 → div(自定义属性若干 + 前缀属性 + mask-position 简写)→ span。
- * `order(entries, who)` 决定每个元素计算样式的枚举顺序 —— 模拟两个进程里浏览器给出的不同顺序。
+ * A small card: scene root → div (several custom properties + prefixed properties + mask-position
+ * shorthand) → span.
+ * `order(entries, who)` determines enumeration order of computed styles for each element:
+ * simulating different orders given by browsers in two processes.
  */
 function buildTree(order) {
   const rootComputed = [['color', 'rgb(255, 255, 255)'], ['display', 'block'], ['font-size', '16px'], ['--accent', '#39f'], ['--pad', '12px']];
@@ -129,7 +137,7 @@ function styleStrings(order) {
   } finally { restore(); }
 }
 
-/* ------------------------------------------------------------------ 用例 */
+/* ------------------------------------------------------------------ Test cases */
 
 test('X6-1 serializeDeclarations: the same set of declarations yields the same string regardless of order', () => {
   const decls = [['width', '10px'], ['--b', '1'], ['-webkit-text-fill-color', 'red'], ['color', 'red'], ['--a', '2'], ['align-items', 'center'], ['-webkit-box-flex', '0']];
@@ -148,7 +156,8 @@ test('X6-2 the order is three groups: "standard properties, prefixed properties,
 });
 
 test('X6-3 the order of the standard section and the prefixed section matches Chrome\'s own enumeration (the shorthand mask-position still comes before -webkit-mask-position-x/y)', () => {
-  // Chrome 152 的枚举:标准属性按字母、前缀属性按字母、自定义属性(本分支报告 X6 一节的实测)
+  // Chrome 152 enumeration: standard properties alphabetically, prefixed properties alphabetically,
+  // custom properties (actual measurements from section X6 of this branch report)
   const chromeOrder = [['align-items', 'center'], ['mask-position', '0% 0%'], ['writing-mode', 'horizontal-tb'],
     ['-webkit-mask-position-x', '0%'], ['-webkit-mask-position-y', '0%'], ['-webkit-writing-mode', 'horizontal-tb']];
   const old = chromeOrder.map(([p, v]) => `${p}:${v};`).join('');
@@ -162,7 +171,8 @@ test('X6-4 inlineDOMStyles: when the enumeration order of computed styles differ
   for (let seed = 1; seed <= 20; seed++) hashes.add(sha(styleStrings((entries, who) => shuffled(entries, seed * 31 + who.length)).join('\n')));
   assert.equal(hashes.size, 1, '22 enumeration orders should produce only one snapshot');
   for (const text of asIs) assert.ok(text.endsWith(STOP_CLOCKS), 'The end is still the stop-clocks entry');
-  // 判据没变:自己新加的自定义属性照写,和父元素相同的(--accent、--pad)照省;三组的先后照 X6-2
+  // Criteria unchanged: its own newly added custom properties are written as usual, those identical
+  // to parent element (--accent, --pad) omitted as usual; order of three groups follows X6-2
   assert.equal(asIs[1], 'display:flex;mask-position:0% 0%;opacity:0.5;position:absolute;width:823.5px;'
     + '-webkit-mask-position-x:0%;-webkit-mask-position-y:0%;-webkit-text-fill-color:rgb(255, 0, 0);-webkit-writing-mode:horizontal-tb;'
     + '--a-first:2;--mid:calc(1px + 2px);--z-last:1;' + STOP_CLOCKS);

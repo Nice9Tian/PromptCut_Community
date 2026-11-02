@@ -111,8 +111,11 @@ export async function exportUnified(project, opts) {
           // the frames before the mismatch a second time.
           ...(sink ? { onFrame: sink.write, staticSkip: false } : {}),
           ...(stream ? { writeFrames: false } : {}),
-          // 推帧补画(`bake.mjs` 文件头):第二片起不补 —— 切点只落在没有有状态的卡跨着的帧上,前面推过去的卡到切点都已卸掉;
-          // 补的话每一片要把前面的帧真的再画一遍。第一片照常(只导一段时它前面那些帧上的卡可能还活着)。
+          // Frame-push catch-up drawing (header of `bake.mjs`): no catch-up from the second shard onward:
+          // cut points only land on frames with no stateful cards spanning across them, and cards pushed
+          // earlier have all been unmounted by the cut point; catching up would require each shard to
+          // actually redraw earlier frames. The first shard runs as usual (when exporting only one section,
+          // cards on frames before it might still be alive).
           ...(shardIndex > 0 && typeof opts.pushDraw !== 'boolean' ? { pushDraw: false } : {}),
           quiet: true,
           onProgress: (frame) => {
@@ -142,7 +145,8 @@ export async function exportUnified(project, opts) {
     cardsVideo = path.join(out, 'overlay.mov');
     await concatVideos(ffmpeg, files, cardsVideo);
     console.log(`Shard videos merged: ${files.length} parts -> ${cardsVideo}`);
-    // 分片是合并后 overlay.mov 的逐字节重复,合完就删(存储计划 A 部分:大的导出里多占十几 GB)
+    // Shards are byte-for-byte duplicates of the merged overlay.mov, deleted once merged (Storage Plan
+    // Part A: takes up an extra dozen+ GB in large exports)
     await fs.rm(partsDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }).catch(() => {});
   }
   return {

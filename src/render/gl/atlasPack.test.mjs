@@ -1,5 +1,5 @@
 /**
- * R9 图集打包的单测。跑:node --test src/render/gl/atlasPack.test.mjs
+ * Unit test for R9 atlas packing. Run: node --test src/render/gl/atlasPack.test.mjs
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -24,7 +24,7 @@ test("split into tabs when it does not fit; with only one stage (compact) the li
   const cards = Array.from({ length: 8 }, (_, i) => ({ id: `big${i}`, w: 1920, h: 1080 }));
   const hi = packAtlas(cards, ATLAS_MAX);
   const lo = packAtlas(cards, ATLAS_MAX_COMPACT);
-  // 4096² 一页放 2 × 3 = 6 张 1080p,8 张就要第二页
+  // A 4096² page holds 2 × 3 = 6 1080p frames; 8 frames require a second page
   assert.equal(hi.pages.length, 2);
   for (const p of lo.pages) assert.ok(p.w <= 2048 && p.h <= 2048);
   assert.equal(lo.pages.length, 8);

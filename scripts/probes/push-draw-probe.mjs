@@ -1,40 +1,55 @@
 /**
- * 「只推帧不截图时,中途挂载的 motion 式卡在画面上不往前走」——导出和抽帧的各条路中不中(`server/bakery/bake.mjs` 文件头「推帧补画」)。
+ * "When only pushing frames without taking screenshots, mid-mounted motion-style cards do not
+ * advance on screen": whether each export and frame extraction path hits (`push-draw` in file
+ * header of `server/bakery/bake.mjs`).
  *
  *   node scripts/probes/push-draw-probe.mjs (--origin http://127.0.0.1:<dev server> | --port 27140)
  *        [--variants glass,user,plain,alone] [--paths range,targets,see,layout,stream,shards] [--legacy]
- *        [--cost] [--out <目录>] [--json <文件>] [--keep]
+ *        [--cost] [--out <dir>] [--json <file>] [--keep]
  *
- * 项目(960×540,30 帧每秒,5 秒):一枚 `punch-pill` 在 1 秒进场;另有一张更早挂载、要回放的卡(`rank-bars`,0.2 秒进场,在最下面);
- * 3 秒时再进场第二枚药丸 —— 它前面有一段画面静止的帧(静止的帧不补画,见 `bake.mjs` 的 `pushDrawNeeded`),核对「静止一段以后
- * 再挂载的卡」也对。四档:
- *   glass  药丸上面压一张毛玻璃卡(里程表 `odometer`,0.2 秒进场)
- *   user   药丸上面压一张用框架写的用户卡(remotion 式,探针经真的 `/api/cards/create` 建;只有探针自己起的开发服务器、
- *          或者加了 `--with-user` 才做:它往那台开发服务器的数据目录里写一张卡)
- *   plain  药丸上面什么都不压(更早挂载的那张卡在它下面)
- *   alone  只有第一枚药丸一张卡(对照:页面上没有更早挂载的卡)
+ * Project (960×540, 30 fps, 5s): one `punch-pill` enters at 1s; another earlier-mounted card to
+ * replay (`rank-bars`, enters at 0.2s, at the very bottom); at 3s a second pill enters: there is a
+ * stretch of static frames before it (no push-draw for static frames, see `pushDrawNeeded` in
+ * `bake.mjs`), verifying that "cards mounted after a static stretch" are also correct. Four tiers:
+ *   glass  A frosted-glass card (odometer `odometer`, enters at 0.2s) overlays the pill
+ *   user   A framework user card overlays the pill (remotion-style, created by probe via real
+ *          `/api/cards/create`; only run when probe starts own dev server or with `--with-user`: it
+ *          writes a card into that dev server's data directory)
+ *   plain  Nothing overlays the pill (earlier-mounted card is below it)
+ *   alone  Only the first pill card (control: no earlier-mounted card on page)
  *
- * 参照:同一个项目从第 0 帧起每帧都截的整段导出(`bakeFrames`,`frames: 0-149`)。
+ * Reference: full-segment export capturing every frame from frame 0 for same project (`bakeFrames`,
+ * `frames: 0-149`).
  *
- * 逐条查产品里「推过去不截图」的路,每条路给结论:取到的那一帧和参照的同一帧差多少(RGBA 四个通道的平均绝对差,满分 255)、
- * 最像参照的哪一帧(落后几帧):
- *   range    只导一段:`exportUnified({ frames: '51-70' })`、`'100-104'`(从第 0 帧推过去,只截这一段)
- *   targets  只取几帧的导出:`exportUnified({ targetFrames: [51, 52, 80, 100, 101] })`
- *   see      抽帧:`FramePipeline.see_frames`(Agent 的 see_frames;get_gif 走同一条,只是时刻多几个)
- *   layout   `FramePipeline.layout`(Agent 的 get_layout):药丸的实体框,和只有药丸的项目同一时刻的框比
- *   stream   流的推帧(`bakeStream`,一页上两张卡 = 组流的页面形状;alone 档是单卡流的形状):断了租约从挂载帧回放过来的分段、
- *            稀疏那一趟(每个分段只截第一帧),各自和接着租约一路产下来的满密度逐帧比
- *   shards   并行导出(另一个项目,6 秒,几张卡前后接着):`exportUnified({ workers: 3 })` 的每一帧和整段导出比
+ * Check each "push through without capturing screenshot" path in product one by one, giving a
+ * conclusion for each: diff between fetched frame and reference same frame (average absolute diff
+ * across 4 RGBA channels, out of 255), which reference frame it is closest to (frames behind):
+ *   range    Export single range: `exportUnified({ frames: '51-70' })`, `'100-104'` (pushes from
+ *            frame 0, captures only this range)
+ *   targets  Export selected frames only: `exportUnified({ targetFrames: [51, 52, 80, 100, 101] })`
+ *   see      Frame extraction: `FramePipeline.see_frames` (Agent's see_frames; get_gif uses same
+ *            path, just with a few more timestamps)
+ *   layout   `FramePipeline.layout` (Agent's get_layout): pill entity box, compared against box at
+ *            same timestamp in pill-only project
+ *   stream   Stream frame-push (`bakeStream`, 2 cards on one page = group stream page shape; alone
+ *            tier is single-card stream shape): segments replayed from mount frame after broken
+ *            lease, and sparse pass (captures only first frame of each segment), each compared
+ *            frame-by-frame against full density produced continuously holding lease
+ *   shards   Parallel export (another project, 6s, cards connected sequentially): every frame of
+ *            `exportUnified({ workers: 3 })` compared against full-segment export
  *
- * 开窗取帧(targets / see / layout):修了 FrameScene 中按 clipFrameMode 分流直接求值与时间卡之后,
- * 开窗取帧不再早一帧挂载,取到的第 f 帧与参照的第 f 帧逐像素相同(ahead = 0)。
+ * Windowed frame capture (targets / see / layout): after fixing dispatch in FrameScene by
+ * clipFrameMode between direct evaluation and time cards, windowed frame capture no longer mounts
+ * 1 frame early; fetched frame f is pixel-identical to reference frame f (ahead = 0).
  *
- * `--legacy`:把推帧补画关掉(`PROMPTCUT_PUSH_DRAW=0`)跑同一套,复现修之前的样子;这时探针核对的是「该中的路都中了、对照档不中」。
- * `--cost`:另量代价(960×540 和 1920×1080):每推一帧多花多少毫秒、并行导出的总耗时变化。耗时只记录。
+ * `--legacy`: disable push-draw (`PROMPTCUT_PUSH_DRAW=0`) and run same suite to reproduce pre-fix
+ * behavior; here probe checks that "all paths that should hit do hit, and control tier does not".
+ * `--cost`: separately measure overhead (960×540 and 1920×1080): extra milliseconds spent per frame
+ * pushed, and total duration change of parallel export. Durations are recorded only.
  *
- * 输出 JSON 结论,过程写 stderr;不合预期就以非零退出。
+ * Output JSON conclusions, write progress to stderr; exit non-zero on unexpected results.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -51,7 +66,7 @@ const WITH_USER = args.includes('--with-user');
 const JSON_OUT = flagArg('json', null, args);
 if (!ORIGIN && !PORT) { console.error('Pass --origin <dev server> or --port <start your own>'); process.exit(2); }
 const OUT = path.resolve(flagArg('out', null, args) || path.join(os.tmpdir(), `pc-push-draw-${Date.now().toString(36)}`));
-// 必须在引入 bake.mjs 之前定下来(它每次调用时读,这里早设只是为了一目了然)
+// Must be set before importing bake.mjs (it reads on each call; setting early here is for clarity)
 if (LEGACY) process.env.PROMPTCUT_PUSH_DRAW = '0'; else delete process.env.PROMPTCUT_PUSH_DRAW;
 process.env.PROMPTCUT_EXPORT_DIR = path.join(OUT, 'export');
 
@@ -68,13 +83,13 @@ const USER_CARD = `pd-cover-${RUN}`;
 const ownServer = !ORIGIN;
 const VARIANTS = String(flagArg('variants', ownServer || WITH_USER ? 'glass,user,plain,alone' : 'glass,plain,alone', args)).split(',').filter(Boolean);
 const PATHS = new Set(String(flagArg('paths', 'range,targets,see,layout,stream,shards', args)).split(',').filter(Boolean));
-/** 取帧的那几帧:药丸 30 帧进场,51 帧时入场动画正在半路上(弹簧还没停、光晕还在散) */
+/** Frames to capture: pill enters at frame 30; at frame 51 entrance animation is midway (spring has not settled, glow still dispersing) */
 const RANGES = [[51, 70], [100, 104]];
 const TARGETS = [51, 52, 80, 100, 101];
 const SEE = [35, 51, 80, 100];
-/** 问实体框的那一帧(不在 `SEE` 里;药丸的光晕这时还在放大,框逐帧在变) */
+/** Frame queried for entity box (not in `SEE`; pill's glow is still expanding, box changes frame by frame) */
 const LAYOUT_FRAME = 57;
-/** 差到这个数以内算相同(同一条路上逐字节相同就是 0;留一点余量给 see_frames 那条路可能的再编码) */
+/** Considered identical within this diff (0 for byte-identical on same path; margin for see_frames re-encoding) */
 const TOL = 0.05;
 
 const say = (step, fields = {}) => process.stderr.write(`${JSON.stringify({ step, t: Date.now(), ...fields })}\n`);
@@ -93,7 +108,7 @@ const userClip = (w = W) => ({ id: 'clip-u', kind: 'card', cardId: USER_CARD, st
 const track = (id, clips) => ({ id, name: id, hidden: false, clips });
 const base = (id, w, h, seconds, tracks) => ({ id: `${id}-${RUN}`, name: `Push-draw probe ${id}`, width: w, height: h, fps: FPS, duration: seconds,
   themeId: 'dark', media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {}, tracks });
-/** 第一条序列在最上面 */
+/** The first track is at the very top */
 function variantProject(variant, w = W, h = H) {
   const tracks = variant === 'glass' ? [track('tr-t', [glassClip(w)]), track('tr-q', [secondPill(w)]), track('tr-p', [pillClip(w)]), track('tr-e', [earlyClip(w)])]
     : variant === 'user' ? [track('tr-u', [userClip(w)]), track('tr-q', [secondPill(w)]), track('tr-p', [pillClip(w)]), track('tr-e', [earlyClip(w)])]
@@ -101,7 +116,7 @@ function variantProject(variant, w = W, h = H) {
         : [track('tr-p', [pillClip(w)])];
   return base(`pd-${variant}-${w}`, w, h, SECONDS, tracks);
 }
-/** 并行导出用的项目(6 秒):卡前后接着,中间留出能切的空当;切点后面的卡都在切点之后才挂载 */
+/** Project for parallel export (6s): cards connect back-to-back, leaving splittable gaps; cards after split point mount after it */
 function shardProject(w = W, h = H) {
   const pill = (id, text, start, end) => ({ ...pillClip(w), id, start, end, params: { text } });
   return base(`pd-shards-${w}`, w, h, 6, [
@@ -170,11 +185,11 @@ try {
     out.userCard = { id: USER_CARD, status: r.status, ok: body?.ok === true, errors: r.status === 200 ? undefined : (body?.errors ?? [body?.error]) };
     say('user-card', out.userCard);
     if (!check(r.status === 200 && body?.ok === true, 'Creating a user card (/api/cards/create) returns 200', out.userCard)) VARIANTS.splice(VARIANTS.indexOf('user'), 1);
-    else await sleep(1500); // 开发服务器把这张卡的模块编出来
+    else await sleep(1500); // Dev server compiles this card's module
   }
 
   bakery = await quiet(() => openBakery({ url: emptyUrl() }));
-  /** 在共用的那一页上跑一趟 `bakeFrames`,回 帧号 → RGBA */
+  /** Run a pass of `bakeFrames` on shared page, returning frame number → RGBA */
   const bake = async (project, opts) => {
     await bakery.reset(project, emptyUrl(project.width, project.height));
     bakery.streamLease = null;
@@ -185,20 +200,20 @@ try {
       onFrame: async (i, buf) => { if (opts.timingOnly) return; frames.set(i, rgba(buf)); if (opts.keepFrames?.includes(i)) pngs.set(i, Buffer.from(buf)); } }));
     return { frames, pngs, ms: Date.now() - t0, result };
   };
-  /** 取到的每一帧:和参照同一帧的差、最像参照的哪一帧 */
+  /** Each fetched frame: diff against reference same frame, which reference frame it is closest to */
   const judge = (got, ref) => [...got].sort((a, b) => a[0] - b[0]).map(([f, picture]) => {
     const same = diff(picture, ref.get(f));
     let bestFrame = f, bestD = same;
     for (let g = Math.max(0, f - 40); g <= Math.min(ref.size - 1, f + 3); g++) { const d = diff(picture, ref.get(g)); if (d < bestD) { bestD = d; bestFrame = g; } }
     return { frame: f, sameFrameDiff: round2(same), bestFrame: bestFrame, bestFrameDiff: round2(bestD), framesBehind: f - bestFrame };
   });
-  /** 一条路中不中:`ahead` 是这条路本来就超前的帧数(开窗取帧是 1,见文件头) */
+  /** Whether a path hits: `ahead` is number of frames path naturally leads ahead by (1 for windowed frame capture, see file header) */
   const verdict = (rows, ahead = 0) => {
     const ok = rows.length > 0 && rows.every((r) => r.bestFrameDiff <= TOL && (r.framesBehind === 0 || r.framesBehind === -ahead));
     const worst = rows.reduce((a, b) => (Math.abs(b.framesBehind) > Math.abs(a.framesBehind) || (Math.abs(b.framesBehind) === Math.abs(a.framesBehind) && b.sameFrameDiff > a.sameFrameDiff) ? b : a), rows[0] ?? {});
     return { hit: !ok, worstFrame: worst, frames: rows };
   };
-  /** 该不该中:修了以后都不中;`--legacy` 下页面上有更早挂载的卡的三档该中,只有药丸的对照档不中 */
+  /** Whether it should hit: none hit after fix; under `--legacy`, 3 tiers with earlier-mounted cards should hit, pill control does not */
   const expectHit = (variant) => LEGACY && variant !== 'alone';
   const settle = (variant, name, v, note) => {
     const want = expectHit(variant);
@@ -210,7 +225,7 @@ try {
   pipeline = new FramePipeline({ root: path.join(OUT, 'lib'), origin: () => origin });
   let aloneLayout = null;
   const layoutOf = async (project) => {
-    // 问的是 `see_frames` 没取过的一帧:取过的帧 `layout` 会直接拿它记下的快照(开窗取的,早一帧挂载;帧库按项目内容认,换项目号没用),这里要它自己推一遍
+    // Querying a frame `see_frames` hasn't fetched: for fetched frames `layout` uses recorded snapshot (windowed, mounted 1 frame early; frame store keys by project content, changing project id won't work); here force it to push once
     const got = await quiet(() => pipeline.layout(project, { t: LAYOUT_FRAME / FPS, clipIds: ['clip-p'] }));
     return got?.clips?.['clip-p']?.contentBox ?? null;
   };
@@ -221,11 +236,11 @@ try {
     const reference = await bake(project, { frames: `0-${N - 1}`, keepFrames: [35, 51] });
     const ref = reference.frames;
     say('reference', { variant, frames: ref.size });
-    // 看图用:参照的第 35、51 帧,和下面两条路取到的同一帧(`--legacy` 的另存一份)
+    // For visual inspection: reference frames 35 and 51, and same frames fetched by 2 paths below (save extra copy for `--legacy`)
     const shot = (name, buf) => fs.writeFile(path.join(OUT, 'shots', `${variant}-${name}${LEGACY ? '-legacy' : ''}.png`), buf);
     if (variant !== 'alone') for (const [f, buf] of reference.pngs) await shot(`ref-f${f}`, buf);
     if (variant === VARIANTS[0]) {
-      // 参照自己可不可靠:再导一遍,逐帧相同(头几十帧的老问题只在演示项目上见过,这里顺带记一下)
+      // Whether reference itself is reliable: export again, frame-by-frame identical (legacy issue with first few dozen frames only seen on demo projects; noted here in passing)
       const again = (await bake(project, { frames: `0-${N - 1}` })).frames;
       row.refTwoExportsDiffFrames = [...ref].filter(([f, a]) => diff(a, again.get(f)) > 0).map(([f]) => f);
       check(row.refTwoExportsDiffFrames.length === 0, `${variant}: two exports of the reference are identical frame by frame`, row.refTwoExportsDiffFrames.slice(0, 20));
@@ -241,7 +256,7 @@ try {
       }
       row.exportOneSegment = { ...settle(variant, 'range: export one segment only', verdict(judge(got, ref))), framePush: pushes };
       row.exportOneSegment.frames = row.exportOneSegment.frames.filter((r, k) => k < 3 || r.sameFrameDiff > TOL).slice(0, 6);
-      // 静止的帧不补画:补画的拍数比推过去的帧数少(只有药丸的那一档,药丸进场以前整个画面都是空的)
+      // Static frames not push-drawn: push-draw ticks fewer than pushed frames (in pill-only tier, entire frame empty before pill enters)
       if (!LEGACY) check(pushes.every((x) => x.redrawnTicks > 0 && x.redrawnTicks < x.framesPushed + 2), `${variant}: static frames are not redrawn when only one segment is exported`, pushes);
       else check(pushes.every((x) => x.redrawnTicks === 0), `${variant}: no tick is redrawn when it is off`, pushes);
     }
@@ -258,7 +273,7 @@ try {
       if (variant !== 'alone') await shot('see-f35', frames.get(35).buf);
     }
     if (PATHS.has('layout')) {
-      // 药丸的实体框只取决于药丸自己:和只有药丸的项目同一时刻(同一条开窗取帧的路)的框比
+      // Pill entity box depends only on pill itself: compared against box at same timestamp (same windowed frame capture path) in pill-only project
       aloneLayout ??= await layoutOf(variantProject('alone'));
       const box = variant === 'alone' ? aloneLayout : await layoutOf(project);
       const same = JSON.stringify(box) === JSON.stringify(aloneLayout);
@@ -268,7 +283,7 @@ try {
       check(box && !same === want, `${variant} / get_layout:${want ? 'should be hit when push-draw is off' : 'should not be hit'}`, row.get_layout);
     }
     if (PATHS.has('stream') && (variant === 'plain' || variant === 'alone')) {
-      // 流的推帧:这一页上的卡就是这条流的成员(plain = 两张卡的组流页面,alone = 单卡流页面);不裁矩形
+      // Stream frame-push: cards on this page are members of this stream (plain = group stream page with 2 cards, alone = single-card stream page); do not crop rectangle
       const mountFrame = Math.min(...project.tracks.flatMap((t) => t.clips.map((c) => mountFrameOf(c, FPS))));
       const first = Math.min(...project.tracks.flatMap((t) => t.clips.map((c) => Math.ceil(c.start * FPS - 1e-9))));
       const stream = async (calls) => {
@@ -281,7 +296,7 @@ try {
       };
       const dense = await stream([{ fromFrame: first, toFrame: N - 1, stride: 1 }]);
       const replay = await stream([{ fromFrame: first + 60, toFrame: first + 74, stride: 1 }]);
-      // 再回放一段更晚的:第二枚药丸在静止了一段以后才挂载,这一段正在它的入场动画里
+      // Replay later segment: second pill mounts only after a static period; this segment is right inside its entrance animation
       const replayLate = await stream([{ fromFrame: first + 90, toFrame: first + 104, stride: 1 }]);
       const segments = [];
       for (let a = first; a < N; a += 15) segments.push({ fromFrame: a, toFrame: Math.min(N - 1, a + 14), stride: 15 });
@@ -330,15 +345,15 @@ try {
       };
       const off = await timeOf(false), on = await timeOf(true);
       const pushed = N - 10;
-      // 单拍:同一个静止的页面上各发 60 拍
+      // Single tick: send 60 ticks each on the same static page
       await bakery.reset(project, emptyUrl(w, h));
       const beat = async (extra) => { const t0 = performance.now(); for (let k = 0; k < 60; k++) await bakery.beginFrame(extra); return (performance.now() - t0) / 60; };
       await beat({ screenshot: { format: 'jpeg', quality: 0 } });
       const plain = await beat(), jpeg0 = await beat({ screenshot: { format: 'jpeg', quality: 0 } }), png = await beat({ screenshot: { format: 'png', optimizeForSpeed: true } });
-      // 并行导出的总耗时
+      // Total duration of parallel export
       const shards = shardProject(w, h);
       const whole = async (pushDraw, workers) => { const t0 = Date.now(); await quiet(() => exportUnified(shards, { url: exportUrl(shards), out: path.join(OUT, 'scratch', `cost-${w}-${pushDraw}-${workers}`), workers, noVideo: true, writeFrames: false, ...(pushDraw === undefined ? {} : { pushDraw }), onFrame: async () => {} })); return Date.now() - t0; };
-      // 缺省:第二片起不补(`export-unified.mjs`);「都补」是硬传 pushDraw: true 的对照(要是分片也补会多花多少)
+      // Default: no push-draw from second shard onward (`export-unified.mjs`); "always push-draw" is control explicitly passing pushDraw: true (overhead if shards also push-draw)
       const single = await whole(undefined, 1), parOff = await whole(false, 3), parDefault = await whole(undefined, 3), parAll = await whole(true, 3);
       out.overhead[`${w}x${h}`] = { framesPushed: pushed, lastTenFramesExportOff: off, lastTenFramesExportOn: on, extraMsPerPushedFrame: round2((on - off) / pushed),
         msPerTick: { noScreenshot: round2(plain), discardedJPEG: round2(jpeg0), PNG: round2(png) },

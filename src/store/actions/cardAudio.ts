@@ -7,9 +7,11 @@ import { state, setProject } from "../core";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 素材已入库后才提交；同一次项目替换关联 WAV 和原视觉片段，一步撤销。
- * `clipCutId`:片段住在哪条剪辑里(缺省激活的那条)。被剪辑段引用的剪辑里的有声卡,导出前在它自己那条剪辑里生成
- * (`src/editor/io/exportSounds.ts`),结果写回那条停放剪辑的条目。
+ * Committed only after the asset is stored; associates WAV and original visual clip in the same
+ * project replacement, with one-step undo. `clipCutId`: which cut the clip belongs to (defaults
+ * to the active one). Audio cards in cuts referenced by cut segments are generated in their own
+ * cut prior to export (`src/editor/io/exportSounds.ts`), and results are written back to that
+ * parked cut entry.
  */
 export function commitCardAudio(args: { projectId?: string; cutId?: string; clipCutId?: string; loadToken: number; clipId: string; expectedClip: string;
   media: Omit<MediaAsset, 'id'>; rendition: Omit<CardAudioRendition, 'mediaId'> }) {

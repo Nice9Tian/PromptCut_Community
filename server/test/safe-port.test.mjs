@@ -1,6 +1,7 @@
 /**
- * `server/safe-port.mjs`：坏端口表与测试全局准备的名单一致；`listenSafe` 拿到坏端口会重试。
- * 跑：npm test
+ * `server/safe-port.mjs`: bad port table matches the list prepared globally for tests;
+ * `listenSafe` retries when getting a bad port.
+ * Run: npm test
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,7 +22,7 @@ test('isUnsafePort: true for entries in the table, false for neighboring numbers
   assert.equal(new Set(UNSAFE_PORTS).size, UNSAFE_PORTS.length, 'No duplicates in the table');
 });
 
-/** 假 server：按给定顺序发端口，记下 listen / close 的次数 */
+/** Mock server: issues ports in given order, recording count of listen / close calls */
 function fakeServer(ports) {
   const s = new EventEmitter();
   let i = 0;

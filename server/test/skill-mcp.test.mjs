@@ -1,15 +1,23 @@
 /**
- * A4:SKILL 改为桌面 APP 经 MCP 直连同一个项目(计划 docs/plan/agent-workflow-plan.md A4)。用例 SM-1～SM-14。
+ * A4: SKILL changed to desktop app connecting directly to the same project via MCP (plan
+ * docs/plan/agent-workflow-plan.md A4). Test cases SM-1 to SM-14.
  *
- *   - 会话身份:两个桌面会话各记各的、厂商从 clientInfo 认得出(SM-1～SM-3);
- *   - 端口发现与没有实例时的说明(SM-4);
- *   - 登记写配置:只在临时目录、先备份、条目名固定、撤销还原(SM-5～SM-7);
- *   - 桌面会话的创造力等级跟项目(SM-8);A2 / A3 的提示出现在桌面会话的结果里(SM-9、SM-10);
- *   - AI 栏分组的数据(SM-11);SKILL 闸按类型(SM-12,细节见 skill-gate.test.mjs);
- *   - 归档后没有残留入口、对话式布局的入口不再出现(SM-13、SM-14,棘轮:只许减少)。
+ *   - Session identity: two desktop sessions are tracked independently, vendor is recognized
+ *     from clientInfo (SM-1 to SM-3);
+ *   - Port discovery and explanation when there is no instance (SM-4);
+ *   - Register writing config: only in temp directory, backed up first, fixed entry name,
+ *     revert on undo (SM-5 to SM-7);
+ *   - Desktop session creativity level follows the project (SM-8); A2 / A3 notices appear in
+ *     desktop session results (SM-9, SM-10);
+ *   - Data for AI panel groups (SM-11); SKILL gate by type (SM-12, see skill-gate.test.mjs for
+ *     details);
+ *   - No leftover entry points after archiving, chat-layout entry points no longer appear
+ *     (SM-13, SM-14, ratchet: decrease-only).
  *
- * **不写任何用户配置**:登记的配置路径一律经参数 / 环境变量指到临时目录;mcp-server 用 PROMPTCUT_PORT_FILE 指到临时的端口文件。
- * 跑法:node --test server/test/skill-mcp.test.mjs
+ * **Never write any user config**: registered config paths always point to the temp directory via
+ * parameters / environment variables; mcp-server uses PROMPTCUT_PORT_FILE to point to a temporary
+ * port file.
+ * Run: node --test server/test/skill-mcp.test.mjs
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -22,7 +30,7 @@ import { fileURLToPath } from 'node:url';
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-skill-mcp-'));
 process.env.PROMPTCUT_SKILL_DIR = path.join(TMP, 'skill');
-// 保险:本文件里任何登记调用即使漏传路径,也只会落到临时目录
+// Safeguard: even if any register call in this file omits the path, it only falls back to the temp directory
 process.env.PROMPTCUT_CLAUDE_CONFIG = path.join(TMP, 'guard', '.claude.json');
 process.env.PROMPTCUT_CODEX_CONFIG = path.join(TMP, 'guard', 'config.toml');
 
@@ -40,7 +48,7 @@ const gate = await import('../skill-gate.mjs');
 
 test.after(() => fs.rmSync(TMP, { recursive: true, force: true }));
 
-/* ------------------------------------------------------------------ 身份 */
+/* ------------------------------------------------------------------ Identity */
 
 test('SM-1 the vendor is identified from clientInfo: Claude Code reports claude-code, Codex reports codex-mcp-client; if unrecognized, use the name it reports itself', () => {
   assert.deepEqual(vendorOf({ name: 'claude-code', title: 'Claude Code', version: '2.1.284' }), { vendor: 'claude-code', label: 'Claude Code', client: { name: 'claude-code', version: '2.1.284' } });
@@ -65,7 +73,7 @@ test('SM-2 session identity: one per MCP process (Claude Code); Codex per thread
   assert.equal(threadOf({ 'claudecode/toolUseId': 'toolu_1' }), null, 'Claude Code _meta has no session id');
 });
 
-/** 一个假的编辑器:记下 /api/mcp/call 的请求体 */
+/** A fake editor: records the /api/mcp/call request body */
 async function fakeEditor() {
   const bodies = [];
   const srv = http.createServer((req, res) => {
@@ -81,7 +89,7 @@ async function fakeEditor() {
   return { port: srv.address().port, bodies, close: () => { srv.close(); srv.closeAllConnections?.(); } };
 }
 
-/** 起一份 mcp-server,按行收 JSON-RPC 回复 */
+/** Starts an mcp-server and receives JSON-RPC responses line by line */
 function mcpClient(env) {
   const clean = { ...process.env };
   for (const k of ['PROMPTCUT_AGENT', 'PROMPTCUT_CALLER', 'PROMPTCUT_PORT', 'PROMPTCUT_PORT_FILE']) delete clean[k];
@@ -165,7 +173,7 @@ test('SM-3 the two desktop sessions (Claude Code, Codex) each record their own i
   }
 });
 
-/* ------------------------------------------------------------------ 端口发现 */
+/* ------------------------------------------------------------------ Port discovery */
 
 test('SM-4 port discovery: arguments / environment variables take priority; a missing port file, a corrupted one, or an exited process each return a clear explanation; mcp-server passes the explanation to the desktop app as is', async () => {
   const none = discoverEditor({ env: {}, argv: [], tmpdir: path.join(TMP, 'no-such') });
@@ -185,14 +193,14 @@ test('SM-4 port discovery: arguments / environment variables take priority; a mi
   assert.equal(discoverEditor({ env: { PROMPTCUT_PORT: '5883' }, argv: ['--port', '5885'] }).port, 5885, 'The --port argument has top priority');
   assert.equal(discoverEditor({ env: { PROMPTCUT_PORT: 'abc' }, argv: [] }).ok, false);
 
-  // 真的起 mcp-server:没有实例时 tools/call 回 isError 与说明,不挂住
+  // Actually start mcp-server: when there is no instance, tools/call returns isError with an explanation without hanging
   const c = mcpClient({ PROMPTCUT_PORT_FILE: path.join(TMP, 'missing-port.json') });
   try {
     await c.call('initialize', { clientInfo: { name: 'claude-code' } });
     const r = await c.call('tools/call', { name: 'get_project', arguments: {} });
     assert.equal(r.result.isError, true);
     assert.match(r.result.content[0].text, /No running PromptCut found/);
-    // 端口文件指着一个没人听的端口(借一个空闲端口再放掉)
+    // The port file points to a port with no listener (borrow an idle port and release it)
     const idle = await new Promise((resolve) => { const s = http.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
     const c2 = mcpClient({ PROMPTCUT_PORT_FILE: portFile(idle) });
     try {
@@ -203,7 +211,7 @@ test('SM-4 port discovery: arguments / environment variables take priority; a mi
   } finally { c.kill(); }
 });
 
-/* ------------------------------------------------------------------ 登记 */
+/* ------------------------------------------------------------------ Register */
 
 const WANT = { command: 'C:\\Program Files\\PromptCut\\node.exe', args: ['C:\\Program Files\\PromptCut\\app\\server\\mcp-server.mjs'] };
 
@@ -227,7 +235,7 @@ test('SM-5 registering with Claude Code (JSON): writes only to a temp directory,
   const st = reg.registrationStatus('claude-code', WANT, opts);
   assert.deepEqual([st.registered, st.current, st.undoable], [true, true, true]);
   assert.equal(reg.register('claude-code', WANT, opts).unchanged, true, 'Nothing is written if it is already the same entry');
-  // 登记之后 Claude Code 自己又改了别的键:撤销只还原 promptcut 这一条,不丢这次改动
+  // After registering, Claude Code modified other keys itself: undo only reverts the promptcut entry without losing those changes
   fs.writeFileSync(file, JSON.stringify({ ...after, numStartups: 8 }, null, 2));
   const u = reg.unregister('claude-code', WANT, opts);
   assert.equal(u.ok, true, u.error);
@@ -246,7 +254,7 @@ test('SM-6 an entry with the same name already exists: registering overwrites it
   assert.equal(reg.register('claude-code', WANT, opts).ok, true);
   assert.equal(reg.unregister('claude-code', WANT, opts).restored, true);
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers.promptcut, mine, 'Restored to the entry from before registration');
-  // 用户改过
+  // Modified by user
   assert.equal(reg.register('claude-code', WANT, opts).ok, true);
   const doc = JSON.parse(fs.readFileSync(file, 'utf8'));
   doc.mcpServers.promptcut.args.push('--debug');
@@ -254,7 +262,7 @@ test('SM-6 an entry with the same name already exists: registering overwrites it
   const refused = reg.unregister('claude-code', WANT, opts);
   assert.equal(refused.ok, false);
   assert.match(refused.error, /has been modified/);
-  // 原文件不存在
+  // Original file does not exist
   const fresh = path.join(dir, 'fresh', '.claude.json');
   const o2 = { configPath: fresh, stateDir: path.join(dir, 'state2') };
   const r = reg.register('claude-code', WANT, o2);
@@ -262,7 +270,7 @@ test('SM-6 an entry with the same name already exists: registering overwrites it
   assert.equal(r.backup, null, 'No original file means no backup');
   assert.equal(reg.unregister('claude-code', WANT, o2).ok, true);
   assert.deepEqual(JSON.parse(fs.readFileSync(fresh, 'utf8')).mcpServers, {});
-  // 坏 JSON:不动它
+  // Malformed JSON: leave it untouched
   const broken = path.join(dir, 'broken.json');
   fs.writeFileSync(broken, '{ nope');
   assert.throws(() => reg.register('claude-code', WANT, { configPath: broken, stateDir: path.join(dir, 's3') }), /is not valid JSON/);
@@ -303,7 +311,7 @@ test('SM-7 registering with Codex (TOML): touches only the [mcp_servers.promptcu
   assert.equal(reg.unregister('codex', WANT, opts).ok, true);
   assert.equal(fs.readFileSync(file, 'utf8'), original, 'Restored character by character after undo');
 
-  // 新文件
+  // New file
   const fresh = path.join(dir, 'new', 'config.toml');
   const o2 = { configPath: fresh, stateDir: path.join(dir, 's2') };
   assert.equal(reg.register('codex', WANT, o2).ok, true);
@@ -311,12 +319,12 @@ test('SM-7 registering with Codex (TOML): touches only the [mcp_servers.promptcu
   assert.equal(reg.unregister('codex', WANT, o2).ok, true);
   assert.equal(fs.readFileSync(fresh, 'utf8').includes('promptcut'), false);
 
-  // 别的写法
+  // Alternative syntax
   const odd = path.join(dir, 'odd.toml');
   fs.writeFileSync(odd, '[mcp_servers]\npromptcut = { command = "x" }\n');
   assert.throws(() => reg.register('codex', WANT, { configPath: odd, stateDir: path.join(dir, 's3') }), /in another form/);
 
-  // 默认路径:环境变量覆盖;测试进程里指的是临时目录
+  // Default path: overridden by environment variable; points to the temp directory in the test process
   assert.equal(reg.configPathOf('codex'), process.env.PROMPTCUT_CODEX_CONFIG);
   assert.equal(reg.configPathOf('claude-code'), process.env.PROMPTCUT_CLAUDE_CONFIG);
   assert.equal(reg.configPathOf('codex', { env: {}, home: 'H:\\u' }), path.join('H:\\u', '.codex', 'config.toml'));
@@ -326,7 +334,7 @@ test('SM-7 registering with Codex (TOML): touches only the [mcp_servers.promptcu
   assert.deepEqual(reg.mcpCommand('R:\\app', { execPath: 'N:\\node.exe' }), { command: 'N:\\node.exe', args: [path.join('R:\\app', 'server', 'mcp-server.mjs')] });
 });
 
-/* ------------------------------------------------------------------ 等级、A2、A3 */
+/* ------------------------------------------------------------------ Creativity level, A2, A3 */
 
 test('SM-8 the creativity level of a desktop session follows the project: the override passed at registration does not count; creating a card is rejected when the project is at a low tier and allowed at a high tier', () => {
   const s = createAgentSessions();
@@ -341,7 +349,7 @@ test('SM-8 the creativity level of a desktop session follows the project: the ov
   assert.equal(s.creativityOf('desk-A', 'medium').level, 'medium', 'When the project changes its level, the desktop session changes with it');
 });
 
-/** 与 vite-plugin-ai.ts 相同的接法:登记表、公告板(厂商名用 label)、multiAgent */
+/** Same integration as vite-plugin-ai.ts: registry, bulletin board (vendor name uses label), multiAgent */
 function rig() {
   const sessions = createAgentSessions();
   const labelOf = (k) => { const e = sessions.get(k); return e.label ?? e.vendor; };
@@ -366,7 +374,7 @@ test('SM-9 the A3 notice appears in the desktop session result: another desktop 
   assert.match(w.notice, /This write falls within a scope another Agent is editing: "Cut 1->Track 2" that Agent desk-A \(Claude Code\)/);
   const a = await r.ma.wrap('desk-A', 'get_clip', async () => ({ ok: true }));
   assert.match(a.notice, /Someone else is editing a scope you declared: Agent desk-B \(Codex\) using add_clip changed Cut 1->Track 2/);
-  // 消息:没有页签可投,带在它下一次工具结果里
+  // Message: no tab to deliver to, attached to its next tool result
   b.deliver({ from: 'desk-B', to: 'desk-A', text: 'I\'ll edit track2' });
   const m = await r.ma.wrap('desk-A', 'get_project', async () => ({ ok: true }));
   assert.match(JSON.stringify(m), /I'll edit track2/);
@@ -388,7 +396,7 @@ test('SM-10 the A2 "user is editing" notice appears in the desktop session resul
   assert.equal(other.notice, undefined, 'No notice if the clips the user is editing were not touched');
 });
 
-/* ------------------------------------------------------------------ AI 栏分组 */
+/* ------------------------------------------------------------------ AI panel groups */
 
 test('SM-11 data for AI panel groups: one group per session, with the operation in progress, recent calls, and progress reports (validated); limit and idleness', () => {
   let t = 1000;
@@ -415,7 +423,7 @@ test('SM-11 data for AI panel groups: one group per session, with the operation 
   assert.equal(snap[1].last.ok, false);
   assert.match(snap[1].last.error, /SKILL/);
   assert.ok(changes >= 5);
-  // 上限:第三个会话把最久没动的挤掉;闲置超时的不给
+  // Limit: the third session evicts the one idle the longest; idle timed-out sessions are omitted
   act.begin('desk-C', B, 'get_project', {});
   assert.equal(act.has('desk-B'), false);
   t = 1100 + 6000;
@@ -439,13 +447,13 @@ test('SM-12 the SKILL gate is by caller type (same logic as vite-plugin-ai.ts: r
   gate.openGate();
   assert.equal(gate.checkGate('get_project', typeOf('desk-A')).ok, true);
   gate.closeGate('test');
-  // 总入口随 Agent 服务搬到 server/agent/service/instance.mjs(契约 cloud-agent-contract.md 第 2.1 节)
+  // Main entry point moved to server/agent/service/instance.mjs with Agent service (contract cloud-agent-contract.md Section 2.1)
   const src = fs.readFileSync(path.join(ROOT, 'server', 'agent', 'service', 'instance.mjs'), 'utf8');
   assert.match(src, /gate\.checkGate\(tool, callerEntry\.registeredAt \? callerEntry\.type : 'unknown'\)/, 'The main entry point decides by the type in the registry');
   assert.equal(/PROMPTCUT_HEADLESS/.test(fs.readFileSync(path.join(ROOT, 'server', 'skill-gate.mjs'), 'utf8')), false, 'No longer decides by "is it a headless instance"');
 });
 
-/* ------------------------------------------------------------------ 归档(棘轮:只许减少) */
+/* ------------------------------------------------------------------ Archive (ratchet: decrease-only) */
 
 function walk(dirs, skip) {
   const files = [];
@@ -470,12 +478,12 @@ test('SM-13 after archiving the headless instance, task directory, submit_merge 
     /scripts\/headless\.mjs/, /__pcHeadless/, /\binstallHeadlessHooks\b/, /PROMPTCUT_OWNER_TOKEN/, /PROMPTCUT_VIEW_TOKEN/, /\bviewGatePlugin\b/,
     /\bSkillLock\b/, /\/api\/skill\/jobs/, /\/api\/skill\/start/, /skill-templates/, /\blaunchClaudeTask\b/, /\bcreateCodexTask\b/,
     /menu-merge-skill/, /Merge Skill results/, /\beditorOwner\b/, /x-pc-owner/];
-  // 这几个是说明历史的测试与数据文件(说明里记着删了哪些入口)
+  // These are test and data files documenting history (the description records which entry points were deleted)
   const skip = new Set(['server/test/skill-mcp.test.mjs', 'server/test/c10-api-ratchet-baseline.json', 'server/test/c10a-online-build.test.mjs', 'server/test/c10a-online-api-paths.json']);
   const hits = [];
   for (const [rel, text] of walk(['src', 'server', 'scripts'], skip)) for (const re of patterns) if (re.test(text)) hits.push(`${rel} :: ${re}`);
   assert.deepEqual(hits, [], `Archived entry points still have leftovers:\n${hits.join('\n')}`);
-  // PROMPTCUT_HEADLESS 只许留在「起子进程时把它从环境里删掉」的清单里(防旧环境带进来)
+  // PROMPTCUT_HEADLESS is only allowed in the "strip it from environment when spawning child processes" list (prevents legacy environment from bringing it in)
   const envScrub = new Set(['server/render-node/host.mjs', 'cloud/scripts/render-host.mjs', 'server/test/render-host.test.mjs', 'server/test/c66-integ.test.mjs', 'server/test/media-tiers.test.mjs']);
   const headless = walk(['src', 'server', 'scripts'], skip).filter(([rel, text]) => /PROMPTCUT_HEADLESS/.test(text) && !envScrub.has(rel) && !rel.startsWith('scripts/probes/')).map(([rel]) => rel);
   assert.deepEqual(headless, [], `PROMPTCUT_HEADLESS is still in feature code: ${headless.join(', ')}`);

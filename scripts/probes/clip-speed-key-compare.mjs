@@ -1,19 +1,27 @@
 /**
- * 片段速度(`TrackClip.speed`)的改前改后键比对:同一份样例项目在基准提交和当前工作区各算一遍各处身份与取帧口径。
+ * Before/after key comparison for clip speed (`TrackClip.speed`): calculates identities and frame
+ * fetch criteria across the board for the same sample project in baseline commit and current workspace.
  *
- *   1. 不带 speed 的项目(视频段、带裁剪起点的视频段、接视频的素材效果卡、交叉溶解、剪辑段里的视频、音频段、卡片):
- *      两边**逐字相同** —— 帧服务的帧身份与轨道前缀、镜像的项目哈希、层表输入签名(含剪辑段摊出来的虚拟片段)、
- *      `CardFrameCache.plan` 的六个键(缓存键两个、共享快照内容键与结果键、单卡流成员键、成本键)与其余字段、
- *      导出混音清单、看画面的素材时刻、导出兼容旁路的 ffmpeg 参数。
- *   2. 同一份项目里把两段视频改成 2 倍和 0.5 倍:当前工作区里,该变的(含这两段的帧身份、它们与接它们的素材效果卡的
- *      签名和键、混音清单、取帧时刻)都变了,别的片段不变;基准提交上不认 speed,输入签名和卡片键**不变** —— 这就是
- *      「漏加 speed 会命中旧快照、画面错了不报错」的那种情形。
+ *   1. Projects without speed (video clips, video clips with trimmed starts, media effect cards
+ *      attached to video, crossfades, video inside cut segments, audio clips, cards):
+ *      **verbatim identical** on both sides: frame service frame identity and track prefix,
+ *      mirrored project hash, layer table input signature (including virtual clips flattened from
+ *      cut segments), six keys of `CardFrameCache.plan` (two cache keys, shared snapshot content
+ *      key and result key, single-card stream member key, cost key) and remaining fields, export
+ *      mix manifest, asset time for viewing video, ffmpeg parameters for export compatibility bypass.
+ *   2. In the same project, change two video clips to 2× and 0.5×: in the current workspace,
+ *      everything that should change (including frame identities of these two clips, signatures and
+ *      keys for them and attached media effect cards, mix manifest, frame fetch times) has changed,
+ *      while other clips remain unchanged; baseline commit does not recognize speed, so input
+ *      signatures and card keys **remain unchanged**: this is the exact case where "missing speed
+ *      hits an old snapshot, displaying incorrect video without reporting an error".
  *
- * 用法(在仓库或工作区根目录):
- *   node scripts/probes/clip-speed-key-compare.mjs [--base <提交>]   缺省 --base main
+ * Usage (in repository or workspace root):
+ *   node scripts/probes/clip-speed-key-compare.mjs [--base <commit>]   defaults to --base main
  *
- * 基准的 src/、server/ 用 `git archive` 解到 out/clip-speed-keys/<提交>/(out/ 不入库),依赖向上解析到仓库的 node_modules。
- * 退出码:0 = 相符;1 = 有不符;2 = 跑不起来。
+ * Baseline src/ and server/ are unpacked to out/clip-speed-keys/<commit>/ via `git archive` (out/
+ * is not stored in the repository), resolving dependencies upward to repo node_modules.
+ * Exit codes: 0 = match; 1 = mismatch; 2 = cannot run.
  */
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -32,7 +40,7 @@ function checkoutBase(ref) {
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
   execFileSync('git', ['archive', '--format=tar', '-o', path.join(dir, 'base.tar'), sha, 'src', 'server'], { cwd: HERE, windowsHide: true });
-  // 相对路径 + cwd:Git Bash 带的 GNU tar 会把 `C:` 当成远端主机名
+  // Relative path + cwd: GNU tar shipped with Git Bash treats `C:` as a remote hostname
   execFileSync('tar', ['-xf', 'base.tar'], { cwd: dir, windowsHide: true });
   fs.rmSync(path.join(dir, 'base.tar'));
   fs.writeFileSync(path.join(dir, '.done'), sha);
@@ -87,7 +95,8 @@ async function measure(root, project) {
   const { CardFrameCache } = await imp('server/card-cache.mjs');
   const flat = flatPlanProject(project);
   const ids = flat.tracks.flatMap((t) => t.clips.map((c) => c.id));
-  // 当前工作区里出键的几处在 projectCardGraph 之后接 withMediaRates(基准没有这个函数,原样)
+  // Key-generating places in the current workspace pipe into withMediaRates after projectCardGraph
+  // (baseline does not have this function, left as-is)
   const clipTime = fs.existsSync(path.join(root, 'src/kernel/clipTime.mjs')) ? await imp('src/kernel/clipTime.mjs') : {};
   const graph = (clipTime.withMediaRates ?? ((_p, g) => g))(flat, projectCardGraph(flat, (id) => DEFS[id]));
   const plan = new CardFrameCache({ root: 'unused', project: flat, envFingerprint: '0123456789abcdef' }).plan({
@@ -129,9 +138,9 @@ for (const k of diff) { bad++; console.log(`✖ ${k}\n    baseline ${String(bPla
 console.log(`${diff.length ? '✖' : '✔'} ${same.length}/${keys.length} entries verbatim identical`);
 
 console.log('\n== 2. v-fx set to 2×, b1 in the cut segment set to 0.5× ==');
-// 当前工作区里必须变的
+// Must change in the current workspace
 const mustChange = ['frameIdentity', 'projectHash', 'audioPlan', 'vision@9', 'compose.args', 'compose.graph', 'sig v-fx', 'sig seg~b1', 'plan v-fx.contentKey', 'plan v-fx.snapshotKey', 'plan v-fx.streamMemberKey', 'plan seg~b1.contentKey'];
-// 不碰的片段必须不变
+// Untouched clips must remain unchanged
 const mustStay = ['sig c1', 'sig v-a', 'sig v-b', 'sig a-1', 'vision@1', 'vision@4', ...keys.filter((k) => /^plan (c1|v-a|v-b|a-1)\./.test(k))];
 for (const k of mustChange) {
   const ok = cSped[k] !== undefined && cSped[k] !== cPlain[k];

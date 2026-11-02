@@ -1,9 +1,12 @@
 /**
- * HT2：背压接到会话层（契约 `docs/plan/http-transport-contract.md` 第 3.4 节、第 7 节；H.2、H.3 原样）。
- * 跑：node --test server/test/ht2-backpressure.test.mjs
+ * HT2: Backpressure connected to the session layer (contract `docs/plan/http-transport-contract.md`
+ * section 3.4, section 7; H.2, H.3 verbatim).
+ * Run: node --test server/test/ht2-backpressure.test.mjs
  *
- * `buffered(connId)` 改为「这个会话里已写出、未确认的消息的字节数」：客户端不确认，积压就一直涨，
- * 与套接字读得快不快无关；传输断着的保留期里同样涨。只照契约写，没看实现；假设见 `ht-kit.mjs`。
+ * `buffered(connId)` changed to "byte count of written, unacknowledged messages in this session":
+ * if the client does not acknowledge, backlog keeps growing, regardless of how fast the socket
+ * reads; it also grows during the retention period while transport is disconnected. Written
+ * strictly to the contract without looking at the implementation; see assumptions in `ht-kit.mjs`.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +19,8 @@ test('HT2-no-ack the client keeps reading but never acknowledges: once unacknowl
   const env = await startService({ highWaterBytes: 64 * KB, maxPendingBytes: 256 * KB, retainMs: 60_000 });
   t.after(env.cleanup);
   const c = await openSession(env);
-  // 分十批、每批 40 KiB，批间停一下：套接字早就读空了，涨的只是「未确认」
+  // Split into 10 batches of 40 KiB each, pausing between batches: socket drained long ago; only
+  // "unacknowledged" grows
   for (let i = 0; i < 10; i++) {
     c.sendSeq({ type: 'ht.burst', count: 10, size: 4 * KB });
     await sleep(40);
@@ -77,7 +81,7 @@ test('HT2-coalesce coalescing keys work as before: while unacknowledged bytes ar
   const env = await startService({ highWaterBytes: 10 * KB, maxPendingBytes: 1024 * KB, retainMs: 60_000 });
   t.after(env.cleanup);
   const c = await openSession(env);
-  c.sendSeq({ type: 'ht.burst', count: 3, size: 4 * KB }); // 前两条写出时还在 10 KiB 高水位以下，三条写完 12 KiB 未确认，过了高水位
+  c.sendSeq({ type: 'ht.burst', count: 3, size: 4 * KB }); // When the first two were written out, it was still below the 10 KiB high-water mark; after three were written, 12 KiB was unacknowledged, exceeding the high-water mark
   await waitFor(() => c.all.filter((m) => m.type === 'ht.blob').length === 3, 2000, 'first three written out');
   c.sendSeq({ type: 'ht.burst', count: 5, size: 100, key: 'k' });
   await sleep(200);

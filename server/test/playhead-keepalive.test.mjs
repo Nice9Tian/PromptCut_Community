@@ -1,10 +1,13 @@
 /**
- * 播放保活在服务端一侧的账:页面播放中每 2 秒发一条 `{session, t, playing: true}`(不带 `wanted`),
- * 预渲染进程的 `streamBusy()` 与队列节点的 `interactionReason()` 在整段播放里一直为忙;
- * 保活停了 5 秒以后转闲。服务端的 5 秒、800 毫秒两个窗口不改。
- * 跑:node --test server/test/playhead-keepalive.test.mjs
+ * Server-side accounting for playback keepalive: while the page is playing, it sends
+ * `{session, t, playing: true}` (without `wanted`) every 2 seconds; the prerender process's
+ * `streamBusy()` and queue node's `interactionReason()` remain busy throughout playback;
+ * transitions to idle 5 seconds after keepalive stops. Do not change the server's 5-second
+ * and 800 ms windows.
+ * Run: node --test server/test/playhead-keepalive.test.mjs
  *
- * 时钟用 `mock.timers` 的 `Date`:镜像存储的 `setPlayhead` 在收到那一刻盖 `at`,判忙的两处读的是同一个 `at`。
+ * Clock uses `Date` from `mock.timers`: the mirror store's `setPlayhead` stamps `at` upon receipt,
+ * and both busy checks read the same `at`.
  */
 import test, { mock, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,19 +15,19 @@ import { createMirrorStore } from '../mirror-store.mjs';
 import { FramePipeline } from '../frame-pipeline.mjs';
 import { interactionReason, PLAYING_STALE_MS } from '../queue-idle.mjs';
 
-/** 页面保活的间隔(`src/render/dataMirror.ts` 的 `PLAYHEAD_KEEPALIVE_MS`) */
+/** Page keepalive interval (`PLAYHEAD_KEEPALIVE_MS` in `src/render/dataMirror.ts`) */
 const KEEPALIVE_MS = 2000;
 const PROJECT = { id: 'p', name: 'demo', width: 1920, height: 1080, fps: 30, duration: 60, tracks: [] };
 
 afterEach(() => { mock.timers.reset(); });
 
-/** 只有 `streamBusy` / `interactionReason` 会读的几个字段 */
+/** The few fields read only by `streamBusy` / `interactionReason` */
 function fakePipeline(store) {
   return { closed: false, playback: null, backgroundYielding: false, backgroundLeaseUntil: 0, playhead: () => store.latestPlayhead(),
     streamBusy: FramePipeline.prototype.streamBusy };
 }
 
-/** 从起播开始走 `seconds` 秒,每 250 毫秒问一次;`keepaliveUntil` 之前每 `KEEPALIVE_MS` 发一条保活 */
+/** Run `seconds` seconds from playback start, polling every 250 ms; send a keepalive every `KEEPALIVE_MS` before `keepaliveUntil` */
 function simulate({ seconds, keepaliveUntil, wanted }) {
   mock.timers.enable({ apis: ['Date'], now: 5_000_000 });
   const store = createMirrorStore();
@@ -37,7 +40,7 @@ function simulate({ seconds, keepaliveUntil, wanted }) {
   for (let elapsed = 0; elapsed <= seconds * 1000; elapsed += 250) {
     mock.timers.setTime(started + elapsed);
     if (elapsed >= nextKeepalive && elapsed <= keepaliveUntil) {
-      store.setPlayhead('s1', elapsed / 1000, true); // 保活不带 wanted
+      store.setPlayhead('s1', elapsed / 1000, true); // Keepalive does not include wanted
       nextKeepalive += KEEPALIVE_MS;
     }
     const now = Date.now();
@@ -64,7 +67,7 @@ test('Control: without keepalive, it goes idle after 5 seconds (this is the bug 
 });
 
 test('Goes idle 5 seconds after keepalive stops; busy the whole time before that', () => {
-  // 最后一条保活在 20 秒整
+  // Last keepalive at exactly 20 seconds
   const { rows } = simulate({ seconds: 30, keepaliveUntil: 20_000 });
   assert.ok(rows.filter((r) => r.elapsed <= 24_750).every((r) => r.busy && r.reason === 'playing'), 'Still busy within 5 seconds after the last keepalive');
   assert.equal(rows.find((r) => r.elapsed === 20_000 + PLAYING_STALE_MS).busy, false);

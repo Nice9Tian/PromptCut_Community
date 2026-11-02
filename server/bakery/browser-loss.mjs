@@ -29,7 +29,7 @@ export function isBrowserLoss(error) {
   return false;
 }
 
-/** How the Chrome process ended, e.g. "退出码 0xC0000409". The WebSocket can
+/** How the Chrome process ended, e.g. "exit code 0xC0000409". The WebSocket can
  * close slightly before the process reports its exit, so wait briefly. */
 export async function browserExitNote(browser, waitMs = 2000) {
   const proc = browser?.process?.();

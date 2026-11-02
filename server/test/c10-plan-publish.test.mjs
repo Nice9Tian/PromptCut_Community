@@ -1,17 +1,21 @@
 /**
- * C10 在线页面发布 `plan` 任务（`docs/plan/c10-contract.md` 第 7 节；`distributed-prerender-queue.md` 第 2 节）。
- * 跑：node --test server/test/c10-plan-publish.test.mjs
+ * C10 online page publishes `plan` task (`docs/plan/c10-contract.md` Section 7;
+ * `distributed-prerender-queue.md` Section 2).
+ * Run: node --test server/test/c10-plan-publish.test.mjs
  *
- *   C10-PP-01 测量落定之前不发（改动再多也不发）；
- *   C10-PP-02 测量落定后发一个 `task.publish`：渲染任务队列认得（`parseInbound`），`tasks[0]` 是 `plan`，
- *             `resultKey` = `<projectId>@<projectRev>`；不是当场发，而是防抖之后；
- *   C10-PP-03 防抖：连续几次改动只发一次，带最后那一版；
- *   C10-PP-04 发过之后再改：重发；
- *   C10-PP-05 没人认领不报错：回包 `task.published` 但一直没有 `task.done`、回包是 `error`、连接断着（`send` 回 false）、
- *             回包一直不来——都不抛、没有未处理的拒绝，之后的改动照常重发；
- *   C10-PP-06 `dispose()` 之后不再发。
+ *   C10-PP-01 Does not publish before measurement settles (no matter how many changes);
+ *   C10-PP-02 Publishes one `task.publish` after measurement settles: render queue recognizes it
+ *             (`parseInbound`), `tasks[0]` is `plan`, `resultKey` = `<projectId>@<projectRev>`; not
+ *             published immediately, but after debounce;
+ *   C10-PP-03 Debounce: multiple consecutive changes only publish once, carrying the latest version;
+ *   C10-PP-04 Changes after publishing: republish;
+ *   C10-PP-05 No error if unclaimed: response `task.published` but never `task.done`, response is
+ *             `error`, connection disconnected (`send` returns false), response never arrives: none
+ *             throw, no unhandled rejections, subsequent changes republish as usual;
+ *   C10-PP-06 No longer publishes after `dispose()`.
  *
- * 时间用 `mock.timers` 推（不看墙钟，忙机上不误报）。假设见 `c10-kit.mjs` 的 K6。实现不在时整组 skip。
+ * Advance time with `mock.timers` (does not check wall clock, avoids false positives on busy
+ * machines). Assumptions see K6 in `c10-kit.mjs`. Skip entire group when implementation is absent.
  */
 import test, { mock, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,7 +30,7 @@ const onUnhandled = (err) => unhandled.push(err);
 process.on('unhandledRejection', onUnhandled);
 afterEach(() => { mock.timers.reset(); });
 
-/** 假连接：记下发出的消息；`reply(msg)` 按策略回包 */
+/** Mock connection: records outgoing messages; `reply(msg)` replies per policy */
 function fakeEndpoint({ connected = true, reply = 'published' } = {}) {
   const ep = { sent: [], handlers: [], connected };
   ep.send = (msg) => {
@@ -141,7 +145,7 @@ it('C10-PP-05 no claimer is not an error: no throw, no unhandled rejection, and 
     const ep = fakeEndpoint(opts);
     const pub = await makePublisher(ep);
     assert.doesNotThrow(() => pub.measured(rev(1)));
-    await flush(600_000); // 十分钟：没人认领、回包不来也不该出事
+    await flush(600_000); // Ten minutes: no claims, no responses, nothing should go wrong
     ep.connected = true;
     assert.doesNotThrow(() => pub.changed(rev(2)));
     await flush(600_000);

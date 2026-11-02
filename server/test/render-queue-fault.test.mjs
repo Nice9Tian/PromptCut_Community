@@ -1,24 +1,30 @@
 /**
- * 渲染任务队列（M1）容错表用例 F1.1～F9.3。
- * 跑：node --test server/test/render-queue-fault.test.mjs
+ * Render queue (M1) fault tolerance table test cases F1.1–F9.3.
+ * Run: node --test server/test/render-queue-fault.test.mjs
  *
- * 依据：`docs/plan/distributed-prerender-queue.md` 第 5 节容错表与 5.1 节 C1～C6（设计）、
- * `docs/plan/render-queue-contract.md` A 节（契约）、`docs/plan/TASK-distributed-prerender-queue.md` 5.2 节（矩阵）。
- * 编号 F<行>.<序> 对应设计第 5 节容错表的行序。
+ * Based on: `docs/plan/distributed-prerender-queue.md` Section 5 fault tolerance table and
+ * Section 5.1 C1–C6 (design), `docs/plan/render-queue-contract.md` Section A (contract),
+ * `docs/plan/TASK-distributed-prerender-queue.md` Section 5.2 (matrix).
+ * Numbering F<row>.<seq> corresponds to the row order in Section 5 fault tolerance table of
+ * the design.
  *
- * 每条用例断言三样：任务状态（state / version / claim / attempts）、这一步发给每条连接的消息、
- * `describe()` 与前两者一致。只经契约 A.3 的公开接口驱动；常量用基线值，时钟用假时钟，`tick()` 手动调。
+ * Each test case asserts three things: task state (state / version / claim / attempts), messages
+ * sent to each connection at this step, and that `describe()` matches the former two. Driven only
+ * through the public interface of Contract A.3; constants use baseline values, clock uses a fake
+ * clock, and `tick()` is invoked manually.
  *
- * 公共布置（`setup`）：发布方 P（连接 p，身份 pub-1，用户 u1）发布任务 T；
- * 节点 A、B、C（连接 a、b、c，profile pc）和只看不做的 W（连接 w，profile pc；M6c X3 之前是 host）都 `queue.watch('all')`。
- * T 新建时 version = 1；A 以 expectVersion 1 认领后 version = token = 2（契约 A.7.2 第 5 步）。
+ * Common setup (`setup`): publisher P (connection p, identity pub-1, user u1) publishes task T;
+ * nodes A, B, C (connections a, b, c, profile pc) and watch-only W (connection w, profile pc; host
+ * before M6c X3) all `queue.watch('all')`.
+ * When T is newly created, version = 1; after A claims with expectVersion 1, version = token = 2
+ * (Contract A.7.2 step 5).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRenderQueue } from '../render-queue/index.mjs';
 import { createQueueHarness, makeTaskInput, T0 } from './fake-render-queue-env.mjs';
 
-// 设计第 8 节 Q4 的基线值（契约 A.2）
+// Baseline values from Section 8 Q4 of the design (Contract A.2)
 const LEASE = 30_000;
 const GRACE = 10_000;
 const STALL = 120_000;
@@ -35,14 +41,14 @@ function setup({ tasks = [T_IN], ...options } = {}) {
   h.node('a', 'node-A');
   h.node('b', 'node-B');
   h.node('c', 'node-C');
-  h.node('w', 'node-W', { profile: 'pc' });   // M6c X3：host 的 watch 'all' 只收摘要，只看不做的 W 改用 pc（原为 host）
+  h.node('w', 'node-W', { profile: 'pc' });   // M6c X3: host watch 'all' only receives summaries, watch-only W switched to pc (formerly host)
   const out = h.publish('p', tasks);
   for (const r of out.one('p', 'task.published').results) assert.equal(r.created, true, 'Setup: tasks should be newly created');
   h.bus.clear();
   return { h, id: tasks[0].id, ids: tasks.map(t => t.id) };
 }
 
-/** 认领成功：回 `task.claimed`，token = version = expectVersion + 1，租约从现在起算（契约 A.7.2 第 5 步）。 */
+/** Claim succeeded: returns `task.claimed`, token = version = expectVersion + 1, lease starts from now (Contract A.7.2 step 5). */
 function claimOk(h, conn, id, expectVersion) {
   const out = h.claim(conn, id, expectVersion);
   const m = out.one(conn, 'task.claimed');
@@ -51,14 +57,14 @@ function claimOk(h, conn, id, expectVersion) {
   assert.equal(m.token, m.version, 'token takes the version at the moment of claiming');
   assert.equal(m.leaseUntil, h.now() + LEASE, 'leaseUntil = now + LEASE_MS');
   assert.equal(m.task.id, id);
-  // 其它可见的 watch 者各收到一条 task.taken，认领者自己不收
+  // Other visible watchers each receive one task.taken, while the claimer does not receive it
   for (const w of WATCHERS) {
     if (w === conn) assert.equal(out.of(w, 'task.taken').length, 0, 'The claimer itself does not receive task.taken');
   }
   return { msg: m, out };
 }
 
-/** 按 `describe()` 断言任务；`exp === null` 表示应已删除。 */
+/** Assert task via `describe()`; `exp === null` indicates it should be deleted. */
 function assertTask(h, id, exp) {
   const t = h.task(id);
   if (exp === null) { assert.equal(t, null, `${id} should have been deleted`); return null; }
@@ -77,7 +83,7 @@ function assertTask(h, id, exp) {
   return t;
 }
 
-/** `conns` 每条各恰好收到一条关于 `id` 的 `task.opened`，其中的任务视图是 open、version、attempts。 */
+/** Each connection in `conns` receives exactly one `task.opened` for `id`, with task view open, version, attempts. */
 function assertOpened(out, conns, id, { version, attempts }) {
   for (const c of conns) {
     const list = out.of(c, 'task.opened').filter(m => m.task?.id === id);
@@ -106,7 +112,7 @@ function assertLeaseLost(out, conn, { id, token, reason }) {
   return m;
 }
 
-/** 契约 A.9：节点报到的回包 `node.welcome { nodeId, resumed, lost }`。 */
+/** Contract A.9: node check-in response `node.welcome { nodeId, resumed, lost }`. */
 function assertWelcome(out, conn, { nodeId, resumed, lost }) {
   const m = out.one(conn, 'node.welcome');
   assert.equal(m.nodeId, nodeId);
@@ -115,7 +121,7 @@ function assertWelcome(out, conn, { nodeId, resumed, lost }) {
   return m;
 }
 
-/** 把 T 做成 failed：A、B、C 各认领一次再 `fail`（MAX_ATTEMPTS = 3）。返回进入 failed 的时刻。 */
+/** Make T failed: A, B, C each claim once and then `fail` (MAX_ATTEMPTS = 3). Returns timestamp entering failed. */
 function failThrice(h, id) {
   let v = h.task(id).version;
   for (const [conn, err] of [['a', 'e1'], ['b', 'e2'], ['c', 'e3']]) {
@@ -127,7 +133,7 @@ function failThrice(h, id) {
   return h.now();
 }
 
-/* ============================================================ F1 认领者 WebSocket 断开 */
+/* ============================================================ F1 Claimer WebSocket disconnected */
 
 test('F1.1 claimer WebSocket disconnects: within the grace period (9.9 s) T is still held by A, with no broadcast', () => {
   const { h, id } = setup();
@@ -142,7 +148,7 @@ test('F1.1 claimer WebSocket disconnects: within the grace period (9.9 s) T is s
   h.advance(9_900).assertSilent('Tick within the grace period');
   assertTask(h, id, { state: 'claimed', version: 2, attempts: 0, claim: { nodeId: 'node-A', token: 2, leaseUntil: T0 + LEASE } });
 
-  // 恰好 10 s：比较是严格大于（契约 A.8），仍不回收
+  // Exactly 10 s: comparison is strictly greater than (Contract A.8), still not reclaimed
   h.at(T0 + GRACE).assertSilent('Tick exactly when the grace period expires');
   assertTask(h, id, { state: 'claimed', version: 2, attempts: 0, claim: { nodeId: 'node-A', token: 2 } });
   assert.equal(h.nodeInfo('node-A').connected, false);
@@ -167,7 +173,7 @@ test('F1.2 claimer WebSocket disconnects: after 5 s the same nodeId reconnects a
   assert.deepEqual(p.conns(), ['a2']);
   assertTask(h, id, { state: 'claimed', version: 2, claim: { token: 2, leaseUntil: T0 + 5_000 + LEASE, progress: { done: 5, changedAt: T0 + 5_000 } } });
 
-  // 原来的宽限期已清掉：过了 T0 + 10 s 也不回收
+  // Original grace period cleared: not reclaimed even after T0 + 10 s
   h.at(T0 + GRACE + 100).assertSilent('tick after reconnect');
   assertTask(h, id, { state: 'claimed', version: 2, attempts: 0, claim: { nodeId: 'node-A', token: 2 } });
 });
@@ -186,7 +192,7 @@ test('F1.3 Claimant WebSocket disconnects: grace period expires (10.1 s), T retu
 });
 
 test('F1.4 Claimant WebSocket disconnects: resuming with the old token after the grace period gets lease-lost, T unchanged (still open or already claimed by another node)', () => {
-  // 情形一：T 仍 open
+  // Case 1: T is still open
   {
     const { h, id } = setup();
     claimOk(h, 'a', id, 1);
@@ -195,13 +201,13 @@ test('F1.4 Claimant WebSocket disconnects: resuming with the old token after the
     h.clock.advance(1_000);
     const out = h.node('a2', 'node-A', { resume: [{ id, token: 2 }], watch: null });
     assertWelcome(out, 'a2', { nodeId: 'node-A', resumed: [], lost: [id] });
-    // 任务存在、不是 claimed → reason 'token'（契约 A.9「其余（不是 claimed、令牌不符）」）
+    // Task exists, not claimed → reason 'token' (Contract A.9 "other (not claimed, token mismatch)")
     assertLeaseLost(out, 'a2', { id, token: 2, reason: 'token' });
     assert.deepEqual(out.sortedTypes('a2'), ['node.welcome', 'task.lease-lost']);
     assert.deepEqual(out.conns(), ['a2'], 'Other connections receive nothing');
     assertTask(h, id, { state: 'open', version: 3, attempts: 1, claim: null });
   }
-  // 情形二：T 已被 B 认领
+  // Case 2: T has already been claimed by B
   {
     const { h, id } = setup();
     claimOk(h, 'a', id, 1);
@@ -210,7 +216,7 @@ test('F1.4 Claimant WebSocket disconnects: resuming with the old token after the
     claimOk(h, 'b', id, 3);
     const out = h.node('a2', 'node-A', { resume: [{ id, token: 2 }], watch: null });
     assertWelcome(out, 'a2', { nodeId: 'node-A', resumed: [], lost: [id] });
-    // 任务存在但认领者是 B → reason 'not-owner'（契约 A.9）
+    // Task exists but claimer is B → reason 'not-owner' (Contract A.9)
     assertLeaseLost(out, 'a2', { id, token: 2, reason: 'not-owner' });
     assert.deepEqual(out.conns(), ['a2']);
     assertTask(h, id, { state: 'claimed', version: 4, attempts: 1, claim: { nodeId: 'node-B', token: 4 } });
@@ -245,14 +251,14 @@ test('F1.6 Claimant WebSocket disconnects: within the grace period another nodeI
   assert.deepEqual(out.conns(), ['x']);
   assertTask(h, id, { state: 'claimed', version: 2, attempts: 0, claim: { nodeId: 'node-A', token: 2, leaseUntil: T0 + LEASE } });
 
-  // A 本人在宽限期内回来仍能接续：别人的 resume 没有破坏认领
+  // A returns within grace period and can still resume: another's resume did not break the claim
   h.clock.set(T0 + 5_000);
   const back = h.node('a2', 'node-A', { resume: [{ id, token: 2 }], watch: null });
   assertWelcome(back, 'a2', { nodeId: 'node-A', resumed: [id], lost: [] });
   assertTask(h, id, { state: 'claimed', version: 2, claim: { nodeId: 'node-A', token: 2 } });
 });
 
-/* ============================================================ F2 处理超时 */
+/* ============================================================ F2 Processing timeout */
 
 test('F2.1 Processing timeout: leaseUntil = t0 + 30 s, after advancing 29.9 s (and exactly 30 s) T is still claimed', () => {
   const { h, id } = setup();
@@ -273,7 +279,7 @@ test('F2.2 Processing timeout: after advancing 30.1 s, T returns to open, attemp
   const out = h.advance(30_100);
   assertTask(h, id, { state: 'open', version: 3, attempts: 1, claim: null, lastError: 'lease-expired' });
   assertLeaseLost(out, 'a', { id, token: 2, reason: 'lease-expired' });
-  // A 自己也是 watch 者，同样收到 task.opened
+  // A is also a watcher and receives task.opened as well
   assertOpened(out, WATCHERS, id, { version: 3, attempts: 1 });
   assert.deepEqual(out.sortedTypes('a'), ['task.lease-lost', 'task.opened']);
   for (const c of ['b', 'c', 'w']) assert.deepEqual(out.types(c), ['task.opened']);
@@ -292,7 +298,7 @@ test('F2.3 Processing timeout: a progress every 10 s (done increasing), 5 times 
     assert.deepEqual([r.id, r.token, r.leaseUntil], [id, 2, now + LEASE], `Lease renewal #${i}`);
     assert.deepEqual(out.conns(), ['a'], 'Lease renewal is not broadcast');
     h.tick().assertSilent(`tick after lease renewal #${i}`);
-    // progress 不是状态转移，version 不变（契约 A.7）
+    // progress is not a state transition, version remains unchanged (Contract A.7)
     assertTask(h, id, { state: 'claimed', version: 2, attempts: 0,
       claim: { token: 2, leaseUntil: now + LEASE, progress: { done: i * 10, changedAt: now } } });
   }
@@ -316,7 +322,7 @@ test('F2.4 Processing timeout: renew the lease once after advancing 20 s, then a
   assertLeaseLost(out, 'a', { id, token: 2, reason: 'lease-expired' });
 });
 
-/* ============================================================ F3 进度停滞 */
+/* ============================================================ F3 Progress stall */
 
 test('F3.1 Progress stall: done=24 reported every 10 s from t=10 s, the stall counts from t=10 s, not reclaimed before t=130 s, reclaimed on the first tick after that', () => {
   const { h, id } = setup();
@@ -365,7 +371,7 @@ test('F3.3 Progress stall: a task that never reported progress is governed only 
     assertLeaseLost(out, 'a', { id, token: 2, reason: 'lease-expired' });
     assertOpened(out, WATCHERS, id, { version: 3, attempts: 1 });
   }
-  // 把 STALL 调得比租约短，更能看出 done === null 时停滞扫描不管它（契约 A.8 第 2 项）
+  // Setting STALL shorter than lease shows clearly stall scan ignores it when done === null (Contract A.8 item 2)
   {
     const { h, id } = setup({ constants: { STALL_MS: 1_000 } });
     claimOk(h, 'a', id, 1);
@@ -378,7 +384,7 @@ test('F3.3 Progress stall: a task that never reported progress is governed only 
   }
 });
 
-/* ============================================================ F4 反复失败的任务 */
+/* ============================================================ F4 Repeatedly failing task */
 
 test('F4.1 Repeatedly failing task: A, B, C claim in turn and then fail, the first two return to open (attempts 1, 2), the third enters failed, the subscriber receives a failure notice carrying lastError', () => {
   const { h, id } = setup();
@@ -409,13 +415,13 @@ test('F4.1 Repeatedly failing task: A, B, C claim in turn and then fail, the fir
   }
   assert.equal(h.bus.ofType('task.failed').length, 1, 'The failure notice is sent only once');
 
-  // failed 之后谁来认领都是 taken
+  // After failed, any attempt to claim results in taken
   const rej = h.claim('a', id, 7).one('a', 'task.claim-rejected');
   assert.deepEqual([rej.reason, rej.state, rej.version], ['taken', 'failed', 7]);
 });
 
 test('F4.2 Repeatedly failing task: timeout, disconnect, stall and fail share one attempts count (C3), the third reclaim moves T to failed', () => {
-  // 矩阵原样：前两次超时回收，第三次认领后又超时
+  // Matrix as is: first two times timed out and reclaimed, third time timed out again after claiming
   {
     const { h, id } = setup();
     let v = 1;
@@ -435,7 +441,7 @@ test('F4.2 Repeatedly failing task: timeout, disconnect, stall and fail share on
     assertClosed(out, WATCHERS, id, 'failed');
     assert.equal(out.ofType('task.opened').length, 0);
   }
-  // 混合：fail → 断开宽限 → 停滞
+  // Mixed: fail → disconnect grace → stall
   {
     const { h, id } = setup();
     const { msg: m1 } = claimOk(h, 'a', id, 1);
@@ -506,16 +512,16 @@ test('F4.5 Repeatedly failing task: A releases voluntarily, T returns to open, a
   claimOk(h, 'a', id, 1);
   const out = h.release('a', id, 2, 'busy');
   assert.equal(out.one('a', 'task.released').id, id);
-  // release 不写 lastError（契约 A.10a）：新任务的 null 保持不变
+  // release does not write lastError (Contract A.10a): null for new tasks remains unchanged
   assertTask(h, id, { state: 'open', version: 3, attempts: 0, claim: null, lastError: null });
   assertOpened(out, WATCHERS, id, { version: 3, attempts: 0 });
   assert.deepEqual(out.sortedTypes('a'), ['task.opened', 'task.released']);
   assert.equal(out.of('p').length, 0);
 });
 
-/* ============================================================ F5 晚到的完成报告 */
+/* ============================================================ F5 Late completion report */
 
-/** A 认领（t1 = 2）→ 超时回收（v3）→ B 认领（t2 = 4）。 */
+/** A claims (t1 = 2) → timeout reclaim (v3) → B claims (t2 = 4). */
 function lateSetup() {
   const s = setup();
   claimOk(s.h, 'a', s.id, 1);
@@ -574,7 +580,7 @@ test('F5.4 Late completion report: after T is reclaimed and open, A sends progre
   assertTask(h, id, { state: 'open', version: 3, attempts: 1, claim: null });
 });
 
-/* ============================================================ F6 节点推产物推到一半就崩了 */
+/* ============================================================ F6 Node crashed halfway through pushing artifacts */
 
 test('F6.1 A node crashes halfway through pushing output: after reporting progress it neither completes nor disconnects, the lease expires and T returns to open, where it can be claimed again', () => {
   const { h, id } = setup();
@@ -611,7 +617,7 @@ test('F6.2 a node crashes halfway through pushing output: A disconnects and neve
   claimOk(h, 'b', id, 3);
 });
 
-/* ============================================================ F7 发布方断开 */
+/* ============================================================ F7 Publisher disconnected */
 
 test('F7.1 publisher disconnects: after the grace period expires, only the open task T1 subscribed by P is deleted (watchers receive task.closed), and the claimed T2 is kept', () => {
   const { h, ids: [id1, id2] } = setup({ tasks: [T1_IN, T2_IN] });
@@ -665,7 +671,7 @@ test('F7.3 publisher disconnects: T has two subscribers, P and Q; after P\'s gra
   assert.equal(h.publisherInfo('pub-1'), null);
   assert.equal(h.publisherInfo('pub-2').connected, true);
 
-  // P 以同一身份再连上：记录已删，是新的发布方，不再是 T 的订阅者
+  // P reconnects with same identity: record deleted, it is a new publisher, no longer a subscriber to T
   h.publisher('p2', 'pub-1');
   claimOk(h, 'a', id, 1);
   const out = h.complete('a', id, 2, { ranges: [[0, 59]] });
@@ -691,9 +697,9 @@ test('F7.4 publisher disconnects: reconnects with the same identity within the g
   assert.equal(out.ofType('task.done').length, 1);
 });
 
-/* ============================================================ F8 文档服务重启 */
+/* ============================================================ F8 Document service restart */
 
-/** Q1：P 发布 T，A 认领（t1 = 2）。Q2：新实例（新 epoch），同一批身份重连。 */
+/** Q1: P publishes T, A claims (t1 = 2). Q2: new instance (new epoch), same batch of identities reconnects. */
 function restartSetup({ q1Done = false } = {}) {
   const h1 = createQueueHarness(createRenderQueue);
   h1.publisher('p', 'pub-1');
@@ -758,7 +764,7 @@ test('F8.4 document service restart: T was already done on the old instance; rep
   assertTask(h2, id, { state: 'open', version: 1, attempts: 0 });
 });
 
-/* ============================================================ F9 宽限期里两个节点都以为持有同一个任务 */
+/* ============================================================ F9 Two nodes both believe they hold the same task during grace period */
 
 test('F9.1 two nodes both think they hold the same task during the grace period: within A\'s grace period after disconnecting, B claims with the current version and gets taken, T stays claimed', () => {
   const { h, id } = setup();

@@ -1,8 +1,9 @@
 /**
- * M6a 共享项目：HTTP 端点（契约 `docs/plan/auth-contract.md` 第 3、4 节，用例 AU1）。
- * 跑：node --test server/test/auth-create.test.mjs
+ * M6a shared project: HTTP endpoints (contract `docs/plan/auth-contract.md` sections 3 and 4, case AU1).
+ * Run: node --test server/test/auth-create.test.mjs
  *
- * 只照契约写，不看实现。起服务的接口是测试方的假设，集中在 `auth-kit.mjs` 文件头。
+ * Written strictly against the contract, without looking at the implementation. The interfaces
+ * to start the service are the test side's assumptions, centralized in the `auth-kit.mjs` header.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -37,7 +38,7 @@ test('AU1 shared/create succeeds in both modes: 201 { ok, projectId: sp_<26 lowe
     assert.equal(l.status, 200, l.text);
     assert.deepEqual({ ok: l.json.ok, projectId: l.json.projectId, name: l.json.name, mode: l.json.mode }, { ok: true, projectId: r.json.projectId, name: body.name, mode });
 
-    // 第 3 节：每个共享项目一个记录文件
+    // Section 3: one record file per shared project
     assert.ok(fs.existsSync(path.join(env.dataDir, 'auth', 'projects', `${r.json.projectId}.json`)), 'credential record is written to <data directory>/auth/projects/<projectId>.json');
   }
   assert.ok(fs.existsSync(path.join(env.dataDir, 'auth', 'server.json')), 'first start generates auth/server.json');
@@ -59,7 +60,7 @@ test('AU1 a second creation with the same name returns 409 name-taken: a differe
     assert.equal(r.status, 409, `"${name}" should be 409: ${r.text}`);
     assert.deepEqual(r.json, { ok: false, error: 'name-taken' });
   }
-  // lookup 同样按规范化比较
+  // lookup likewise compares using normalization
   const l = await env.http(`shared/lookup?name=${encodeURIComponent(nfd.toUpperCase())}`);
   assert.equal(l.status, 200, l.text);
   assert.equal(l.json.projectId, first.json.projectId);
@@ -97,7 +98,8 @@ test('AU1 missing or invalid fields return 400 bad-request (lead session ruling:
   const noList = createBody({ mode: 'restricted' });
   delete noList.list;
   const r = await env.http('shared/create', { method: 'POST', body: noList });
-  // 主会话裁定（2026-09-26，契约第 14 节）：限定进入缺 list 等同空名单，只有创建者一人，合法
+  // Lead session ruling (2026-09-26, contract section 14): restricted entry missing list is
+  // equivalent to an empty list, with only the creator alone, valid
   assert.equal(r.status, 201, `restricted entry with a missing list = empty list: ${r.text}`);
   const emptyList = { projectId: r.json.projectId, mode: 'restricted', creator: { username: 'alice', password: 'creator-pw' }, list: [] };
   assert.equal(await joinStatus(env, emptyList, { username: 'bob', password: 'bob-pw', remote: '203.0.113.90' }), 401, 'empty list: handshake with a username not on the list returns 401');
@@ -129,9 +131,9 @@ test('AU1 LAN host (mounted mode): creating a project from a non-loopback source
   }
   const ok = await env.http('shared/create', { method: 'POST', body: createBody() });
   assert.equal(ok.status, 201, ok.text);
-  // 挂载模式的端点在 /docservice/shared/…
+  // Attached mode endpoints are at /docservice/shared/…
   assert.ok(env.httpBase.endsWith('/docservice/'));
-  // 非回环来源可以 lookup、取挑战
+  // Non-loopback origins can perform lookup and fetch challenges
   const l = await env.http(`shared/lookup?name=${encodeURIComponent(ok.json.name)}`, { remote: LAN });
   assert.equal(l.status, 200, l.text);
 });

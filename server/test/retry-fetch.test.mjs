@@ -1,4 +1,4 @@
-// node --test server/test/retry-fetch.test.mjs —— API 直连的自动重试
+// node --test server/test/retry-fetch.test.mjs: automatic retry for direct API
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -7,7 +7,7 @@ const { createRetryingFetch, RETRYABLE_STATUS, backoffMs, DEFAULT_RETRY, isRetry
 const { withIdleTimeout } = await import('../harness/idle-timeout.mjs');
 const { readSse } = await import('../harness/providers/base.mjs');
 
-/** 假响应。headers.get 只认 retry-after */
+/** Mock response. headers.get only recognizes retry-after */
 function res(status, { retryAfter } = {}) {
   return {
     status,
@@ -17,7 +17,7 @@ function res(status, { retryAfter } = {}) {
   };
 }
 
-/** 构造一条 HTTP 200 SSE 流响应 */
+/** Construct an HTTP 200 SSE stream response */
 function sseRes(chunks) {
   return {
     status: 200,
@@ -33,7 +33,7 @@ function sseRes(chunks) {
   };
 }
 
-/** 按剧本依次返回;数字 = 状态码,Error 实例 = 抛出去,函数 = 调用取响应 */
+/** Return in sequence by script; number = status code, Error instance = throw, function = call to get response */
 function scripted(seq) {
   const calls = [];
   const fetchImpl = async (url, init) => {
@@ -46,7 +46,7 @@ function scripted(seq) {
   return { fetchImpl, calls };
 }
 
-/** 不真的睡:把等待时间记下来 */
+/** Do not actually sleep: record the wait time */
 function noSleep() {
   const waits = [];
   return { waits, opts: { rand: () => 0.5, onRetry: (i) => waits.push(i.delayMs) } };
@@ -117,7 +117,7 @@ test('If the server sends Retry-After, follow it rather than our own computed ba
     baseDelayMs: 1, maxDelayMs: 60000,
     onRetry: (i) => waits.push(i.delayMs),
   });
-  // 假响应里没带 retry-after,先确认走的是退避
+  // Mock response does not include retry-after; first confirm that backoff is used
   await f('u', {});
   assert.ok(waits[0] <= 1, `Without Retry-After the backoff should be used, got ${waits[0]}`);
 
@@ -147,13 +147,13 @@ test('However large Retry-After is, it is clamped by maxDelayMs so the other sid
 
 test('Backoff is exponential with jitter, and the cap holds', () => {
   const cfg = { baseDelayMs: 500, maxDelayMs: 8000 };
-  const half = (n) => backoffMs(n, cfg, () => 1); // rand=1 → 取满额
+  const half = (n) => backoffMs(n, cfg, () => 1); // rand=1 → take full amount
   assert.equal(half(0), 500);
   assert.equal(half(1), 1000);
   assert.equal(half(2), 2000);
   assert.equal(half(5), 8000, 'Stops growing once it reaches the cap');
   assert.equal(half(9), 8000);
-  // 抖动:同一档在 50%~100% 之间
+  // Jitter: same tier is between 50% and 100%
   assert.equal(backoffMs(1, cfg, () => 0), 500);
   assert.equal(backoffMs(1, cfg, () => 1), 1000);
 });
@@ -163,7 +163,7 @@ test('Stop retrying once the total budget runs out, even if retries remain', asy
   let clock = 0;
   const f = createRetryingFetch(fetchImpl, {
     baseDelayMs: 1, maxDelayMs: 1, maxTotalMs: 50,
-    now: () => (clock += 30),   // 每次问时间都往前跳 30ms
+    now: () => (clock += 30),   // Jump forward 30ms each time time is queried
     onRetry: () => {},
   });
   const r = await f('u', {});
@@ -221,7 +221,7 @@ test('A single attempt that triggers withIdleTimeout (external signal not aborte
   const rawFetch = (url, init) => {
     attempt++;
     if (attempt === 1) {
-      // 第一次尝试卡死,直到 withIdleTimeout 触发
+      // First attempt hangs until withIdleTimeout triggers
       return new Promise((_res, rej) => {
         init.signal.addEventListener('abort', () => rej(init.signal.reason), { once: true });
       });
@@ -243,7 +243,7 @@ test('A single attempt that triggers withIdleTimeout (external signal not aborte
   for await (const ev of readSse(r)) evs.push(ev.data);
   assert.ok(evs.some((d) => d.includes('Second try worked')));
 
-  // 用户主动点停止(外部 signal.aborted === true)时绝不重试
+  // Never retry when the user explicitly clicks stop (external signal.aborted === true)
   let stopAttempts = 0;
   const stopAc = new AbortController();
   const stopFetch = (url, init) => {
@@ -286,7 +286,7 @@ test('DEFAULT_RETRY.maxTotalMs is 20 minutes: when each attempt takes 95 seconds
     'data: {"error":{"message":"The upstream service timed out. Please try again later. (request id: 202610180052009722857049rKYajio)"}}\n\n';
   let clock = 0;
   const timedTimeoutStep = () => {
-    clock += 95_000; // 模拟单次上游挂起 95 秒后返回 SSE error
+    clock += 95_000; // Simulate a single upstream hang of 95 seconds before returning SSE error
     return sseRes([upstreamTimeoutChunk]);
   };
   const { fetchImpl, calls } = scripted([

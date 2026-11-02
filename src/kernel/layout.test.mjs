@@ -1,13 +1,15 @@
 /**
- * kernel/layout.ts 的单测。跑:node --test src/kernel/layout.test.mjs
+ * Unit test for kernel/layout.ts. Run: node --test src/kernel/layout.test.mjs
  *
- * 这是「Agent 说的位置」到「屏幕上的像素」之间唯一的一道换算。它算错不会报错,
- * 只会让卡片出现在别的地方,而且 world/local 两边一旦不自洽,Agent 会拿到
- * 两个互相矛盾的答案还不知道信哪个。所以钉死:
- *   - 没有 frame 时输出和以前逐字节一样(老项目的导出基线不能动);
- *   - 锚点语义:x,y 是锚点的位置,不是左上角;
- *   - world 和 local 在卡片级恒等,反解是 round-trip;
- *   - 校验的错误信息说人话,而且不能让坏值溜进 frame。
+ * This is the only conversion between "the position specified by the Agent" and "pixels on screen".
+ * If it calculates wrong, it won't throw an error; it just makes the card appear somewhere else.
+ * And once world and local are inconsistent, the Agent receives two contradictory answers without
+ * knowing which to trust. So pin down:
+ *   - When there is no frame, output is byte-for-byte identical to before (export baseline of
+ *     legacy projects cannot be changed);
+ *   - Anchor semantics: x, y is the position of the anchor, not the top-left corner;
+ *   - world and local are identical at the card level; inverse solving is a round-trip;
+ *   - Validation error messages speak human, and bad values must not slip into frame.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -45,7 +47,8 @@ test("A bottom-right anchor snaps to the bottom-right corner of the stage", () =
 });
 
 test("Omitting w/h means the stage size; omitting anchor means the top-left corner", () => {
-  // 三维那三项的默认值也一起钉住:它们必须默认为 0,否则「没开三维的项目渲染不变」这条就破了
+  // Also pin down the defaults for those three 3D items: they must default to 0, otherwise
+  // the rule "rendering remains unchanged for projects without 3D enabled" is broken
   assert.deepEqual(resolveFrame({ x: 100, y: 50 }, STAGE), {
     x: 100, y: 50, w: 1920, h: 1080, anchor: [0, 0], scale: 1, rotate: 0,
     rotateX: 0, rotateY: 0, translateZ: 0,
@@ -98,7 +101,7 @@ test("framePatchFromArgs: bad values must not slip through, and error messages a
   assert.throws(() => framePatchFromArgs({ anchor: "center" }, STAGE), /anchor must be two numbers/);
 });
 
-/* ---------- visualBox:判遮挡要看的那个框 ---------- */
+/* ---------- visualBox: the box to check for occlusion ---------- */
 
 test("visualBox: equals box when there is no scale and no rotation", () => {
   const f = { x: 960, y: 540, w: 400, h: 200, anchor: [0.5, 0.5] };
@@ -126,7 +129,7 @@ test("visualBox: a 90° rotation swaps width and height (within floating-point e
 test("rectToFrame fit (default): the canvas stays unchanged, is scaled to fit into the rectangle, and is centered", () => {
   const f = rectToFrame({ x1: 0, y1: 270, x2: 960, y2: 810 }, {}, undefined, STAGE);
   assert.deepEqual(f, { x: 480, y: 540, w: 1920, h: 1080, anchor: [0.5, 0.5], scale: 0.5 });
-  // 缩放后的可见框正好落在矩形里
+  // The scaled visible box lands right inside the rectangle
   assert.deepEqual(visualBox(f, STAGE), { left: 0, top: 270, width: 960, height: 540 });
 });
 
@@ -223,7 +226,8 @@ test("clampToStage: if it goes past the left/top edge it is moved back the same 
 });
 
 test("clampToStage: computed from the scaled visible frame, not from the canvas", () => {
-  // 画布 1920 宽、缩到 0.5 后 960 宽,锚点在中心放到 x=1700 → 可见框右缘 2180,要挪回 260
+  // Canvas 1920 wide, scaled to 0.5 is 960 wide, center anchor placed at x=1700 → visible box right
+  // edge 2180, must shift back 260
   const f = clampToStage({ x: 1700, y: 540, anchor: [0.5, 0.5], scale: 0.5 }, STAGE);
   assert.equal(f.x, 1440);
   assert.equal(visualBox(f, STAGE).left + visualBox(f, STAGE).width, 1920);
@@ -234,7 +238,7 @@ test("clampToStage: a frame larger than the stage cannot be clamped back and is 
   assert.equal(f.x, -100);
 });
 
-/* ---------- 主体检测 → 矩形 ---------- */
+/* ---------- subject detection → rectangle ---------- */
 
 test("rectForSafeSide: left/right is a half screen, top/bottom is a 1/3 band, with margins left", () => {
   assert.deepEqual(rectForSafeSide("left", STAGE, 40), { x1: 40, y1: 40, x2: 920, y2: 1040 });
@@ -257,8 +261,9 @@ test("nudgeFrame: empty calls and non-positive multipliers are both rejected", (
 });
 
 /*
- * 三维。硬要求是**没用到三维的项目,输出一个字节都不变** ——
- * 老项目的导出有逐像素基线,哪怕多一个恒等变换都可能让合成器换一条光栅路径。
+ * 3D. The hard requirement is **projects that do not use 3D must not change a single byte in output**:
+ * exports of legacy projects have pixel-by-pixel baselines; even an extra identity transform
+ * could make the compositor switch rasterization paths.
  */
 test("3D: when none of the three fields is set, transform is exactly as before and preserve-3d is not added", () => {
   const before = frameCss({ x: 960, y: 540, w: 400, h: 200, anchor: [0.5, 0.5], scale: 2, rotate: 15 }, STAGE);
@@ -276,7 +281,8 @@ test("3D: translateZ / rotateX / rotateY are each written into transform", () =>
 test("3D comes before scale/rotate: lay out within the plane first, then place the whole card into space", () => {
   const css = frameCss({ x: 0, y: 0, translateZ: 100, rotateY: 30, scale: 2, rotate: 10 }, STAGE);
   assert.equal(css.transform, "translateZ(100px) rotateY(30deg) scale(2) rotate(10deg)");
-  // 反过来的话倾斜会被后面的缩放拉伸,用户调 scale 时会发现透视跟着变形
+  // If reversed, skew will be stretched by subsequent scale; users adjusting scale would see
+  // perspective distort
   assert.ok(css.transform.indexOf("rotateY") < css.transform.indexOf("scale"));
 });
 
@@ -292,18 +298,20 @@ test("3D: the old path without a frame is completely untouched", () => {
 });
 
 /*
- * 三维下的 visualBox / clamp。
+ * visualBox / clamp in 3D.
  *
- * 这里出错不会报任何错,只会让两个判断悄悄给出平面时代的答案:
- *   - clamp:true 以为卡片还在画面里,什么都不做,卡片其实已经飞出去了;
- *   - get_layout 返回的 visualBox 和屏幕上实际占的地方对不上,Agent 据此判遮挡会判错。
+ * Errors here won't throw any error; they just quietly give 2D-era answers to two checks:
+ *   - clamp:true assumes the card is still in the frame and does nothing, when the card has
+ *     actually flown out;
+ *   - The visualBox returned by get_layout does not match the actual area occupied on screen,
+ *     causing the Agent to judge occlusion incorrectly based on it.
  */
 test("3D: visualBox uses perspective projection, so pushing toward the viewer makes it bigger, and the farther from the picture center, the further out of bounds it is pushed", () => {
   const stage = { width: 1920, height: 1080 };
   const flat = visualBox({ x: 960, y: 540, w: 400, h: 200, anchor: [0.5, 0.5] }, stage, 40);
   assert.equal(Math.round(flat.width), 400, "There should be no change at z=0");
 
-  // 相机距离 d = 1080 / (2·tan20°) ≈ 1483.6;推到 z=700,放大 d/(d−700) ≈ 1.893
+  // Camera distance d = 1080 / (2·tan20°) ≈ 1483.6; pushed to z=700, magnification d/(d−700) ≈ 1.893
   const near = visualBox({ x: 960, y: 540, w: 400, h: 200, anchor: [0.5, 0.5], translateZ: 700 }, stage, 40);
   assert.ok(Math.abs(near.width - 400 * 1.893) < 4, `Should scale up to ≈757, got ${near.width}`);
 
@@ -316,9 +324,11 @@ test("3D: clamp must really snap to the edge, and must not overshoot in either d
   const edge = (f) => { const vb = visualBox(f, stage, 40); return vb.left + vb.width; };
 
   /*
-   * 越界量是在**投影后**量的,x 存的是投影前的 —— 差一个 d/(d−z) 倍。
-   * 不换算的话:z 为负挪不够(夹完还在画外),z 为正挪过头(被拽到大半屏之外)。
-   * 这条测试当初只测了 z 为正、断言又只写了 right <= 1920.5,过冲照样通过,所以没抓到。
+   * The out-of-bounds delta is measured **post-projection**, while x stores pre-projection:
+   * differing by a factor of d/(d−z). Without conversion: negative z moves too little (still outside
+   * the frame after clamping), positive z overshoots (pulled more than half a screen away).
+   * Originally this test only checked positive z, and the assertion only checked right <= 1920.5,
+   * so overshooting still passed and was not caught.
    */
   for (const z of [-800, -300, 0, 300, 700]) {
     const frame = { x: 2400, y: 540, w: 800, h: 450, anchor: [0.5, 0.5], ...(z ? { translateZ: z } : null) };
@@ -326,7 +336,7 @@ test("3D: clamp must really snap to the edge, and must not overshoot in either d
     const right = edge(c);
     assert.ok(right <= 1920.5, `z=${z}: still out of frame after clamping, the right edge is at ${right}`);
     assert.ok(right >= 1919.5, `z=${z}: clamped too far, the right edge only reaches ${right}, it should touch 1920`);
-    // 幂等:再夹一次不该再动
+    // Idempotent: clamping again should not move it further
     const again = clampToStage(c, stage, 40);
     assert.ok(Math.abs(again.x - c.x) < 0.01, `z=${z}: clamping again moved it again, ${c.x} → ${again.x}`);
   }
@@ -354,7 +364,7 @@ test("3D: when clamp cannot pull it back (larger than the stage after projection
 test("3D: without a camera, rotateY is just an affine squash, and visualBox must still be computed truthfully", () => {
   const stage = { width: 1920, height: 1080 };
   const vb = visualBox({ x: 960, y: 540, w: 400, h: 200, anchor: [0.5, 0.5], rotateY: 60 }, stage);
-  // cos60° = 0.5,宽压成一半;没有透视所以高度不变
+  // cos60° = 0.5, width compressed to half; no perspective so height remains unchanged
   assert.ok(Math.abs(vb.width - 200) < 0.5, `Should squash to 200, got ${vb.width}`);
   assert.ok(Math.abs(vb.height - 200) < 0.5, `Height should not change, got ${vb.height}`);
 });
@@ -365,7 +375,8 @@ test("3D: when a card is pushed behind the camera, give a very large but finite 
   const vb = visualBox({ x: 960, y: 540, w: 400, h: 200, anchor: [0.5, 0.5], translateZ: d + 500 }, stage, 40);
   assert.ok(Number.isFinite(vb.width) && Number.isFinite(vb.left), `Must not produce NaN/Infinity: ${JSON.stringify(vb)}`);
   assert.ok(vb.width > stage.width, "For a card past the camera plane, the frame should be big enough that the problem is obvious at a glance");
-  // 比舞台还大的框 clampToStage 本来就不夹,所以不会被拉出个荒唐的位置
+  // Boxes larger than the stage are not clamped by clampToStage to begin with, so they won't
+  // be pulled into an absurd position
   const clamped = clampToStage({ x: 960, y: 540, w: 400, h: 200, anchor: [0.5, 0.5], translateZ: d + 500 }, stage, 40);
   assert.equal(clamped.x, 960);
 });

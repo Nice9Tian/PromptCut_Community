@@ -1,13 +1,16 @@
 /*
- * 社区版的空桩：浏览器侧那几个「云端扩展包」别名在没有闭源目录时指到这里。
+ * Empty stub for community edition: aliases for the several "cloud extension packages" on the
+ * browser side point here when no closed source directory exists.
  *
- * 为什么需要它：浏览器侧的加载点引的是**别名说明符**（`#promptcut-cloud-*`），由
- * `server/vite-plugin-cloud-seams.ts` 在构建时解析。社区版没有闭源目录，别名必须仍然能解析到
- * 一个真实模块，否则 `vite build` 会当场报 "Failed to resolve import" —— 构建期的失败，
- * 不是运行期的优雅降级。所以这里给一个什么都不导出的模块。
+ * Why it is needed: call sites on the browser side reference **alias specifiers**
+ * (`#promptcut-cloud-*`), resolved at build time by `server/vite-plugin-cloud-seams.ts`. The community
+ * edition has no closed source directory, but aliases must still resolve to a real module; otherwise
+ * `vite build` would immediately report "Failed to resolve import": a build-time failure, not a
+ * graceful runtime downgrade. Therefore, an empty module exporting nothing is provided here.
  *
- * 各加载点判「装上了没有」看的是 `register` / `registerUi` / `manifest` 这几个导出在不在。
- * 本文件一个都不导出，所以它们一律落回公开侧自带的默认实现（局域网成员源、云端关着、
- * codeVersion 为 null 等等），这正是社区版该有的样子。
+ * Call sites determine "whether installed" by checking presence of `register` / `registerUi` /
+ * `manifest` exports. This file exports none of them, so they all fall back to default implementations
+ * included on the open side (LAN member source, cloud closed, codeVersion as null, etc.), which is
+ * exactly what the community edition should be.
  */
 export {};

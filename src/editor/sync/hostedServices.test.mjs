@@ -1,16 +1,22 @@
 /**
- * HR24：项目设置里「托管方的渲染节点」的勾选与成员列表里的服务行（契约 `docs/plan/hosted-render-contract.md` 第 1.7、3、10.1 节）。
+ * HR24: Checkbox for "Host render node" in project settings and service rows in member list
+ * (contract `docs/plan/hosted-render-contract.md` sections 1.7, 3, 10.1).
  *
  *   node --test src/editor/sync/hostedServices.test.mjs
  *
- *   HR24a 纯逻辑：成员列表顶层 `hosted` 的解析；显示条件（放云端且 `available`）；`hosted-service-changed` 落到状态上；
- *         成员列表拆成成员与服务行（服务行在后、不计数）
- *   HR24b 组件：放本机、没有 `hosted` 字段、`available` 为假时没有这一项；放云端且 `available` 时出现，缺省勾上；
- *         创建者能改（勾选没有 disabled）、其他成员只读（disabled，另有「只有创建者能改」）；点勾选把「要改成什么」交给上层
- *   HS10～HS12：渲染节点下面的子选项「生成轨道流」（见文件末尾）
- *   HS13：账号项目那条路（状态从会话里来、没有创建者密码这一步、成员靠前后两次读到的状态得到提示）
- *   同步管理（`syncManager.ts`）把成员列表的 `hosted` 与 `hosted-service-changed` 通知接到上面两个纯函数；它在 Node 里载不起来（要浏览器环境），
- *   那一段在浏览器里验（报告里的两张截图与断言）。
+ *   HR24a Pure logic: parsing top-level `hosted` in member list; display conditions (in cloud and
+ *         `available`); `hosted-service-changed` applied to state; member list split into members
+ *         and service rows (service rows at end, not counted)
+ *   HR24b Component: item absent when local, lacking `hosted` field, or `available` is false;
+ *         appears and checked by default when in cloud and `available`; creator can edit (checkbox
+ *         not disabled), other members read-only (disabled, with "Only creator can edit"); clicking
+ *         checkbox passes target value to upper layer
+ *   HS10-HS12: Sub-option "Generate track stream" under render node (see end of file)
+ *   HS13: Account project path (state comes from session, no creator password step, members
+ *         prompted by comparing two consecutive states)
+ *   Sync manager (`syncManager.ts`) connects member list `hosted` and `hosted-service-changed`
+ *   notifications to the two pure functions above; it cannot load in Node (requires browser
+ *   environment), and that part is verified in browser (two screenshots and assertions in report).
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test from "node:test";
@@ -85,7 +91,7 @@ test("HR24a member list: service rows come after the members and are not counted
   assert.equal(H.serviceRowLabel(undefined), "Host's service");
 });
 
-/** 渲染 HostedServiceRows(TSX 经 vite 的 ssrLoadModule 载入,与 stageLocalOnly.test.mjs 同一做法) */
+/** Render HostedServiceRows (TSX loaded via Vite ssrLoadModule, same approach as stageLocalOnly.test.mjs) */
 async function withRows(fn) {
   const server = await createServer({ root: ROOT, configFile: false, logLevel: "error", server: { middlewareMode: true, hmr: false, ws: false, watch: null },
     appType: "custom", optimizeDeps: { noDiscovery: true, include: [] } });
@@ -130,7 +136,7 @@ test("HR24b in the cloud and available: appears, checked by default; the creator
 }));
 
 test("HR24b clicking the checkbox: pass the requested new value up to the parent component (creator identity verification is done by the parent's CreatorFlow)", () => withRows(({ M }) => {
-  // 直接取元素树里勾选框的 onChange,不起 DOM
+  // Directly get checkbox onChange from element tree without spinning up DOM
   const tree = M.HostedServiceRows({ where: "hosted", hosted: ON, creator: true, onToggle: (...a) => calls.push(a) });
   const calls = [];
   const find = (node) => {
@@ -147,7 +153,7 @@ test("HR24b clicking the checkbox: pass the requested new value up to the parent
   assert.deepEqual(calls, [["render", false], ["render", true]]);
 }));
 
-/* ---------------- 第四段:项目设置里「云端 Agent」一行、署名(契约 `docs/plan/cloud-agent-contract.md` 第 5、9.5 节) ---------------- */
+/* ---------------- Section 4: "Cloud Agent" row in project settings, signature (contract `docs/plan/cloud-agent-contract.md` sections 5, 9.5) ---------------- */
 
 const agentBoxOf = (html) => html.match(/<input[^>]*data-pc="collab-hosted-agent-toggle"[^>]*>/)?.[0] ?? null;
 
@@ -175,18 +181,20 @@ test("CAU-SIGN-01 attribution: others see a Cloud Agent's changes as \"<member n
     const L = await server.ssrLoadModule("/src/editor/sync/labels.ts");
     const bob = { session: "s-bob", userId: "bob@dev-b" };
     const cloud = { userId: "alice@dev-a", deviceId: "dev-a", role: "agent", conversation: 3, session: "s-agent", service: "agent" };
-    // 两种形状都认:DocSync 记的 { actor, session },与文档服务直接给的 actor 本身
+    // Recognizes both shapes: { actor, session } recorded by DocSync, and actor itself directly
+    // provided by document service
     assert.equal(L.writerLabel({ actor: cloud, session: "s-agent" }, bob), "alice's Cloud Agent");
     assert.equal(L.writerLabel(cloud, bob), "alice's Cloud Agent");
-    // 发起成员不在线(成员列表里查不到显示名)时照样有名字;在线、重名带设备名时也只用用户名
+    // Initiating member still has a name when offline (display name not found in member list);
+    // when online with duplicate names carrying device name, only username is used
     assert.equal(L.writerLabel({ actor: cloud }, bob, new Map([["alice@dev-a", "alice (computer)"]])), "alice's Cloud Agent");
-    // 用户名里带 @ 的:取最后一个 @ 之前
+    // For usernames containing @: take everything before the last @
     assert.equal(L.writerLabel({ actor: { ...cloud, userId: "a@b@dev-a" } }, bob), "a@b's Cloud Agent");
-    // 发起的那台设备上
+    // On the initiating device
     assert.equal(L.writerLabel({ actor: cloud }, { session: "s-alice", userId: "alice@dev-a" }), "Your Cloud Agent");
-    // 同一位成员在另一台设备上看:按名字说
+    // The same member viewing from another device: referred to by name
     assert.equal(L.writerLabel({ actor: cloud }, { session: "s-alice-2", userId: "alice@dev-a2" }), "alice's Cloud Agent");
-    // 本机 Agent 的说法不变
+    // Wording for local Agent remains unchanged
     const local = { userId: "alice@dev-a", deviceId: "dev-a", role: "agent", conversation: 2, session: "s-x" };
     assert.equal(L.writerLabel({ actor: { ...local, username: "alice" } }, bob, new Map([["alice@dev-a", "alice"]])), "alice · Agent · Chat #2");
     assert.equal(L.writerLabel({ actor: local }, bob), "Agent\"Chat #2\"");
@@ -199,7 +207,7 @@ test("CAU-SIGN-01 attribution: others see a Cloud Agent's changes as \"<member n
 
 const mrow = (username, conns, extra = {}) => ({ username, displayName: username, deviceId: `${username}-d`, deviceName: null, creator: false, tags: { editing: conns.some((c) => c.role === "page"), rendering: false, agents: conns.filter((c) => c.role === "agent").length }, conns, ...extra });
 
-/** 「有一轮在跑」表:成员键是 用户名@设备号(与成员行的 `${username}@${deviceId}` 同一写法,mrow 的设备号是 `<用户名>-d`) */
+/** "Round in progress" table: member key is username@deviceId (same format as `${username}@${deviceId}` in member rows; mrow deviceId is `<username>-d`) */
 const running = (...names) => new Set(names.map((n) => `${n}@${n}-d`));
 const NONE = new Set();
 
@@ -210,14 +218,17 @@ test("CAU-MEM-01 member counting rule [user decision 2026-10-07, changed the sam
   const render = mrow("service:render", [{ role: "render" }], { service: "render" });
   const { people } = H.splitMembers([alice, bob, carol, render]);
   assert.equal(people.length, 3, "the render node row does not count as a member");
-  // 谁都没有一轮在跑:bob 的云端 Agent 闲置(不计),carol 本人不在线、只剩闲置连接(整行不显示、不计)
+  // Nobody has a round running: bob's Cloud Agent is idle (not counted); carol is offline with
+  // only an idle connection (entire row hidden, not counted)
   assert.deepEqual(H.memberCounts(people, NONE), { people: 2, agents: 2 }, "only alice's 2 local Agents remain; the cloud connections of bob and carol are both idle, not counted");
   assert.deepEqual(H.visibleMembers(people, NONE).map((r) => r.username), ["alice", "bob"], "carol is not online in person and only an idle Cloud Agent connection remains: this row is not shown");
   assert.equal(H.memberCountLabel(people, NONE), "Members: 2 · Agents: 2");
   assert.equal(H.isCloudAgentOnly(carol, NONE), false, "an idle one is not labeled \"Offline, Agent running\"");
   assert.equal(H.isIdleCloudAgentOnly(carol, NONE), true);
   assert.equal(H.isCloudAgentRunning(bob, NONE), false, "the member is online and the Cloud Agent is idle: the \"[Cloud Agent]\" tag is not shown");
-  // bob、carol 各有一轮在跑:bob 云端算 1 个(多条连接只算一个),carol 的行回来、标「离线,Agent 在跑」、计入 Agent 数、不计入人数
+  // bob and carol each have a round running: bob cloud counts as 1 (multiple connections count as
+  // one); carol's row returns, marked "Offline, Agent running", counted in Agent count, not in
+  // member count
   const both = running("bob", "carol");
   assert.deepEqual(H.memberCounts(people, both), { people: 2, agents: 4 }, "alice and bob are online in person; Agents: alice's 2 local + bob's 1 cloud + carol's 1 cloud");
   assert.equal(H.memberCountLabel(people, both), "Members: 2 · Agents: 4");
@@ -229,7 +240,8 @@ test("CAU-MEM-01 member counting rule [user decision 2026-10-07, changed the sam
   assert.equal(H.isCloudAgentRunning(bob, both), true, "the member is online and a round is running: the \"[Cloud Agent]\" tag is shown");
   assert.equal(H.isCloudAgentOnly(alice, both), false);
   assert.equal(H.isCloudAgentOnly(mrow("dave", []), running("dave")), false, "no connection at all does not count");
-  // 表里有这位成员、但他名下并没有云端 Agent 的连接(成员列表还没跟上):不算
+  // Member is in table, but has no Cloud Agent connection under their name (member list has not
+  // caught up yet): does not count
   assert.equal(H.isCloudAgentRunning(alice, running("alice")), false, "no Cloud Agent connection: not counted even if it is in the table");
   assert.equal(H.memberKeyOf(alice), "alice@alice-d", "the member key is username@device id");
 });
@@ -243,17 +255,22 @@ test("CAU-MEM-02 member count: with only yourself online it reads \"Members: 1 �
   assert.equal(H.memberCountLabel([me2], running("me")), "Members: 1 · Agents: 2", "your own Cloud Agent has a round running: 1 local + 1 cloud");
   assert.equal(H.isCloudAgentRunning(me2, running("me")), true, "your own row also shows \"[Cloud Agent]\" according to this table");
   assert.equal(H.isCloudAgentRunning(me2, NONE), false);
-  // 只有自己的云端 Agent 连着(自己的页面都关了):闲置时整行不显示、不计;一轮在跑时标「离线,Agent 在跑」、计 Agent、不计人数
+  // Only own Cloud Agent is connected (own pages all closed): entire row hidden and not counted when
+  // idle; when a round is running, marked "Offline, Agent running", counted toward Agents, not member
+  // count
   const gone = mrow("gone", [{ role: "agent", conversation: "cc-3", service: "agent" }]);
   assert.equal(H.memberCountLabel([me, gone], NONE), "Members: 1 · Agents: 0");
   assert.equal(H.memberCountLabel([me, gone], running("gone")), "Members: 1 · Agents: 1");
   assert.equal(H.isCloudAgentOnly(gone, running("gone")), true);
 });
 
-/* ---------------- 渲染节点下面的子选项「生成轨道流」(契约 `docs/plan/hosted-render-contract.md` 第 3.1 节;用例前缀 HS 是「轨道流入口」) ----------------
- *   HS10 纯逻辑:解析、出现条件、置灰条件、通知落到状态上、文案
- *   HS11 组件:出现位置(渲染节点那一行下面)、缺省勾上、创建者能改/成员只读、渲染节点关着时置灰、点勾选交给上层
- *   HS12 向后兼容:旧托管端不报 streams(这一行不显示,别的行不变);新托管端多出的字段不影响别的行
+/* ---------------- Sub-option "Generate track stream" under render node (contract `docs/plan/hosted-render-contract.md` section 3.1; test prefix HS is "track stream entry") ----------------
+ *   HS10 Pure logic: parsing, appearance conditions, disabled conditions, notifications applied
+ *        to state, copy
+ *   HS11 Component: placement (below render node row), checked by default, creator can edit /
+ *        members read-only, grayed out when render node is off, clicking checkbox passes to upper layer
+ *   HS12 Backward compatibility: legacy hosted side does not report streams (this row is hidden,
+ *        other rows unchanged); extra fields on new hosted side do not affect other rows
  */
 const WITH_STREAMS = { render: { available: true, enabled: true, streams: true }, agent: { available: false, enabled: true } };
 const STREAMS_OFF = { render: { available: true, enabled: true, streams: false } };
@@ -295,7 +312,7 @@ test("HS10 notice applied to state: only recognized ones are changed; an old hos
   assert.equal(H.applyHostedOptionChange(WITH_STREAMS, "agent", "streams", false), WITH_STREAMS);
   assert.equal(H.applyHostedOptionChange(WITH_STREAMS, "render", "streams", "no"), WITH_STREAMS);
   assert.equal(H.applyHostedOptionChange(null, "render", "streams", false), null);
-  // 服务开关的通知不冲掉 streams
+  // Service toggle notifications do not overwrite streams
   assert.deepEqual(H.applyHostedChange(WITH_STREAMS, "render", false).render, { available: true, enabled: false, streams: true });
 });
 
@@ -325,7 +342,7 @@ test("HS11 component: one more indented row under the render node row, checked a
   assert.doesNotMatch(box, /disabled/, "the creator can change it");
   assert.doesNotMatch(asCreator, /only the creator can change this/);
   assert.ok(asCreator.indexOf("Host&#x27;s render node</label>") < asCreator.indexOf("Generate track streams"), "after the render node row");
-  // 缩进:挂在渲染节点那一行的容器里,带缩进用的类
+  // Indentation: attached inside render node row container, with class used for indentation
   assert.match(asCreator, /<div class="pc-collab-hosted-sub" data-pc="collab-hosted-render-streams" data-state="on">/);
 
   const asMember = render({ where: "hosted", hosted: WITH_STREAMS, creator: false, onToggleOption: () => {} });
@@ -402,7 +419,7 @@ test("HS11 clicking the checkbox: pass \"which option of which service, and what
 }));
 
 test("HS12 backward compatibility (page side): the member list from an old hosted side (without streams) parses unchanged and the other rows stay as before; in a list that has streams, the state of the service rows is unaffected", () => withRows(({ render }) => {
-  // 新页面连旧文档服务:render/agent 都没有 streams
+  // New page connecting to legacy document service: neither render nor agent has streams
   const oldHosted = { render: { available: true, enabled: true }, agent: { available: true, enabled: true } };
   assert.deepEqual(H.parseHosted(oldHosted), oldHosted);
   assert.deepEqual(H.hostedRowsOf("hosted", oldHosted).map((r) => r.service), ["render", "agent"]);
@@ -411,15 +428,17 @@ test("HS12 backward compatibility (page side): the member list from an old hoste
   assert.match(html, /Host&#x27;s render node/);
   assert.match(html, /Cloud Agent/);
   assert.doesNotMatch(html, /track streams/);
-  // 新托管端多出的 streams 字段:服务那几行的 enabled 与 available 不受影响(旧页面只读这两项,多出的字段它不看)
+  // Extra streams field from new hosted side: enabled and available for service rows are unaffected
+  // (legacy page only reads these two items and ignores extra fields)
   const rows = H.hostedRowsOf("hosted", { render: { available: true, enabled: false, streams: false }, agent: { available: true, enabled: true } });
   assert.deepEqual(rows.map((r) => [r.service, r.enabled]), [["render", false], ["agent", true]]);
 }));
 
-/* ---------------- 账号项目那条路(任务书 `docs/plan/render-refactor-task.md`「甲三」):状态从会话里来,没有创建者密码这一步 ---------------- */
+/* ---------------- Account project path (task brief `docs/plan/render-refactor-task.md` "Jia-3"): state comes from session, no creator password step ---------------- */
 
 test("HS13 account project: the hosted object in the session (render node with streams, Cloud Agent with url) still produces these rows; the creator can change them, members are read-only; an old document service that doesn't report the render node has neither of those two rows", () => withRows(({ render }) => {
-  // 新文档服务的会话:`hosted.render` 是 `{ available, enabled, streams }`,`hosted.agent` 多一个 url(界面不看)
+  // New document service session: `hosted.render` is `{ available, enabled, streams }`;
+  // `hosted.agent` has an extra url (ignored by UI)
   const session = { agent: { available: true, enabled: false, url: "https://example.invalid/agent/v1" }, render: { available: true, enabled: true, streams: false } };
   assert.deepEqual(H.hostedRowsOf("hosted", session).map((r) => [r.service, r.enabled]), [["render", true], ["agent", false]]);
   assert.deepEqual(H.hostedOptionRowsOf("hosted", session), [{ service: "render", option: "streams", label: "Generate track streams", enabled: false, parentOff: false }]);
@@ -431,15 +450,16 @@ test("HS13 account project: the hosted object in the session (render node with s
   assert.match(box(asMember, "collab-hosted-render-toggle"), /disabled=""/, "members are read-only");
   assert.match(box(asMember, "collab-hosted-render-streams-toggle"), /disabled=""/, "members are read-only");
   assert.match(asMember, /only the creator can change this/);
-  // 账号项目新建时渲染节点是关的:轨道流那一行置灰
+  // Render node is off when account project is newly created: track stream row is grayed out
   const fresh = { agent: session.agent, render: { available: true, enabled: false, streams: false } };
   assert.equal(H.hostedOptionRowsOf("hosted", fresh)[0].parentOff, true);
   assert.match(box(render({ where: "hosted", hosted: fresh, creator: true, onToggleOption: () => {} }), "collab-hosted-render-streams-toggle"), /disabled=""/);
-  // 旧文档服务的会话只有云端 Agent:没有渲染节点那两行,云端 Agent 一行照旧
+  // Legacy document service session only has Cloud Agent: no render node rows, Cloud Agent row
+  // remains as usual
   const old = { agent: session.agent };
   assert.deepEqual(H.hostedRowsOf("hosted", old).map((r) => r.service), ["agent"]);
   assert.deepEqual(H.hostedOptionRowsOf("hosted", old), []);
-  // 登记表里没有渲染服务(available 为假):同样没有那两行
+  // Render service missing in registry (available is false): those two rows are likewise absent
   assert.deepEqual(H.hostedOptionRowsOf("hosted", { agent: session.agent, render: { available: false, enabled: false, streams: false } }), []);
 }));
 
@@ -472,7 +492,7 @@ test("HS14 this page sees \"Generate track streams\" taking effect (the online p
   assert.equal(H.hostedStreamsOn("lan", view({ available: true, enabled: true, streams: true })), false, "a local project has no host render node");
   assert.equal(H.hostedStreamsOn("hosted", null), false);
   assert.equal(H.hostedStreamsOn(null, null), false);
-  // 账号项目的会话形状同样读得出
+  // Session shape for account projects can also be read
   assert.equal(H.hostedStreamsOn("hosted", { agent: { available: true, enabled: false, url: null }, render: { available: true, enabled: true, streams: true } }), true);
 });
 
@@ -497,12 +517,12 @@ test("STF3 a failed switch change always gives an understandable reason: an acco
   const r = H.accountHostedFailure(denied);
   assert.deepEqual(r, { ok: false, error: "forbidden", message: "Your account does not have permission to enable this option. Please contact the host." });
   assert.equal(H.hostedFailText(r, "No such option", fallback), "Your account does not have permission to enable this option. Please contact the host.");
-  // 连不上、服务端出错、不认识的异常:也都有一句话,不会是空的
+  // Unreachable, server error, unknown exception: all produce a message and will not be empty
   assert.equal(H.accountHostedFailure(Object.assign(new Error("Failed to connect to the cloud. Check the network and try again."), { status: 0, code: "network" })).message, "Failed to connect to the cloud. Check the network and try again.");
   assert.equal(H.accountHostedFailure(Object.assign(new Error("The cloud service is temporarily unavailable. Please try again later."), { status: 503, code: "account-unavailable" })).error, "other");
   assert.equal(H.accountHostedFailure(new TypeError("boom")).message, "Did not succeed, try again later.");
   assert.equal(H.accountHostedFailure(undefined).message, "Did not succeed, try again later.");
-  // 口令项目(没有 message):照旧
+  // Passphrase project (no message): as usual
   assert.equal(H.hostedFailText({ error: "forbidden" }, "No such option", fallback), "Wrong password.");
   assert.equal(H.hostedFailText({ error: "bad-message" }, "No such option", fallback), "No such option");
 });

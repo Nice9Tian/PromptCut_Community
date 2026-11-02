@@ -1,18 +1,22 @@
 /**
- * 卡片级指纹锁：节点这一侧（契约 `docs/plan/render-queue-contract.md` F.2 与 F.7 第 5 条，
- * 测试表 F.5 的 N1～N5、F.7 第 6 条的 N6）。
- * 跑：node --experimental-test-module-mocks --test server/test/card-lock-node.test.mjs
+ * Per-card fingerprint lock: node side (contract `docs/plan/render-queue-contract.md` F.2 and F.7
+ * item 5, test table F.5 N1-N5, F.7 item 6 N6).
+ * Run: node --experimental-test-module-mocks --test server/test/card-lock-node.test.mjs
  *
- * 只照契约 F.2、F.7 以及它引用的 B.1、B.4、B.5、D、E.5 写，不看实现。
+ * Written strictly against contracts F.2, F.7, and their referenced B.1, B.4, B.5, D, and E.5,
+ * without looking at the implementation.
  *
- *   N1  `normalizeOs` 的前缀映射；用真实页面串算指纹
- *   N2  `splitPlan` 的 `cardLocks`
- *   N3  `splitPlan` 的 `takeover`（布尔 / Set / 函数）
- *   N4  节点会话收到 `card-locked` 丢候选、不重试
- *   N5  `createLocalNode` 把 `PlanContext.cardLocks` / `takeover` 原样交给切分（M3 的环回与假件，真队列）
- *   N6  `createLocalNode` 发布被拒建后照锁指纹重发、等回包才完成 plan、`takeoverLocked`、最多重来 2 轮
+ *   N1  Prefix mapping of `normalizeOs`; compute fingerprints using real page strings
+ *   N2  `cardLocks` of `splitPlan`
+ *   N3  `takeover` of `splitPlan` (boolean / Set / function)
+ *   N4  Node session drops candidate upon receiving `card-locked`, no retries
+ *   N5  `createLocalNode` passes `PlanContext.cardLocks` / `takeover` as-is to splitting
+ *       (M3 loopback and dummy files, real queue)
+ *   N6  `createLocalNode` resends by lock fingerprint after publishing is rejected, waits for
+ *       response before completing plan, `takeoverLocked`, at most 2 retry rounds
  *
- * 结果键、指纹按 B.1 的公式用 `node:crypto` 自己算，任务 id 按 A.4 自己算，不借实现。
+ * Result keys and fingerprints are computed independently with `node:crypto` following formulas
+ * in B.1, task id computed per A.4, without borrowing from the implementation.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,7 +34,10 @@ const sha256 = text => crypto.createHash('sha256').update(text, 'utf8').digest('
 const fpOf = (os, gpuClass, chromeMajor) => sha256(`${os}\n${gpuClass}\n${chromeMajor}`).slice(0, 16);
 const rkOf = (contentKey, fp) => sha256(`${contentKey}\n${fp}`);
 const sorted = list => [...list].sort();
-/** M7 契约 D2（`docs/plan/m7-contract.md` 第 13 节）给 card-locked 的回包加了 lockIdleMs / lockedByProfile / lockUndone；这里只比 F.7 定的那几项 */
+/**
+ * M7 contract D2 (Section 13 of `docs/plan/m7-contract.md`) added lockIdleMs / lockedByProfile /
+ * lockUndone to card-locked responses; here only comparing items specified in F.7
+ */
 const f7 = r => { if (r == null) return r; const { lockIdleMs, lockedByProfile, lockUndone, ...rest } = r; return rest; };
 
 /* ================================================================== N1 */
@@ -59,7 +66,7 @@ test('N1 normalizeOs: navigator.platform / userAgentData.platform reported by th
   assert.equal(normalizeOs('Windows'), 'windows');
   assert.equal(normalizeOs('macOS'), 'macos');
   assert.equal(normalizeOs('Linux'), 'linux');
-  // 大小写
+  // Case sensitivity
   assert.equal(normalizeOs('WIN32'), 'windows');
   assert.equal(normalizeOs('MACINTEL'), 'macos');
 });
@@ -83,31 +90,33 @@ test('N1 compute the fingerprint from real page strings: navigator.platform + We
     '"Mac OS X 10_15_7" in a Mac UA must not be treated as a version number');
   const linux = describeEnvironment({ platform: 'Linux x86_64', ...GPU.intel, chromeVersion: UA.linux });
   assert.deepEqual(linux, { os: 'linux', gpuClass: 'intel', chromeMajor: 140, fingerprint: fpOf('linux', 'intel', 140) });
-  // userAgentData.platform 与 navigator.platform 得到同一个指纹
+  // userAgentData.platform and navigator.platform yield the same fingerprint
   assert.equal(describeEnvironment({ platform: 'Windows', ...GPU.nvidia, chromeVersion: UA.win }).fingerprint, win.fingerprint);
   assert.equal(describeEnvironment({ platform: 'macOS', ...GPU.apple, chromeVersion: UA.mac }).fingerprint, mac.fingerprint);
-  // Edge 的 UA 里 Chrome 主版本同样是 138
+  // Chrome major version in Edge UA is also 138
   assert.equal(describeEnvironment({ platform: 'Win32', ...GPU.nvidia, chromeVersion: UA.edge }).fingerprint, win.fingerprint);
-  // 页面与预渲染进程：同 OS、同 Chrome 主版本，但一个走 GPU、一个走 SwiftShader → 指纹不同
+  // Page and prerender process: same OS, same major Chrome version, but one uses GPU and one uses
+  // SwiftShader → different fingerprints
   const prerender = describeEnvironment({ platform: 'win32', ...GPU.swiftshader, chromeVersion: 'HeadlessChrome/138.0.7204.49' });
   assert.equal(prerender.gpuClass, 'software');
   assert.notEqual(prerender.fingerprint, win.fingerprint);
-  // 同一种环境（页面 Win32 + SwiftShader + Chrome 138）与预渲染进程指纹相同：前缀映射让两边对得上
+  // The same environment (page Win32 + SwiftShader + Chrome 138) has the same fingerprint as the
+  // prerender process: prefix mapping matches the two sides
   assert.equal(describeEnvironment({ platform: 'Win32', ...GPU.swiftshader, chromeVersion: UA.win }).fingerprint, prerender.fingerprint);
 });
 
-/* ================================================================== N2 / N3 夹具（照 render-node-logic.test.mjs 的写法） */
+/* ================================================================== N2 / N3 fixtures (patterned after render-node-logic.test.mjs) */
 
-const FP = fpOf('windows', 'software', 138);    // 本节点（切分节点）
-const X = fpOf('macos', 'apple', 139);           // 锁定方
-const Y = fpOf('linux', 'amd', 140);            // 另一个锁定方（诱饵键用它，写错锁键就会出别的键）
+const FP = fpOf('windows', 'software', 138);    // This node (splitter node)
+const X = fpOf('macos', 'apple', 139);           // Locking party
+const Y = fpOf('linux', 'amd', 140);            // Another locking party (decoy keys use this; writing the wrong lock key produces a different key)
 const CV = 'c0de5a';
 const PROJECT = 'proj-7', REV = 3, ENTRY = 'entry-xyz';
 const PLAN_ID = `plan:${PROJECT}@${REV}`;
 const SHARED_CAPS = { frameMode: 'stateful', compositing: 'independent' };
 const LOCAL_CAPS = { frameMode: 'stateful', compositing: 'belowDependent' };
 
-/** 按 card-cache.mjs 的 plan() 输出（E.3，带 contentKey）造一个 control */
+/** Create a control following the plan() output of card-cache.mjs (E.3, with contentKey) */
 function control({ clipId, cardId, contentKey, tier, capabilities, count, start = 0, withContentKey = true }) {
   const c = {
     key: `png-${clipId}`, snapshotKey: rkOf(contentKey, FP), costKey: `cost-${clipId}`, frameMode: capabilities.frameMode,
@@ -125,7 +134,7 @@ const A = control({ clipId: 'a', cardId: 'particles', contentKey: 'ck-a', tier: 
 const B = control({ clipId: 'b', contentKey: 'ck-b', tier: 'shared', capabilities: SHARED_CAPS, count: 30 });
 const C = control({ clipId: 'c', contentKey: 'ck-c', tier: 'shared', capabilities: SHARED_CAPS, count: 30 });
 const D = control({ clipId: 'd', contentKey: 'ck-d', tier: 'local', capabilities: LOCAL_CAPS, count: 30 });
-/** 没有 contentKey 字段的旧形状（M2 夹具）：snapshotKey 当内容键 */
+/** Legacy shape without a contentKey field (M2 fixture): snapshotKey serves as the content key */
 const OLD = control({ clipId: 'old', contentKey: 'ck-old', tier: 'shared', capabilities: SHARED_CAPS, count: 10, withContentKey: false });
 const STREAM = { streamKey: rkOf('sk-1', FP), contentKey: 'sk-1', topClipId: 'top', firstSegment: 0, lastSegment: 9 };
 const STREAM_OLD = { streamKey: 'sk-old', topClipId: 'top2', firstSegment: 0, lastSegment: 3 };
@@ -136,7 +145,7 @@ const baseArgs = over => ({
   envFingerprint: FP, codeVersion: CV, cardSourceVersions: { particles: 'builtin:12' }, ...over,
 });
 
-/** 某个任务的 input.contentKey（E.5）与锁键（F.2） */
+/** input.contentKey (E.5) and lock key (F.2) for a task */
 const contentKeyOf = ctl => (ctl.tier === 'local' ? `${ENTRY}/${ctl.contentKey ?? ctl.snapshotKey}` : (ctl.contentKey ?? ctl.snapshotKey));
 const LK = {
   a: `snapshot:${contentKeyOf(A)}`, b: `snapshot:${contentKeyOf(B)}`, c: `snapshot:${contentKeyOf(C)}`,
@@ -153,7 +162,10 @@ const byLock = tasks => {
   return map;
 };
 
-/** 把「按本节点指纹出的任务」换成「按指纹 fp 出的任务」：只动 resultKey、id、requires.envFingerprint */
+/**
+ * Replace "tasks generated with this node's fingerprint" with "tasks generated with fingerprint
+ * fp": only modify resultKey, id, and requires.envFingerprint
+ */
 function rekeyed(task, fp) {
   const resultKey = rkOf(task.input.contentKey, fp);
   return { ...task, resultKey, id: `${task.kind}:${resultKey}:${task.range.from}-${task.range.to}`, requires: { ...task.requires, envFingerprint: fp } };
@@ -179,12 +191,13 @@ for (const [shape, wrap] of [['plain object', o => o], ['Map', o => new Map(Obje
   test(`N2 splitPlan with cardLocks (${shape}): a card locked by another fingerprint has its key and requires derived from the lock fingerprint; cards with the same fingerprint or without a lock stay as before; the lock key of the local tier carries entryKey/`, () => {
     const plain = splitPlan(baseArgs());
     const locks = {
-      [LK.a]: X,                       // 被别的环境锁定
-      [LK.b]: FP,                      // 锁在自己的指纹上
-      [LK.d]: X,                       // 本地档，锁键带 entryKey/
-      [LK.stream]: X,                  // 流
-      [LK.old]: X,                     // 旧形状：snapshotKey 当内容键
-      // 不该命中的：本地档不带 entryKey/ 的键、kind 不对的键、按结果键而不是内容键写的键
+      [LK.a]: X,                       // Locked by another environment
+      [LK.b]: FP,                      // Locked to own fingerprint
+      [LK.d]: X,                       // Local tier, lock key contains entryKey/
+      [LK.stream]: X,                  // Stream
+      [LK.old]: X,                     // Legacy shape: snapshotKey serves as the content key
+      // Should not hit: local tier keys without entryKey/, keys with the wrong kind, keys written with
+      // result keys instead of content keys
       [`snapshot:${D.contentKey}`]: Y,
       ['snapshot:sk-1']: Y,
       [`snapshot:${C.snapshotKey}`]: Y,
@@ -204,14 +217,14 @@ for (const [shape, wrap] of [['plain object', o => o], ['Map', o => new Map(Obje
         assert.deepEqual(t, p, `${lk}: not locked by another fingerprint, follows E.5`);
       }
     }
-    // 输出顺序照 B.4：先快照（cardPlan 顺序、段升序）后流
+    // Output order follows B.4: snapshots first (cardPlan order, segment ascending), then streams
     assert.deepEqual(out.map(t => t.input.clipId), plain.map(t => t.input.clipId));
   });
 }
 
 test('N2 addendum: the remaining frames of the lock owner go only to nodes with the same fingerprint (requires.envFingerprint = X makes rule 1 apply), and the task ids are the same as those the lock owner splits out itself', () => {
   const lockedByX = splitPlan(baseArgs({ cardLocks: { [LK.a]: X } })).filter(t => t.input.clipId === 'a');
-  // 锁定方（指纹 X）自己切同一张卡
+  // The locking party (fingerprint X) splits the same card itself
   const byXItself = splitPlan(baseArgs({ envFingerprint: X, cardPlan: [A], streams: [] }));
   assert.deepEqual(lockedByX.map(t => t.id), byXItself.map(t => t.id), 'both sides split out the same task ids, so they merge into the same set of tasks in the queue');
   assert.deepEqual(lockedByX.map(t => t.requires.envFingerprint), byXItself.map(() => X));
@@ -259,7 +272,7 @@ test('N3 addendum: takeover applies only to cards locked by another fingerprint;
   assert.deepEqual(splitPlan(baseArgs({ cardLocks: locks })), splitPlan(baseArgs({ cardLocks: locks, takeover: false })));
   assert.deepEqual(splitPlan(baseArgs({ cardLocks: locks })), splitPlan(baseArgs({ cardLocks: locks, takeover: new Set() })));
   assert.deepEqual(splitPlan(baseArgs({ cardLocks: locks })), splitPlan(baseArgs({ cardLocks: locks, takeover: () => false })));
-  // 没有锁时 takeover: true 不给任何任务加字段
+  // When there is no lock, takeover: true does not add fields to any task
   for (const t of splitPlan(baseArgs({ takeover: true }))) assert.equal('takeover' in t, false, t.id);
 });
 
@@ -302,7 +315,7 @@ test('N4 the node session receives claim-rejected card-locked: drops this candid
   assert.ok(!session.known().some(k => k.id === locked.id), 'the locked candidate is removed from the local view');
   assert.deepEqual(started, []);
 
-  // 在飞的认领已清：下一次 tick 能认领别的；被锁的那个不再出现
+  // In-flight claims are cleared: the next tick can claim others; the locked one no longer appears
   for (let i = 0; i < 5; i++) {
     t += 1000;
     session.tick();
@@ -331,7 +344,7 @@ test('N4 addendum: if the locked candidate is pushed again by task.opened later 
   assert.deepEqual(sent.filter(m => m.type === 'task.claim').map(m => m.id), [locked.id]);
 });
 
-/* ================================================================== N5 / N6：进程内（照 render-queue-inproc.test.mjs 的拓扑） */
+/* ================================================================== N5 / N6: in-process (following the topology of render-queue-inproc.test.mjs) */
 
 const FP_A = '0123456789abcdef';
 const FP_B = 'fedcba9876543210';
@@ -373,7 +386,10 @@ function inprocControl({ clipId, cardId, label, capabilities, start, count }) {
   };
 }
 
-/** 标题（共享档 130 帧 → 3 段）、下三分之一（共享档 70 帧 → 2 段）、毛玻璃（本地档 45 帧 → 1 段）、一条流（12 段 → 2 个任务） */
+/**
+ * Title (shared tier 130 frames → 3 segments), lower third (shared tier 70 frames → 2 segments),
+ * frosted glass (local tier 45 frames → 1 segment), one stream (12 segments → 2 tasks)
+ */
 function planContextFor(salt = 'p1', extra = {}) {
   const stateful = { frameMode: 'stateful', compositing: 'independent' };
   return {
@@ -392,8 +408,9 @@ function planContextFor(salt = 'p1', extra = {}) {
 const titleLockKey = (salt = 'p1') => `snapshot:${sha256(`snap:${salt}:title`)}`;
 
 /**
- * 按 B.4 / E.5 / F.2 自己算这份 PlanContext 切出的细任务：`fpFor(lockKey)` 给出每个锁键出键用的指纹，
- * `takeoverFor(lockKey)` 为真时任务带 `takeover: true`。
+ * Compute fine-grained tasks split from this PlanContext following B.4 / E.5 / F.2:
+ * `fpFor(lockKey)` provides the fingerprint used to generate keys for each lock key,
+ * and when `takeoverFor(lockKey)` is true, the task includes `takeover: true`.
  */
 function expectedDerived(ctx, fpFor, takeoverFor = () => false) {
   const out = [];
@@ -411,7 +428,8 @@ function expectedDerived(ctx, fpFor, takeoverFor = () => false) {
     const lockKey = `stream:${s.streamKey}`;
     const fp = fpFor(lockKey);
     const resultKey = rkOf(s.streamKey, fp);
-    // 稀疏流整条流一个任务(rr-motion-preempt 规则);满密度任务按 8 段切分
+    // Sparse stream has one task for the entire stream (rr-motion-preempt rule); full density tasks
+    // are split by 8 segments
     out.push({ id: `stream:${resultKey}:${s.firstSegment}-${s.lastSegment}:sparse`, lockKey, fp, takeover: takeoverFor(lockKey), clipId: s.topClipId });
     for (let from = s.firstSegment; from <= s.lastSegment; from += 8) {
       const to = Math.min(s.lastSegment, from + 7);
@@ -449,7 +467,10 @@ function createRig({ planContext }) {
     };
   }
 
-  /** `wrapSend(message, send)`：包一层端点的 send，测试可以在节点的消息进队列之前插一手 */
+  /**
+   * `wrapSend(message, send)`: wraps endpoint send so tests can intervene before node messages
+   * enter the queue
+   */
   function addNode(nodeId, { fp, seed = 1, wrapSend, extra = {} } = {}) {
     const inner = lb.connect(`conn-${nodeId}`, { userId: 'u9', tenantId: 't1' });
     const endpoint = wrapSend
@@ -516,7 +537,7 @@ function hygiene(rig, unhandledBefore) {
 const claimsOf = rig => rig.out('task.claimed').map(e => ({ connId: e.connId, id: e.message.id, task: e.message.task }));
 const allDone = (rig, page, ids) => () => ids.every(id => page.doneCount(id) >= 1) && rig.nodes.every(n => n.local.running().length === 0);
 
-/** 每个 id：页面恰好一条 task.done、队列恰好确认一次完成 */
+/** For each id: the page gets exactly one task.done, and the queue confirms completion once */
 function assertCompletedOnce(rig, page, ids) {
   const completed = new Map();
   for (const e of rig.out('task.completed')) completed.set(e.message.id, (completed.get(e.message.id) ?? 0) + 1);
@@ -565,7 +586,7 @@ test('N5 createLocalNode passes PlanContext.cardLocks to the split: locked cards
     const t = exp.find(x => x.id === e.message.id);
     if (t) assert.equal(fpOfConn.get(e.connId), t.fp, `a node with a different fingerprint tried to claim ${e.message.id}`);
   }
-  // 发布的细任务里没有 takeover 字段
+  // Published fine-grained tasks contain no takeover field
   for (const e of rig.inbound('task.publish').filter(e => e.connId === a1.connId)) {
     for (const t of e.message.tasks) assert.equal('takeover' in t, false, t.id);
   }
@@ -579,7 +600,7 @@ test('N5 createLocalNode passes PlanContext.takeover to the split: locked cards 
   const page = rig.addPage('page');
   const a1 = rig.addNode('node-a1', { fp: FP_A, seed: 1 });
   const b1 = rig.addNode('node-b1', { fp: FP_B, seed: 3 });
-  b1.idle = false;                     // plan 由 a1 认领
+  b1.idle = false;                     // plan is claimed by a1
   a1.local.start();
   b1.local.start();
   await settle(rig);
@@ -609,9 +630,12 @@ test('N5 createLocalNode passes PlanContext.takeover to the split: locked cards 
   hygiene(rig, before);
 });
 
-/* ================================================================== N6（F.7 第 5 条） */
+/* ================================================================== N6 (F.7 item 5) */
 
-/** 页面先用 card.lock 把标题卡锁给 FP_B（页面测量推过的帧入库的情形）；切分节点 FP_A 不知道这把锁 */
+/**
+ * The page first uses card.lock to lock the title card to FP_B (the case where frames pushed by
+ * page measurement are stored); splitter node FP_A does not know about this lock
+ */
 async function lockedTitleScene({ extra = {}, wrapSend } = {}) {
   const rig = createRig({ planContext: task => planContextFor(task.source.projectId) });
   const page = rig.addPage('page');
@@ -639,7 +663,8 @@ test('N6 after a creation rejection, republish with the lock fingerprint: only t
   await coast(rig);
   assertCompletedOnce(rig, page, ids);
 
-  // 两次发布：第一次全部（标题卡按 FP_A、被拒建），第二次只有标题卡、按 FP_B
+  // Published twice: first time all (title card uses FP_A, creation rejected), second time title
+  // card only, using FP_B
   const pubs = rig.inbound('task.publish').filter(e => e.connId === a1.connId);
   assert.equal(pubs.length, 2, 'publish once first, then republish once after the creation is rejected');
   const [first, second] = pubs;
@@ -651,7 +676,7 @@ test('N6 after a creation rejection, republish with the lock fingerprint: only t
     assert.equal(t.requires.envFingerprint, FP_B);
     assert.equal('takeover' in t, false, 'default takeoverLocked: false, republish with the fingerprint of the lock owner, without takeover');
   }
-  // 发布带 reqId；第一次的回包里标题卡是 card-locked
+  // Publish includes reqId; in the first response, the title card is card-locked
   for (const p of pubs) assert.ok(typeof p.message.reqId === 'string' || Number.isFinite(p.message.reqId), 'task.publish of derived tasks carries reqId');
   const reply = reqId => rig.out('task.published').find(e => e.connId === a1.connId && e.message.reqId === reqId);
   const r1 = reply(first.message.reqId), r2 = reply(second.message.reqId);
@@ -661,21 +686,22 @@ test('N6 after a creation rejection, republish with the lock fingerprint: only t
   }
   assert.ok(r2.message.results.every(r => r.created === true && !('error' in r)));
 
-  // plan 在第二次回包之后才完成
+  // plan completes only after the second response
   const planComplete = rig.inbound('task.complete').find(e => e.message.id === planId);
   assert.ok(planComplete.index > r2.index, 'the plan completes only after the reply to the last publish');
   assert.deepEqual(sorted(planComplete.message.result.derived), sorted(exp.map(t => t.id)), 'derived is all the ids that were finally published successfully');
 
-  // 继承页面订阅：重发的细任务订阅者里有页面，source.userId 是页面的
+  // Inherit page subscription: resent fine-grained tasks include the page in subscribers,
+  // source.userId is the page's
   const view = new Map(rig.queue.describe().tasks.map(t => [t.id, t]));
   for (const t of titleB) assert.ok(view.get(t.id).subscribers.includes(page.publisherId), `${t.id} inherited the page subscription`);
-  // 由锁定方指纹的节点做完
+  // Completed by the node with the locking party's fingerprint
   const fpOfConn = new Map(rig.nodes.map(n => [n.connId, n.fp]));
   for (const c of claimsOf(rig).filter(c => titleB.some(t => t.id === c.id))) {
     assert.equal(fpOfConn.get(c.connId), FP_B);
     assert.equal(c.task.source.userId, 'u1');
   }
-  // 队列里没有留下 FP_A 的标题卡死任务
+  // No dead tasks for FP_A's title card remain in the queue
   for (const t of titleA) assert.equal(view.get(t.id), undefined, `${t.id} had its creation rejected and is not in the table`);
   hygiene(rig, before);
 });
@@ -712,7 +738,8 @@ test('N6 at most 2 retry rounds: when another environment takes the lock away in
   const ck = titleLockKey().slice('snapshot:'.length);
   let flips = 0;
   let page;
-  // 切分节点每发一次 task.publish，页面抢先（同一条环回、先入队先处理）把标题卡的锁接手到一个新指纹
+  // Each time the splitter node sends task.publish, the page preempts (same loopback, FIFO) to
+  // take over the title card lock to a new fingerprint
   const wrapSend = (message, send) => {
     if (message.type === 'task.publish' && page) {
       flips += 1;
@@ -734,7 +761,7 @@ test('N6 at most 2 retry rounds: when another environment takes the lock away in
   assert.ok(Array.isArray(last.gaveUp) && last.gaveUp.length > 0, 'gaveUp lists the items given up on');
   assert.ok(Array.isArray(last.lockKeys) && last.lockKeys.includes(titleLockKey()), 'lockKeys contains the lock key of the title card');
   assert.deepEqual(sorted(page.done(planId).result.derived), sorted(exp.map(t => t.id)), 'derived contains only those finally published successfully');
-  // 剩下的细任务照常完成
+  // Remaining fine-grained tasks complete as usual
   const ids = exp.map(t => t.id);
   rig.addNode('node-a2', { fp: FP_A, seed: 2 }).local.start();
   await drive(rig, allDone(rig, page, ids));

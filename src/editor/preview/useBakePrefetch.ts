@@ -6,83 +6,97 @@ import { prerenderUrl } from "../../render/prerender";
 import { tr as trText } from "../../i18n/index.ts";
 
 /**
- * 空闲时把贴图预先渲好。排队规则见 bakePlan.ts,这里只管**什么时候动手**。
+ * Pre-render textures while idle. See bakePlan.ts for the queueing rules; this file only decides
+ * **when to start**.
  *
- * # 三条不能破的规矩
+ * # Three rules that must not be broken
  *
- * 1. **不跟用户抢。** 预渲染一张要起一个 Chrome、四五秒,而且服务端那条渲染路是**串行**的
- *    (enqueue)。所以用户正在看的那张要是排在预渲染后面,就得干等 —— 本来是来提速的,
- *    反而卡了一下。于是:只在浏览器空闲时发,而且前台一有渲染请求就立刻让路(见下面那道闸)。
- * 2. **一次只渲一张。** 并发发过去也是在服务端排队,只会让「让路」变得不可能。
- * 3. **拖动时不动手。** 拖进度条会连续改 t,每一格都重排一次队没有意义。
- *    等它停下来一会儿再说(IDLE_MS)。
+ * 1. **Don't fight the user.** One prerender starts a Chrome and takes four or five seconds, and
+ *    the server's render path is **serial** (enqueue). So if the image the user is looking at
+ *    queues behind a prerender, it has to wait idly: it was meant to speed things up, but instead
+ *    it causes a stall. Hence: send only when the browser is idle, and yield immediately as soon
+ *    as the foreground has a render request (see the gate below).
+ * 2. **One render at a time.** Sending them concurrently just queues them on the server and
+ *    makes "yielding" impossible.
+ * 3. **Don't start while dragging.** Dragging the progress bar changes t continuously, and
+ *    re-queueing at every step is pointless. Wait until it has stopped for a while (IDLE_MS).
  *
- * # 为什么盘点要问服务端
+ * # Why the inventory has to ask the server
  *
- * 缓存记在服务端(字节在素材服务的 `px` 里,「输入哈希 → 内容哈希」在预渲染一侧的小索引里,见 server/bake-store.mjs),
- * 浏览器关一次页面就全忘了 —— 上次开编辑器预渲染出来的,前端一个都不认识。
- * 所以每轮先问一次 /api/vision/bake-status:哪些已经有了、各自多大、还有哪些是没人认领的旧快照。
- * 不问的话占用永远算不准。
+ * The cache is recorded on the server (the bytes are in the asset service's `px`, and "input
+ * hash → content hash" is in a small index on the prerender side, see server/bake-store.mjs),
+ * and the browser forgets everything once the page is closed: what the last editor session
+ * prerendered is not recognized by the frontend at all. So each round first asks
+ * /api/vision/bake-status once: which ones already exist, how large each is, and which old
+ * snapshots are unclaimed. Without asking, disk usage can never be computed accurately.
  *
- * 顺带解决了另一件事:**键只认服务端算的那一个**。预渲染、盘点、清理三方共用 `bakeTarget`,
- * 前端不自己算一套 —— 两处各算各的,迟早会「明明预渲染过却当成没渲」,而且不报错。
+ * It also solves another thing: **the key is only the one the server computes.** Prerender,
+ * inventory and cleanup share `bakeTarget`, and the frontend does not compute its own set: if
+ * two places each compute their own, sooner or later you get "clearly prerendered but treated as
+ * not rendered", with no error.
  *
- * # 预渲染哪几个时刻不由这里决定
+ * # Which moments to prerender is not decided here
  *
- * 一张卡在它那几秒里是会动的,要渲的是**若干个时刻**;挑哪几个是 `bakeTime.ts` 的事,
- * 由调用方算好了传进来。这里只管「什么时候动手」和「按什么顺序、留多少」。
+ * A card moves during its few seconds, so what must be rendered is **several moments**; which
+ * ones to pick is the job of `bakeTime.ts`, computed by the caller and passed in. This file only
+ * decides "when to start" and "in what order, and how many to keep".
  */
 
-/** 用户停手多久算「空闲」 */
+/** How long the user must stop before it counts as "idle" */
 const IDLE_MS = 600;
-/** 一轮做完歇多久再盘点下一轮 —— 别把服务端和磁盘一直吵醒 */
+/** How long to rest after a round before the next inventory: don't keep waking the server and disk */
 const REST_MS = 4000;
 /**
- * 没活干的时候歇多久。
+ * How long to rest when there is nothing to do.
  *
- * 全渲完之后如果还按 REST_MS 去问,就是**每 4 秒列一次目录、stat 上百个文件,一直到关页面为止**。
- * 实测就是这样:界面上什么都没发生,网络面板里 bake-status 一条接一条。
- * 所以没活干就逐次翻倍往后退,退到一分钟一次;用户一改东西立刻退回 REST_MS(见 backoff 的重置)。
+ * If, after everything is rendered, we still asked every REST_MS, it would be **listing the
+ * directory and stat-ing hundreds of files every 4 seconds until the page is closed**.
+ * That is what was measured: nothing happens in the UI, while bake-status requests keep coming
+ * one after another in the network panel.
+ * So with nothing to do we back off by doubling each time, up to once a minute; as soon as the
+ * user changes anything, it drops back to REST_MS (see the backoff reset).
  */
 const IDLE_MAX_MS = 60000;
 
 /**
- * 前台渲染的让路闸。
+ * Yield gate for foreground rendering.
  *
- * 3D 视图看到缺贴图会自己发一次渲染请求(那是用户正盯着的),
- * 而服务端渲染是串行的。前台开工前后各调一次,预渲染就会停下来等它。
+ * When the 3D view sees a missing texture it sends a render request itself (that is the one the
+ * user is staring at), and server rendering is serial. Call it once before and once after the
+ * foreground starts work, and prerender will stop and wait for it.
  */
 let foreground = 0;
 export function beginForegroundBake() { foreground++; }
 export function endForegroundBake() { foreground = Math.max(0, foreground - 1); }
 
-/** 要预渲染的一个时刻。哪几个时刻由调用方挑(见 bakeTime.ts 的 sampleTimesFor) */
+/** One moment to prerender. Which moments is picked by the caller (see sampleTimesFor in bakeTime.ts) */
 export interface WantedMoment {
   clipId: string;
   t: number;
   start: number;
   end: number;
-  /** 低帧率还是原始帧率。不写按低帧率算 */
+  /** Low frame rate or original frame rate. If not set, low frame rate is assumed */
   tier?: BakeTier;
-  /** 这一刻是否落在**原始帧率**的格子上(0.5 秒这种点两档都有,所以和 tier 是两件事) */
+  /** Whether this moment falls on a cell of the **original frame rate** (a point like 0.5 seconds exists in both tiers, so this is separate from tier) */
   fine?: boolean;
 }
 
 export interface PrefetchStatus {
   /**
-   * 已经渲好的:`<clipId>@<t>` → 贴图 URL。
-   * 键带上时刻,因为同一张卡会渲好几个时刻,只按 clipId 存会互相覆盖。
+   * Already rendered: `<clipId>@<t>` → texture URL.
+   * The key includes the moment, because the same card is rendered at several moments, and
+   * storing by clipId alone would make them overwrite each other.
    */
   ready: Map<string, string>;
-  /** 已经渲好的文件一共占多少磁盘(实测字节) */
+  /** Total disk space used by the files already rendered (measured bytes) */
   footprintBytes: number;
   budgetBytes: number;
   fileCount: number;
-  /** 正在渲的那张(给状态条显示) */
+  /** The one being rendered (shown in the status bar) */
   baking: { clipId: string; phase: string } | null;
-  /** 还排着多少张 */
+  /** How many are still queued */
   queued: number;
-  /** 这一轮删掉了几个过期文件 */
+  /** How many expired files this round deleted */
   evicted: number;
   error: string | null;
 }
@@ -92,7 +106,7 @@ const EMPTY: PrefetchStatus = {
   baking: null, queued: 0, evicted: 0, error: null,
 };
 
-/** 浏览器空闲时回调;没有 requestIdleCallback 的就退化成一个短 timeout */
+/** Callback when the browser is idle; without requestIdleCallback it degrades to a short timeout */
 function onIdle(fn: () => void, timeout = 2000): () => void {
   const ric = (globalThis as any).requestIdleCallback;
   if (typeof ric === "function") {
@@ -105,10 +119,11 @@ function onIdle(fn: () => void, timeout = 2000): () => void {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-// momentId 定义在 bakeCoverage.ts(纯的,覆盖表也按它记账);这里再导出给 Scene3DView 用
+// momentId is defined in bakeCoverage.ts (pure; the coverage table also keeps its books by it); it is re-exported here for Scene3DView to use
 export { momentId } from "./bakeCoverage";
 
-// canonFrameT 定义在 bakePlan.ts(纯函数、可单测);这里再导出,方便 Scene3DView 一处引入
+// canonFrameT is defined in bakePlan.ts (pure function, unit-testable); re-exported here so
+// Scene3DView needs only one import
 export { canonFrameT } from "./bakePlan";
 
 export function useBakePrefetch({
@@ -120,16 +135,18 @@ export function useBakePrefetch({
 }: {
   project: any;
   t: number;
-  /** 整条片子要预渲染的所有时刻。调用方算好传进来(bakeTime.ts 的 sampleTimesFor) */
+  /** All moments of the whole video that need prerendering. Computed by the caller and passed in
+   * (sampleTimesFor in bakeTime.ts) */
   moments: WantedMoment[];
   enabled: boolean;
   budgetBytes?: number;
 }): PrefetchStatus {
   const [status, setStatus] = useState<PrefetchStatus>(EMPTY);
   /*
-   * project / t / moments 走 ref:它们每拖一下都在变,进 effect 依赖会让整轮调度不停重启,
-   * 结果就是永远停在「盘点」那一步,一张也渲不出来。
-   * effect 只认 enabled,循环里每次都读最新值。
+   * project / t / moments go through refs: they change on every drag tick, and putting them in the
+   * effect dependencies would restart the whole scheduling round nonstop, so it would stay stuck at
+   * the "inventory" step and never render a single one.
+   * The effect only depends on enabled; the loop reads the latest values each time.
    */
   const projRef = useRef(project);
   projRef.current = project;
@@ -138,8 +155,9 @@ export function useBakePrefetch({
   const momentsRef = useRef(moments);
   momentsRef.current = moments;
   /**
-   * 每张卡当前的内容指纹。发布覆盖时要带上它 —— 画条子的那一侧靠它判断
-   * 「这段覆盖还算不算数」,从而做到改完卡片当帧就变白,不用等这里发布。
+   * Current content fingerprint of each card. It must be included when publishing coverage: the side
+   * that draws the bars uses it to decide "does this coverage still count", so a bar turns white on
+   * the very frame a card is edited, without waiting for a publish here.
    */
   const fingerprints = useMemo(() => {
     const m = new Map<string, string>();
@@ -148,7 +166,7 @@ export function useBakePrefetch({
   }, [project]);
   const fpRef = useRef(fingerprints);
   fpRef.current = fingerprints;
-  /** 最后一次改动的时刻 —— 用来判断用户是不是还在拖 */
+  /** Moment of the last change: used to tell whether the user is still dragging */
   const touchedAt = useRef(Date.now());
   useEffect(() => { touchedAt.current = Date.now(); }, [project, t]);
 
@@ -159,14 +177,14 @@ export function useBakePrefetch({
     let dead = false;
     let cancelIdle: (() => void) | null = null;
     const ready = new Map<string, string>();
-    /** 这一刻正在渲(给绿条标出来)。渲完置回 null */
+    /** The moment currently being rendered (to mark it on the green bar). Reset to null when done */
     let latestBakingAt: number | null = null;
 
-    /** 等到「浏览器空闲」且「用户停手」且「前台没在渲」 */
+    /** Wait until the browser is idle, the user has stopped, and the foreground is not rendering */
     const waitIdle = () => new Promise<void>((resolve) => {
       const attempt = () => {
         if (dead) return resolve();
-        // 手还按在播放头上就一律不动手 —— 拖动时每一格都会改 t,渲出来的全是一闪而过的位置
+        // While a hand is still on the playhead, do nothing: every drag step changes t, and what gets rendered is all fleeting positions
         const quiet = Date.now() - touchedAt.current >= IDLE_MS && !isScrubbing();
         if (quiet && foreground === 0) return resolve();
         cancelIdle = onIdle(attempt);
@@ -175,8 +193,9 @@ export function useBakePrefetch({
     });
 
     /**
-     * 把覆盖情况发给绿条。`bakingAt` 从 `latestBakingAt` 读 —— 它在渲的过程中会变,
-     * 而这个函数在每轮盘点后调一次,不能把当时那个瞬间的值封进闭包。
+     * Send the coverage to the green bar. `bakingAt` is read from `latestBakingAt`: it changes while
+     * rendering, and this function is called once after each inventory, so it must not close over the
+     * value of that one instant.
      */
     const publishBaked = (all: BakeMoment[], known: Map<string, number>, fpAtRequest: Map<string, string>) => {
       let bytes = 0;
@@ -184,11 +203,12 @@ export function useBakePrefetch({
       const isBaked = (m: { key?: string }) => !!m.key && known.has(m.key);
 
       /*
-       * **按卡分开发布**,每条带上这张卡当时的内容指纹。
+       * **Publish per card**, each entry carrying that card's content fingerprint at the time.
        *
-       * 合成一整条的话,就只有这个循环能更新它 —— 而这个循环要等当前这批渲完、
-       * 再盘点一次才轮得到发布,于是「改完卡片条子纹丝不动」。分卡存之后,
-       * 画条子的那一侧拿当前项目的指纹一对就知道哪条作废了,不用等这里。
+       * If published as one combined entry, only this loop could update it, and this loop publishes only
+       * after the current batch finishes rendering and another inventory is taken, so "after editing a
+       * card the bar doesn't budge". With per-card storage, the side that draws the bars compares against
+       * the current project's fingerprints and knows which entry is stale, without waiting here.
        */
       const byClip = new Map<string, BakeMoment[]>();
       for (const m of all) {
@@ -201,29 +221,32 @@ export function useBakePrefetch({
       const baked = new Set<string>();
       for (const [clipId, ms] of byClip) {
         /*
-         * 用**发请求那一刻**的指纹,不是现在的。
+         * Use the fingerprint from **the moment the request was sent**, not the current one.
          *
-         * 盘点是异步的:请求发出去之后用户可能已经改了这张卡。拿"现在的指纹"去盖一份
-         * "改之前的盘点结果",等于把过期数据盖上有效的戳 —— 实测过:改完 29ms 条子正确变白,
-         * 591ms 那个在途的盘点回来,又把它涂回去了,而那一刻它根本还没重渲。
-         * 条子说有、拖过去要等五秒,正是最不能接受的那种骗人。
+         * The inventory is asynchronous: after the request goes out the user may already have edited the
+         * card. Stamping a "before the edit" inventory result with the "current fingerprint" puts a valid
+         * stamp on stale data. Measured: 29ms after an edit the bar correctly turned white, then the
+         * in-flight inventory came back at 591ms and painted it over again, even though the card had not
+         * been re-rendered at all. A bar that says it's ready when dragging there takes five seconds is
+         * exactly the most unacceptable kind of lie.
          *
-         * 带上当时的指纹之后,这种过期结果和当前项目对不上,画条子那一侧自动滤掉。
+         * With the fingerprint from that time attached, such stale results don't match the current project,
+         * and the side that draws the bars filters them out automatically.
          */
         const fp = fpAtRequest.get(clipId);
-        // 指纹都拿不到说明这张卡当时就不在项目里,那它的覆盖也没有意义
+        // If no fingerprint can be found, the card wasn't in the project at that time, so its coverage is meaningless
         if (!fp) continue;
         clips.push({
           clipId,
           fp,
-          // 发布这一刻它待在哪儿。之后用户把卡挪走,画条子那侧按差值平移(见 ClipCoverage.start)
+          // Where it sat at the moment of publishing. If the user later moves the card, the bar-drawing side shifts by the difference (see ClipCoverage.start)
           start: ms[0]?.start ?? 0,
           moments: ms.map((m) => ({
             clipId: m.clipId, id: momentId(m.clipId, m.t), key: m.key,
             t: m.t, start: m.start, end: m.end, tier: m.tier, fine: m.fine,
           })),
         });
-        // 盘点问回来「这个键在磁盘上」的,就是已经渲好的那些时刻
+        // The keys the inventory reports as "on disk" are the moments that have already been rendered
         for (const m of ms) if (isBaked(m)) baked.add(momentId(m.clipId, m.t));
       }
       publishCoverage({ clips, baked, bakingAt: latestBakingAt, bytes });
@@ -231,8 +254,10 @@ export function useBakePrefetch({
 
     const post = async (url: string, payload: unknown, signal?: AbortSignal) => {
       /*
-       * 预渲染挂得久、一次两批,发到**预渲染进程的源**上,不占编辑器自己那个源的连接
-       * (浏览器同源只给约 6 条;挤满了编辑器要的模块、素材、接口全都得排队,见 src/render/prerender.ts)。
+       * Prerendering stays attached for a long time and sends two batches at once, so it goes to the
+       * **prerender process's origin** and doesn't take connections from the editor's own origin
+       * (the browser allows only about 6 per origin; when they are full, the modules, assets and APIs the
+       * editor needs all have to queue, see src/render/prerender.ts).
        */
       const res = await fetch(await prerenderUrl(url), {
         method: "POST",
@@ -245,18 +270,21 @@ export function useBakePrefetch({
       return data;
     };
 
-    /** 没活干就往后退,有活干或用户动了就退回最短 */
+    /** Back off when there is nothing to do; drop back to the shortest when there is work or the user moved */
     let backoff = REST_MS;
 
     /**
-     * 歇着,但**用户一动就立刻醒**。
+     * Rest, but **wake up immediately when the user moves**.
      *
-     * 原来这里是一句 `await sleep(backoff)`,而 backoff 全渲完之后会翻倍到 60 秒。
-     * 后果:改一张卡的参数 —— 它那几段缓存当场作废 —— 而进度条上的黄绿条还挂着,
-     * 板子上还贴着改之前的图,**最长要等一分钟**才刷新。用户看到的就是"改了没反应"。
+     * This used to be a single `await sleep(backoff)`, and backoff doubles up to 60 seconds once
+     * everything is rendered. Consequence: change a card's parameters, and its cached segments are
+     * invalidated on the spot, yet the yellow-green bars on the progress bar are still there and the
+     * board still shows the pre-edit image, so **it could take up to a minute** to refresh. What the
+     * user sees is "I changed it and nothing happened".
      *
-     * 所以拆成小段睡,每段之间看一眼 touchedAt(改项目、拖播放头都会更新它)。
-     * 250ms 一次的开销可以忽略:只是比一下时间戳,不发请求也不碰磁盘。
+     * So it sleeps in small slices and checks touchedAt between slices (editing the project or
+     * dragging the playhead both update it). The cost of checking every 250ms is negligible: it only
+     * compares timestamps, with no requests and no disk access.
      */
     const restUntilTouched = async (ms: number) => {
       const since = touchedAt.current;
@@ -280,9 +308,9 @@ export function useBakePrefetch({
           const wanted = momentsRef.current;
           if (!wanted.length) { await restUntilTouched(backoff); backoff = Math.min(IDLE_MAX_MS, backoff * 2); continue; }
 
-          // 拍下**这一刻**每张卡长什么样。盘点是异步的,回来时项目可能已经变了(见 publishBaked)
+          // Snapshot what every card looks like at **this moment**. The inventory is asynchronous and the project may have changed by the time it returns (see publishBaked)
           const fpAtRequest = fpRef.current;
-          /* ① 盘点:哪些已经有了、各自多大、还有哪些没人认领 */
+          /* ① Inventory: which already exist, how big each is, and which are still unclaimed */
           const st = await post("/api/vision/bake-status", {
             project: proj,
             clips: wanted.map((m) => ({ clipId: m.clipId, t: m.t })),
@@ -291,21 +319,22 @@ export function useBakePrefetch({
           if (dead) return;
 
           /*
-           * 键一律用服务端算的那个(bakeTarget)。前端不自己算一套 ——
-           * 两处各算各的,迟早会「明明预渲染过却当成没渲」,而且不报错,只是白白多等五秒。
-           * 盘点是按 (clipId, t) 一一对应回来的,所以顺序就是 wanted 的顺序。
+           * Always use the key computed by the server (bakeTarget). The frontend doesn't compute its own
+           * set: if both sides compute separately, sooner or later something "was clearly prerendered but
+           * is treated as not rendered", with no error, just five seconds of extra waiting for nothing.
+           * The inventory comes back matched one-to-one by (clipId, t), so the order is the order of wanted.
            */
           const known = new Map<string, number>();
           const planMoments: BakeMoment[] = [];
           for (const it of st.items ?? []) {
-            // 渲不了的(素材段之类)服务端会带 error 回来,跳过,别一直重试
+            // For ones that can't be rendered (media clips and the like) the server returns an error; skip them and don't keep retrying
             if (!it.key) continue;
             const w = wanted.find((m) => m.clipId === it.clipId && m.t === it.t);
             if (!w) continue;
             /*
-             * **tier 必须带过来。** 漏掉它的后果是所有时刻都退回 coarse:
-             * 界面上显示"低帧率 23/496、原始帧率 0/0",而排队也就没有了先后 ——
-             * 而且不报错,只是两档悄悄合成了一档。
+             * **The tier must be passed along.** If it's dropped, every moment falls back to coarse:
+             * the UI shows "low frame rate 23/496, original frame rate 0/0", and the queue has no priority
+             * order anymore, and there's no error either, the two tiers quietly merge into one.
              */
             planMoments.push({ clipId: w.clipId, t: w.t, start: w.start, end: w.end, key: it.key, tier: w.tier ?? "coarse", fine: !!w.fine });
             if (typeof it.bytes === "number") {
@@ -313,25 +342,26 @@ export function useBakePrefetch({
               if (it.url) ready.set(momentId(w.clipId, w.t), it.url);
             }
           }
-          // 没人认领的旧文件也计入占用 —— 不数它们的话,磁盘上的东西永远删不掉
+          // Old unclaimed files also count toward usage: if they aren't counted, things on disk can never be deleted
           for (const o of st.orphans ?? []) known.set(o.key, o.bytes);
 
           /*
-           * 把「哪几段已经能立刻看到画面」发给时间轴顶上那条绿条。
+           * Send "which segments can already show a picture immediately" to the green bar at the top of the timeline.
            *
-           * 用**这一轮盘点的结果**发,而不是用前端记的那份:盘点是问服务端要的,
-           * 上次开编辑器预渲染出来的文件也算数;只按这次会话渲过的算,绿条会从零开始涨,
-           * 明明磁盘上早就有了。
+           * Send it using **the result of this round's inventory**, not the copy the frontend remembers:
+           * the inventory is requested from the server, and files prerendered the last time the editor was
+           * open count too; if only what was rendered in this session counted, the green bar would grow
+           * from zero even though the files have long been on disk.
            */
           publishBaked(planMoments, known, fpAtRequest);
 
-          /* ② 排队:眼前 → 两侧 → 从 0 铺;同一份名单顺便算出该删哪些 */
+          /* ② Queue: in front of the playhead → both sides → tile from 0; the same list also yields what to delete */
           const plan = planBakes({ moments: planMoments, t: now, budgetBytes: budget, known });
 
-          /* ③ 先删再渲:腾出来的空间这一轮就能用上 */
+          /* ③ Delete first, then render: the freed space can be used in this very round */
           let evicted = 0;
           if (plan.evict.length) {
-            // 键全是服务端给的,它那边还会再拿自己的索引比对一次,删的只是索引条目(字节留在素材服务里)
+            // All keys come from the server, which will compare them against its own index again; only index entries are deleted (the bytes stay in the asset service)
             const gone = await post("/api/vision/bake-evict", { keys: plan.evict });
             evicted = gone.deleted?.length ?? 0;
             for (const k of gone.deleted ?? []) known.delete(k);
@@ -346,50 +376,58 @@ export function useBakePrefetch({
           });
 
           /*
-           * ④ **一批一批渲**,每批填满服务端的渲染池。
+           * ④ **Render batch by batch**, each batch filling the server's render pool.
            *
-           * 以前是一张一张发的,而服务端一次能并行跑好几个(28 核的机器上是 7 个)——
-           * 一张一张发等于让池子空着 6 个槽位干等。批的大小跟着服务端报的 concurrency 走,
-           * 别在前端猜:那个数是按机器的核心数和空闲内存算的,只有服务端知道。
+           * It used to send them one at a time, but the server can run several in parallel (7 on a 28-core
+           * machine). Sending one at a time leaves 6 slots idle, waiting. The batch size follows the
+           * concurrency the server reports; don't guess it in the frontend: that number is computed from the
+           * machine's core count and free memory, which only the server knows.
            *
-           * 批不宜再大:一批发出去就不能中途改主意了,而用户随时可能拖走 ——
-           * 刚好填满池子,既不浪费槽位,也不会让「回去重排」等太久。
+           * Batches shouldn't get bigger: once a batch is sent it can't change its mind midway, and the user
+           * may drag away at any time. Exactly filling the pool wastes no slots and doesn't make "go back and
+           * re-plan" wait too long.
            */
           const lot = Math.max(1, Math.min(8, Number(st.concurrency) || 1));
           /**
-           * 同时挂几个请求在飞。
+           * How many requests are in flight at the same time.
            *
-           * **一批刚好填满池子,不等于池子一直是满的。** 一批里那几张卡的活儿长短差很多
-           * (预渲染一张卡要从第 0 帧顺推到它所在的帧,所以贵在它排在时间轴多靠后,和它自己
-           * 长不长没关系)。一个请求要等**最慢的那张**才返回,于是每批的尾巴上池子都在塌:
-           * 先渲完的那几个槽位空着,干等最后一张。批越大,尾巴越长。
+           * **A batch that exactly fills the pool doesn't mean the pool stays full.** The cards in a batch
+           * differ a lot in workload (prerendering a card has to advance from frame 0 to its own frame, so
+           * the cost depends on how far back on the timeline it sits, not on how long it is itself). A
+           * request returns only after **the slowest card** finishes, so at the tail of every batch the pool
+           * collapses: the slots that finished first sit idle, waiting for the last card. The bigger the
+           * batch, the longer the tail.
            *
-           * 所以同时挂两批:A 收尾的时候 B 的活已经在池子里了,槽位不落空。
+           * So two batches are kept in flight: when A is finishing, B's work is already in the pool and no
+           * slot goes empty.
            *
-           * 为什么是 2 而不是更多:浏览器对同一个源只给约 6 条 HTTP/1.1 连接,而**贴图本身
-           * 也要走这些连接**取回来。Scene3DView 那边踩过一次:挂了 4 个渲染请求之后,
-           * 连取一张已经渲好的图的 GET 都排不进去,表现成「拖回已经预渲染过的地方也不刷新」。
-           * 两批(前台那张再占一条)还剩三条给图,够用。
+           * Why 2 and not more: the browser gives only about 6 HTTP/1.1 connections per origin, and **the
+           * textures themselves also use these connections** to be fetched. Scene3DView stepped on this
+           * once: with 4 render requests in flight, even the GET to fetch an already-rendered image couldn't
+           * get in line, which showed up as "dragging back to an already prerendered spot doesn't refresh".
+           * Two batches (plus one for the foreground card) still leave three connections for images, which
+           * is enough.
            */
           const INFLIGHT = 2;
           /**
-           * 一趟最多捎多少个同卡时刻。**顺路的那部分几乎免费**:服务端从第 0 帧顺推,
-           * 「渲第 F 帧」已经把 0..F 推了一遍,同一张卡其余 ≤F 的时刻只多花一次截图(约 78ms),
-           * 而单独开一趟要 4400ms。封顶是怕一个请求跑太久 —— 用户拖走时掐掉的那一趟越长越亏
-           * (虽然不浪费:服务端照样落盘)。
+           * Max number of same-card moments to piggyback on one trip. **The part along the way is almost
+           * free**: the server advances from frame 0, and "render frame F" has already advanced through
+           * 0..F, so the card's other moments ≤F cost only one more screenshot (about 78ms), whereas a
+           * separate trip takes 4400ms. The cap exists because a request that runs too long is a bigger
+           * loss when cancelled as the user drags away (though not wasted: the server still writes to disk).
            */
           const RIDE_ALONG = 48;
           const taken = new Set<number>();
           let done = 0;
-          /** 已经发出去、还没回来的那几批。`at` 是这一批里最靠前的时刻(绿条要标它) */
+          /** Batches already sent and not yet returned. `at` is the earliest moment in the batch (the green bar marks it) */
           const flying = new Set<{ at: number; p: Promise<void> }>();
-          /** 在飞的批里最靠前的那一刻 —— 绿条标的是它,不是某一批自己的 */
+          /** The earliest moment among the in-flight batches: the green bar marks this, not any single batch's own */
           const bakingAtNow = () => (flying.size ? Math.min(...[...flying].map((f) => f.at)) : null);
 
-          /** 发一批出去,登记进 flying;回来时自己摘掉、更新绿条 */
+          /** Send a batch out and register it in flying; on return it removes itself and updates the green bar */
           const launch = (batch: typeof plan.jobs) => {
             const entry = { at: Math.min(...batch.map((j) => j.t)), p: Promise.resolve() };
-            // 先登记再开跑:反过来的话 finally 里那句 delete 有可能先于 add 执行
+            // Register first, then start running: the other way around, the delete in finally could run before the add
             flying.add(entry);
             latestBakingAt = bakingAtNow();
             publishBaked(planMoments, known, fpAtRequest);
@@ -400,11 +438,12 @@ export function useBakePrefetch({
             entry.p = (async () => {
               try {
                 /*
-                 * 用户一动就把这批掐掉。实测:不掐的话「改完一张卡到进度条更新」要 11.8 秒,
-                 * 其中 7.8 秒是干等这批渲完 —— 而这批渲的还是**改之前**那一版,早就作废了。
+                 * Cancel this batch as soon as the user moves. Measured: without cancelling, "from editing a card
+                 * to the progress bar updating" takes 11.8 seconds, of which 7.8 seconds is just waiting for this
+                 * batch to finish rendering, and what it is rendering is the **pre-edit** version, long obsolete.
                  *
-                 * 掐掉不浪费:服务端不会因此停手,图照样落盘(见 bakeOne 的 bakeInFlight),
-                 * 只是这一轮不再等它。
+                 * Cancelling is not wasteful: the server doesn't stop because of it and the image is still written
+                 * to disk (see bakeInFlight in bakeOne), this round just no longer waits for it.
                  */
                 const ac = new AbortController();
                 const stopWatch = (async () => {
@@ -420,24 +459,25 @@ export function useBakePrefetch({
                 }, ac.signal).finally(() => { ac.abort(); void stopWatch; });
                 for (const b of out.baked ?? []) {
                   /*
-                   * 按「卡 + 时刻」存,而且时刻用**服务端回的那个**:一批里有好几张,
-                   * 拿 batch[0] 的 t 去认会把整批都记成同一刻(而且不报错,只是贴图对不上)。
+                   * Store by "card + moment", and use the moment **the server returned**: a batch has several cards,
+                   * and identifying by batch[0]'s t would record the whole batch as the same moment (with no error,
+                   * just textures that don't match).
                    */
                   ready.set(momentId(b.clipId, b.t), b.url);
                   if (typeof b.bytes === "number") footprint += b.bytes;
-                  // 这一刻已经能看了,记进 known,下一句发布时绿条就把它涂上
+                  // This moment can now be viewed; record it in known, and the green bar paints it at the next publish
                   const j = batch.find((x) => x.clipId === b.clipId && x.t === b.t);
                   if (j && typeof b.bytes === "number") known.set(j.key, b.bytes);
                 }
               } catch (e: any) {
-                // 一批渲不出来不该让整轮停摆,下一轮盘点会重新遇到它们;
-                // 被掐掉的更不算错 —— 那是项目变了、我们自己主动放弃的
+                // A batch failing to render shouldn't stall the whole round; the next inventory will meet them again.
+                // Cancelled ones certainly don't count as errors: the project changed and we gave up on our own
                 if (!dead && e?.name !== "AbortError") setStatus((s) => ({ ...s, error: String(e?.message || e) }));
               } finally {
                 flying.delete(entry);
                 done += batch.length;
                 latestBakingAt = bakingAtNow();
-                // 每回来一批就更新绿条,而不是等整轮跑完 —— 用户要看着它一段一段长出来
+                // Update the green bar as each batch returns, not after the whole round finishes: the user wants to watch it grow segment by segment
                 publishBaked(planMoments, known, fpAtRequest);
                 setStatus((s) => ({
                   ...s,
@@ -452,8 +492,9 @@ export function useBakePrefetch({
           for (let i = 0; i < plan.jobs.length; i += 1) {
             if (taken.has(i)) continue;
             /*
-             * **批次的先后一点没动**:仍然按 plan.jobs 的顺序(离播放头由近到远)取下一个还没发的活,
-             * 填满服务端的池子。变的只是「每张卡把自己其余的时刻捎上」—— 那部分是顺路的。
+             * **The order of batches is unchanged**: still take the next unsent job in plan.jobs order
+             * (nearest to the playhead first), filling the server's pool. What changed is only that "each
+             * card piggybacks its other moments", and that part comes along the way.
              */
             const batch: typeof plan.jobs = [];
             const clipsIn = new Set<string>();
@@ -466,7 +507,7 @@ export function useBakePrefetch({
               }
               taken.add(k); batch.push(j);
             }
-            // 再把这几张卡在队伍里更靠后的时刻捎上,按卡各自封顶
+            // Then piggyback these cards' later moments in the queue, capped per card
             const perClip = new Map<string, number>();
             for (const j of batch) perClip.set(j.clipId, (perClip.get(j.clipId) ?? 0) + 1);
             for (let k = 0; k < plan.jobs.length; k++) {
@@ -480,31 +521,38 @@ export function useBakePrefetch({
             }
             if (dead) return;
             /*
-             * 满了就停。**最多超出还在飞的那几批**(几十 KB × INFLIGHT)—— 因为没渲出来之前
-             * 不知道它多大,而为了这几十 KB 去估一个大小,反而会把整套东西建在猜测上。
+             * Stop when full. **At most it exceeds by the batches still in flight** (a few dozen KB × INFLIGHT):
+             * the size isn't known before rendering, and estimating a size for a few dozen KB would build the
+             * whole thing on guesses instead.
              */
             if (footprint >= budget) break;
             await waitIdle();
             if (dead) return;
             /*
-             * 用户在这一轮开始之后动过任何东西 → 手上这份队伍已经不作数了,回去重排。
+             * If the user touched anything after this round started → the queue in hand no longer counts; go
+             * back and re-plan.
              *
-             * 原来这里写的是 `Date.now() - touchedAt.current < IDLE_MS`,**永远不成立**:
-             * 上面那句 `waitIdle()` 的定义就是"安静满 IDLE_MS 才返回",所以走到这一行时
-             * 这个差值必然 ≥ IDLE_MS。等于这条退出路径从来没生效过。
+             * This used to be `Date.now() - touchedAt.current < IDLE_MS`, which **never holds**: the
+             * `waitIdle()` above is defined as "returns only after being quiet for a full IDLE_MS", so by the
+             * time we reach this line the difference is necessarily ≥ IDLE_MS. That means this exit path never
+             * took effect.
              *
-             * 后果实测得到:一轮排出四百多个活,每批 7 个约 5 秒 —— 整整五分钟里
-             * **一次都不会重新盘点**。期间改一张卡,进度条上它那几段黄绿条纹丝不动,
-             * 因为重新发布覆盖只发生在下一轮盘点之后。用户看到的就是"改了半天没反应"。
+             * Measured consequence: a round queued over four hundred jobs, 7 per batch at about 5 seconds each,
+             * so for a full five minutes **there was not a single re-inventory**. If you edited a card in that
+             * time, its yellow-green stripes on the progress bar didn't budge, because republishing coverage
+             * only happens after the next inventory. What the user sees is "I changed it for ages and nothing
+             * happened".
              *
-             * 比时间戳而不是比时长:只要和开工时不一样,就说明中途有变化。
+             * Compare timestamps rather than durations: any difference from the time work started means
+             * something changed midway.
              */
             if (touchedAt.current !== roundStartedAt) break;
 
             didSomething = true;
             /*
-             * 池子里没位置就等一个回来。**只等一个,不等全部** —— 等全部就退回原来那种
-             * 「一批一批地等最慢的」,尾巴照样塌。
+             * If there's no room in the pool, wait for one to return. **Wait for just one, not all**: waiting
+             * for all falls back to the old "batch by batch, waiting for the slowest" behavior, and the tail
+             * still collapses.
              */
             if (flying.size >= INFLIGHT) await Promise.race([...flying].map((f) => f.p));
             if (dead) return;
@@ -512,21 +560,24 @@ export function useBakePrefetch({
             launch(batch);
           }
           /*
-           * 这一轮的活全排出去了,等挂着的那几批回来再进下一轮盘点。
-           * 不等的话下一轮会拿着「还没落盘」的盘点结果重排一遍,把正在渲的那些又排一次。
+           * All of this round's jobs have been sent; wait for the pending batches to return before the next
+           * inventory. Without waiting, the next round would re-plan using an inventory result that is "not
+           * yet on disk" and queue the ones currently rendering a second time.
            */
           await Promise.allSettled([...flying].map((f) => f.p));
         } catch (e: any) {
           if (!dead) setStatus((s) => ({ ...s, baking: null, error: String(e?.message || e) }));
         }
         /*
-         * 这一轮干了活,或者用户在这期间动过东西 → 下一轮马上来;
-         * 否则说明已经渲齐了,逐次翻倍往后退,免得空转着一直问服务端。
+         * This round did work, or the user touched something meanwhile → next round right away;
+         * otherwise everything is already rendered, so back off with doubling each time, to avoid
+         * spinning and asking the server constantly.
          */
         /*
-         * 因为**有变化**才回到这里的:立刻重排,别再歇。手上这份计划已经作废了,
-         * 歇 4 秒只是让用户多盯 4 秒不对的进度条。下一轮开头的 waitIdle 会保证
-         * 「安静 600ms」,连续编辑自然会被合并,不会打成一片请求。
+         * We got back here because **something changed**: re-plan immediately, don't rest. The plan in
+         * hand is obsolete, and resting 4 seconds only makes the user stare at a wrong progress bar for 4
+         * more seconds. The waitIdle at the start of the next round guarantees "quiet for 600ms", so
+         * continuous edits get merged naturally and won't turn into a flood of requests.
          */
         const changed = touchedAt.current !== roundStartedAt;
         backoff = changed ? 0 : didSomething ? REST_MS : Math.min(IDLE_MAX_MS, backoff * 2);

@@ -1,9 +1,14 @@
 /**
- * SP 局域网发现（契约 `docs/plan/shared-project-contract.md` 第 4 节参数；验收第 7 节 SP4 的本机部分）。
- * 跑：node --test server/test/sp-lan.test.mjs
+ * SP LAN discovery (parameters in Section 4 of `docs/plan/shared-project-contract.md`;
+ * local portion of Section 7 acceptance check SP4).
+ * Run: node --test server/test/sp-lan.test.mjs
  *
- * 契约只定参数，没定模块与函数：全部假设见 `sp-kit.mjs` 文件头 L0。本机单测用两个 dgram 套接字模拟（回环网卡注入、
- * 单播代替组播），端口都由系统分配（主机绑 0，查询发往它实际绑到的端口），同一台机器上并行跑几份也不串。跨机（真组播、定向广播、不同网段发现不到）在 W6 验。
+ * The contract specifies only parameters, not modules and functions: all assumptions are in
+ * `sp-kit.mjs` file header L0. Local unit tests simulate with two dgram sockets (loopback interface
+ * injection, unicast instead of multicast), with all ports assigned by the system (host binds to 0,
+ * queries are sent to the port it actually bound to), so running multiple copies in parallel on the
+ * same machine will not collide. Cross-machine (real multicast, directed broadcast, undiscoverable
+ * across different subnets) is verified in W6.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,7 +28,7 @@ function announceFields(extra = {}) {
   };
 }
 
-// ================================================================== 参数
+// ================================================================== Parameters
 
 test('SPC4-1 parameters: 239.255.42.99:54887, TTL 1, 3 queries 500 ms apart, announce every 15 s ± 3 s, expire after 45 s, single packet ≤ 1 KiB, discovery limited to 3 s, check network interfaces every 10 s', async () => {
   const { LAN_DISCOVERY: P } = await loadLan();
@@ -40,7 +45,7 @@ test('SPC4-1 parameters: 239.255.42.99:54887, TTL 1, 3 queries 500 ms apart, ann
   assert.equal(P.interfaceCheckMs, 10_000);
 });
 
-// ================================================================== 包格式
+// ================================================================== Packet format
 
 test('SPC4-2 query packet: { magic: promptcut-lan, v: 1, type: query, nonce, name? }, UTF-8 JSON', async () => {
   const { encodeQuery, decodePacket } = await loadLan();
@@ -67,7 +72,7 @@ test('SPC4-3 reply packet: all fields present, ttlMs 45000; not sent when over 1
   }
   assert.deepEqual(decodePacket(buf).projectId, f.projectId);
   assert.equal(encodeAnnounce(announceFields({ hostDeviceName: 'x'.repeat(1100) })), null, 'not sent when over 1 KiB');
-  // 刚好按 UTF-8 字节算：多字节字符
+  // Calculated exactly in UTF-8 bytes: multibyte characters
   assert.equal(encodeAnnounce(announceFields({ hostDeviceName: '设'.repeat(330) })), null, 'counted in UTF-8 bytes, not characters');
 });
 
@@ -83,7 +88,7 @@ test('SPC4-4 decodePacket: a wrong magic, v or type, non-JSON, or more than 1 Ki
   assert.equal(decodePacket(enc(announceFields())).type, 'announce');
 });
 
-// ================================================================== 选网卡
+// ================================================================== Select network interface
 
 test('SPC4-5 selecting network interfaces: enabled, non-loopback, non-link-local, with IPv4; computes the subnet-directed broadcast address', async () => {
   const { selectInterfaces } = await loadLan();
@@ -104,7 +109,7 @@ test('SPC4-5 selecting network interfaces: enabled, non-loopback, non-link-local
   ]);
 });
 
-// ================================================================== 过期
+// ================================================================== Expiration
 
 test('SPC4-6 a client is removed if not seen for 45 s; seeing it again in the meantime renews it', async () => {
   const { createLanTable } = await loadLan();
@@ -124,12 +129,12 @@ test('SPC4-6 a client is removed if not seen for 45 s; seeing it again in the me
   assert.equal(table.list().length, 1, 'the same project on the same host counts as one entry');
 });
 
-// ================================================================== 两个 dgram 套接字
+// ================================================================== Two dgram sockets
 
 async function udpSocket(t, port = 0) {
   const s = dgram.createSocket({ type: 'udp4', reuseAddr: false });
   await new Promise((resolve, reject) => { s.once('error', reject); s.bind(port, '127.0.0.1', resolve); });
-  t.after(() => { try { s.close(); } catch { /* 已关 */ } });
+  t.after(() => { try { s.close(); } catch { /* Closed */ } });
   return s;
 }
 

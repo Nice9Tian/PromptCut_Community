@@ -1,4 +1,8 @@
-/** 探针的对照卡（测试夹具，不进卡片库）：每渲染一次就往 ref 里加一，画面取决于前面渲染过几次——顺着播和直接跳必然不同。它过不了建卡检查。 */
+/**
+ * Control card for probes (test fixture, not added to the card library): increments a ref on each
+ * render; visuals depend on how many times it previously rendered: sequential playback and jumping
+ * directly inevitably differ. It cannot pass the card creation check.
+ */
 import { useRef } from "react";
 import type { CardDef, CardProps } from "../../kernel/types";
 interface Params { text: string }

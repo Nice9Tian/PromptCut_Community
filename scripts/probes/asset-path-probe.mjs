@@ -1,34 +1,54 @@
 /**
- * Agent 读素材的路径的端到端探针(`docs/archive/agent-reports/AGENT-asset-path.md`;语义 `docs/semantics/product/agent.md`「素材与产物」):
- * 证明 `measure_audio` 与 `measure_audio_js`,以及三个感知工具 `detect_shots` / `track_points` / `detect_subjects`
- * (`docs/archive/agent-reports/AGENT-asset-path-2.md`)在编辑器进程里是**经素材服务的接口**取的字节,不是按素材目录找文件。
+ * End-to-end probe for Agent asset-reading paths (`docs/archive/agent-reports/AGENT-asset-path.md`;
+ * semantics `docs/semantics/product/agent.md` "Media and Artifacts"):
+ * Proves that `measure_audio` and `measure_audio_js`, plus three perception tools `detect_shots` /
+ * `track_points` / `detect_subjects` (`docs/archive/agent-reports/AGENT-asset-path-2.md`), fetch bytes
+ * in the editor process **via the asset service interface**, not by finding files via asset catalog.
  *
  *   node scripts/probes/asset-path-probe.mjs [--port 5920] [--keep]
  *
- * 自己起一个编辑器 dev server(`--port`,缺省 5920,舞台另占 +1、+2;带 PROMPTCUT_NO_PORT_FILE=1),产物与素材落在新建的临时目录;
- * 再在 `--port + 5` 上起一台计数的「远程素材服务」(只实现 `GET/HEAD <base>/media/<hash>`,支持 Range),充当共享项目登记的那一台。
- * 两段测试音频**只放在这台远程素材服务上**,编辑器的素材目录里一开始什么都没有;项目里素材记录的 `path` 指向不存在的目录。
+ * Starts an editor dev server itself (`--port`, defaults to 5920; stages occupy +1 and +2; with
+ * PROMPTCUT_NO_PORT_FILE=1), placing artifacts and assets in a newly created temporary directory;
+ * then starts a counting "remote asset service" on `--port + 5` (only implements
+ * `GET/HEAD <base>/media/<hash>`, supporting Range), acting as the one registered for shared project.
+ * The two test audio clips are **only placed on this remote asset service**, and the editor's asset
+ * catalog is initially empty; the asset record's `path` in the project points to a nonexistent directory.
  *
- *   P1 编辑器经 `POST /api/media/remote` 连上这台远程素材服务(共享项目时页面做的事);
- *   P2 `measure_audio` 测噪声素材:integrated / truePeak / LRA / threshold / duration 与探针自己用 ffmpeg 直接读本地文件
- *      (改前的读法)算出来的逐项相同;远程素材服务被请求过这份素材 —— 字节确实是经素材服务的接口来的;
- *   P3 `measure_audio_js`(登记为「高」的对话)测正弦波素材:RMS / 峰值与理论值一致;沙箱里算的 PCM 指纹与探针自己解码
- *      本地文件的相同;远程素材服务被请求过这份素材;
- *   P4 断开远程(回到本机空间):这时素材只在本地内容库里、按哈希存(`<hash>.<ext>`),素材记录的 url 不带扩展名,
- *      按目录拼文件名(改前的 `mediaFileOf`)找不到它,只有素材服务按哈希能找到;两条工具照常出结果、数值不变,远程一次也没被打到;
- *   P5 一份哪儿都没有的素材:两条工具回清楚的错(素材文件不存在 / no-media),不崩。
- *   ── 下面是感知工具(视频也只放在远程素材服务上;P7～P11 要一个带 numpy 的 Python,编辑器经 PROMPTCUT_PYTHON 用它) ──
- *   P6 detect_shots(scdet 兜底档):转场时刻与直接对本地文件跑 scdet 的相同;远程素材服务被请求过这段视频;
- *   P7 track_points(模板匹配档):经素材服务追出来的与直接对本地文件跑 promptcut_track 的逐项相同;
- *   P8 detect_subjects:地址过得了 Python 的入口检查(这台机器没装模型,停在「未就绪」,不是「找不到视频文件」);
- *   P9 三个 Python 包都答 ACCEPTS_URL;
- *   P10 老包(没有 ACCEPTS_URL)拒绝地址,Node 改走临时文件:字节相同、结果相同、用完删;
- *   P11 主体检测抽帧那一步:经地址与读本地文件解出的像素逐字节相同。
- *   这台机器没有 TransNetV2 / BootsTAPIR / YuNet 等模型,真的模型推理不在探针里跑。
+ *   P1 The editor connects to this remote asset service via `POST /api/media/remote` (what the page
+ *      does when sharing a project);
+ *   P2 `measure_audio` tests noise asset: integrated / truePeak / LRA / threshold / duration are
+ *      item-by-item identical to those calculated by the probe itself reading the local file directly
+ *      with ffmpeg (pre-change reading method); the remote asset service was requested for this
+ *      asset: bytes indeed came via the asset service interface;
+ *   P3 `measure_audio_js` (chat registered as "high") tests sine wave asset: RMS / peak match
+ *      theoretical values; PCM fingerprint calculated in sandbox matches probe's own decoding of
+ *      local file; remote asset service was requested for this asset;
+ *   P4 Disconnect remote (return to local space): asset now exists only in local content store,
+ *      stored by hash (`<hash>.<ext>`), and asset record url has no extension; splicing filename by
+ *      directory (pre-change `mediaFileOf`) cannot find it, only asset service finds it by hash;
+ *      both tools return results as usual with unchanged values, remote was not hit once;
+ *   P5 Asset that exists nowhere: both tools return clear errors (asset file does not exist /
+ *      no-media) without crashing.
+ *   ── Below are perception tools (video also only on remote asset service; P7~P11 require Python
+ *      with numpy, used by editor via PROMPTCUT_PYTHON) ──
+ *   P6 detect_shots (scdet fallback tier): transition timestamps match running scdet directly on
+ *      local file; remote asset service was requested for this video;
+ *   P7 track_points (template matching tier): tracking results via asset service are item-by-item
+ *      identical to running promptcut_track directly on local file;
+ *   P8 detect_subjects: URL passes Python entry check (this machine has no models installed, stops
+ *      at "not ready" rather than "video file not found");
+ *   P9 All three Python packages return ACCEPTS_URL;
+ *   P10 Legacy package (without ACCEPTS_URL) rejects URL, Node falls back to temp files: bytes
+ *       identical, results identical, deleted after use;
+ *   P11 Subject detection frame extraction step: pixels decoded via URL vs reading local file are
+ *       byte-by-byte identical.
+ *   This machine does not have TransNetV2 / BootsTAPIR / YuNet models; real model inference is not
+ *   run in the probe.
  *
- * 结束时只停自己起的进程(编辑器进程树、计数服务、探针的 puppeteer Chrome);`--keep` 不关、不删临时目录。
+ * On exit, only stop processes started by itself (editor process tree, counting service, probe's
+ * puppeteer Chrome); `--keep` does not close them or delete temporary directories.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,并设 PROMPTCUT_NO_PORT_FILE=1
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR, and set PROMPTCUT_NO_PORT_FILE=1
 import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -58,21 +78,21 @@ const EDITOR = `http://127.0.0.1:${PORT}`;
 const EXPORT_DIR = path.join(os.tmpdir(), `pc-asset-path-probe-${Date.now().toString(36)}`);
 const DATA_DIR = path.join(EXPORT_DIR, 'data');
 const MEDIA_DIR = path.join(EXPORT_DIR, 'media');
-const SRC_DIR = path.join(EXPORT_DIR, 'remote-src'); // 远程素材服务的字节(编辑器不知道这个目录)
+const SRC_DIR = path.join(EXPORT_DIR, 'remote-src'); // Bytes from the remote asset service (the editor does not know about this directory)
 const GONE = path.join(EXPORT_DIR, 'nonexistent-asset-dir');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(MEDIA_DIR, { recursive: true });
 fs.mkdirSync(SRC_DIR, { recursive: true });
 
-/* ---- P6～P11 用的 Python 辅助(claude/asset-path-2)---- */
-/** 带 numpy 的 Python:PROMPTCUT_TEST_PYTHON,或 PATH 上的 python / python3;找不到时 P7～P11 记为失败(探针不静默跳过) */
+/* ---- Python helpers for P6~P11 (claude/asset-path-2) ---- */
+/** Python with numpy: PROMPTCUT_TEST_PYTHON, or python / python3 on PATH; when not found, record P7~P11 as failures (probe does not silently skip) */
 function findTestPython() {
   for (const cmd of [process.env.PROMPTCUT_TEST_PYTHON, 'python', 'python3'].filter(Boolean)) {
     try {
       const r = spawnSync(cmd, ['-c', 'import sys, numpy; sys.stdout.write(sys.executable)'], { encoding: 'utf8', windowsHide: true, timeout: 30000 });
       const exe = String(r.stdout || '').trim();
       if (r.status === 0 && exe && fs.existsSync(exe)) return exe;
-    } catch { /* 下一个 */ }
+    } catch { /* Next */ }
   }
   return null;
 }
@@ -80,10 +100,10 @@ const PY = findTestPython();
 const PYLIBS = path.join(EXPORT_DIR, 'pylibs');
 const MODELS = path.join(EXPORT_DIR, 'models');
 fs.mkdirSync(PYLIBS, { recursive: true });
-/** 让 Python 找得到仓库里的包(和 vite-plugin-stt 的 buildEnv 对普通解释器的做法相同) */
+/** Let Python find packages in the repository (same approach as buildEnv in vite-plugin-stt for ordinary interpreters) */
 const pyEnv = (pylibs) => ({ ...process.env, PYTHONPATH: pylibs + path.delimiter + path.join(ROOT, 'python'), PYTHONNOUSERSITE: '1', PYTHONUTF8: '1', PROMPTCUT_PYLIBS: pylibs, PROMPTCUT_MODELS: MODELS });
 const spawnPy = (python, a, env) => spawn(python, a, { env, windowsHide: true });
-/** 异步跑子进程:计数的远程素材服务就在探针进程里,spawnSync 会卡住事件循环、ffmpeg 发来的请求没人答 */
+/** Run child process asynchronously: counting remote asset service is in probe process; spawnSync blocks event loop, leaving ffmpeg requests unanswered */
 function runAsync(cmd, a, env, timeoutMs = 180000) {
   return new Promise((resolve) => {
     const child = spawn(cmd, a, { env, windowsHide: true });
@@ -95,14 +115,14 @@ function runAsync(cmd, a, env, timeoutMs = 180000) {
     child.on('close', (status) => { clearTimeout(timer); resolve({ status, stdout, stderr }); });
   });
 }
-/** promptcut_track 的 result 事件 → 与 get_track(full) 比对的那几项 */
+/** promptcut_track's result event -> fields compared against get_track(full) */
 function trackResult(r) {
   const line = String(r.stdout).split(/\r?\n/).find((l) => /"event":\s*"result"/.test(l));
   if (!line) return { error: (r.stdout + r.stderr).slice(-400) };
   const ev = JSON.parse(line);
   return { engine: ev.engine, width: ev.width, height: ev.height, frames: ev.frames, points: ev.points };
 }
-/** 造一份「老包」:照仓库里的 promptcut_track 拷一份,去掉 ACCEPTS_URL 与地址放行(桌面版只打 Node 补丁时运行时里的包就是这样) */
+/** Create a "legacy package": copy promptcut_track from repository, remove ACCEPTS_URL and URL allowlisting (what package in runtime looks like when desktop app only patches Node) */
 function makeOldTrackPackage(pylibs) {
   const dst = path.join(pylibs, 'promptcut_track');
   fs.cpSync(path.join(ROOT, 'python', 'promptcut_track'), dst, { recursive: true, filter: (s) => !s.includes('__pycache__') });
@@ -159,8 +179,8 @@ function stopEditor() {
   else editor.kill('SIGKILL');
 }
 
-/* ---- 计数的远程素材服务:GET/HEAD /api/asset/media/<hash>,Range ---- */
-const remoteFiles = new Map(); // hash → 文件
+/* ---- Counting remote asset service: GET/HEAD /api/asset/media/<hash>, Range ---- */
+const remoteFiles = new Map(); // hash -> file
 const remoteLog = [];
 const remote = http.createServer((req, res) => {
   const m = /^\/api\/asset\/media\/([0-9a-f]{64})$/.exec(String(req.url).split('?')[0]);
@@ -193,13 +213,13 @@ const mcpCall = async (tool, callArgs, agent) => {
   const body = await res.json().catch(() => null);
   return body?.result ?? body;
 };
-/** 登记这个对话的等级:真的走 /api/ai/chat,provider 不存在,登记之后起模型那一步直接报错,不花额度 */
+/** Register this chat's tier: actually hits /api/ai/chat; provider does not exist, so starting model right after registration directly throws error without spending quota */
 const register = (conv, creativity) => fetch(`${EDITOR}/api/ai/chat`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ provider: 'probe-none', prompt: 'x', conversationId: conv, creativity, projectCreativity: 'high' }),
 }).then((r) => r.text()).catch(() => '');
 
-/** 沙箱里算:每声道 RMS / 峰值,加上全部样本字节的 FNV-1a 指纹 */
+/** Compute in sandbox: per-channel RMS / peak, plus FNV-1a fingerprint of all sample bytes */
 const RMS_PEAK_FNV = [
   'const out = []; let h = 2166136261 >>> 0;',
   'for (const x of input.channels) {',
@@ -225,7 +245,7 @@ const near = (a, b, tol) => typeof a === 'number' && Math.abs(a - b) < tol;
 const LOUD_KEYS = ['integrated', 'truePeak', 'lra', 'lraLow', 'lraHigh', 'threshold', 'duration'];
 const pick = (o) => Object.fromEntries(LOUD_KEYS.map((k) => [k, o?.[k]]));
 
-/** 探针自己按改前的读法(ffmpeg 直接读本地文件)测响度 */
+/** Probe measures loudness itself using pre-change reading method (ffmpeg directly reading local file) */
 function loudnessDirect(ffmpeg, file) {
   const r = spawnSync(ffmpeg, measureArgs({ file }), { encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
   return parseEbur128(r.stderr);
@@ -263,7 +283,7 @@ try {
   const placed = await page.evaluate(async ({ sine, noise, ghost, gone }) => {
     const m = await import('/src/store/project.ts');
     m.actions.newProject?.();
-    // url 不带扩展名、path 指向不存在的目录:按目录拼文件名找不到,只能经素材服务按哈希找
+    // url has no extension and path points to nonexistent directory: splicing filename by directory cannot find it, can only find by hash via asset service
     const a = m.actions.addMedia({ id: 'm-sine', kind: 'audio', name: 'sine.wav', url: `/@media/${sine}`, hash: sine, path: `${gone}\\sine.wav`, duration: 3 });
     const b = m.actions.addMedia({ id: 'm-noise', kind: 'audio', name: 'noise.wav', url: `/@media/${noise}`, hash: noise, path: `${gone}\\noise.wav`, duration: 20 });
     const c = m.actions.addMedia({ id: 'm-ghost', kind: 'audio', name: 'ghost.wav', url: `/@media/${ghost}`, hash: ghost, path: `${gone}\\ghost.wav`, duration: 3 });
@@ -273,7 +293,7 @@ try {
   out.placed = placed;
   check(!!placed.clipId && placed.hashes.includes(sine.hash), 'The asset was recorded in the project (with hash) and the sine wave was placed on the timeline', placed);
 
-  /* ---- P1 连上远程素材服务 ---- */
+  /* ---- P1 Connect to remote asset service ---- */
   const base = `http://127.0.0.1:${REMOTE_PORT}/api/asset`;
   const set = await fetch(EDITOR + '/api/media/remote', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base }) }).then((r) => r.json()).catch(() => null);
   const status = await fetch(EDITOR + '/api/media/remote').then((r) => r.json()).catch(() => null);
@@ -304,7 +324,7 @@ try {
   const clipJs = await mcpCall('measure_audio_js', { clipId: placed.clipId, mono: true, sampleRate: 48000, code: RMS_PEAK_FNV }, conv);
   check(clipJs?.ok === true && near(clipJs.value?.channels?.[0]?.rmsDb, RMS, 0.05), 'P3 Clip tier (mono, 48 kHz) works as usual', clipJs && { ok: clipJs.ok, error: clipJs.error, v: clipJs.value?.channels });
 
-  /* ---- P6～P11 三个感知工具(claude/asset-path-2):字节经素材服务来,结果与直接读本地文件相同 ---- */
+  /* ---- P6~P11 Three perception tools (claude/asset-path-2): bytes come via asset service, results identical to reading local file directly ---- */
   const cuts = gen('cuts.mp4', ['-f', 'lavfi', '-i', 'color=c=red:s=160x90:r=25:d=1', '-f', 'lavfi', '-i', 'color=c=blue:s=160x90:r=25:d=1',
     '-f', 'lavfi', '-i', 'color=c=green:s=160x90:r=25:d=1', '-filter_complex', '[0][1][2]concat=n=3:v=1:a=0', '-c:v', 'libx264', '-pix_fmt', 'yuv420p']);
   const move = gen('move.mp4', ['-f', 'lavfi', '-i', 'color=c=black:s=160x120:r=10:d=2', '-f', 'lavfi', '-i', 'color=c=white:s=16x16:r=10:d=2',
@@ -318,7 +338,7 @@ try {
     return { cuts: a.id, move: b.id };
   }, { cuts: cuts.hash, move: move.hash, gone: GONE });
 
-  // P6 detect_shots(编辑器没有 Python 模型,走 scdet 兜底档):转场时刻与直接对本地文件跑 scdet 的相同
+  // P6 detect_shots (editor has no Python model, uses scdet fallback tier): transition timestamps match running scdet directly on local file
   const scdetDirect = [...String(spawnSync(ffmpeg, ['-hide_banner', '-i', cuts.file, '-vf', 'scdet=threshold=10', '-f', 'null', '-'], { encoding: 'utf8', windowsHide: true }).stderr)
     .matchAll(/lavfi\.scd\.time:\s*([0-9.]+)/g)].map((x) => Number(x[1]));
   const started = await mcpCall('detect_shots', { mediaId: vids.cuts });
@@ -334,7 +354,7 @@ try {
   if (!PY) {
     fails.push('P7-P11 need a Python with numpy (python on PATH, or PROMPTCUT_TEST_PYTHON), none was found on this machine');
   } else {
-    // P7 track_points(模板匹配档):追出来的与直接对本地文件跑 promptcut_track 的逐项相同
+    // P7 track_points (template matching tier): tracking results via asset service are item-by-item identical to running promptcut_track directly on local file
     const POINTS = [[0, 28, 58]];
     const direct = trackResult(await runAsync(PY, ['-m', 'promptcut_track', 'track', '--video', move.file, '--points', JSON.stringify(POINTS)], pyEnv(PYLIBS)));
     const moveHits0 = hitsOf(move.hash);
@@ -346,11 +366,11 @@ try {
     const trackNow = track && { engine: track.engine, width: track.width, height: track.height, frames: track.frames, points: track.points };
     check(track?.engine === 'template' && JSON.stringify(trackNow) === JSON.stringify(direct),
       'P7 track_points (template-matching tier): tracking through the asset service matches reading the local file directly, item by item', { now: trackNow && { ...trackNow, points: trackNow.points?.map((p) => [p.xy[0], p.xy.at(-1)]) }, direct: direct && direct.points?.map((p) => [p.xy[0], p.xy.at(-1)]), error: track?.error, started: tStart });
-    // 页面登记素材后,本地素材服务可能已经按预取清单把整份从远程拉进本地内容库(P7 开始前),所以这里只看远程总共被请求过没有:
-    // 编辑器的素材目录一开始是空的、素材记录的 path 指向不存在的目录,字节只可能经素材服务来
+    // After page registers asset, local asset service may have pulled the whole file from remote into local content store per prefetch manifest (before P7 starts), so here only check if remote was requested overall:
+    // Editor's asset catalog is empty initially, and asset record's path points to a nonexistent directory; bytes could only come via asset service
     check(hitsOf(move.hash) >= 1, `P7 The remote asset service was asked for this video (${hitsOf(move.hash)} GETs in total, ${hitsOf(move.hash) - moveHits0} of them during P7)`);
 
-    // P8 detect_subjects:这台机器没有主体检测的模型;地址要过得了 Python 的入口检查,停在「未就绪」而不是「找不到视频文件」
+    // P8 detect_subjects: this machine has no subject detection model; URL must pass Python entry check, stopping at "not ready" rather than "video file not found"
     const sStart = await mcpCall('detect_subjects', { mediaId: vids.move, times: [0.5, 1.2] });
     const subj = await until('list_subjects finishes', async () => {
       const r = await mcpCall('list_subjects', { mediaId: vids.move });
@@ -360,12 +380,12 @@ try {
     check(subj && !/video file not found/.test(String(subj.error || '')) && (subj.running === false ? subj.samples?.length === 2 : /not ready/.test(String(subj.error))),
       'P8 detect_subjects: the URL passed the entry check (with the model installed it yields two samples; without it, it stops at "not ready")', out.subjects);
 
-    // P9 三个 Python 包都答 ACCEPTS_URL(Node 据此递地址)
+    // P9 All three Python packages return ACCEPTS_URL (Node passes URL accordingly)
     for (const pkg of ['promptcut_shots', 'promptcut_track', 'promptcut_subject']) {
       check(await pythonAcceptsUrl({ python: PY, env: pyEnv(PYLIBS), pkg, spawnPython: spawnPy }), `P9 ${pkg} answers ACCEPTS_URL`);
     }
 
-    // P10 老包(拷一份仓库里的 promptcut_track,去掉 ACCEPTS_URL 与地址放行):拒绝地址;Node 改走临时文件,结果相同,临时文件用完删
+    // P10 Legacy package (copy promptcut_track from repository, remove ACCEPTS_URL and URL allowlisting): rejects URL; Node falls back to temporary files, results identical, temporary files deleted after use
     const oldLibs = path.join(EXPORT_DIR, 'pylibs-old');
     makeOldTrackPackage(oldLibs);
     const url = `http://127.0.0.1:${REMOTE_PORT}/api/asset/media/${move.hash}`;
@@ -377,7 +397,7 @@ try {
     input.cleanup();
     check(JSON.stringify(viaTemp) === JSON.stringify(direct) && !fs.existsSync(input.input), 'P10 Tracking via the temp file with the old package matches reading the file directly, and the temp file is deleted');
 
-    // P11 主体检测取字节那一步:frames.probe_size + grab_frame 经地址与读本地文件,宽高与 BGR 像素逐字节相同
+    // P11 Subject detection byte-fetching step: frames.probe_size + grab_frame via URL vs reading local file, width/height and BGR pixels are byte-by-byte identical
     const script = path.join(EXPORT_DIR, 'frames_check.py');
     fs.writeFileSync(script, [
       'import sys, json, hashlib',
@@ -396,12 +416,12 @@ try {
     ].join('\n'));
     const fc = await runAsync(PY, [script, ffmpeg, url, move.file], pyEnv(PYLIBS));
     let pair = null;
-    try { pair = JSON.parse(fc.stdout.trim().split(/\r?\n/).at(-1)); } catch { /* 下面报 */ }
+    try { pair = JSON.parse(fc.stdout.trim().split(/\r?\n/).at(-1)); } catch { /* Report below */ }
     check(pair && JSON.stringify(pair[0]) === JSON.stringify(pair[1]) && JSON.stringify(pair[0].size) === '[160,120]',
       'P11 Subject detection frame extraction: pixels decoded via the asset service URL are byte-for-byte identical to those from reading the local file', pair ?? fc.stderr.slice(-400));
   }
 
-  /* ---- P4 回到本机空间:只剩本地内容库,按哈希存 ---- */
+  /* ---- P4 Return to local space: only local content store remains, stored by hash ---- */
   await until('Remote fetch finished and the asset is in the local content store', async () => {
     const s = await fetch(EDITOR + '/api/media/remote').then((r) => r.json());
     return s.jobs.every((j) => j.done) ? s : null;
@@ -418,7 +438,7 @@ try {
   check(js2?.ok === true && js2.value?.fnv === fnvOf(pcmDirect), 'P4 Local space: measure_audio_js works as usual, PCM unchanged', js2 && { ok: js2.ok, error: js2.error, fnv: js2.value?.fnv });
   check(remoteLog.length === before, 'P4 The remote asset service was never hit', remoteLog.slice(before, before + 5));
 
-  /* ---- P5 哪儿都没有的素材 ---- */
+  /* ---- P5 Asset that exists nowhere ---- */
   const g1 = await mcpCall('measure_audio', { mediaId: placed.ghost });
   check(g1 && typeof g1.integrated !== 'number' && /asset file does not exist/.test(String(g1.error || '')), 'P5 measure_audio on an asset that exists nowhere returns "asset file does not exist"', g1);
   const g2 = await mcpCall('measure_audio_js', { mediaId: placed.ghost, code: 'return 1' }, conv);

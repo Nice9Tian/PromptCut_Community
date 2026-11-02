@@ -1,7 +1,10 @@
 /**
- * particles 唯一画面变化的精确验收，不用没有NASA的演示项目代替。
- * 真实 ParticlesCard 旧/新源码逐帧比较；空/inline/URL配置、参数边界、seed/links、背景各种分支。
- * 每例12帧，另核当前逐帧与直接跳帧相同。在线NASA使用原URL；网络截获回公开纯色fixture图，未打包徽标。
+ * Exact acceptance check for the only visual change in particles, not replaced with a demo
+ * project lacking NASA.
+ * Frame-by-frame comparison of real ParticlesCard old vs. new source; empty/inline/URL configs,
+ * parameter boundaries, seed/links, and various background branches.
+ * 12 frames per case; also verify current frame-by-frame matches direct frame jumping. Online NASA
+ * uses original URL; network interception returns public solid-color fixture image, unbundled logo.
  * node scripts/probes/card-policy-particles-probe.mjs --port 5908 [--out <TMP>] [--before 461206a3]
  */
 import fs from 'node:fs';

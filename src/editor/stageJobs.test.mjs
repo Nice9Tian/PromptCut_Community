@@ -1,12 +1,15 @@
 /**
- * 后台舞台单飞队列的单测(D4 / E0)。跑:node --test src/editor/stageJobs.test.mjs
+ * Unit tests for background stage single-flight queue (D4 / E0).
+ * Run: node --test src/editor/stageJobs.test.mjs
  *
- * 钉四件事:
- *   1. 真的单飞 —— 两个活不会同时在跑;
- *   2. 优先级 补跑 > 页面侧测量 > 探针,同一档按先来后到;
- *   3. 更急的活进来时,正在跑的那个收到 abort 通知(只是通知,不强杀);
- *   4. `renderAbortAction` 的五条规矩,尤其是 `'project'` 按工作项分岔那一条 ——
- *      它要是判错,三条规则就成环、`settled` 永远发不出去(E0 明写的那个死锁)。
+ * Pin down four things:
+ *   1. Truly single-flight: two jobs will not run at the same time;
+ *   2. Priority: catch-up run > page-side measurement > probe, within the same tier by FIFO;
+ *   3. When a more urgent job arrives, the currently running one receives an abort notice (notice
+ *      only, no hard kill);
+ *   4. The five rules of `renderAbortAction`, especially the one branching `'project'` by work
+ *      item: if it decides incorrectly, the three rules form a loop, and `settled` will never be
+ *      sent (the deadlock explicitly described in E0).
  */
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
@@ -45,7 +48,7 @@ test("Single-flight: two jobs never run at the same time", async () => {
 test("Priority: catch-up run > page-side measurement > probe; within the same tier, first come, first served", async () => {
   bridge.setStageClient("back", fakeClient());
   const order = [];
-  // 先占住队列,让后面三个都排上再开跑
+  // Occupy the queue first so the next three all queue up before starting to run
   let release;
   const gate = new Promise((r) => { release = r; });
   const head = runBackJob("probe", async () => { order.push("head"); await gate; });
@@ -83,7 +86,7 @@ test("Send setRole before starting; page-side measurement maps to job: 'catchup'
   bridge.setStageClient("back", c);
   await runBackJob("measure", async ({ job }) => { assert.equal(job, "catchup"); });
   assert.deepEqual(c.roles, ["back:catchup", "back:probe"]);
-  // 同一个工作项不重发:setRole('back') 每次都会清空快照 / 抑制集合
+  // Do not resend for the same work item: setRole('back') clears snapshots / suppression set every time
   c.roles.length = 0;
   await runBackJob("probe", async () => {});
   assert.deepEqual(c.roles, [], "When the queue hands back, the role is already probe and must not be sent again");
@@ -95,7 +98,7 @@ test("After back changes client (K5 swap / iframe reload), the same work item mu
   await runBackJob("probe", async () => {});
   assert.deepEqual(a.roles, ["back:probe"]);
 
-  // K5 的互换:另一个 iframe 接任 back。新客户端的缺省角色是 front,从没收到过 setRole
+  // K5 swap: another iframe takes over back. New client's default role is front, never received setRole
   const b = fakeClient();
   bridge.setStageClient("back", b);
   await runBackJob("probe", async () => {});
@@ -146,12 +149,13 @@ test("renderAbortAction: one rule for each of the five reasons", () => {
 });
 
 test("renderAbortAction: 'project' branches by work item: discarded during catchup, otherwise resent", () => {
-  // 探针被 setProject 掐掉:按当前目标重发
+  // Probe aborted by setProject: resend for current target
   assert.equal(renderAbortAction("project", "probe"), "resend");
   assert.equal(renderAbortAction("project", null), "resend");
   /*
-   * 补跑 / 页面侧测量期间那份 setProject 是这个活自己灌的。重发探针会把补跑掐成
-   * 'superseded',而 'superseded' 又不许重发 —— 三条规则成环,settled 永远发不出去。
+   * During catch-up run / page-side measurement, that setProject was fed by this job itself.
+   * Resending probe cuts off the catch-up run into 'superseded', and 'superseded' is not allowed to
+   * resend: the three rules form a loop, and settled is never sent.
    */
   assert.equal(renderAbortAction("project", "catchup"), "drop");
   assert.ok(MAX_PROJECT_RESENDS === 3);

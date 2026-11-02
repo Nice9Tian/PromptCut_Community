@@ -1,13 +1,23 @@
 /**
- * 层表条目的输入签名(stale-layer,`layerInputSig.mjs`):渲染节点写层表时按它认下的那一版项目算,页面按当前项目算,
- * 对不上就是旧参数的层。用例:
- *   SIG-1 同一份项目两边算出同一个签名(JSON 往返后也一样);参数改了就变,改回原来的参数又回到原来的签名
- *   SIG-2 不进快照的东西(位置、缩放、旋转、不透明度、淡入淡出、motion、音量、整帧平移)改了签名不变
- *   SIG-3 进快照的东西(时长、亚帧相位、框宽高、parts、强调、画幅、fps、主题、style、滤镜库条目)改了签名变
- *   SIG-4 素材效果卡:上游节点、上游片段的参数改了,下游片段的签名变;环路不死循环
- *   SIG-5 比对:任何一边没有签名、算法版本不同都不判过期;片段不在项目里回 null
- *   SIG-6 服务端 `layerMapOf` 写进层表的 `inputSig` 与页面对同一份项目算的相同;项目里没有这个片段就不写这一项
- * 跑:node --test src/render/layerInputSig.test.mjs
+ * Input signature of layer table entries (stale-layer, `layerInputSig.mjs`): when the render node
+ * writes the layer table, it calculates based on the project version it claimed; the page
+ * calculates based on the current project. A mismatch indicates a layer with stale parameters.
+ * Test cases:
+ *   SIG-1 Both sides calculate the same signature for the same project (also identical after
+ *     JSON round-trip); changes when parameters change, returns to original signature when
+ *     reverted
+ *   SIG-2 Things not included in snapshots (position, scale, rotation, opacity, fade, motion,
+ *     volume, whole-frame translation) do not change the signature when modified
+ *   SIG-3 Things included in snapshots (duration, sub-frame phase, box width/height, parts,
+ *     emphasis, aspect ratio, fps, theme, style, filter library entries) change signature when
+ *     modified
+ *   SIG-4 Media effect card: when upstream node or upstream clip parameters change, downstream
+ *     clip signature changes; loops do not cause infinite recursion
+ *   SIG-5 Comparison: missing signature on either side or differing algorithm versions is not
+ *     judged as stale; returns null if clip is not in the project
+ *   SIG-6 `inputSig` written to layer table by server-side `layerMapOf` matches what the page
+ *     calculates for the same project; this entry is omitted if the clip is not in the project
+ * Run: node --test src/render/layerInputSig.test.mjs
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -37,7 +47,7 @@ function project(patch = {}) {
   };
 }
 
-/** 换掉某个片段(不原地改) */
+/** Replace a clip (do not modify in place) */
 function withClip(p, id, fn) {
   return { ...p, tracks: p.tracks.map((tr) => ({ ...tr, clips: tr.clips.map((c) => (c.id === id ? fn(c) : c)) })) };
 }
@@ -47,7 +57,7 @@ test("SIG-1 The same project gives the same signature; changing a parameter chan
   const sig = clipInputSig(p, "a");
   assert.match(sig, new RegExp(`^i${LAYER_INPUT_SIG_VERSION}-[0-9a-f]{16}$`));
   assert.equal(clipInputSig(JSON.parse(JSON.stringify(p)), "a"), sig, "Same after a document service round trip");
-  // 键的先后不同也一样(规范 JSON)
+  // Identical even with different key order (canonical JSON)
   const reordered = withClip(p, "a", (c) => ({ params: { n: 3, title: "hello" }, end: c.end, start: c.start, cardId: c.cardId, frame: c.frame, id: c.id }));
   assert.equal(clipInputSig(reordered, "a"), sig);
   const changed = withClip(p, "a", (c) => ({ ...c, params: { ...c.params, title: "world" } }));
@@ -65,10 +75,10 @@ test("SIG-2 Changing things that do not go into the snapshot leaves the signatur
     (c) => ({ ...c, opacity: 0.5, fadeIn: 0.3, fadeOut: 0.2 }),
     (c) => ({ ...c, motion: { mediaId: "m1", pointIndex: 0, offsets: [[0, 0]], visible: [true], frameStep: 1 / 30, whenHidden: "hold" } }),
     (c) => ({ ...c, audioVolume: 0.3, audioMuted: true, label: "Rename" }),
-    (c) => ({ ...c, start: c.start + 2, end: c.end + 2 }), // 整帧平移(2 秒 = 60 帧)
+    (c) => ({ ...c, start: c.start + 2, end: c.end + 2 }), // Whole-frame translation (2 seconds = 60 frames)
   ];
   for (const [i, fn] of same.entries()) assert.equal(clipInputSig(withClip(p, "a", fn), "a"), sig, `Item ${i}`);
-  // 别的轨道隐藏、改名也不动它
+  // Hiding or renaming other tracks does not affect it
   assert.equal(clipInputSig({ ...p, name: "New name", tracks: p.tracks.map((tr) => ({ ...tr, name: "x", hidden: true })) }, "a"), sig);
 });
 
@@ -89,7 +99,7 @@ test("SIG-3 Changing things that go into the snapshot changes the signature", ()
     ["3D field of view", { ...p, camera3dFov: 40 }],
   ];
   for (const [name, next] of differ) assert.notEqual(clipInputSig(next, "a"), sig, name);
-  // 素材段的滤镜:库条目改了也变
+  // Filters on media clips: also changes when the library entry changes
   const vs = clipInputSig(p, "v");
   assert.notEqual(clipInputSig({ ...p, filters: [{ id: "f1", name: "blur", ops: [{ op: "blur", r: 5 }] }] }, "v"), vs);
   assert.notEqual(clipInputSig({ ...p, media: [{ ...p.media[0], hash: "e".repeat(64) }] }, "v"), vs, "Asset bytes changed");
@@ -107,13 +117,13 @@ test("SIG-4 Media effect card: changing an upstream node or upstream clip change
   assert.notEqual(clipInputSig(upMove, "g"), g, "Upstream clip moved relative to this clip");
   const edge = { ...p, cardNodes: p.cardNodes.map((n) => (n.id === "n2" ? { ...n, inputs: { a: { nodeId: "n1", offset: 0.5 } } } : n)) };
   assert.notEqual(clipInputSig(edge, "g"), g, "Edge time mapping");
-  // 环路:n1 ← n2 ← n1
+  // Loop: n1 ← n2 ← n1
   const cyc = { ...p, cardNodes: [
     { id: "n1", adapter: "card", cardId: "x", params: {}, inputs: { s: "n2" } },
     { id: "n2", adapter: "card", cardId: "y", params: {}, inputs: { s: "n1" } },
   ] };
   assert.match(clipInputSig(cyc, "g"), /^i1-/);
-  // 片段自己引用自己
+  // Clip references itself
   const selfRef = { ...p, cardNodes: [{ id: "n2", adapter: "card", cardId: "y", params: {}, inputs: { s: "@clip/g/source" } }] };
   assert.match(clipInputSig(selfRef, "g"), /^i1-/);
 });
@@ -149,7 +159,7 @@ test("SIG-6 The inputSig written by layerMapOf matches the one computed by the p
   assert.equal(byId.a.inputSig, clipInputSig(p, "a"));
   assert.equal("inputSig" in byId.ghost, false, "Clip is not in this version of the project: not written");
   assert.equal(body.v, 3, "Do not add a version number (old pages read as before)");
-  // 页面改了参数:层表里那一层就过期了
+  // Page modified parameters: that layer in the layer table becomes stale
   const edited = withClip(p, "a", (c) => ({ ...c, params: { ...c.params, n: 4 } }));
   assert.equal(inputSigStale(byId.a.inputSig, clipInputSig(edited, "a")), true);
 });

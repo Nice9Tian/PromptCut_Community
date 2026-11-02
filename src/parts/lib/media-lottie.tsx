@@ -3,9 +3,9 @@ import { LottieView } from "../../cards/native/lottie";
 import { assetOptions } from "../../cards/catalogAssets";
 
 /**
- * Lottie 动画。
- * 从 lottie 卡片拆出的媒体部件，按时间轴逐帧定位。
- * 进场: 跟着时间轴走，挂载即显，不靠自己的时钟。
+ * Lottie animation.
+ * Media part extracted from lottie card, positioned frame by frame according to timeline.
+ * Entrance: follows timeline, displays upon mount, and does not rely on its own clock.
  */
 interface Params {
   json: string;

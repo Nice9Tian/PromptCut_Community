@@ -1,13 +1,16 @@
 /**
- * 轨道流分段编码提速(`docs/archive/agent-reports/AGENT-perf-encode.md`)的单测:
- *   - 新滤镜链与旧写法(`streamFilterIdentity`)送进编码器的 YUV 逐字节相同(yuv420p、nv12 两种尾巴);
- *   - 分段签名里的编码参数哈希不变(盘上已有的分段不作废);
- *   - `endsWithCompleteMfra` 的判定;
- *   - 预先拉起的编码进程:领用后补拉、产出和现拉的逐字节相同、`finish()` 见到 mfra 就交字节;
- *     ffmpeg 出错时照旧报错;关掉开关不留进程。
- *   - 整条命令行(输入端不攒包 + 新滤镜链)编出的 fMP4 与改写前的命令行逐字节相同;帧一到就开工
- *     (`docs/archive/agent-reports/AGENT-perf-encode-2.md`)。
- * 需要 ffmpeg 的几条在没有 ffmpeg 的机器上跳过。
+ * Unit test for track stream segment encoding speedup (`docs/archive/agent-reports/AGENT-perf-encode.md`):
+ *   - YUV fed to encoder from new filterchain is byte-for-byte identical to legacy code
+ *     (`streamFilterIdentity`) (two tails: yuv420p, nv12);
+ *   - Encoding parameter hash in segment signature unchanged (existing segments on disk not invalidated);
+ *   - Judgment of `endsWithCompleteMfra`;
+ *   - Pre-spawned encoding processes: replenished after claim, output is byte-for-byte identical
+ *     to on-demand spawned processes, `finish()` yields bytes upon seeing mfra; ffmpeg errors reported
+ *     as usual; no processes remain when switch is turned off;
+ *   - fMP4 encoded by full command line (no packet buffering at input + new filterchain) is byte-for-byte
+ *     identical to pre-rewrite command line; starts immediately once frames arrive
+ *     (`docs/archive/agent-reports/AGENT-perf-encode-2.md`).
+ * Cases requiring ffmpeg are skipped on machines without ffmpeg.
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,7 +25,7 @@ import { encoderParamsHash, splitFmp4, segmentInfo } from '../frame-stream.mjs';
 const ffmpegOk = spawnSync('ffmpeg', ['-version'], { windowsHide: true }).status === 0;
 after(() => dropStreamEncoderSpares());
 
-/** 合成帧:随机 RGBA(覆盖全部 alpha 值与颜色组合)+ 渐变 + 全透明 / 全不透明块 */
+/** Synthetic frame: random RGBA (all alpha and color combinations) + gradient + transparent/opaque blocks */
 function synthPngs(width, height, count, seed0 = 7) {
   let seed = seed0;
   const rnd = () => { seed = (seed * 1103515245 + 12345) >>> 0; return (seed >>> 16) & 255; };
@@ -42,7 +45,10 @@ function synthPngs(width, height, count, seed0 = 7) {
   return out;
 }
 
-/** 同一批 PNG 过一条滤镜链,拿送进编码器之前的原始 YUV(`threads`:滤镜图切片线程数,0 = ffmpeg 缺省) */
+/**
+ * Same batch of PNGs through filterchain, getting raw YUV before encoder (`threads`: slice
+ * threads, 0 = ffmpeg default)
+ */
 function filtered(filter, pngs, threads = 0) {
   return execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-filter_complex_threads', String(threads), '-reinit_filter', '0', '-f', 'image2pipe', '-c:v', 'png',
     '-framerate', '30', '-i', 'pipe:0', '-filter_complex', filter, '-f', 'rawvideo', 'pipe:1'],
@@ -72,7 +78,7 @@ test('Filter slice thread count: capped at 8 by core count', () => {
 });
 
 test('The encoding-parameter hash in the segment signature is the same as before the rewrite (existing segments are not invalidated)', () => {
-  // 改写前(main 2c7cee2)按 streamFilter 字面算出来的值
+  // Value calculated from streamFilter literal before rewrite (main 2c7cee2)
   assert.equal(encoderParamsHash('libx264'), 'de84562fd4660af1');
   assert.equal(encoderParamsHash('h264_mf'), 'e8429af745c908c0');
   assert.equal(encoderParamsHash('h264_nvenc'), '71b4b8bd213000a1');
@@ -86,13 +92,13 @@ test('The YUV that the new filter chain feeds the encoder is byte-identical to t
       const b = filtered(streamFilter(pixFmt), pngs);
       assert.equal(a.length, 3 * w * 2 * (h + 8) * 1.5, `${w}x${h} ${pixFmt}: frame size`);
       assert.ok(a.equals(b), `${w}x${h} ${pixFmt}: new and old filter chains produce different output`);
-      // 切片线程数不改产出(命令行按核数封顶 8,机器不同片数不同)
+      // Slice thread count does not alter output (CLI caps at 8 by core count, slice count varies by machine)
       for (const threads of [1, 3]) assert.ok(filtered(streamFilter(pixFmt), pngs, threads).equals(a), `${w}x${h} ${pixFmt}: output differs with ${threads} slices`);
     }
   }
 });
 
-/* ------------------------------------------------------------ mfra 收尾判定 */
+/* ------------------------------------------------------------ mfra finalization check */
 
 const box = (type, size = 8) => { const b = Buffer.alloc(size); b.writeUInt32BE(size, 0); b.write(type, 4, 'latin1'); return b; };
 
@@ -109,7 +115,7 @@ test('endsWithCompleteMfra: counts only if it ends exactly with a complete mfra'
   assert.equal(endsWithCompleteMfra(Buffer.concat([box('ftyp', 16), zero])), false, 'Size 0 (to end of file) does not count as an ending');
 });
 
-/* ------------------------------------------------------------ 预先拉起的编码进程 */
+/* ------------------------------------------------------------ Pre-spawned encoding processes */
 
 async function encode(pngs, opts) {
   const enc = openStreamSegmentEncoder('ffmpeg', { encoder: 'libx264', fps: 30, ...opts });
@@ -160,9 +166,12 @@ test('When ffmpeg fails, finish still reports the error as before (same for a sp
   dropStreamEncoderSpares();
 });
 
-/* ------------------------------------------------------------ 整条命令行 */
+/* ------------------------------------------------------------ Full command line */
 
-/** 改写前(main e27fa520)的完整命令行:输入端缺省探测 5 MB、帧级多线程解码,滤镜链是 `streamFilterIdentity` 那条 */
+/**
+ * Full CLI before rewrite (main e27fa520): default 5 MB probe, frame-level multithreading,
+ * `streamFilterIdentity` chain
+ */
 function legacySegmentArgs(fps = 30) {
   return ['-y', '-hide_banner', '-loglevel', 'error',
     '-reinit_filter', '0', '-f', 'image2pipe', '-c:v', 'png', '-framerate', String(fps), '-i', 'pipe:0',
@@ -189,7 +198,8 @@ test('Starts working as soon as a frame arrives: before stdin is closed, the enc
   dropStreamEncoderSpares();
   const pngs = synthPngs(320, 180, 15, 5);
   const enc = openStreamSegmentEncoder('ffmpeg', { encoder: 'libx264', fps: 30, prewarm: false });
-  // 只喂 3 帧、不关 stdin:改写前 ffmpeg 要先读够 5 MB 才开工,整段凑不够,这里会一直是 0
+  // Feed only 3 frames without closing stdin: before rewrite ffmpeg had to read 5 MB before starting;
+  // not enough for the full segment, so this stays 0
   for (const png of pngs.slice(0, 3)) await enc.write(png);
   const deadline = Date.now() + 20_000;
   while (enc.received === 0 && Date.now() < deadline) await new Promise(r => setTimeout(r, 50));

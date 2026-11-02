@@ -1,5 +1,6 @@
 /**
- * report_progress 的前端解析:工具名认前缀、input 兼容字符串、旧历史从 tools 里找、摘要只拼非空组。
+ * Frontend parsing of report_progress: tool names match prefixes, input supports strings, old
+ * history is looked up from tools, and summary only concatenates non-empty groups.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -20,7 +21,7 @@ test("Parsing rules match the server-side validation: a call the server rejects 
     { final: true, stage: 3 },
     { final: true, done: "a" },
     { final: true, done: ["a", 1] },
-    // blocked:停下来等用户回话。隐含 final,两边同一套规则
+    // blocked: stop and wait for the user to reply. Implicitly final, using the same rules on both sides
     { final: true, blocked: true, done: ["a"], todo: ["Do this step in PromptCut on the computer"] },
     { blocked: true, todo: ["Please scan the QR code to sign in"] },
     { final: false, blocked: true, problems: ["Cannot read the media"] },
@@ -81,7 +82,7 @@ test("Parsing: returns null when the arguments have not finished streaming or ar
   assert.equal(parseProgressReport("{\"final\": tr"), null);
   assert.equal(parseProgressReport([]), null);
   assert.equal(parseProgressReport({}), null);
-  // 三组全空但明确给了 final:是一份「没什么可报」的报告
+  // All three groups are empty but final was explicitly given: a "nothing to report" report
   assert.deepEqual(parseProgressReport({ final: false }), { final: false, done: [], todo: [], problems: [] });
 });
 

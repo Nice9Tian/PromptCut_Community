@@ -1,14 +1,17 @@
 /**
- * 手机版探针共用的本机环境(`mobile-ui-probe.mjs`、`mobile-business-probe.mjs`):
- * 本机文档服务 + 素材服务(`probe-services.mjs`,数据目录在系统临时目录)+ 仿 nginx 的代理(`hosted-proxy.mjs`,三个同站跨源的源)+ 在线构建当页面,
- * 不连任何远端。凭口令的共享项目经「刷新后回到项目」那条产品路径进入(`online-resume-entry.mjs`)。
+ * Shared local environment for mobile app probes (`mobile-ui-probe.mjs`, `mobile-business-probe.mjs`):
+ * Local document service + asset service (`probe-services.mjs`, data directory in system temp
+ * directory) + nginx-mocking proxy (`hosted-proxy.mjs`, three same-site cross-origin origins)
+ * + online build as pages, without connecting to any remote host. Passphrase-based shared projects
+ * enter via the "return to project after refresh" product path (`online-resume-entry.mjs`).
  *
  *   const env = await startMobileEnv({ dist, basePort, docPort, assetPort, name });
  *   const page = await env.newPage(browser, 'phone' | 'desktop' | 'iphone' | 'ipad' | 'none');
- *   await env.enter(page, { layout });   // 进项目;layout 给了就带 ?layout=
+ *   await env.enter(page, { layout });   // enter project; includes ?layout= if layout is provided
  *   await env.close();
  *
- * 设备仿真:标识(UA)用 CDP 的 `Emulation.setUserAgentOverride` 一并设 `userAgentData`(Chromium 系按它判手机),视口 375×812、触屏。
+ * Device emulation: identity (UA) sets `userAgentData` via CDP's `Emulation.setUserAgentOverride`
+ * as well (Chromium-based browsers use it to identify phones), viewport 375×812, touchscreen.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -43,14 +46,14 @@ export async function startMobileEnv({ dist, basePort, base2Port, docPort, asset
     docPublicUrl: `ws://pc.localhost:${basePort}/hosted/`, assetPublicUrl: `${origin}/media/api/asset`, log,
   });
   const proxy = await startHostedProxy({ dist, basePort, docPort, assetPort, policy: 'full' });
-  /** 第二套同形代理(另一名成员走它;只断第一套时第二套照常在线) */
+  /** Second identical proxy instance (used by another member; when only the first instance is disconnected, the second remains online as usual). */
   const proxy2 = base2Port ? await startHostedProxy({ dist, basePort: base2Port, docPort, assetPort, policy: 'full' }) : null;
   const origin2 = base2Port ? proxyOrigins(base2Port).editor : null;
   const creator = { username: 'boss', password: `boss-${randomBytes(6).toString('hex')}` };
   const projectPw = `pw-${randomBytes(6).toString('hex')}`;
   const made = await createSharedProject({ base: docDirect, name, mode: 'free', creator, password: projectPw });
 
-  /** 凭创建者身份直连文档服务,替创建者的桌面版写进初始内容(在线页面只加入、不新建) */
+  /** Connects directly to the document service as creator, writing initial content on behalf of the creator's desktop app (online pages only join, never create new). */
   async function seed(body) {
     const protocols = await buildAuthProtocols({ base: docDirect, projectId: made.projectId, username: creator.username, deviceId: 'mobile-probe-seed-01', deviceName: 'probe-seed', as: 'creator', password: creator.password, role: 'page' });
     const ws = new WebSocket(docDirect.replace(/^http/, 'ws'), protocols);
@@ -106,16 +109,16 @@ export async function startMobileEnv({ dist, basePort, base2Port, docPort, asset
     await proxy.close?.().catch?.(() => {});
     await proxy2?.close?.().catch?.(() => {});
     await combo.close?.().catch?.(() => {});
-    try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch { /* Windows 上还有句柄:留给系统清 */ }
+    try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch { /* Handles still remain on Windows: left for the system to clean up */ }
   }
 
   return { origin, origin2, proxy, proxy2, made, docDirect, seed, newPage, enter, close, creator, combo };
 }
 
-/** 等全屏的「正在测量卡片」遮罩退场:加卡之后它会盖住整页,这时点什么都落在遮罩上 */
+/** Waits for the full-screen "Measuring cards" overlay to exit: after adding a card it covers the entire page, and any click during this time hits the overlay. */
 export const gateClear = (page, ms = 60_000) => page.waitForFunction(() => !document.querySelector('.pc-probe-gate'), { timeout: ms }).catch(() => {});
 
-/** 一份空项目(尺寸、时长同「新建项目」的缺省),两条序列、两条剪辑 */
+/** An empty project (dimensions and duration match the "New project" defaults), two tracks, two cuts. */
 export function emptyProject(name) {
   return {
     version: 1, id: `mobile-seed-${Date.now().toString(36)}`, name, width: 1920, height: 1080, fps: 30, duration: 30, themeId: 'midnight', media: [],
@@ -125,7 +128,7 @@ export function emptyProject(name) {
   };
 }
 
-/** 画一张纯色 PNG(素材导入用) */
+/** Draws a solid-color PNG (used for asset import). */
 export async function solidPng(file, [r, g, b], w = 320, h = 180) {
   const { PNG } = await import('pngjs');
   const png = new PNG({ width: w, height: h });

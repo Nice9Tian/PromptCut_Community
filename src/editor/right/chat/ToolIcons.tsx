@@ -8,19 +8,20 @@ import "./agent.css";
 import { tr } from "../../../i18n/index.ts";
 
 /*
- * 动作分类(toolKind / KIND_LABEL)和图标分组(iconRuns)是纯函数,放在 iconRuns.ts 里好直接跑测试;
- * 这里原样转出去,从 ToolIcons 导入的地方不用改。
+ * The action classification (toolKind / KIND_LABEL) and icon grouping (iconRuns) are pure functions,
+ * kept in iconRuns.ts so tests can run directly;
+ * they are re-exported as is here, so places that import from ToolIcons need no change.
  */
 export { toolKind, bareToolName, KIND_LABEL, iconRuns, ICON_RUN_MAX } from "./iconRuns";
 export type { ToolKind, IconRun, ToolPartLike } from "./iconRuns";
 
-/** 耗时:一秒以内给毫秒,十秒以内一位小数,再长取整秒 */
+/** Duration: milliseconds under one second, one decimal under ten seconds, whole seconds beyond that */
 function fmtDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   return ms < 10000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms / 1000)}s`;
 }
 
-/** 结果摘要压成一行。开头那截 visualId 是给界面认记录用的,不是给人读的,先摘掉 */
+/** Squash the result summary into one line. The visualId segment at the start is for the UI to recognize records, not for humans to read, so strip it first */
 function summaryLine(summary?: string): string {
   const s = (summary || "")
     .replace(/"visualId"\s*:\s*"v-[0-9a-z]+"\s*,?\s*/g, "")
@@ -31,23 +32,25 @@ function summaryLine(summary?: string): string {
 }
 
 /**
- * 一个工具片段:标题行 + 可展开的入参 / 结果 / 文件。
- * 只有详细模式(AI 设置里的「详细」)逐条渲染时用;简洁模式的详细内容都在操作详细预览控件里。
+ * A tool entry: title row + expandable input args / result / files.
+ * Only used when detailed mode ("Detailed" in AI settings) renders items one by one; in concise mode
+ * all the details live in the operation detail preview control.
  */
 export function ToolDetail(props: {
   t: ToolCallInfo;
   open: boolean;
   installJobs: ReturnType<typeof useInstallJobs>;
   onToggle: () => void;
-  /** 标题行再带上耗时和结果摘要 */
+  /** The title row also shows the elapsed time and a result summary */
   meta?: boolean;
 }) {
   const { t, open, installJobs, onToggle, meta } = props;
   const done = t.ok !== undefined;
   const visualId = done ? visualIdOf(t.summary) : null;
-  // 装引擎要下好几百 MB、可能跑几分钟。折成一行「stt_install ✓」的话,
-  // 用户看到的就是聊天框里一个转圈的小字,不知道在干什么、还要多久。
-  // 这里换成带进度的控件,和启动时那个缺依赖提示用的是同一个。
+  // Installing an engine downloads several hundred MB and can run for minutes. Folded into a single
+  // "stt_install ✓" line, the user would only see a tiny spinner in the chat box, with no idea what
+  // is going on or how long it will take.
+  // So this renders a control with progress, the same one used by the missing-dependency hint at startup.
   const installJob = bareToolName(t.name) === "stt_install" ? matchInstallJob(t, installJobs) : undefined;
 
   if (installJob) {
@@ -71,8 +74,9 @@ export function ToolDetail(props: {
       {open && (
         <div className="ai-tool-detail">
           {/*
-            有可视化记录的(看图、加卡、删卡、改卡、get_gif):先给看得见的结果,
-            入参和结果的 JSON 收进「原始数据」—— 那是调试用的,不该是用户点开看到的第一样东西。
+            For actions with visual records (view image, add card, remove card, edit card, get_gif): show
+            visible results first, and tuck inputs and result JSON into "Raw data": that is for debugging
+            and shouldn't be the first thing users see when expanding.
           */}
           {visualId ? <ToolVisual id={visualId} /> : null}
           {visualId ? (
@@ -138,45 +142,49 @@ export function ToolDetail(props: {
   );
 }
 
-/** 图标行里操作之外的图标:收到的 Agent 消息(行首)、阶段 / 本轮小结(行尾) */
+/** Icons in the icon row other than operations: a received Agent message (row start), a phase / turn summary (row end) */
 export interface ExtraIcon {
-  /** 和操作详细预览控件里那一项的 key 一样 */
+  /** Same as the key of that item in the operation detail preview control */
   key: string;
-  /** 决定底色和字形的类名,如 `ai-op--agent`、`ai-op--summary tone-ok` */
+  /** Class names that decide the background color and glyph, e.g. `ai-op--agent`, `ai-op--summary tone-ok` */
   className: string;
   label: string;
-  /** 大于 1 时右下角标 ×n */
+  /** When greater than 1, a ×n badge is shown at the bottom right */
   count?: number;
 }
 
 /**
- * 一段的图标行。
+ * The icon row of one run.
  *
- * 一次调用不再是一个 16px 的小方块,而是 small_cube 大小的图标:相邻的同类操作叠进同一个图标
- * (最多 5 个,见 iconRuns),颜色区分动作类型,新的会弹出来 —— 用户看得见条目在变多,不会以为卡住了。
- * 收到的 Agent 消息是行首一个对话图标,阶段 / 本轮小结是行尾一个绿 ✓ / 黄 ! / 红 ! 的图标。
- * 点图标**不在这里摊开任何清单**:所有详细内容都在气泡里那个操作详细预览控件里,点一下只让它跳到这一项。
+ * A call is no longer a 16px small square but an icon the size of small_cube: adjacent operations of
+ * the same kind are stacked into one icon (up to 5, see iconRuns), colors tell action types apart,
+ * and new ones pop in: the user can see items piling up and won't think it is stuck.
+ * A received Agent message is a chat icon at the row start; a phase / turn summary is a green ✓ /
+ * yellow ! / red ! icon at the row end.
+ * Clicking an icon **does not expand any list here**: all details live in the operation detail
+ * preview control in the bubble, and a click only makes it jump to that item.
  */
 export function ToolIcons(props: {
-  /** 这一段的操作,按先后顺序;报告工具混在里面也没关系,不出操作图标 */
+  /** The operations of this run, in order; report tools mixed in are fine, they produce no operation icon */
   tools: ToolCallInfo[];
-  /** 上层已经算好的分组,省得再算一遍;不给就在这里算 */
+  /** Grouping already computed by the upper layer, to avoid computing it again; computed here if not given */
   runs?: IconRun[];
   /**
-   * 图标 key 的前缀,形如 `<消息id>:i<段号>`。必须以消息 id 开头:
-   * 操作详细预览控件的页靠这个完整 key 认出自己属于哪个图标。
+   * Prefix of the icon key, of the form `<message id>:i<run index>`. It must start with the message id:
+   * the pages of the operation detail preview control use this full key to recognize which icon they
+   * belong to.
    */
   keyPrefix: string;
   installJobs: ReturnType<typeof useInstallJobs>;
-  /** 行首的额外图标(收到的 Agent 消息) */
+  /** Extra icon at the row start (a received Agent message) */
   lead?: ExtraIcon | null;
-  /** 行尾的额外图标(小结) */
+  /** Extra icon at the row end (the summary) */
   tail?: ExtraIcon | null;
-  /** 用户点过 / 翻过之后,控件当前显示的那一项:强调色描边 + 略放大 */
+  /** The item the control currently shows after the user has clicked / flipped: accent outline + slightly enlarged */
   selectedKey?: string | null;
-  /** 还没点过、消息在跑时,控件当前显示的那一项:只发光 */
+  /** The item the control currently shows when nothing has been clicked and the message is running: glow only */
   focusKey?: string | null;
-  /** 点图标:上层让控件跳到它那一项 */
+  /** Icon click: the upper layer makes the control jump to its item */
   onToggleIcon: (key: string) => void;
 }) {
   const { tools, keyPrefix, installJobs, lead, tail, selectedKey, focusKey, onToggleIcon } = props;
@@ -204,7 +212,7 @@ export function ToolIcons(props: {
         {runs.map((run) => {
           const key = `${keyPrefix}:${run.key}`;
           const first = tools[run.items[0]];
-          // 装引擎那种几分钟的活儿不做成图标,它有自己的进度条(iconRuns 保证它单独成一个)
+          // Multi-minute jobs like installing an engine are not made into icons; they have their own progress bar (iconRuns guarantees it forms a run by itself)
           const job = bareToolName(first.name) === "stt_install" ? matchInstallJob(first, installJobs) : undefined;
           if (job) {
             return (

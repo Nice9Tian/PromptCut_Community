@@ -1,15 +1,18 @@
 /**
- * 摘掉片段上那张素材效果卡(`cardAuthoring.mjs` 的 `detachCardNode`,issue #35 第 3 项)。
+ * Detach the media effect card on the clip (`detachCardNode` in `cardAuthoring.mjs`,
+ * issue #35 item 3).
  *
- * 它和另外三样挂载不一样:那三样是片段上的一个字段,置空就完了;这个是节点图里的一个节点,
- * 连着输入和输出。所以这里守的是**链接回去**这件事:
- * 摘中间一张,上下游要接上;摘最后一张,片段回到普通素材段;接不回去的要抛出说得清的话。
+ * It differs from the other three attachments: those three are fields on the clip, clearing them
+ * is enough; this is a node in the node graph, connected to inputs and outputs. So what is guarded
+ * here is **re-linking**:
+ * detach a middle card, upstream and downstream must connect; detach the last card, the clip
+ * reverts to an ordinary media clip; if re-linking is impossible, throw a clear error message.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { detachCardNode } from "./cardAuthoring.mjs";
 
-/** 注册表:只要能查到 defaults 就够,画面不进这支测试 */
+/** Registry: only needs to look up defaults, visuals do not enter this test */
 const getCard = (id) => ({
   invert: { id: "invert", name: "Invert colors", card: () => {}, defaults: { amount: 1 } },
   blur: { id: "blur", name: "blur", card: () => {}, defaults: { sigma: 4 } },
@@ -17,7 +20,7 @@ const getCard = (id) => ({
   intro: { id: "intro", name: "Intro", card: () => {}, defaults: {} },
 }[id]);
 
-/** 素材 → 反色 → 模糊,片段的终端是模糊 */
+/** Asset → invert → blur, the clip's terminal node is blur */
 function chain() {
   return {
     id: "p", width: 1920, height: 1080, fps: 30, duration: 5, media: [{ id: "m1", kind: "video" }],

@@ -1,10 +1,13 @@
 /**
- * SKILL 闸门(server/skill-gate.mjs)的单测。计划 docs/plan/agent-workflow-plan.md A4 把它改成**按调用方类型拦**:
- * 登记过的桌面 APP 会话(`desktop`)在 SKILL 模式关着时什么都不做,AI 栏的 Agent(`api` / `cli`)不受它管,
- * 没报身份的调用(`unknown`)不拦。原来按「这个进程是不是无头实例」拦,无头实例已归档。
+ * Unit tests for SKILL gate (server/skill-gate.mjs). Plan docs/plan/agent-workflow-plan.md A4
+ * changes it to **block by caller type**: registered desktop app sessions (`desktop`) do nothing
+ * when SKILL mode is off, AI panel Agents (`api` / `cli`) are not governed by it, and calls without
+ * reported identity (`unknown`) are not blocked. Previously blocked by "is this process a headless
+ * instance"; headless instances are now archived.
  *
- * 状态文件只写在临时目录(PROMPTCUT_SKILL_DIR),不碰用户的 Documents\PromptCut-Skill。
- * 跑法:node --test server/test/skill-gate.test.mjs
+ * State file is only written to temporary directory (PROMPTCUT_SKILL_DIR), not touching user's
+ * Documents\PromptCut-Skill.
+ * Run: node --test server/test/skill-gate.test.mjs
  */
 import fs from 'node:fs';
 import os from 'node:os';

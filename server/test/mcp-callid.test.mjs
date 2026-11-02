@@ -1,6 +1,7 @@
 /**
- * c65-integ2:mcp-server 把 Claude Code 在 tools/call 里带的 `_meta["claudecode/toolUseId"]` 当 callId 转给编辑器
- * (/api/mcp/call 的请求体),编辑器把它放进工具调用事件,页面 AI 栏按它对上聊天记录;没带时不转。
+ * c65-integ2: mcp-server passes `_meta["claudecode/toolUseId"]` sent by Claude Code in tools/call as
+ * callId to editor (request body of /api/mcp/call); editor puts it into tool call events, and page
+ * AI panel matches chat history by it; not passed when absent.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,32 +1,60 @@
 /**
- * 探针:当场算一帧 Lottie 要多久,以及按成本测量现成的口径判不判重。
- * 出处:`docs/plan/render-refactor-task.md`「癸」的「当场算一帧 Lottie 要多久没有量过。量出来,写进 `render-standard.md` 的 Lottie 一节」。
+ * Probe: how long calculating a Lottie frame on the fly takes, and whether it is classified as
+ * heavy under existing cost measurement criteria.
+ * Source: "Gui" in `docs/plan/render-refactor-task.md`: "How long calculating a Lottie frame on the
+ * fly takes has not been measured. Measure it and write it into the Lottie section of
+ * `render-standard.md`".
  *
  *   node scripts/probes/lottie-cost-probe.mjs [--port 27260] [--only stage,export] [--sizes 960x540,1920x1080]
- *        [--cards demo,adrock,bodymovin,gatin,happy2016,navidad] [--json <文件>] [--no-baseline]
+ *        [--cards demo,adrock,bodymovin,gatin,happy2016,navidad] [--json <file>] [--no-baseline]
  *
- * 量的是真的舞台,不是单独挂一份播放库:起一台隔离的编辑器(`preview-stop-lib.mjs`),在编辑台里用 store 的 actions 建只有一张卡的项目
- * (`demo` 是通用 Lottie 卡缺省参数里的演示动画,其余五个是自带素材的封装卡;另有一份「空 Lottie」,通用卡放一段没有任何图层的动画,
- * 量出来的是舞台自己一拍的底,拿来对照,看卡本身多花多少),片段长度取素材本身的长度,帧率 30。每个素材 × 每个分辨率各量:
+ * Measures the real stage, rather than mounting an isolated player library: start an isolated
+ * editor (`preview-stop-lib.mjs`), create a project with only a single card via store actions in the
+ * editor (`demo` is the demo animation in default parameters of the generic Lottie card, and the other
+ * five are wrapper cards for built-in assets; an additional "empty Lottie", where the generic card
+ * holds an animation without any layers, measures the baseline of the stage's own tick to compare
+ * how much extra the card itself consumes), setting clip duration to the asset's own duration,
+ * frame rate 30. Measured for each asset × each resolution:
  *
- *   stage    桌面开发服务器的预览(可见舞台,双舞台那一台)。在可见舞台页里调产品自己的 `setTime`(`window.__pcStage`,
- *            舞台 RPC 的同一个函数,拖动时间轴、播放时父页调的就是它),全长逐帧:
- *              顺着推   第 0、1、2……帧连着拨(往前小于 0.5 秒,走舞台的「连续」那一支)
- *              直接跳   全长的帧号按固定种子洗牌,一帧一帧乱序拨(走「跳转」那一支)
- *            每一帧记两个数:`sync` = 调 `setTime` 到它返回(React 提交完、Lottie 跳完帧、DOM 已是这一帧);
- *            `paint` = 再等下一次 rAF 和随后一个宏任务(浏览器把这一帧画完;下限是无头浏览器出帧的节拍,看和「空 Lottie」的差)。
- *   export   导出页(`FramePipeline.bakery` + `bakeFrames` / `createStepper`,和真的导出同一条取帧的路),三项:
- *              整帧   `bakeFrames` 全长顺着导,每帧完成时刻的间隔 = 导出一帧(含推一拍、截图,不写盘)
- *              拨时   `createStepper` 的一步(下发时间、排空、推一拍、钉动画、等素材),不截图;顺着推、直接跳各一遍
- *              页内   `window.__pcSetT` 在页面里同步跑的耗时(React 提交 + Lottie 跳帧,不含与 Node 来回、不含出帧);顺着推、直接跳各一遍
- *   cost     成本测量现成的口径:编辑器自己(`src/editor/probeRunner.ts` 的 `probeCardOnce`)在后台舞台上给每张卡测一趟——direct 的卡
- *            在 16 个固定随机抽的帧上各 `setTime(t, { probe: true })` 取 `stepMs`,第 90 百分位当这张卡的 `stepMs`;判重式 `stepMs × COST_SCALE > 0.7 × 一拍`。
- *            这里读它写下的成本记录,和分派表在中间一个位置上的轻重(`__pcStagePipelineAt`),不另写一份测量。
+ *   stage    Preview on desktop dev server (visible stage, the one in dual stage). Calls the
+ *            product's own `setTime` in the visible stage page (`window.__pcStage`, the same function
+ *            in stage RPC, called by the parent page when scrubbing the timeline or playing), frame by
+ *            frame across full length:
+ *              Sequential advance   Seek frames 0, 1, 2... consecutively (forward less than 0.5
+ *                                   seconds, taking the stage's "continuous" branch)
+ *              Direct jump          Frame numbers across full length are shuffled with a fixed
+ *                                   seed, seeking frame by frame out of order (taking the "jump"
+ *                                   branch)
+ *            Two numbers are recorded for each frame: `sync` = from calling `setTime` until it
+ *            returns (React commit finished, Lottie frame step finished, DOM is already at this
+ *            frame); `paint` = then wait for the next rAF and a subsequent macro task (browser
+ *            finishes painting this frame; lower bound is headless browser frame output cadence,
+ *            compared against the difference with "empty Lottie").
+ *   export   Export page (`FramePipeline.bakery` + `bakeFrames` / `createStepper`, the same frame
+ *            extraction path as real export), three items:
+ *              Full frame   `bakeFrames` exports full length sequentially, interval between
+ *                           completion times of each frame = exporting one frame (including
+ *                           advancing one tick, screenshot, no disk write)
+ *              Step time    One step of `createStepper` (dispatch time, drain, advance one tick, pin
+ *                           animation, wait for assets), no screenshots; one pass each for
+ *                           sequential advance and direct jump
+ *              In-page      Time spent running `window.__pcSetT` synchronously in page (React commit +
+ *                           Lottie frame step, excluding Node round-trip and frame output); one pass
+ *                           each for sequential advance and direct jump
+ *   cost     Existing cost measurement criteria: the editor itself (`probeCardOnce` in
+ *            `src/editor/probeRunner.ts`) runs a pass for each card on the background stage: direct
+ *            cards take `stepMs` across 16 fixed randomly sampled frames with `setTime(t, { probe: true })`,
+ *            taking the 90th percentile as the card's `stepMs`; classification formula is
+ *            `stepMs × COST_SCALE > 0.7 × one tick`. Reads the cost records it wrote and the
+ *            classification (light/heavy) in the dispatch table at a midpoint position
+ *            (`__pcStagePipelineAt`), without writing a separate measurement.
  *
- * 数字的统计:中位数、第 90 百分位、最大(毫秒)。耗时只记录,不判过不过;只有量不到数、页面报错、成本记录没落定才进 `fails`(退出码 1)。
- * 输出:过程写 stderr;最后一行 stdout 是 JSON `{ ok, fails, rows }`。
+ * Statistics: median, 90th percentile, max (milliseconds). Time spent is recorded only, without
+ * pass/fail judgment; enters `fails` (exit code 1) only if numbers cannot be measured, the page throws
+ * an error, or cost records fail to settle.
+ * Output: progress writes to stderr; last line of stdout is JSON `{ ok, fails, rows }`.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,也不写公共的 port.json
+import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR, and does not write shared port.json
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -70,7 +98,7 @@ const stats = (xs) => {
   const r = (x) => (x === null ? null : +x.toFixed(2));
   return { n: v.length, med: r(quantile(v, 0.5)), p90: r(quantile(v, 0.9)), max: r(v.length ? v[v.length - 1] : null) };
 };
-/** 固定种子洗牌(mulberry32),同一台机器上复跑抽到同一个顺序 */
+/** Fixed-seed shuffle (mulberry32), re-runs on the same machine draw the same order */
 function shuffled(n, seed) {
   const a = Array.from({ length: n }, (_, i) => i);
   let s = seed >>> 0;
@@ -80,9 +108,10 @@ function shuffled(n, seed) {
 }
 
 /**
- * 可见舞台页里跑的:按给定的帧号次序一帧一帧拨,每帧记 sync / paint。
- * 舞台页把时钟、计时器、rAF 都换成了可钉的虚拟版本(`src/kernel/clock.ts`),所以这里用它留下的真版本:
- * `__pcRealNow`、`__pcRealRaf`、`__pcRealSetTimeout`。
+ * Runs in the visible stage page: seeks frame by frame in the given frame sequence, recording
+ * sync / paint for each frame. The stage page replaced clock, timer, and rAF with pinnable virtual
+ * versions (`src/kernel/clock.ts`), so the real versions preserved by it are used here:
+ * `__pcRealNow`, `__pcRealRaf`, `__pcRealSetTimeout`.
  */
 const STAGE_PASS = String.raw`(async (order, fps) => {
   const now = window.__pcRealNow ?? (() => performance.now());
@@ -129,7 +158,8 @@ try {
       const stored = await store('return JSON.parse(JSON.stringify(getState().project));');
       check(stored.width === size.w && stored.height === size.h, `${tag}: project resolution was not set to ${size.w}x${size.h}`, [stored.width, stored.height]);
 
-      // 等成本记录落定(编辑器自己的测量趟),再等前台舞台回到这张卡的精确活渲
+      // Wait for cost records to settle (the editor's own measurement pass), then wait for the visible
+      // stage to return to exact live render for this card
       const cost = await waitFor(async () => {
         const rec = await costRecordOf(page, clipId);
         return rec && typeof rec.stepMs === 'number' ? rec : null;
@@ -174,7 +204,8 @@ try {
           const full = []; for (let i = 1; i < stamps.length; i++) full.push(stamps[i] - stamps[i - 1]);
           const step = createStepper(bakery, { fps: FPS });
           const timed = async (order) => { const out = []; for (const i of order) { const a = performance.now(); await step(i, false); out.push(performance.now() - a); } return out; };
-          // 导出页把 performance.now 钉成了导出毫秒(kernel/exportClock.ts);performance.mark 的时间戳走原生时钟,拿它量真耗时
+          // Export page pins performance.now to export milliseconds (kernel/exportClock.ts); timestamps of
+          // performance.mark use native clock, which is used to measure real elapsed time
           const inPage = (order) => bakery.page.evaluate((o, fps) => { const real = () => performance.mark('m').startTime; const out = []; for (const f of o) { const a = real(); window.__pcSetT(f / fps, f / fps); out.push(real() - a); } performance.clearMarks(); return out; }, order, FPS);
           const seqOrder = Array.from({ length: total }, (_, i) => i);
           const jumpOrder = shuffled(total, 20261014);
@@ -197,7 +228,7 @@ try {
   say(`ERROR ${e?.stack || e}`);
 } finally {
   await browser?.close().catch(() => {});
-  try { await editor?.stop?.(); } catch { /* 收摊 */ }
+  try { await editor?.stop?.(); } catch { /* Teardown */ }
 }
 const summary = { ok: fails.length === 0, fails, seconds: +((Date.now() - started) / 1000).toFixed(1), machine: { cpu: os.cpus()[0]?.model, logical: os.cpus().length, node: process.version }, rows };
 if (JSON_OUT) await fs.writeFile(JSON_OUT, JSON.stringify(summary, null, 2));

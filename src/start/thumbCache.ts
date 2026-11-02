@@ -1,22 +1,35 @@
 /**
- * 开始页缩略图那一格上的「真画面」与画幅、时长:这台浏览器打开过这个项目时记下的。
+ * The "real picture", aspect ratio and duration on a start-page thumbnail cell: recorded when this
+ * browser opened the project.
  *
- * 云端项目列表(`/api/account/projects`)只给项目号和名字,不给画幅、时长、首帧;不进项目就拿不到项目内容,
- * 也没有不进项目就能取首帧快照的接口。所以这一版的做法(〔裁 vibe-wire-1〕,三级:用户看不出办法的区别,只看得到有没有图):
- *   - 在 Vibe 模式里打开一个项目时(已经连上文档服务、项目内容在页面上),记下它的画幅、时长;
- *   - 首帧取「0 秒那一刻最上面那段可见的视频 / 图片素材」的那一帧(取法与手机版素材格子同一套,`src/mobile/thumbs.ts`、
- *     `Thumb.tsx`:经素材服务带只读票据的预览地址解码、缩成小 JPEG),取到了记下;
- *   - 没打开过、只有卡片没有素材、取不到(解码失败、跨源画不进画布):这一格退回原来的取色色块,不空白、不破图。
- * 它不是合成后的整帧(卡片叠在素材上的样子要舞台才画得出来,舞台在跨源的 iframe 里,父页读不到像素)。
- * 要「预渲染给的合成首帧」得在服务端加一个按项目取首帧快照的接口,列为待办(报告「没做成的」)。
+ * The cloud project list (`/api/account/projects`) gives only the project id and name, not the aspect
+ * ratio, duration or first frame; without entering a project its content cannot be obtained, and there
+ * is no interface that fetches a first-frame snapshot without entering the project. So the approach in
+ * this version ([ruling vibe-wire-1], level 3: users cannot tell the difference between methods, they
+ * only see whether there is a picture):
+ *   - When a project is opened in Vibe mode (the document service is already connected and the project
+ *     content is on the page), record its aspect ratio and duration;
+ *   - The first frame is the frame of "the topmost visible video / image media at second 0" (taken the
+ *     same way as the mobile app's media cells, `src/mobile/thumbs.ts` and `Thumb.tsx`: decoded through
+ *     a preview URL of the asset service that carries a read-only ticket, and shrunk to a small JPEG);
+ *     once obtained, it is recorded;
+ *   - Never opened, only cards and no media, or cannot be obtained (decode failed, cross-origin content
+ *     cannot be drawn onto the canvas): the cell falls back to the original color block, so there is no
+ *     blank and no broken image.
+ * It is not the composited whole frame (how cards overlay on media can only be drawn by the stage, and
+ * the stage lives in a cross-origin iframe whose pixels the parent page cannot read).
+ * To get "the composited first frame given by the prerender" an interface that fetches a first-frame
+ * snapshot per project would have to be added on the server side; it is listed as a to-do (the report's
+ * "Not done" section).
  *
- * 记在本机(localStorage),只留最近 `MAX` 个项目;读写包 try/catch,取不到就当没记过。
+ * Recorded locally (localStorage), keeping only the most recent `MAX` projects; reads and writes are
+ * wrapped in try/catch, and when it cannot be read it is treated as never recorded.
  */
 import type { SeenMeta } from "./vibeOrg.ts";
 import type { Ratio } from "./types.ts";
 
 const KEY = "pc.start.seen";
-/** 最多记几个项目(每个缩略图约十几 KB) */
+/** How many projects to record at most (each thumbnail is a dozen or so KB) */
 const MAX = 40;
 
 type Store = Record<string, SeenMeta>;
@@ -55,7 +68,7 @@ export function subscribeSeen(l: () => void): () => void {
   return () => { listeners.delete(l); };
 }
 
-/** 记下一个项目的画面信息。只改给了的那几项;最旧的超出 MAX 就丢掉 */
+/** Record a project's picture info. Only the given fields are changed; the oldest ones beyond MAX are dropped */
 export function rememberSeen(projectId: string, patch: Partial<SeenMeta>): void {
   const all = { ...seenProjects() };
   const prev = all[projectId] ?? { ratio: null, duration: null, thumb: null, seenAt: null };
@@ -68,13 +81,13 @@ export function rememberSeen(projectId: string, patch: Partial<SeenMeta>): void 
   try {
     localStorage.setItem(KEY, JSON.stringify(all));
   } catch {
-    // 存满了:把缩略图去掉再试一次,画幅和时长至少留着
+    // Storage is full: drop the thumbnail and try again, keeping at least the aspect ratio and duration
     try {
       const slim: Store = {};
       for (const [id, m] of Object.entries(all)) slim[id] = { ...m, thumb: id === projectId ? m.thumb : null };
       localStorage.setItem(KEY, JSON.stringify(slim));
       cache = slim;
-    } catch { /* 存不了就只在这次打开期间有效 */ }
+    } catch { /* If it cannot be saved, it is only valid for this session of the page */ }
   }
   for (const l of [...listeners]) l();
 }

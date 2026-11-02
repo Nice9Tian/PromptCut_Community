@@ -1,11 +1,15 @@
 /**
- * 顶栏的成员按钮、成员浮层与创建者操作(c65-ux-draft.md 第 3、4 节;契约 `auth-contract.md` 第 7 节)。
+ * The members button in the top bar, the members popover and the creator actions (c65-ux-draft.md sections
+ * 3 and 4; contract `auth-contract.md` section 7).
  *
- * - 按设备一行;重名带设备名(服务端给的 displayName);自己那行加粗、后缀「(自己)」;创建者带「[创建者]」;
- *   标签 [编辑中] [渲染中] [Agent ×n];点行展开 Agent:「用户名 · Agent · 第 n 个对话」。
- * - 我是创建者时:别人那行悬停出「踢出」;浮层底部「项目管理（仅创建者可见）」:改项目密码 / 改名单、改创建者密码、
- *   已禁入的设备、删除项目。每次都先「验证创建者身份」(当场输密码,用 `list-bans` 做一次无副作用的证明核对),
- *   验证过的 K 只用于这一次操作流程,关掉就丢。
+ * - One row per device; duplicate names carry the device name (the displayName given by the server); your
+ *   own row is bold with the suffix "(you)"; the creator has "[creator]"; tags [editing] [rendering]
+ *   [Agent ×n]; clicking a row expands the Agent: "username · Agent · chat n".
+ * - When I am the creator: other rows show "Kick" on hover; at the bottom of the popover "Project management
+ *   (visible to the creator only)": change project password / change list, change creator password, banned
+ *   devices, delete project. Each time, first "verify creator identity" (enter the password on the spot and
+ *   use `list-bans` to do a side-effect-free proof check); the verified K is used only for this one action
+ *   flow and is dropped when closed.
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
@@ -15,8 +19,9 @@ import { createInvite, localCollab, rememberPasswords } from "./collab";
 import { HOSTED_SERVICE_TEXT, cloudAgentConns, cloudAgentLabel, hostedFailText, hostedFlowNeedsPassword, hostedOptionText, isCloudAgentOnly, isCloudAgentRunning, memberCountLabel, serviceRowLabel, splitMembers, visibleMembers, type HostedOptionName, type HostedServiceName } from "./hostedServices";
 import { useCloudRunning } from "./presence";
 import "./sync.css";
-// 局域网缺省成员源的注册已挪到入口（`src/main.tsx` → `./lanBoot.ts`）：
-// 原来写在本文件顶层，等于「谁 import 到这个面板就顺带注册」，手机端那条路上它不在闭包里
+// The registration of the default LAN member source has moved to the entry (`src/main.tsx` → `./lanBoot.ts`):
+// it used to live at the top level of this file, which meant "whoever imports this panel registers it as
+// a side effect", and on the mobile app path it is not in the closure
 import { getMemberSource, subscribeAccountExtensions } from "./accountExtensions";
 import { tr } from "../../i18n/index.ts";
 
@@ -41,7 +46,7 @@ function LegacyMembersButton() {
   const shared = useSync((v) => v.shared);
   const members = useSync((v) => v.members);
   const device = useSync((v) => v.device);
-  /** 哪些成员的云端 Agent 此刻有一轮在跑(在场状态里的 `cloud-run`):表变了(开始、结束、过期)要重画 */
+  /** Which members' Cloud Agent currently has a round running (`cloud-run` in the presence state): redraw when the table changes (start, end, expiry) */
   const running = useCloudRunning();
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState<DOMRect | null>(null);
@@ -63,10 +68,10 @@ function LegacyMembersButton() {
 
   if (!shared) return null;
   const isMe = (r: MemberRow) => r.username === shared.username && r.deviceId === device?.deviceId;
-  // 托管方的服务(渲染节点)不是成员:排在成员之后,不计入成员数,没有踢人按钮
+  // The host's service (render node) is not a member: it is listed after the members, not counted in the member count, and has no kick button
   const split = splitMembers(members);
   const services = split.services;
-  // 本人不在线、只剩闲置的云端 Agent 连接的行不显示、不计数(云端 Agent 的连接在一轮结束后还会连着一阵)
+  // A row whose user is offline and has only an idle Cloud Agent connection left is not shown or counted (a Cloud Agent connection stays connected for a while after a round ends)
   const people = visibleMembers(split.people, running);
   const others = people.filter((r) => !isMe(r));
   const mine = people.find(isMe);
@@ -108,8 +113,8 @@ function LegacyMembersButton() {
             {[...(mine ? [mine] : []), ...others].map((row) => {
               const key = `${row.username}@${row.deviceId}`;
               const allAgents = row.conns.filter((c) => c.role === "agent");
-              // 代这位成员进项目的云端 Agent 连接:归在他这一行里,不另起一行(契约 cloud-agent-contract.md 第 5 节)
-              // 闲置的云端 Agent 连接不算:有一轮在跑才显示标记与子行
+              // A Cloud Agent connection that enters the project on behalf of this member: it goes in the member's row and does not get a row of its own (contract cloud-agent-contract.md section 5)
+              // An idle Cloud Agent connection does not count: the marker and sub-row are shown only while a round is running
               const cloud = isCloudAgentRunning(row, running) ? cloudAgentConns(row.conns) : [];
               const local = allAgents.filter((c) => c.service !== "agent");
               const agents = [...local, ...cloud];
@@ -198,14 +203,14 @@ function LegacyMembersButton() {
   );
 }
 
-/* ---------------- 创建者操作 ---------------- */
+/* ---------------- Creator actions ---------------- */
 
 type Verified = { key: string; bans: { username: string; deviceId: string }[]; list: string[] };
 
 export function CreatorFlow({ flow, onClose }: { flow: Flow; onClose: () => void }) {
   const account = useSync((v) => !!v.shared?.accountId);
   const [checked, setVerified] = useState<Verified | null>(null);
-  // 账号项目改托管方服务的开关:没有创建者密码这一步(凭账号的登录态,服务端按创建者身份把关),直接到确认
+  // The switch for an account project to change the host's service: there is no creator password step (it relies on the account's login state, and the server checks the creator identity), so go straight to confirmation
   const direct = (flow.kind === "hosted-service" || flow.kind === "hosted-option") && !hostedFlowNeedsPassword(account);
   const verified: Verified | null = checked ?? (direct ? { key: "", bans: [], list: [] } : null);
   if (!verified) return <VerifyDialog onClose={onClose} onOk={setVerified} />;
@@ -316,7 +321,7 @@ function PasswordDialog({ creator, v, onClose }: { creator: boolean; v: Verified
     const r = creator ? await adminOp("set-creator-password", { key: v.key }, { creator: cred }) : await adminOp("set-password", { key: v.key }, { project: cred });
     setBusy(false);
     if (!r.ok) return setErr(failText(r.error));
-    // 项目设置「多用户协作」里显示的是本机记下的密码(C10a):改了就跟着换
+    // The project settings "multi-user collaboration" shows the password recorded on this machine (C10a): follow it when it changes
     const pid = getSyncView().shared?.projectId;
     if (pid) await rememberPasswords(pid, creator ? { creatorPassword: a } : { projectPassword: a });
     pushToast(creator ? tr("Creator password changed. Use the new password for project management from now on.") : tr("Project password changed. People who are online are not affected; the new password is needed next time they join."), "info");
@@ -489,7 +494,7 @@ function KickDialog({ row, v, onClose }: { row: MemberRow; v: Verified; onClose:
   );
 }
 
-/** 创建者开关托管方的服务(项目设置里的勾选;验证创建者身份之后到这一步确认) */
+/** The creator toggles the host's service (the checkbox in project settings; after verifying creator identity, this step confirms) */
 function HostedServiceDialog({ service, enabled, v, onClose }: { service: HostedServiceName; enabled: boolean; v: Verified; onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -525,7 +530,7 @@ function HostedServiceDialog({ service, enabled, v, onClose }: { service: Hosted
   );
 }
 
-/** 创建者改托管方服务下面的子选项(项目设置里「生成轨道流」的勾选;验证创建者身份之后到这一步确认) */
+/** The creator changes the sub-option under the host's service (the "generate track stream" checkbox in project settings; after verifying creator identity, this step confirms) */
 function HostedOptionDialog({ service, option, enabled, v, onClose }: { service: HostedServiceName; option: HostedOptionName; enabled: boolean; v: Verified; onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -572,7 +577,7 @@ function DeleteDialog({ v, onClose }: { v: Verified; onClose: () => void }) {
     setBusy(false);
     if (!r.ok) return setErr(failText(r.error));
     onClose();
-    // 自己删的:不弹「项目已被创建者删除」,直接回开始页
+    // Deleted by the user themself: do not show "The project was deleted by the creator", go straight back to the start page
     leaveBlocked();
   };
   return (

@@ -2,13 +2,16 @@ import type { AgentTab } from "../../../ai/agentTabs";
 import { tr } from "../../../i18n/index.ts";
 
 /**
- * rail 上 AI 类项(剧本、Agent 分页)的画法小件:剧本图标、Agent 头像里的字、标签截断、悬停说明。
+ * Drawing helpers for the AI items on the rail (script, Agent tabs): the script icon, the letter in an
+ * Agent avatar, label truncation, hover tooltip.
  *
- * rail 本身已经左右共用、可以拖动,在 editor/dock/RailBar.tsx;原来这里的 RightRail 组件和 `pc.right.page`(剧本 / 助手)
- * 并进了 dock 的布局 store(editor/dock/railStore.ts,`pc.rail.layout.v1`)—— 剧本、每个 Agent 都是 rail 上独立的一项。
+ * The rail itself is now shared left and right and draggable, in editor/dock/RailBar.tsx; the
+ * RightRail component that used to be here and `pc.right.page` (script / assistant) were merged into
+ * the dock's layout store (editor/dock/railStore.ts, `pc.rail.layout.v1`): the script and every Agent
+ * is an independent item on the rail.
  */
 
-/** rail 上「剧本」的图标:一页写了几行字的文稿 */
+/** The icon for "Script" on the rail: a document with a few lines of text on one page */
 export function IconScript() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
@@ -19,7 +22,7 @@ export function IconScript() {
   );
 }
 
-/** 头像里的字:默认名「Agent N」取编号,声明过范围的取标题首字 */
+/** The letter in the avatar: for the default name "Agent N" take the number, for one with a declared scope take the first letter of the title */
 export function glyphOf(t: AgentTab, index: number): string {
   const num = /^Agent\s+(\d+)$/.exec(t.title.trim());
   if (num) return num[1];
@@ -27,8 +30,9 @@ export function glyphOf(t: AgentTab, index: number): string {
 }
 
 /**
- * rail 标签最多 4 个字宽:全角字算 1,半角字算 0.5。
- * 按字符数截的话「Agent 1」会被切成「Agen…」,而它其实比「剪辑导演」还窄。
+ * A rail label is at most 4 characters wide: a full-width character counts as 1, a half-width one as 0.5.
+ * Truncating by character count would cut "Agent 1" into "Agen…", although it is actually narrower
+ * than "Cut director".
  */
 export function shortLabel(title: string): string {
   let units = 0;
@@ -42,7 +46,7 @@ export function shortLabel(title: string): string {
   return out;
 }
 
-/** 悬停说明:完整标题 + 范围 + 对话 ID(给模型看的 Agent ID,send_message 的收件人就写它) */
+/** Hover tooltip: full title + scope + chat ID (the Agent ID shown to the model, the recipient of send_message is written as this) */
 export function tabTooltip(t: AgentTab): string {
   const lines = [t.title];
   if (t.scope) lines.push(tr("Scope: {0}", t.scope));

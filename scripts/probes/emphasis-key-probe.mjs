@@ -1,34 +1,47 @@
 /**
- * 输出节点带上游的片段(挂了强调的卡片段)经真的预渲染管线跑一遍:两张不同的卡挂同样的强调,各是各的画面吗
- * (报告 `docs/archive/agent-reports/AGENT-rr-emphasis-key.md`;单测 `server/test/card-cache-upstream-key.test.mjs`)。
+ * Clips whose output node has upstream nodes (card clips with emphasis attached) run through real
+ * prerender pipeline: do two different cards with same emphasis have distinct frames?
+ * (Report `docs/archive/agent-reports/AGENT-rr-emphasis-key.md`; unit test
+ * `server/test/card-cache-upstream-key.test.mjs`).
  *
  *   node scripts/probes/emphasis-key-probe.mjs [--port 27840] [--out <dir>] [--keep] [--json <file>]
  *
- * 自己在检出根起一个 dev server(`--port`,另占 +1、+2 当舞台端口、+5 给测试页;带 `PROMPTCUT_NO_PORT_FILE=1`,不碰 5190～5192),
- * 本进程里直接起一个 `FramePipeline`(同预渲染进程的代码,`interactive: true`),库根放 `--out`。灌一个项目,四个片段都挂同样的
- * 描边强调、框一样大、时长都是 3 秒、入点都落在整帧上(采样相位相同):
+ * Starts a dev server in this checkout root (`--port`, occupying +1 and +2 as stage ports and +5
+ * for test page; with `PROMPTCUT_NO_PORT_FILE=1`, not touching 5190-5192), directly starts a
+ * `FramePipeline` in this process (same code as prerender process, `interactive: true`), with store
+ * root at `--out`. Feeds a project where all four clips have the same stroke emphasis, identical
+ * frame size, 3-second duration, and in points aligned to whole frames (identical sampling phase):
  *
- *   clip-l     金句药丸 `punch-pill`,文字 AAA          0～3 秒   画面左上
- *   clip-r     人物聚焦 `focus-card`,要点 ZZZ…         0～3 秒   画面右下     和 clip-l 是两张不同的卡
- *   clip-late  金句药丸,文字 LATE                       4～7 秒   画面左上     和 clip-l 同一张卡、参数不同
- *   clip-twin  金句药丸,文字 AAA(和 clip-l 一模一样)   4～7 秒   画面右下     和 clip-l 里外都相同
+ *   clip-l     punchline pill `punch-pill`, text AAA          0-3s   top-left of video
+ *   clip-r     focus card `focus-card`, key points ZZZ…     0-3s   bottom-right of video  different card from clip-l
+ *   clip-late  punchline pill, text LATE                      4-7s   top-left of video      same card as clip-l, different parameters
+ *   clip-twin  punchline pill, text AAA (identical to clip-l) 4-7s   bottom-right of video  identical to clip-l inside and out
  *
- * 记下来的(结论 JSON 的 `plan`、`streams`、`layers`):每个片段的输出节点、档位、能不能单独预渲染、进不进预渲染集合、
- * 三个键;`planStreams` 给每个片段出的流;就绪索引发给页面的每一层用的是哪个键。
+ * Recorded (conclusion JSON's `plan`, `streams`, `layers`): output node, tier, whether independently
+ * prerenderable, whether entering prerender set, and three keys for each clip; streams produced by
+ * `planStreams` for each clip; which key is used for each layer sent to the page by ready index.
  *
- * 核对:
- *   1. 四个片段的输出节点都是强调节点,判成共享档、能单独预渲染、进了预渲染集合、各有单卡流(这是「会不会真的贴错」的前提);
- *   2. clip-l、clip-r、clip-late 两两之间:快照的内容键、流的成员键、结果键都不相同;clip-l 与 clip-r 的流键不相同;
- *   3. clip-l 与 clip-twin:快照的内容键、结果键相同(同一张卡两个片段共用一份);入点不同,所以流键不同;
- *   4. 快照:每个片段按自己的结果键(发给页面的 `html` 层用的就是它)去读这个键下面现有的头一帧快照 HTML,里面是这个片段自己的文字、
- *      没有别的片段的文字(文字在 DOM 里,与入场动画做到哪一步无关);
- *   5. 舞台:一个舞台 iframe 照父页的做法贴流(`setSuppressed` + `setStreamPlanes`,平面取自就绪索引的 `stream` 层),
- *      播到 1.7 秒、5.7 秒各停一次截图;再摘掉流让这几张卡活渲同一帧截一张。每个片段的框那一块,贴流与活渲相差很大的像素
- *      (三个分量里最大的差超过 64)不到 0.3%(判据的来历见 `regionDiff`)。截图存在 `--out` 下的 `shots/`。
+ * Verification:
+ *   1. Output nodes of all four clips are emphasis nodes, classified as shared tier, can be
+ *      independently prerendered, entered prerender set, and each has a single-card stream (the
+ *      prerequisite for "whether stream pasting could actually go wrong");
+ *   2. Pairwise among clip-l, clip-r, and clip-late: snapshot content key, stream member key, and
+ *      result key are all different; stream keys of clip-l and clip-r are different;
+ *   3. clip-l and clip-twin: snapshot content key and result key are identical (shared between the
+ *      two clips of the same card); in points differ, so stream keys differ;
+ *   4. Snapshots: each clip reads existing first frame snapshot HTML under its own result key
+ *      (used for `html` layer sent to page), verifying it contains its own text and no text from
+ *      other clips (text is in DOM, regardless of entrance animation progress);
+ *   5. Stage: one stage iframe pastes streams following parent page practice (`setSuppressed` +
+ *      `setStreamPlanes`, planes taken from `stream` layer of ready index), stops at 1.7s and 5.7s to
+ *      take screenshots; then detaches streams and live renders same frame for these cards to take
+ *      a screenshot. For each clip's frame area, pixels with large differences between stream paste
+ *      and live render (max difference across three channels > 64) are under 0.3% (see `regionDiff`
+ *      for criterion origin). Screenshots saved under `shots/` in `--out`.
  *
- * 输出 JSON 结论,过程写 stderr;任何一条不过就以非零退出。
+ * Outputs JSON conclusion, writes progress to stderr; exits with non-zero on any failure.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import os from 'node:os';
@@ -97,7 +110,10 @@ function viteBin() {
   return path.join(main.slice(0, at + 6), 'bin', 'vite.js');
 }
 
-/** 父页那一侧的最小替身:一个舞台 iframe,只经 postMessage RPC 驱动(同 `stream-play-probe.mjs`) */
+/**
+ * Minimal stand-in for parent page side: a stage iframe driven only via postMessage RPC
+ * (same as `stream-play-probe.mjs`).
+ */
 const hostHtml = (stage) => `<!doctype html><html><head><meta charset="utf-8"><title>emphasis key probe host</title></head>
 <body style="margin:0;background:#202020">
 <iframe id="a" src="${stage}/?stage=1&id=A&preview=stage&prerender=1" style="width:1920px;height:1080px;border:0;display:block"></iframe>
@@ -122,7 +138,7 @@ window.__ready = new Promise((res) => {
 });
 </script></body></html>`;
 
-/** 截图的一块 → RGB(截图不透明,直接取) */
+/** Region of screenshot → RGB (screenshot is opaque, sampled directly) */
 function regionRgb(pngBuf, box) {
   const png = PNG.sync.read(pngBuf);
   const x0 = Math.max(0, box.x), y0 = Math.max(0, box.y), x1 = Math.min(png.width, box.x + box.w), y1 = Math.min(png.height, box.y + box.h);
@@ -132,9 +148,12 @@ function regionRgb(pngBuf, box) {
   return out;
 }
 /**
- * 两块画面差多少:`meanAbs` 是三个分量的平均绝对差;`bigRatio` 是「相差很大」的像素占多少(三个分量里最大的差超过 64)。
- * 有损编码的误差落在前一个数上(实测 0.2～0.8),几乎不产生相差很大的像素(实测 0.002%～0.02%);贴成别的画面时后一个数是百分之几到几十
- * (实测:同一张卡文字不同 2.4%,换了一张卡 77%)。所以按后一个数判。
+ * How much two image regions differ: `meanAbs` is mean absolute difference across three channels;
+ * `bigRatio` is proportion of "significantly different" pixels (max difference across three
+ * channels > 64). Lossy encoding errors fall on the former number (measured at 0.2-0.8), producing
+ * almost no significantly different pixels (measured at 0.002%-0.02%); when pasted with a different
+ * image, the latter number reaches a few percent to tens of percent (measured: 2.4% for same card
+ * with different text, 77% for different card). Therefore, judgments are based on the latter number.
  */
 function regionDiff(a, b) {
   if (a.length !== b.length || !a.length) return { meanAbs: null, bigRatio: null };
@@ -162,7 +181,7 @@ const RUN = Date.now().toString(36);
 const TMP = fsSync.mkdtempSync(path.join(os.tmpdir(), 'pc-emphasis-key-dev-'));
 let child = null, pipeline = null, browser = null, hostServer = null;
 try {
-  // ---------- 0. dev server(本检出根,临时数据目录,不写公共的端口文件)
+  // ---------- 0. dev server (this checkout root, temporary data dir, does not write shared port file)
   const log = [];
   child = spawn(process.execPath, [viteBin(), '--port', String(PORT), '--strictPort', '--host', '127.0.0.1'], {
     cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
@@ -183,7 +202,9 @@ try {
   if (!up) throw new Error(`dev server did not start: ${log.join('').slice(-600)}`);
   out.origin = origin;
 
-  // ---------- 1. 管线:灌项目,等流全部满密度、共享档快照产齐。不钉预渲染集合:进不进集合照产品自己判
+  // ---------- 1. Pipeline: feed project, wait for all streams to reach full density and
+  // shared-tier snapshots to finish producing. Do not pin prerender set: whether to enter set is
+  // judged by product logic itself
   pipeline = new FramePipeline({ root: path.join(OUT, 'library'), origin: () => origin, interactive: true, playhead: () => null });
   const producer = pipeline.streamProducer();
   producer.attachRoute();
@@ -202,7 +223,9 @@ try {
   if (!status) throw new Error('The streams were not fully produced');
   const plan = entry.cardPlan ?? [];
   const controlOf = Object.fromEntries(plan.map((control) => [control.clipId, control]));
-  // 快照是后台一张卡一张卡、每批 4 帧慢慢产的(实测一批十几秒),每张卡的头一帧先产:等到每个片段的键下面至少有一帧(不要求整张产齐),进度记进结论
+  // Snapshots are produced slowly in background card by card in batches of 4 frames (measured at
+  // ~10+s per batch), first frame of each card produced first: wait until at least one frame exists
+  // under each clip's key (not requiring full card completion), record progress in conclusion
   out.snapshotProgress = [];
   const snapshotsDone = async () => {
     const row = { ms: Date.now() - t0 };
@@ -221,7 +244,7 @@ try {
   await until('every clip\'s key has a snapshot', snapshotsDone, 1_200_000, 2000);
   out.produceMs = Date.now() - t0;
 
-  // ---------- 2. 记下计划、流、层
+  // ---------- 2. Record plan, streams, layers
   const short = (key) => (typeof key === 'string' ? key.slice(0, 12) : key ?? null);
   out.plan = {};
   for (const clipId of CLIPS) {
@@ -245,7 +268,7 @@ try {
   say('plan', out.plan);
   say('streams', { streams: out.streams, layers: out.layers });
 
-  // ---------- 3. 前提与键
+  // ---------- 3. Prerequisites and keys
   for (const clipId of CLIPS) {
     const c = controlOf[clipId];
     if (!check(!!c, `${clipId}: it is in the card plan`)) continue;
@@ -270,13 +293,13 @@ try {
     }
   }
 
-  // ---------- 4. 快照:按发给页面的键读一帧,里面是谁的文字
+  // ---------- 4. Snapshots: read one frame by key sent to page, check whose text is inside
   out.snapshots = {};
   for (const clipId of CLIPS) {
     const c = controlOf[clipId];
     if (!c?.snapshotKey) continue;
     const index = await pipeline.snapshots().snapshotIndex({ tier: 'shared', key: c.snapshotKey });
-    const localFrame = index.frames[0]?.[0] ?? 0; // 这个键下面现有的头一帧
+    const localFrame = index.frames[0]?.[0] ?? 0; // Existing first frame under this key
     const html = await pipeline.snapshots().readSnapshot({ tier: 'shared', key: c.snapshotKey, localFrame });
     const has = Object.fromEntries(['AAA', 'ZZZ', 'LATE'].map((text) => [text, typeof html === 'string' && html.includes(text)]));
     out.snapshots[clipId] = { key: short(c.snapshotKey), localFrame, frames: index.frames, bytes: typeof html === 'string' ? html.length : null, has };
@@ -287,7 +310,7 @@ try {
   }
   say('snapshots', out.snapshots);
 
-  // ---------- 5. 舞台:贴流截图 vs 活渲截图
+  // ---------- 5. Stage: stream-paste screenshots vs live-render screenshots
   const ports = await (await fetch(`${origin}/api/stage/ports`)).json();
   if (!ports.ok || !Array.isArray(ports.ports) || !ports.ports.length) throw new Error(`Stage ports did not come up: ${JSON.stringify(ports)}`);
   const stageOrigin = `http://127.0.0.1:${ports.ports[0]}`;
@@ -320,7 +343,8 @@ try {
     await page.screenshot({ clip: { x: 0, y: 0, width: 1920, height: 1080 } });
     return page.screenshot({ clip: { x: 0, y: 0, width: 1920, height: 1080 } });
   };
-  // 平面:就绪索引里每个片段最后一条 `stream` 层(父页 `streamPlanesFor` 的口径:一层一个平面)
+  // Plane: the last `stream` layer for each clip in the ready index
+  // (parent page `streamPlanesFor` standard: one layer per plane)
   const planes = CLIPS.map((clipId) => lastLayer(clipId, 'stream')).filter(Boolean)
     .map((l) => ({ clipIds: l.groupClipIds?.length ? l.groupClipIds : [l.clipId], key: l.key, ranges: l.ranges }));
   const heavy = [...new Set(planes.flatMap((p) => p.clipIds))];
@@ -368,14 +392,14 @@ try {
   try { hostServer?.close(); } catch { /* ignore */ }
   try { await pipeline?.close(); } catch { /* ignore */ }
   if (child && child.exitCode === null) {
-    // 只结束自己起的进程树
+    // Only terminate the process tree it spawned
     if (process.platform === 'win32') {
       await new Promise((resolve) => { const k = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); k.on('close', resolve); k.on('error', resolve); });
     } else child.kill('SIGKILL');
   }
   try { fsSync.rmSync(TMP, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* ignore */ }
   if (!KEEP) {
-    // 留下 shots 和结论 JSON,别的(库)删掉
+    // Keep shots and conclusion JSON; delete the rest (stores)
     try {
       for (const name of await fs.readdir(OUT)) if (name !== 'shots' && name !== 'result.json') await fs.rm(path.join(OUT, name), { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     } catch { /* ignore */ }

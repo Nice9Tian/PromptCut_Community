@@ -1,8 +1,11 @@
 /**
- * 审查环路(harness/loop.mjs)的各条路径。模型全是按角色写好台词的假 provider,不走网络。
+ * Various paths of the review loop (harness/loop.mjs). Models are all mock providers with scripted
+ * lines by role, making no network calls.
  *
- * 盯的几件事:只有 judger 能宣布完成;worker 每轮都看得到用户原话;三次失败换成反省、
- * 反省时不给工具;judger 改写的教训会被存下来;卡住时提前反省;两批都没过就停下交给用户。
+ * Things monitored: only judger can declare completion; worker sees the user's original words
+ * every round; switch to reflection after three failures, with no tools provided during reflection;
+ * rewritten lessons from judger are saved; reflect early when stuck; stop and hand over to the user
+ * if neither batch passes.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,7 +13,7 @@ import { runReviewLoop, presentLoopEvent } from '../harness/loop.mjs';
 
 const USER = 'Add motion graphics to this narration, within thirty seconds';
 
-/** 一个角色的台词:每次「新一轮请求」弹一句;刚执行完工具就回一句「好」收尾 */
+/** Lines for a role: emit one on each "new round of requests"; reply "OK" to wrap up right after executing tools */
 function scripted(role, actions, calls) {
   const queue = [...actions];
   let n = 0;
@@ -135,7 +138,8 @@ test('Chat panel display: rulings become status lines listed one by one, reviewe
   assert.equal(presentLoopEvent({ type: 'text', role: 'worker', delta: 'Delivery' })[0].type, 'text');
   assert.match(presentLoopEvent({ type: 'progress', role: 'reviewer', text: 'Round 1' })[0].text, /^reviewer · Round 1/);
   assert.deepEqual(presentLoopEvent({ type: 'loop', stage: 'done', outcome: 'passed' }), [], 'The end does not start a separate status line, the conclusion goes in the body');
-  // 实跑见过:没有逐条裁定、judger 自己核对后要求返工 —— 要把要求摆出来,不能只写「采纳 0 条」
+  // Seen in actual runs: no item-by-item rulings, judger checks on its own and requests rework:
+  // must lay out the requirements, cannot just write "0 items accepted"
   const [own] = presentLoopEvent({ type: 'loop', stage: 'verdict', role: 'judger', verdict: 'request_revision',
     input: { rulings: [], requirements: 'worker must actually call tools to carry out the fixes\n1. Remove all redundant cards' } });
   assert.match(own.text, /checked on its own and requested rework/);

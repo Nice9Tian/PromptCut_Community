@@ -122,7 +122,8 @@ export const focusCard: CardDef<Params> = {
   useWhen: "Full-screen layout for a person presenting on camera: the opaque solid background fully covers the underlying picture, 16:9 landscape only. You must provide a separate narration video URL camSrc, otherwise that half of the screen is just a placeholder block reading \"narration video\"; the other side holds 2 to 3 key points. The key point text is fixed white, so bg must be a dark color. If you only want to overlay key points on the original video, use pin-board or checklist instead.",
   tags: ["person","half-screen","on camera","Key points"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,

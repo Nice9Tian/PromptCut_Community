@@ -1,17 +1,25 @@
 /**
- * 编辑台预览里的音频效果:把 <video> / <audio> 元素接进 Web Audio,挂上 fxChain。
+ * Audio effects in the editor preview: connects <video> / <audio> elements into Web Audio and
+ * attaches fxChain.
  *
- * 元素只在**第一次需要效果时**才接进 AudioContext(createMediaElementSource):接上之后声音就只走节点图,
- * 再也回不到元素直出;所以没挂效果的片段一律不碰,老行为一点不变。接上过的元素,片段换成没效果的,
- * 就直通(source → destination)。
+ * An element is connected into the AudioContext (createMediaElementSource) only **the first time an
+ * effect is needed**: once connected, the sound goes only through the node graph and can never
+ * return to the element's direct output; so clips with no effect are left untouched, and the old
+ * behavior is completely unchanged. For an element that has been connected, if the clip is
+ * switched to one without effects, it passes straight through (source → destination).
  *
- * 音量还是走 el.volume(MediaLayers 的 driveMedia),节点图在它后面 —— 顺序和导出一致:音量 → 效果。
+ * Volume still goes through el.volume (driveMedia in MediaLayers), with the node graph behind it;
+ * the order matches the export: volume → effects.
  *
- * # 两个坑
- *   1. AudioContext 没有用户手势之前是 suspended,接进去的元素会没声。播放时 resume 一次;编辑台里点过任何
- *      地方之后 Chrome 就放行了(sticky activation)。Agent 驱动的 play 也一样,只要用户在这个页面点过。
- *   2. createMediaElementSource 对跨域且没开 CORS 的素材输出静音。所以只接同源(/@media/、blob:)的元素;
- *      外链素材挂了效果,预览里不生效(console 提示一次),导出照常 —— 导出走的是 ffmpeg 抽出来的本地 wav。
+ * # Two pitfalls
+ *   1. Before a user gesture an AudioContext is suspended, and a connected element would be silent.
+ *      resume once on playback; Chrome lets it through after any click anywhere in the editor
+ *      (sticky activation). The same holds for Agent-driven play, as long as the user has clicked
+ *      in this page.
+ *   2. createMediaElementSource outputs silence for cross-origin media without CORS enabled. So only
+ *      same-origin elements (/@media/, blob:) are connected; for external media with an effect, it
+ *      has no effect in the preview (a console hint, once), while the export works as usual: the
+ *      export uses the local wav extracted by ffmpeg.
  */
 
 import { audioFxOfClip, isAudioFxAnimated, type AudioFxDef } from "../kernel/audioFx.mjs";
@@ -45,15 +53,17 @@ function sameOrigin(el: HTMLMediaElement): boolean {
 }
 
 /**
- * 每帧调一次(MediaLayers 的布局 effect 里):clip 是这个元素此刻播的片段(没有就 null),t 是时间轴时刻。
- * 只在需要时接入;接入过的元素按片段换链 / 直通;随时间变的效果每帧写参数。
+ * Called once per frame (inside the layout effect of MediaLayers): clip is the clip this element is
+ * playing at the moment (null if none), and t is the timeline time.
+ * It connects only when needed; an element that has been connected swaps chains / passes through per
+ * clip; effects that vary over time write their parameters every frame.
  */
 export function routePreviewAudio(el: HTMLMediaElement | null, audioFx: AudioFxDef[] | undefined, clip: TrackClip | null, t: number, playing: boolean): void {
   if (!el) return;
   const def = clip && audioFx?.length ? audioFxOfClip({ audioFx }, clip) : null;
   let r = routed.get(el);
   if (!r) {
-    if (!def) return; // 没挂效果、也没接过:什么都不做
+    if (!def) return; // No effect attached and never connected: do nothing
     if (!sameOrigin(el)) {
       const s = el.currentSrc || el.src;
       if (!warned.has(s)) {
@@ -70,8 +80,10 @@ export function routePreviewAudio(el: HTMLMediaElement | null, audioFx: AudioFxD
   }
   const c = context();
   if (playing && c.state === "suspended") void c.resume();
-  // 同一个元素会轮换 src(MediaLayers 两个槽位):接进来之后换到跨域外链,MediaElementAudioSourceNode 会输出静音,
-  // 而且回不去元素直出。没法修,只能每次都判、每个地址提示一次
+  // The same element rotates its src (the two slots of MediaLayers): after being connected, if it
+  // switches to a cross-origin external link, the MediaElementAudioSourceNode outputs silence and
+  // cannot return to the element's direct output. It cannot be fixed; the only option is to check every
+  // time and show a hint once per address
   if (!sameOrigin(el)) {
     const s = el.currentSrc || el.src;
     if (s && !warned.has(s)) {
@@ -105,17 +117,20 @@ export function routePreviewAudio(el: HTMLMediaElement | null, audioFx: AudioFxD
   }
 }
 
-/** 元素卸载时把它的链拆掉(source 节点跟着元素走,不用管) */
+/** Tear down the element's chain when it unmounts (the source node goes with the element and needs no handling) */
 export function releasePreviewAudio(el: HTMLMediaElement | null): void {
   if (!el) return;
   const r = routed.get(el);
   if (!r) return;
-  try { r.src.disconnect(); } catch { /* 已断 */ }
+  try { r.src.disconnect(); } catch { /* Broken */ }
   r.chain?.dispose();
   routed.delete(el);
 }
 
-/** 调试 / 端到端测试用:接进 Web Audio 的元素数、上下文状态。挂在 window.__pcPreviewAudio 上 */
+/**
+ * For debugging / end-to-end tests: the number of elements connected into Web Audio and the context
+ * state. Attached to window.__pcPreviewAudio
+ */
 export function previewAudioStats(): { routed: number; withChain: number; state: string | null } {
   let n = 0;
   let withChain = 0;

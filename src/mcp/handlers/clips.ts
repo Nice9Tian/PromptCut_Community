@@ -17,10 +17,12 @@ type Args<K extends keyof EditorApi> = Parameters<EditorApi[K]>[0];
 
 export const clipsHandlers = {
   addClip: (args) => {
-    // 先校验再落库:参数错了当场报错,而不是建出一张播默认值的空壳卡
+    // Validate first before storing: error immediately if parameters are invalid, rather than
+    // creating an empty shell card playing default values
     validateCardParams(args.cardId, args.params);
-    // 字幕卡没指定序列时统一去「字幕」序列(没有就建一条,建在最上层):
-    // 字幕要压在画面之上,而且单独一条轨才看得清哪句话在什么时候
+    // When no track is specified for a caption card, route it to the "Captions" track (create one at
+    // the top layer if none exists): captions must sit above the video, and only a separate track
+    // clearly shows which line is at what time
     const trackId =
       args.trackId ?? (args.cardId === CAPTION_CARD_ID ? actions.ensureCaptionTrack().id : undefined);
     const clip = actions.addCardClip(args.cardId, args.start, {
@@ -30,8 +32,10 @@ export const clipsHandlers = {
     });
     if (!clip) throw new Error("Failed to add card");
     clipGuard.noteCreated(clip.id);
-    // look:去看这张卡真实画面的现成调用;timeline:当前全部 clip 的 id 和起止,
-    // 之后模型引用 clipId 以它为准,不再凭几步前的记忆。理由见 toolEcho.ts。
+    // look: ready-made call to inspect the actual visuals of this card; timeline: ids, start, and end
+    // of all current clips, which the model should use as the reference for subsequent clipId
+    // citations, rather than relying on memory from several steps ago. See toolEcho.ts for the
+    // rationale.
     return { ...clip, look: lookHint(clip.id), timeline: timelineDigest(getState().project) };
   },
   updateClip: /* @__PURE__ */ inClipCut((args: Args<"updateClip">) => {
@@ -40,15 +44,18 @@ export const clipsHandlers = {
       const hit = findClip(getState().project, args.clipId);
       if (!hit) throw clipMissingError(args.clipId);
       const clip = hit.clip as { cardId?: string; params?: Record<string, unknown> };
-      // 换卡时旧参数不再适用,按空的算;只改参数时要带上 clip 已有的,
-      // 免得「只改个颜色」被当成漏填了必填项。
+      // When changing cards, old parameters no longer apply and are treated as empty; when only
+      // modifying parameters, include the clip's existing ones, lest "just changing a color" be treated
+      // as omitting required fields.
       const switching = args.cardId !== undefined && args.cardId !== clip.cardId;
       validateCardParams(args.cardId ?? clip.cardId!, args.params, switching ? undefined : clip.params);
     }
     /*
-     * 挂着转场的片段:相对时间关系是转场的一部分。
-     *   - 整组平移(只给 start,或 start+end 保持时长)照做,同组的会跟着一起走;
-     *   - 改时长、换序列、手改转场管着的那一侧淡化 —— 拒绝,并告诉它先 remove_transition。
+     * Clips with transitions attached: relative timing relationships are part of the transition.
+     *   - Translate the entire group (providing only start, or start+end maintaining duration):
+     *     proceed, as items in the same group will move together;
+     *   - Changing duration, changing tracks, or manually editing fading on the side governed by
+     *     the transition: reject, and instruct it to call remove_transition first.
      */
     const lock = timingLock(getState().project, args.clipId);
     if (lock) {
@@ -69,11 +76,13 @@ export const clipsHandlers = {
         }
       }
     }
-    // params 是增量补丁(setClipParams 默认合并):回显里列出真正变了的键,带回旧值时模型自己看得见
+    // params is a delta patch (setClipParams merges by default): the echo lists keys that actually
+    // changed, and the model can see for itself when old values are carried back
     const paramsBefore = args.params ? (findClip(getState().project, args.clipId)?.clip.params as Record<string, unknown> | undefined) : undefined;
     if (args.params) actions.setClipParams(args.clipId, args.params);
-    // 不透明度 / 淡入淡出 / 标签:store 早就支持,以前只是没暴露给模型 —— 系统提示词让它
-    // 「遮到人就降不透明度」,它却没有工具能做。
+    // Opacity / fade / label: supported by the store long ago, but previously not exposed to the
+    // model: the system prompt told it "reduce opacity when covering a person", yet it had no tool
+    // to do so.
     const patch: { opacity?: number; fadeIn?: number; fadeOut?: number; label?: string } = {};
     for (const k of ["opacity", "fadeIn", "fadeOut"] as const) {
       const v = args[k];
@@ -100,7 +109,8 @@ export const clipsHandlers = {
     };
   }),
   removeClip: (args) => {
-    // 门槛:删自己刚建的卡、或一口气连删一串,要 force + reason。理由回显给用户。见 toolEcho.ts。
+    // Gate: deleting a card it just created or deleting a whole batch in one go requires force +
+    // reason. The reason is echoed to the user. See toolEcho.ts.
     const a = args as { clipId: string; force?: boolean; reason?: string };
     assertClipNotParked(a.clipId);
     const { reason } = clipGuard.checkRemove(a);
@@ -108,12 +118,14 @@ export const clipsHandlers = {
     clipGuard.noteRemoved(a.clipId);
     return { ok: true, removed: a.clipId, ...(reason ? { reason } : null), timeline: timelineDigest(getState().project) };
   },
-  // 约定封装:Agent 看到和改的都是它(kernel/envelope.ts),不是原始 clip 也不是组件源码
+  // Card contract: what the Agent sees and modifies is this (kernel/envelope.ts), not the raw clip
+  // or component source code
   getClip: /* @__PURE__ */ inClipCut((args: Args<"getClip">) => {
     const hit = findClip(getState().project, args.clipId);
     if (!hit) throw clipMissingError(args.clipId);
     const envelope = envelopeOf(getState().project, hit.clip, getCard(hit.clip.cardId), stageSize());
-    // 剪辑段:另带引用哪条剪辑、偏移、被引用剪辑的总时长、音量与静音(kernel/cutSegments.ts)
+    // Cut segment: additionally includes which cut is referenced, offset, total duration of the
+    // referenced cut, volume, and mute (kernel/cutSegments.ts)
     return hit.clip.cutId ? { ...envelope, cutSegment: segmentInfo(hit.clip.id) } : envelope;
   }),
   setClip: /* @__PURE__ */ inClipCut((args: Args<"setClip">) => {

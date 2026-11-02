@@ -69,7 +69,8 @@ export const entityChips: CardDef<Params> = {
   useWhen: "When introducing team members, guests or partner organizations, turn 2 to 5 entities into **vertical** pill-shaped name tags that slide in one by one. chips splits entries by newline (not vertical bar), each in the format `dark or light|name|title`; a note can be added on the right as a category side note. Use focus-card for a single person presenting on camera.",
   tags: ["person","organization","name tag","entity"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,

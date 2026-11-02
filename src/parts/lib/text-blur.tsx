@@ -5,8 +5,10 @@ import "../../cards/native/hud.css";
 import { fitOr } from "../fit";
 
 /**
- * 模糊浮现文字:逐块模糊浮现的文字，支持用星号高亮重点词。从 blur-text 卡片拆出。
- * 词块按 staggerMs 依次进场，落定耗时由词块数和间隔决定。
+ * Blur-reveal text: text revealed with blur block by block, supporting asterisks to highlight
+ * key words. Extracted from blur-text card.
+ * Word blocks enter in sequence based on staggerMs; settling duration is determined by word block
+ * count and interval.
  */
 interface Params {
   text: string;

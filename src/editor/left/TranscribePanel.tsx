@@ -41,19 +41,19 @@ export function TranscribePanel({ mediaId, onClose }: TranscribePanelProps) {
   const [model, setModel] = useState("small");
   const [language, setLanguage] = useState("");
 
-  // 状态
+  // State
   const [statusData, setStatusData] = useState<SttStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
-  // 在线浏览器模式没有语音识别(C10 契约第 10 节):不查引擎状态(那是编辑器进程的接口),只给一个置灰的按钮
+  // Online browser mode has no speech recognition (C10 contract, section 10): do not query the engine status (that is an editor process API), just show a greyed-out button
   const online = onlinePage();
   const [loadingStatus, setLoadingStatus] = useState(!online);
 
-  // 安装
+  // Install
   const [installing, setInstalling] = useState(false);
   const [installLogs, setInstallLogs] = useState<string[]>([]);
   const installLogRef = useRef<HTMLDivElement>(null);
 
-  // 转写
+  // Transcribe
   const [transcribing, setTranscribing] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
@@ -61,14 +61,14 @@ export function TranscribePanel({ mediaId, onClose }: TranscribePanelProps) {
   const [transcribeError, setTranscribeError] = useState<string | null>(null);
   const [transcribeLogs, setTranscribeLogs] = useState<string[]>([]);
 
-  // 取消信号
+  // Cancel signal
   const cancelRef = useRef(false);
 
   useEffect(() => {
     if (!online) loadStatus();
   }, []);
 
-  // 安装日志自动滚动
+  // Auto-scroll the install log
   useEffect(() => {
     if (installLogRef.current) {
       installLogRef.current.scrollTop = installLogRef.current.scrollHeight;
@@ -124,7 +124,7 @@ export function TranscribePanel({ mediaId, onClose }: TranscribePanelProps) {
           if ("done" in p && "total" in p) {
             setProgress({ done: p.done, total: p.total });
           } else if ("segment" in p) {
-            // 实时段落展示(不影响最终 done 里的完整 segments)
+            // Live paragraph display (does not affect the full segments in the final done)
           } else if ("log" in p) {
             setTranscribeLogs((prev) => {
               const next = [...prev, p.log];
@@ -148,11 +148,11 @@ export function TranscribePanel({ mediaId, onClose }: TranscribePanelProps) {
   function handleCancel() {
     cancelRef.current = true;
     setTranscribing(false);
-    // 注意:网络层取消由 fetch 的 AbortController 控制,此处简化
+    // Note: network-layer cancellation is controlled by fetch's AbortController, simplified here
     setTranscribeError(tr("Cancelled"));
   }
 
-  // 判断当前引擎是否已安装
+  // Determine whether the current engine is installed
   const engineInstalled =
     statusData?.engines[engine as "faster-whisper" | "whisper"]?.installed ?? false;
 
@@ -163,7 +163,7 @@ export function TranscribePanel({ mediaId, onClose }: TranscribePanelProps) {
       data-pc="transcribe-panel"
       className="pc-left-box p-2 mt-1 text-xs"
     >
-      {/* 头部:参数选择 */}
+      {/* Head: parameter selection */}
       <div className="flex flex-wrap gap-1.5 mb-2">
         <select
           className="pc-left-select is-sm"
@@ -208,7 +208,7 @@ export function TranscribePanel({ mediaId, onClose }: TranscribePanelProps) {
         </button>
       )}
 
-      {/* 状态区 */}
+      {/* Status area */}
       {loadingStatus && (
         <div className="pc-left-faint mb-1">{tr("Checking engine status…")}</div>
       )}
@@ -225,7 +225,7 @@ export function TranscribePanel({ mediaId, onClose }: TranscribePanelProps) {
         </div>
       )}
 
-      {/* 下载引擎按钮 */}
+      {/* Download engine button */}
       {showInstallBtn && !installing && (
         <button
           type="button"
@@ -237,7 +237,7 @@ export function TranscribePanel({ mediaId, onClose }: TranscribePanelProps) {
         </button>
       )}
 
-      {/* 安装日志 */}
+      {/* Install log */}
       {(installing || installLogs.length > 0) && (
         <div
           ref={installLogRef}
@@ -250,7 +250,7 @@ export function TranscribePanel({ mediaId, onClose }: TranscribePanelProps) {
         </div>
       )}
 
-      {/* 开始转写 / 取消 */}
+      {/* Start transcribing / Cancel */}
       {!loadingStatus && !statusError && engineInstalled && (
         <div className="mb-2">
           {transcribing ? (
@@ -293,19 +293,19 @@ export function TranscribePanel({ mediaId, onClose }: TranscribePanelProps) {
         </div>
       )}
 
-      {/* 转写日志(仅在转写中显示,静音提示) */}
+      {/* Transcription log (shown only while transcribing, silence hint) */}
       {transcribing && transcribeLogs.length > 0 && (
         <div className="h-12 overflow-y-auto font-mono text-[10px] pc-left-faint bg-black/20 rounded p-1 mb-1 whitespace-pre-wrap break-all">
           {transcribeLogs.slice(-20).map((l, i) => <div key={i}>{l}</div>)}
         </div>
       )}
 
-      {/* 错误 */}
+      {/* Error */}
       {transcribeError && (
         <div className="text-red-400 mb-1 break-all">{transcribeError}</div>
       )}
 
-      {/* 转写结果预览 */}
+      {/* Transcription result preview */}
       {totalSegments !== null && segments.length > 0 && (
         <div>
           <div className="pc-left-faint mb-0.5">

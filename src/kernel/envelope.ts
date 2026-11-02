@@ -7,24 +7,31 @@ import { visualBox, worldOf, type Box, type Size, type WorldPlacement } from "./
 import { validateCardParams } from "./cardParams.ts";
 
 /**
- * 约定封装(clip envelope):一张时间轴上的卡对外唯一的样子。
+ * Card contract (clip envelope): the only external representation of a card on the timeline.
  *
- * 以前代码页和 Agent 看到的是「原始」的 clip:`{ cardId, start, end, params }` 一坨扁平参数,
- * 位置(frame)、淡入淡出(fadeIn / fadeOut / opacity)、卡片的部件结构和生命周期都不在里面,
- * 于是「动画 3.2 秒就结束了之后干什么」「能不能加淡出」「哪个参数管哪一块」都没处看。
+ * Previously, code pages and Agents saw the "raw" clip: a flat blob of parameters
+ * `{ cardId, start, end, params }`, where position (frame), fades (fadeIn / fadeOut / opacity),
+ * card part structure, and lifecycle were all missing, leaving questions like "what happens
+ * after the animation ends at 3.2s", "can fade-out be added", and "which parameter controls
+ * which piece" with nowhere to look.
  *
- * 封装把这些收成一份有固定形状的 JSON:
- *   card      —— 这是哪张卡、它的生命周期声明(多久落定、之后停住还是循环、支持什么退场)
- *   time      —— 起止和时长
- *   frame     —— 存下来的局部框(null = 铺满舞台)+ 算出来的画面绝对位置(world,只读)
- *   blend     —— 不透明度、淡入淡出
- *   motion    —— 有没有绑运动轨迹(只读,轨迹本身不在封装里)
- *   parts     —— 部件树:每个部件带它自己的参数值(卡片声明了 parts 才有结构,没声明就一个根)
- *   params    —— 全量参数(和 parts 里的是同一份数据的两种视图)
+ * The envelope gathers these into a fixed-shape JSON:
+ *   card      : which card this is, its lifecycle declaration (how long to settle, whether to
+ *               freeze or loop afterwards, what exits are supported)
+ *   time      : start, end, and duration
+ *   frame     : stored local frame (null = fills stage) + computed absolute world position
+ *               (world, read-only)
+ *   blend     : opacity, fade-in and fade-out
+ *   motion    : whether motion track is attached (read-only, track itself is not in envelope)
+ *   parts     : part tree: each part carries its own parameter values (structured only if card
+ *               declares parts; single root otherwise)
+ *   params    : full parameters (two views of the same data alongside parts)
  *
- * 读:envelopeOf。写:applyEnvelope,只写和当前不一样的部分,顺序固定(换卡 → 参数 → 时段 →
- * 框 → 混合),每一步都走 store 已有的动作,所以撤销栈、脏标记和 Agent 工具的行为完全一致。
- * 素材文件、组件源码都不在封装里 —— Agent 只操作封装,不操作原始代码。
+ * Read: envelopeOf. Write: applyEnvelope, writing only parts differing from current state in a
+ * fixed order (switch card → params → time range → frame → blend); each step dispatches existing
+ * store actions, so undo stack, dirty flags, and Agent tool behaviors are completely consistent.
+ * Media files and component source code are not in the envelope: Agents only manipulate
+ * the envelope, not raw code.
  */
 
 export const ENVELOPE_SCHEMA = "promptcut/clip-envelope@1";
@@ -35,18 +42,19 @@ export interface EnvelopePart {
   role?: CardPart["role"];
   enterMs?: number;
   settleMs?: number;
-  /** 这个部件自己的参数值(键来自 CardPart.params;组合卡里是实例的全量参数) */
+  /** Parameter values of this part itself (keys from CardPart.params; full instance parameters in composite cards) */
   params: Record<string, unknown>;
   children?: EnvelopePart[];
   /**
-   * 下面几个只有**组合卡**的部件实例才有(普通卡的部件只是说明书,没有自己的位置):
-   * partId 引用部件库里的哪个部件;frame.local 相对父框、可写,frame.world 画面绝对矩形、只读;
-   * after 是这个部件落定后的行为。
+   * The following only exist on part instances in a **composite card** (parts in regular cards are
+   * only specifications, without their own positions): partId references which part in the parts
+   * library; frame.local is relative to parent frame and writable; frame.world is screen absolute
+   * rectangle and read-only; after is this part's behavior after settling.
    */
   partId?: string;
   frame?: { local: ClipFrame | null; world: Box };
   after?: "hold" | "loop" | "evolve";
-  /** 相对 clip 起点的绝对进场时刻(毫秒),只读;enterMs 仍是相对父级的、可写 */
+  /** Absolute entrance time relative to clip start (ms), read-only; enterMs remains relative to parent and writable */
   enterAtMs?: number;
 }
 
@@ -58,25 +66,25 @@ export interface ClipEnvelope {
     name: string;
     source: CardDef["source"];
     lifecycle: { settleMs?: number; after: "hold" | "loop" | "evolve"; exit: ("fade" | "reverse")[] };
-    /** 组合卡:parts 是可增删改移的部件实例树(add_part / set_part / remove_part / move_part,或整棵写回) */
+    /** Composite card: parts is a mutable tree of part instances (add_part / set_part / remove_part / move_part, or write back the entire tree) */
     composite?: boolean;
   };
   time: { start: number; end: number; duration: number };
   frame: {
-    /** 存下来的局部框;null = 铺满舞台 */
+    /** Saved local box; null = fill the stage */
     local: ClipFrame | null;
-    /** 由 local 算出来的画面绝对位置,只读;写回时忽略 */
+    /** Absolute screen position calculated from local, read-only; ignored when writing back */
     world: WorldPlacement;
   };
   blend: { opacity: number; fadeIn: number; fadeOut: number };
   motion: { attached: boolean; mediaId?: string; whenHidden?: "hold" | "hide" };
   parts: EnvelopePart[];
   params: Record<string, unknown>;
-  /** 卡片声明了、clip 里却没有的参数(老 clip 靠默认值兜底渲染) */
+  /** Parameters declared by card but missing in clip (old clips fall back to defaults for rendering) */
   missingParams?: string[];
 }
 
-/** 没写 lifecycle 的卡按「有进场动画、之后停住、只支持淡出」处理 */
+/** Cards without lifecycle are treated as "has entrance animation, holds afterwards, fade-out only" */
 const DEFAULT_LIFECYCLE: ClipEnvelope["card"]["lifecycle"] = { after: "hold", exit: ["fade"] };
 
 function pick(params: Record<string, unknown>, keys: string[] | undefined): Record<string, unknown> {
@@ -86,8 +94,10 @@ function pick(params: Record<string, unknown>, keys: string[] | undefined): Reco
 }
 
 /**
- * 按当前参数算时序。卡片给了 timing 就用它(参数先和 defaults 合并,和渲染时看到的一样),
- * 没给或算炸了就退回静态声明 —— 时序是辅助信息,不能让它把整份封装拖垮。
+ * Calculate timing from current parameters. If the card provides timing, use it (parameters are
+ * first merged with defaults, identical to what is seen during rendering); if not given or
+ * calculation fails, fall back to static declarations: timing is auxiliary information and must
+ * not drag down the entire envelope.
  */
 function timingOf(card: CardDef<any> | undefined, params: Record<string, unknown>): CardTiming {
   if (!card?.timing) return {};
@@ -100,7 +110,7 @@ function timingOf(card: CardDef<any> | undefined, params: Record<string, unknown
 
 const roundMs = (v: number | undefined) => (v === undefined || !Number.isFinite(v) ? undefined : Math.round(v));
 
-/** 把卡片声明的部件树填上当前参数值;没声明 parts 的卡就是一个根部件,所有参数都归它 */
+/** Fill card-declared part tree with current params; cards without parts are a root part owning all params */
 function partsOf(card: CardDef<any> | undefined, params: Record<string, unknown>, timing: CardTiming): EnvelopePart[] {
   const fill = (p: CardPart): EnvelopePart => {
     const dyn = timing.parts?.[p.id];
@@ -120,18 +130,23 @@ function partsOf(card: CardDef<any> | undefined, params: Record<string, unknown>
   return [{ id: "root", label: card?.name ?? "Cards", role: "group", params: { ...params } }];
 }
 
-/** 组合卡:部件实例树 → 封装里的 parts,带每个实例的画面位置和时序 */
+/** Composite card: part instance tree → parts in envelope, with visual position and timing per instance */
 function compositePartsOf(tree: PartInstance[], parentBox: Box, clipWorld: WorldPlacement, lookup: PartLookup): { parts: EnvelopePart[]; settleMs: number; after: "hold" | "loop" | "evolve" } {
   /*
-   * 根级传缩放**之后**的矩形:placeParts 内部约定「parentBox 是乘过缩放的世界矩形 + 累计缩放」,
-   * 子级靠 width / scale 还原父框的逻辑尺寸;worldOf 的 box 是缩放前的画布,传它会差一个 scale²、原点也不对。
-   * 没旋转时它正是缩放绕锚点之后的矩形;旋转过的组合卡这里取的是外接矩形,只是近似。
+   * Pass the rectangle **after** scaling at root level: placeParts internal convention is
+   * "parentBox is the world rectangle multiplied by scale + accumulated scale", and children restore
+   * the parent box's logical size via width / scale; worldOf's box is the canvas before scaling,
+   * and passing it would be off by scale² with an incorrect origin. When unrotated, it is exactly the
+   * rectangle after scaling around the anchor point; for rotated composite cards, the bounding box
+   * is taken here, which is only an approximation.
    *
-   * ⚠ 这个框必须是**没投影过**的。visualBox 现在会按相机投影(三维卡要的),
-   * 但渲染器那边(PartTree)用的是 frameBox —— 传投影过的框进来,两边父框就不是同一个了,
-   * 部件的 world 会既不等于修复前的值、也不等于画面真值。实测一张 translateZ:+400 的组合卡,
-   * 铺满父框的部件从 1920×1080 变成 2628.7×1478.7,偏了 37%,而画面上它其实还是 1920×1080
-   * 再被整体投影。所以调用方传的是不带 fov 的 visualBox。
+   * ⚠ This box must be **unprojected**. visualBox is now projected by camera (required by 3D cards),
+   * but the renderer side (PartTree) uses frameBox: if a projected box is passed in, the parent
+   * boxes on both sides will no longer be the same, and the part's world would equal neither the
+   * pre-fix value nor the true on-screen value. In testing, for a composite card with
+   * translateZ:+400, a part filling the parent box went from 1920×1080 to 2628.7×1478.7, off by 37%,
+   * whereas on screen it is actually still 1920×1080 before being projected as a whole. Therefore,
+   * callers pass visualBox without fov.
    */
   const placed = placeParts(tree, { box: parentBox, scale: clipWorld.scale });
   const timing = partsTiming(tree, lookup);
@@ -144,7 +159,8 @@ function compositePartsOf(tree: PartInstance[], parentBox: Box, clipWorld: World
       partId: n.partId,
       label: n.label ?? def?.name ?? n.partId,
       ...(def?.role ? { role: def.role } : {}),
-      // enterMs 写回去要的是相对父级的值(PartInstance 的定义);绝对时刻另给 enterAtMs 只读
+      // When writing back, enterMs needs value relative to parent (PartInstance definition);
+      // absolute time is separately provided in read-only enterAtMs
       enterMs: n.enterMs ?? 0,
       ...(tm ? { enterAtMs: Math.round(tm.enterMs), settleMs: Math.round(tm.settleMs), after: tm.after } : {}),
       params: { ...n.params },
@@ -155,12 +171,13 @@ function compositePartsOf(tree: PartInstance[], parentBox: Box, clipWorld: World
   return { parts: tree.map(fill), settleMs: Math.round(timing.settleMs), after: timing.after };
 }
 
-/** 封装里的部件实例(可能被人改过)→ 存进 clip 的 PartInstance;只留可写的字段 */
+/** Part instance in envelope (possibly modified) → PartInstance in clip; keep writable fields only */
 function instancesFromEnvelope(parts: unknown[], lookup: PartLookup): unknown[] {
   return parts.map((raw) => {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
     const r = raw as Record<string, unknown>;
-    // 封装里的 label 是显示名(没自定义就是部件名);等于部件名的不存,免得「原样写回」被判成改了
+    // label in envelope is display name (part name if not customized); omitted if equal to part name
+    // to avoid "write back as-is" being judged as modified
     const defName = typeof r.partId === "string" ? lookup(r.partId)?.name : undefined;
     const label = typeof r.label === "string" && r.label && r.label !== defName ? r.label : undefined;
     const frameRaw = r.frame;
@@ -179,7 +196,7 @@ function instancesFromEnvelope(parts: unknown[], lookup: PartLookup): unknown[] 
   });
 }
 
-/** 部件树里的参数摊平回一份 params(写回时用:用户改的是部件里的值) */
+/** Flatten parameters in part tree back into params (used on writeback: user modified values in parts) */
 function flattenParts(parts: EnvelopePart[] | undefined, into: Record<string, unknown>): void {
   for (const p of parts ?? []) {
     if (p.params && typeof p.params === "object") Object.assign(into, p.params);
@@ -193,11 +210,12 @@ export function envelopeOf(project: Project, clip: TrackClip, card: CardDef<any>
   const motion = clip.motion;
   const timing = timingOf(card, params);
   const staticLc = card?.lifecycle ?? DEFAULT_LIFECYCLE;
-  // 三维:visualBox 要按项目的相机投影算,不然摆进空间的卡在 get_clip 里报的是平面位置
+  // 3D: visualBox must be calculated using project camera projection; otherwise cards placed
+  // in space report 2D positions in get_clip
   const world = worldOf(clip.frame, stage, project.camera3dFov);
-  // 组合卡:结构和时序都来自部件实例树,不是卡片声明
+  // Composite card: structure and timing come from part instance tree, not card declaration
   const composite = isComposite(clip);
-  // 部件定位用**不带投影**的框(见 compositePartsOf 里的说明):渲染器那边用的就是这个
+  // Part positioning uses **unprojected** box (see notes in compositePartsOf): used by renderer side
   const comp = composite ? compositePartsOf(clip.parts ?? [], visualBox(clip.frame, stage), world, partLookup) : null;
   const lifecycle = {
     ...staticLc,
@@ -225,7 +243,7 @@ export function envelopeOf(project: Project, clip: TrackClip, card: CardDef<any>
   };
 }
 
-/** 组合卡:cardId 是 composite,或者 clip 上已经有部件树 */
+/** Composite card: cardId is composite, or clip already has a part tree */
 export function isComposite(clip: { cardId: string; parts?: PartInstance[] }): boolean {
   return clip.cardId === "composite" || !!clip.parts?.length;
 }
@@ -234,28 +252,30 @@ function round3(n: number): number {
   return Math.round(n * 1000) / 1000;
 }
 
-/** 写封装要用到的 store 动作。抽成接口是为了能在 node 里单测,不用拉起整个 store */
+/** Store actions used to write envelopes. Extracted as an interface for Node unit tests without full store */
 export interface EnvelopeWriter {
   setClipCard(clipId: string, cardId: string): void;
   setClipParams(clipId: string, params: Record<string, unknown>, opts?: { merge?: boolean }): void;
   moveClip(clipId: string, patch: { start?: number; end?: number }): void;
   setClipFrame(clipId: string, frame: ClipFrame | undefined): void;
   updateClip(clipId: string, patch: { opacity?: number; fadeIn?: number; fadeOut?: number }): void;
-  /** 组合卡的部件实例树整棵替换 */
+  /** Replace the entire part instance tree of a composite card */
   setClipParts?(clipId: string, parts: PartInstance[]): void;
 }
 
 export interface ApplyReport {
-  /** 实际改了哪些段:card / params / parts / time / frame / blend */
+  /** Which sections actually changed: card / params / parts / time / frame / blend */
   changed: string[];
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
 /**
- * 声音音量只有 set_clip_volume 一个入口。Agent 找不到它时会往 update_clip 的参数、set_clip 的 blend 里塞
- * volume —— 以前这两处都静默丢掉还报成功(update_clip 回 ok、set_clip 回 changed: []),它得来回试好几轮
- * 才敢说「没这功能」。现在当场拒掉并指路。
+ * Audio volume has only one entry point: set_clip_volume. When Agent cannot find it, it stuffs
+ * volume into update_clip params or set_clip blend: previously both places silently dropped it
+ * while reporting success (update_clip returned ok, set_clip returned changed: []), and it had to
+ * try back and forth for several rounds before daring to say "feature not available". Now reject
+ * immediately and point the way.
  */
 const AUDIO_VOLUME_KEYS = ["volume", "audioVolume", "gain"];
 export function rejectAudioVolumeKeys(obj: unknown, where: string): void {
@@ -268,23 +288,27 @@ export function rejectAudioVolumeKeys(obj: unknown, where: string): void {
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
 /**
- * 允许写进 frame.local 的键;别的键(比如有人把 world 抄进来)直接拒。
+ * Keys allowed to be written into frame.local; other keys (e.g. someone copying world in) are
+ * directly rejected.
  *
- * ⚠ 给 ClipFrame 加字段就要同步这里,否则那个字段一进 frame 就把 set_clip 整个堵死:
- * envelopeOf 把 clip.frame 原样放进 frame.local,applyEnvelope 在 diff **之前**就校验它 ——
- * 于是哪怕只想改 params,只要封装里带着 frame 段就一律失败,而且错误信息还会反过来
- * 告诉 Agent「这个键不合法」,它照做删掉,那张卡的这个属性就没了。
- * kernel/parts.ts 里还有一份同样的清单,两处要一起改。
+ * ⚠ Adding fields to ClipFrame requires syncing here; otherwise once that field enters frame,
+ * set_clip is completely blocked: envelopeOf puts clip.frame into frame.local as is, and
+ * applyEnvelope validates it **before** diffing: then even if one only wants to modify params,
+ * as long as the envelope carries a frame section it will fail, and the error message will in turn
+ * tell Agent "this key is invalid"; if it complies and deletes it, that property on the card
+ * is gone. There is an identical manifest in kernel/parts.ts; update both places together.
  */
 const FRAME_KEYS = new Set(["x", "y", "w", "h", "anchor", "scale", "rotate", "rotateX", "rotateY", "translateZ"]);
 
 /**
- * 三维只对**卡片段**生效。默认的编辑器预览、导出、see_frames 已经共用 Chrome
- * FrameScene；这里保留限制，是因为显式选择的旧 `--media=ffmpeg` 旁路只支持二维素材。
+ * 3D only takes effect on **card clips**. Default editor preview, export, and see_frames already
+ * share Chrome FrameScene; this restriction is kept because the explicitly chosen legacy
+ * `--media=ffmpeg` bypass only supports 2D media.
  *
- * 拦截放在这里而不是只放在 set_position 那个工具入口:set_clip 是另一条路,
- * `get_clip` 拿到封装、往 frame.local 里塞个 rotateY 再写回来,一样能绕过去(实测能写进去)。
- * 凡是能改 frame 的路都会经过 applyEnvelope 或 framePatchFromArgs,两处都守住才是真守住。
+ * Interception is placed here rather than just at the set_position tool entry point: set_clip is
+ * another path; getting the envelope via `get_clip`, stuffing rotateY into frame.local, and writing
+ * it back can bypass it just the same (verified writable in testing). Any path that can modify
+ * frame goes through applyEnvelope or framePatchFromArgs; guarding both places ensures true safety.
  */
 export function assertNo3dOnMedia(clip: TrackClip, frame: ClipFrame | undefined): void {
   if (!frame || !(clip as { mediaId?: string }).mediaId) return;
@@ -315,11 +339,13 @@ function validateFrame(raw: unknown): ClipFrame | undefined {
 }
 
 /**
- * 把一份(可能被人改过的)封装写回 clip。
+ * Write an envelope (possibly modified) back to a clip.
  *
- * 只比较、只写**有差异**的段;不认识的顶层键忽略,只读段(frame.world、motion、card.name…)忽略。
- * 参数以 `params` 为准;如果调用方只改了 `parts` 里的值而没动 `params`,就用部件树摊平的结果。
- * 所有校验在写之前做完,一处不合法整份不写 —— 不留半截状态。
+ * Only compare and write sections **with differences**; unrecognized top-level keys are ignored,
+ * and read-only sections (frame.world, motion, card.name…) are ignored. Parameters take `params`
+ * as the source of truth; if the caller only modified values in `parts` without touching `params`,
+ * use the flattened result from the part tree. All validations are completed before writing; if one
+ * check fails, nothing is written: never leave a partial state.
  */
 export function applyEnvelope(
   project: Project,
@@ -339,7 +365,7 @@ export function applyEnvelope(
   const env = input as Partial<ClipEnvelope> & Record<string, unknown>;
   const changed: string[] = [];
 
-  // ── 1. 校验(全部做完再写)──
+  // ── 1. Validation (finish all before writing) ──
   let nextCardId: string | undefined;
   if (isObj(env.card) && env.card.id !== undefined) {
     if (typeof env.card.id !== "string" || !findCardById(env.card.id)) throw new Error(`No such card: ${String(env.card.id)}`);
@@ -350,30 +376,34 @@ export function applyEnvelope(
   if (env.params !== undefined && !isObj(env.params)) throw new Error("params must be an object");
   const fromParams = isObj(env.params) ? env.params : undefined;
   const fromParts: Record<string, unknown> = {};
-  // 组合卡:parts 是可写的实例树,整棵校验、整棵替换;普通卡:parts 里的值只是 params 的另一种视图
+  // Composite cards: parts is a writable instance tree, validated and replaced as a whole;
+  // normal cards: values in parts are merely another view of params
   let nextTree: PartInstance[] | undefined;
   if (env.parts !== undefined) {
     if (!Array.isArray(env.parts)) throw new Error("parts must be an array");
     if (composite) {
       const tree = validatePartTree(instancesFromEnvelope(env.parts, partLookup), partLookup);
-      // 现有的树也过一遍同样的归一化(键序、默认值),不然键序不同就会被判成改了
+      // Run existing tree through same normalization (key order, defaults), otherwise differing key
+      // orders will be judged as modified
       let currentNorm: unknown = hit.clip.parts ?? [];
-      try { currentNorm = validatePartTree(hit.clip.parts ?? [], partLookup); } catch { /* 库里少了部件之类,按原样比 */ }
+      try { currentNorm = validatePartTree(hit.clip.parts ?? [], partLookup); } catch { /* If parts are missing from the library, compare as is */ }
       if (JSON.stringify(tree) !== JSON.stringify(currentNorm)) nextTree = tree;
     } else {
       flattenParts(env.parts as EnvelopePart[], fromParts);
     }
   }
-  // params 段没动、parts 段动了 → 以 parts 为准;两边都给了以 params 为准(它是全量视图)
+  // params untouched, parts modified → defer to parts; if both provided, defer to params
+  // (it is the full view)
   const paramsSame = fromParams !== undefined && JSON.stringify(fromParams) === JSON.stringify(current.params);
   const candidate = fromParams !== undefined && !paramsSame ? fromParams : Object.keys(fromParts).length ? { ...current.params, ...fromParts } : undefined;
   if (candidate && JSON.stringify(candidate) !== JSON.stringify(current.params)) {
     const targetCard = nextCardId ?? current.card.id;
-    // 换卡时旧参数不再适用,按空的算;不换卡时带上已有的,免得「只改一项」被判成漏了必填
+    // When switching cards, old params no longer apply and count as empty; when not switching cards,
+    // keep existing ones so "modifying only one item" is not judged as missing required fields
     validateCardParams(targetCard, candidate, nextCardId ? undefined : current.params);
     nextParams = candidate;
   } else if (nextCardId) {
-    // 换了卡却没给新参数:按新卡的默认值走(validate 会校必填)
+    // Card switched without new params: use defaults of new card (validate checks required fields)
     validateCardParams(nextCardId, {}, undefined);
   }
 
@@ -412,7 +442,7 @@ export function applyEnvelope(
     if (Object.keys(patch).length) nextBlend = patch;
   }
 
-  // ── 2. 写(顺序固定)──
+  // ── 2. Write (fixed order) ──
   if (nextCardId) {
     writer.setClipCard(clipId, nextCardId);
     changed.push("card");
@@ -441,7 +471,7 @@ export function applyEnvelope(
   return { changed };
 }
 
-/** 代码页 / 工具里给人看的一行说明 */
+/** A one-line description for humans in code pages / tools */
 export function describeLifecycle(env: ClipEnvelope): string {
   const lc = env.card.lifecycle;
   const settle = lc.settleMs !== undefined ? `entrance settles in about ${(lc.settleMs / 1000).toFixed(1)}s` : "entrance duration varies";

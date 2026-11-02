@@ -1,4 +1,5 @@
-// AI 助手附件后台复制子进程：在独立进程中复制大文件，避免阻塞 Dev Server
+// AI assistant attachment background copy child process: copy large files in an independent
+// process to avoid blocking Dev Server
 import fs from "node:fs/promises";
 import path from "node:path";
 

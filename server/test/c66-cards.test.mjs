@@ -1,15 +1,21 @@
 /**
- * C6.6 卡片源码同步（`docs/plan/c66-design.md` 第 5 节；验收 T8 的单进程部分）。
- * 跑：node --test server/test/c66-cards.test.mjs
+ * C6.6 card source synchronization (`docs/plan/c66-design.md` section 5; single-process portion
+ * of acceptance check T8).
+ * Run: node --test server/test/c66-cards.test.mjs
  *
- * 只照设计稿写，没看实现。同步模块的名字与依赖注入的形状是假设 K5（见 `c66-kit.mjs` 文件头）。
- * 内容库用假件（`fakeContentService`，行为照 `server/docservice/modules/content.mjs`：card-source 按键发 rev、
- * 每次 put 加一、后写的赢），A、B 两端各拿一个以自己身份写的视图、共享同一份存储。
- * 本机文件、装卡（`/api/cards/install`）、备份、覆盖提示都由 `fakeCardHost` 记下来。
- * 「装上后重测、重排预渲染」走现有规则，不在本文件。
+ * Written strictly according to the design draft without inspecting the implementation. Sync
+ * module name and dependency injection shape follow Assumption K5 (see header of `c66-kit.mjs`).
+ * Content store uses a mock (`fakeContentService`, behaving per
+ * `server/docservice/modules/content.mjs`: card-source assigns rev by key, increments on each put,
+ * last write wins); A and B each hold a view written under their own identity, sharing the same
+ * storage. Local files, card installation (`/api/cards/install`), backups, and overwrite notices
+ * are all recorded by `fakeCardHost`. "Retest after install, reschedule prerender" follows
+ * existing rules, not in this file.
  *
- * 冲突的判定依据：设计稿第 5 节「本机改过、服务上也改过 → 最后写的赢，本机先备份再装、给提示」，
- * 以及语义 `document-service.md`「冲突」：「被覆盖的一方在换成最新版本之前，先把自己那份存成本地备份」。
+ * Basis for conflict determination: section 5 of the design draft, "modified locally and on
+ * service → last write wins; back up locally before installing, display notice", and semantics
+ * `document-service.md` "Conflict": "the overwritten party saves a local backup before switching
+ * to the latest version".
  */
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,7 +36,7 @@ const src = (tag) => `export default function Card() { return <div>${tag}</div>;
 
 const ofType = (host, type) => host.events.filter((e) => e.type === type);
 
-// ------------------------------------------------------------------ 写
+// ------------------------------------------------------------------ Write
 
 test('C66-T8-01 saving a user card → content.put(card-source, repo-relative path, source), cardRev increments by one on each save', async () => {
   const create = await loadCardSync();
@@ -62,7 +68,7 @@ test('C66-T8-02 scope: user cards and modified built-in cards sync; unmodified b
   await sync.close();
 });
 
-// ------------------------------------------------------------------ 读：打开项目
+// ------------------------------------------------------------------ Read: open project
 
 test('C66-T8-03 open project: cards missing on this machine → pulled down and installed (with cardRev), no backup, no notice', async () => {
   const create = await loadCardSync();
@@ -87,14 +93,14 @@ test('C66-T8-04 not modified on this machine and cardRev on the service is newer
   const svc = fakeContentService();
   const sf = stateFile();
   const host = fakeCardHost({ stateFile: sf });
-  // B 存过一次（rev 1），关掉
+  // B saved once (rev 1), closed
   const b1 = create({ content: svc.as('B'), host });
   await b1.open();
   await b1.save(USER, src('B1'));
   await b1.close();
-  // 期间 A 在 B 那一版的基础上改（rev 2）；B 本机文件没动
+  // In the meantime, A modified based on B's version (rev 2); B's local file remained untouched
   await svc.as('A').put(KIND, USER, src('A2'));
-  // B 重新打开（新实例、同一个状态文件）
+  // B reopens (new instance, same state file)
   const b2 = create({ content: svc.as('B'), host });
   await b2.open();
   await waitFor(() => ofType(host, 'install').length >= 1, { what: 'A\'s new version to be installed' });
@@ -103,9 +109,9 @@ test('C66-T8-04 not modified on this machine and cardRev on the service is newer
   assert.equal(inst[0].body, src('A2'));
   assert.equal(inst[0].rev, 2);
   assert.equal(host.local.get(USER), src('A2'));
-  // 本机那份没改过：不算冲突
+  // The local copy has not been modified: not a conflict
   assert.deepEqual(ofType(host, 'backup').filter((e) => e.key === USER && e.body !== src('B1')), [], 'no extra backups');
-  // 再开一次：已经是最新，不重装
+  // Open again: already up to date, do not reinstall
   await b2.close();
   const b3 = create({ content: svc.as('B'), host });
   await b3.open();
@@ -114,8 +120,11 @@ test('C66-T8-04 not modified on this machine and cardRev on the service is newer
   await b3.close();
 });
 
-// 2026-10-22 用户定(`workflow/editing.md`「撤销、重做」、`product/document-service.md`「冲突」):断网期间的改动与云端冲突时进「冲突合并」,
-// 一张卡一条。原来「后写的赢 + 覆盖提示」改成:先备份本机那份、装上服务上的,发 conflict(带两份源码)交给冲突合并窗口(conflict-merge 报告)
+// (user decision, 2026-10-22) (`workflow/editing.md` "Undo, redo", `product/document-service.md` "Conflict"):
+// when offline changes conflict with the cloud, enter "conflict merge", one entry per card.
+// Changed from original "last write wins + overwrite notice" to: first back up the local copy,
+// install the one on the service, and send conflict (with both sets of source code) to the
+// conflict merge window (conflict-merge report)
 test('C66-T8-05 modified on this machine (not synced out) and also modified on the service → back up the local copy first, then install the service\'s copy, and hand over to conflict merge (with both copies of the source)', async () => {
   const create = await loadCardSync();
   const svc = fakeContentService();
@@ -125,7 +134,8 @@ test('C66-T8-05 modified on this machine (not synced out) and also modified on t
   await b1.open();
   await b1.save(USER, src('base'));
   await b1.close();
-  // B 离线改了本机文件（没经同步），A 同时改了服务上的（rev 2）
+  // B modified the local file offline (without sync), while A simultaneously modified the one on
+  // the service (rev 2)
   host.local.set(USER, src('B-local'));
   await svc.as('A').put(KIND, USER, src('A-remote'));
   const b2 = create({ content: svc.as('B'), host });
@@ -169,7 +179,7 @@ test('C66-T8-07 both sides modify the same card at the same time: the later writ
   const b = create({ content: svc.as('B'), host: hostB });
   await a.open();
   await b.open();
-  // B 先写，A 后写（A 没有先装 B 的那版：两边各改各的）
+  // B wrote first, A wrote later (A did not first install B's version: each side modified independently)
   await b.save(USER, src('B-first'));
   await a.save(USER, src('A-last'));
   await waitFor(() => ofType(hostB, 'install').some((e) => e.body === src('A-last')), { timeoutMs: 5000, what: 'B to install the version A wrote last' });
@@ -179,9 +189,11 @@ test('C66-T8-07 both sides modify the same card at the same time: the later writ
   assert.ok(bi < ii, 'B backs up first, then switches to A\'s version');
   assert.ok(ofType(hostB, 'notify').some((e) => e.key === USER), 'B receives the overwrite notice');
   assert.equal(hostB.local.get(USER), src('A-last'), 'the later write wins');
-  // 服务上最后是 A 的
+  // The version on the service is finally A's
   assert.equal((await svc.as('X').get(KIND, USER)).body, src('A-last'));
-  // A 是后写方：B 那一版的通知可能先到 A（A 那时还没存，装上也合规），但最后 A 本机必须是自己后写的版本
+  // A is the later writer: notification of B's version may reach A first (A had not saved yet at that
+  // time, so installing it is also valid), but ultimately A's local copy must be its own later-written
+  // version
   await sleep(150);
   assert.equal(hostA.local.get(USER), src('A-last'), 'A is not rolled back by B\'s earlier-written version');
   await a.close();

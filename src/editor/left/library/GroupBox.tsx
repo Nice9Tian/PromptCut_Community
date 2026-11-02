@@ -2,14 +2,15 @@ import type { GroupLayout } from "./layout";
 import type { GroupData, GroupDef } from "./groups";
 import { tr } from "../../../i18n/index.ts";
 
-/** 总览里每种 layout 露几个缩略:small_cube 两行四列,其余两个 */
+/** How many thumbnails each layout shows in the overview: small_cube shows two rows of four columns, the others show two */
 const THUMB_COUNT: Record<GroupLayout, number> = { small_cube: 8, middle_cube: 2, big_16_9: 2, big_strip: 2 };
 
 /**
- * 总览里的一个组框:组名 + 「N 个项」+ › 箭头,下面是缩略预览。
+ * A group box in the overview: group name + "N items" + › arrow, with a thumbnail preview below.
  *
- * 点组框任意位置都是打开这个组;缩略预览是纯展示(pointer-events: none),
- * 不会触发卡片的「加到播放头」。空的素材类组画一个虚线「导入…」,点它直接导入,不打开组。
+ * Clicking anywhere on the group box opens the group; the thumbnail preview is display only
+ * (pointer-events: none) and does not trigger the card's "add to playhead". An empty media group
+ * draws a dashed "Import…"; clicking it imports directly without opening the group.
  */
 export function GroupBox({
   def,
@@ -35,7 +36,7 @@ export function GroupBox({
           data-pc-add="media-empty"
           title={tr("Import media (video / audio / images, filed automatically by type)")}
           onClick={(e) => {
-            // 占位是导入入口,不是打开组
+            // The placeholder is an import entry, not an open-group action
             e.stopPropagation();
             onImport();
           }}
@@ -60,7 +61,7 @@ export function GroupBox({
 
   return (
     <div className="pc-lib-group" data-pc-group={def.id} onClick={onOpen} title={def.hint}>
-      {/* 头部是个真按钮:键盘能聚焦,回车 / 空格的点击冒泡到组框上打开组 */}
+      {/* The header is a real button: it can take keyboard focus, and Enter / Space clicks bubble up to the group box to open the group */}
       <button type="button" className="pc-lib-group-head" aria-label={tr("Open \"{0}\", {1} items", def.title, count)}>
         <span className="pc-lib-group-text">
           <span className="pc-lib-group-name">{def.title}</span>

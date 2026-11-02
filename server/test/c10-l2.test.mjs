@@ -1,20 +1,27 @@
 /**
- * C10 页面内快照库 L2（`docs/plan/c10-contract.md` 第 4 节，第 3 节的成本记录）。
- * 跑：node --test server/test/c10-l2.test.mjs
+ * C10 in-page snapshot store L2 (`docs/plan/c10-contract.md` Section 4, Section 3 cost records).
+ * Run: node --test server/test/c10-l2.test.mjs
  *
- *   C10-L2-01 一个库、三张表（costs、snapshots、ranges），没有 backups（浏览器本地只放能重新拉回的缓存）；
- *   C10-L2-02 软上限按环境分配的几个数（32 MiB、1 GiB、128 MiB）由 L2 模块导出（2026-10-22 起不按档定固定数，原来是 256 / 64 MiB）；
- *   C10-L2-03 软上限取「剩余额度的 10%」夹在 [32 MiB, 1 GiB]，由页面自己的 LRU 守住（剩余 320 MiB → 32 MiB）；
- *   C10-L2-04 拿不到额度时按内存：报 2 GB → 64 MiB；
- *   C10-L2-05 LRU：读过的块比没读过的晚淘汰；留下的总是最近用过的；
- *   C10-L2-06 costs 不参与淘汰；
- *   C10-L2-07/08 QuotaExceededError（请求报错 / 只有事务 abort 两种）：一个事务回收 16～64 MiB 再试一次，成功；
- *   C10-L2-09/10 回收之后仍失败（两种）：这一块只放内存（读得回来），不再写库，写库只试两次；
- *   C10-L2-11 ranges 写入即通知订阅方，且落进 ranges 表；
- *   C10-L2-12 costs 关掉再开还在（成本记录持久）。
+ *   C10-L2-01 One store, three tables (costs, snapshots, ranges), no backups (browser local
+ *             storage only holds cache that can be refetched);
+ *   C10-L2-02 Values for soft limit allocated by environment (32 MiB, 1 GiB, 128 MiB) exported by
+ *             L2 module (from 2026-10-22, no fixed numbers by tier, originally 256 / 64 MiB);
+ *   C10-L2-03 Soft limit takes "10% of remaining quota" clamped to [32 MiB, 1 GiB], guarded by
+ *             page's own LRU (remaining 320 MiB → 32 MiB);
+ *   C10-L2-04 By memory when quota unavailable: report 2 GB → 64 MiB;
+ *   C10-L2-05 LRU: read chunks evicted later than unread chunks; what remains is always recently
+ *             used;
+ *   C10-L2-06 costs does not participate in eviction;
+ *   C10-L2-07/08 QuotaExceededError (request error / transaction abort only, two types): one
+ *                transaction reclaims 16-64 MiB and retries once, succeeds;
+ *   C10-L2-09/10 Still fails after reclamation (two types): this chunk stored in memory only (can
+ *                be read back), no longer written to store, store write only tried twice;
+ *   C10-L2-11 ranges notifies subscribers on write, and is committed to ranges table;
+ *   C10-L2-12 costs persists after close and reopen (cost records durable).
  *
- * IndexedDB 用自写的内存桩（`c10-fake-idb.mjs`）；块用同一块缓冲的不同长度视图，几十 MiB 不真占内存。
- * 假设见 `c10-kit.mjs` 的 K1、K2。实现不在时整组 skip。
+ * IndexedDB uses custom in-memory stub (`c10-fake-idb.mjs`); chunks use views of different lengths
+ * on the same buffer, tens of MiB do not actually occupy memory.
+ * Assumptions see K1 and K2 in `c10-kit.mjs`. Skip entire group when implementation is absent.
  */
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -33,7 +40,7 @@ const block = (size) => new Uint8Array(BUF, 0, size);
 const restores = [];
 afterEach(() => { while (restores.length) restores.pop()(); });
 
-/** 装桩并打开 L2；`remaining` 是 `estimate()` 报的剩余额度 */
+/** Install stub and open L2; `remaining` is remaining quota reported by `estimate()` */
 async function setup({ deviceMemory, remaining = 10 * 1024 * MiB, noEstimate = false, quotaBytes = Infinity, quotaMode = 'request' } = {}) {
   const factory = new FakeIDBFactory({ quotaBytes, quotaMode });
   restores.push(installFakeIndexedDB(factory));
@@ -43,11 +50,11 @@ async function setup({ deviceMemory, remaining = 10 * 1024 * MiB, noEstimate = f
   let clock = 1_000_000;
   const now = () => (clock += 1);
   const l2 = await openL2(gate, { indexedDB: factory, deviceMemory, estimate, now });
-  restores.push(() => { try { l2.close(); } catch { /* 忽略 */ } });
+  restores.push(() => { try { l2.close(); } catch { /* Ignore */ } });
   return { factory, l2 };
 }
 
-/** 读回来的块字节数 */
+/** Byte count of chunk read back */
 const lenOf = (v) => (v === null ? -1 : bytesIn(v) || (typeof v === 'string' ? v.length : -1));
 
 it('C10-L2-01 one database, three object stores: costs, snapshots, ranges; no backups', async () => {
@@ -76,7 +83,7 @@ it('C10-L2-03 with 320 MiB remaining the soft limit is 32 MiB (10% of the remain
   }
   assert.ok(blockRecords(factory, keys.at(-1)).length > 0, 'The most recently written chunk is in the database');
   assert.ok(storedBlockBytes(factory) >= 24 * MiB, `Evicted too much: only ${storedBlockBytes(factory) / MiB} MiB left (soft limit 32 MiB, at 4 MiB per chunk at least 6 chunks should remain)`);
-  // 留下的是最近写的一段后缀
+  // What remains is a recently written suffix
   const kept = keys.map((k) => blockRecords(factory, k).length > 0);
   const firstKept = kept.indexOf(true);
   assert.ok(kept.slice(firstKept).every(Boolean), `The chunks that remain are not the most recently written ones: ${JSON.stringify(kept)}`);
@@ -92,9 +99,9 @@ it('C10-L2-04 when no quota is available (no storage.estimate), the limit is bas
 });
 
 it('C10-L2-05 LRU: chunks that were read are evicted later than chunks that were not', async () => {
-  const { factory, l2 } = await setup({ remaining: 320 * MiB }); // 软上限 32 MiB
+  const { factory, l2 } = await setup({ remaining: 320 * MiB }); // Soft limit 32 MiB
   const k = (i) => snapKey(i, 'c');
-  for (let i = 0; i < 8; i++) await l2.putBlock(k(i), block(4 * MiB)); // 正好 32 MiB
+  for (let i = 0; i < 8; i++) await l2.putBlock(k(i), block(4 * MiB)); // Exactly 32 MiB
   assert.equal(lenOf(await l2.getBlock(k(0))), 4 * MiB, 'Chunk 0 can be read back');
   await l2.putBlock(k(8), block(4 * MiB));
   assert.ok(blockRecords(factory, k(0)).length > 0, 'Chunk 0, just read, should not be evicted');
@@ -114,8 +121,10 @@ it('C10-L2-06 costs do not take part in eviction', async () => {
 });
 
 /**
- * 配额错误后回收：桩的配额 41 MiB、软上限远大于它（剩余额度报 10 GiB），2 MiB 一块写 30 块。
- * 每一次因配额失败的写入之后，到同一块重试写入为止：只有一个事务删了块、删掉的字节在 16～64 MiB，且重试成功。
+ * Reclamation after quota error: stub quota 41 MiB, soft limit far exceeds it (remaining quota
+ * reports 10 GiB), write 30 chunks of 2 MiB each.
+ * After each write failed due to quota, up until retry write of the same chunk: only one
+ * transaction deleted chunks, deleted bytes in 16-64 MiB, and retry succeeds.
  */
 async function quotaReclaim(quotaMode) {
   const { factory, l2 } = await setup({ quotaBytes: 41 * MiB, quotaMode });
@@ -151,7 +160,7 @@ it('C10-L2-08 QuotaExceededError (only the transaction abort, no error event): r
 async function quotaStillFails(quotaMode) {
   const { factory, l2 } = await setup({ quotaMode });
   const salt = quotaMode === 'abort' ? '1' : '2';
-  for (let i = 0; i < 12; i++) await l2.putBlock(snapKey(i, salt), block(2 * MiB)); // 24 MiB，回收够得着 16 MiB
+  for (let i = 0; i < 12; i++) await l2.putBlock(snapKey(i, salt), block(2 * MiB)); // 24 MiB, reclamation reaches 16 MiB
   factory.forceQuota = true;
   const x = snapKey(99, salt);
   await within(l2.putBlock(x, block(3 * MiB)), 5000, 'A write that still fails after reclaiming');

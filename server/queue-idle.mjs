@@ -1,29 +1,37 @@
 /**
- * 本机队列节点的闲时门槛(M6c X5,`docs/plan/m6c-contract.md`;语义 `product/platforms.md`「节点只在闲时认领」)。
+ * Idle gate for local queue nodes (M6c X5, `docs/plan/m6c-contract.md`; semantics in
+ * `product/platforms.md` "Nodes only claim when idle").
  *
- * M5b 的门槛是执行器的 `isIdle()`:要等 preload 到 `ready`(还要流不在忙),本机节点起步偏晚。现在改为:
- * 执行器有空位(持有 + 在飞 < maxConcurrent,由节点会话自己守),并且**最近 500 ms 没有交互帧请求**,
- * 就可以认领细任务。preload 还在跑、流还在产都不挡。
+ * The M5b gate was the executor's `isIdle()`: had to wait for preload to reach `ready` (and stream
+ * not busy), so the local node started up rather late. Now changed to: if the executor has
+ * available slots (held + in-flight < maxConcurrent, guarded by the node session itself) and **no
+ * interactive frame requests in the last 500 ms**, fine-grained tasks can be claimed. Does not
+ * block while preload is still running or streams are still producing.
  *
- * 交互帧请求(拖动、播放)从这几处来:
- *   - 路由记下的:`/api/frames/see`(`user` lane,旧预览拖动取帧)、`/api/frames/playback`(旧预览播放时钟)——
- *     调用方经 `note()` 或 `lastInteractionAt()` 告诉门槛;
- *   - 管线身上的:旧预览热池在播(`playback.playing`)、后台让路租约在期或正在让路(编辑器进程播放时借走预渲染间);
- *   - 镜像插件报的播放头(`pipeline.playhead()`,页面拖动、播放时上报):在播且 5 秒内有过音讯,或者 500 ms 内动过。
+ * Interactive frame requests (scrub, playback) come from these sources:
+ *   - Recorded by routes: `/api/frames/see` (`user` lane, legacy preview frame fetching during
+ *     scrub), `/api/frames/playback` (legacy preview playback clock): callers notify the gate via
+ *     `note()` or `lastInteractionAt()`;
+ *   - From the pipeline: legacy preview warm pool is playing (`playback.playing`), background yield
+ *     lease is active or currently yielding (the editor process borrows the prerender room during
+ *     playback);
+ *   - Playhead reported by mirror plugin (`pipeline.playhead()`, reported during page scrubbing and
+ *     playback): playing and had audio within 5 seconds, or moved within 500 ms.
  *
- * 用户播放或拖动时照语义让路:**不认领新的,手里在做的做完**(调用方不再因为忙而 `yieldAll`)。
+ * Yields according to semantics when the user plays or scrubs: **do not claim new ones, finish what
+ * is currently in hand** (callers no longer `yieldAll` because of being busy).
  *
- * 纯逻辑,不开计时器;时钟可注入。
+ * Pure logic, starts no timers; clock is injectable.
  */
 
-/** 最近这么久内有过交互帧请求就不认领新任务 */
+/** Do not claim new tasks if an interactive frame request occurred within this recent duration */
 export const INTERACTION_QUIET_MS = 500;
-/** 播放头报「在播」之后多久没再报就不算在播了(同 `FramePipeline.streamBusy`:播放中页面每 2 秒发一条保活,有缺口时另按 100 ms 节流报) */
+/** How long after the playhead reports "playing" without further reports before it is no longer considered playing (same as `FramePipeline.streamBusy`: the playing page sends a keepalive every 2 seconds, and throttles reports at 100 ms when there is a gap) */
 export const PLAYING_STALE_MS = 5_000;
 
 /**
- * 管线身上此刻有没有交互:回原因字符串,没有回 null。
- * @param {any} pipeline  `FramePipeline`(只读 closed、playback、backgroundYielding、backgroundLeaseUntil、playhead())
+ * Whether the pipeline currently has interaction: returns reason string, or null if none.
+ * @param {any} pipeline  `FramePipeline` (only reads closed, playback, backgroundYielding, backgroundLeaseUntil, playhead())
  */
 export function interactionReason(pipeline, at, { quietMs = INTERACTION_QUIET_MS } = {}) {
   if (!pipeline) return null;
@@ -42,10 +50,10 @@ export function interactionReason(pipeline, at, { quietMs = INTERACTION_QUIET_MS
 
 /**
  * @param {object} [options]
- * @param {any} [options.pipeline]                     管线(可缺省:只看 note / lastInteractionAt)
+ * @param {any} [options.pipeline]                     Pipeline (optional: only inspects note / lastInteractionAt)
  * @param {() => number} [options.now]
  * @param {number} [options.quietMs]
- * @param {() => number} [options.lastInteractionAt]  外面记的最近一次交互帧请求时刻(路由里记的)
+ * @param {() => number} [options.lastInteractionAt]  Timestamp of the most recent interactive frame request recorded externally (recorded in routes)
  */
 export function createQueueIdleGate({ pipeline = null, now = Date.now, quietMs = INTERACTION_QUIET_MS, lastInteractionAt = () => -Infinity } = {}) {
   let noted = -Infinity;
@@ -53,15 +61,15 @@ export function createQueueIdleGate({ pipeline = null, now = Date.now, quietMs =
     const outside = Number(lastInteractionAt());
     return Math.max(noted, Number.isFinite(outside) ? outside : -Infinity);
   };
-  /** 此刻不能认领的原因;能认领回 null */
+  /** Reason why claims are not allowed right now; returns null if claimable */
   const reason = (at = now()) => {
     if (at - latest() < quietMs) return 'interaction';
     return interactionReason(pipeline, at, { quietMs });
   };
   return {
-    /** 记一次交互帧请求(拖动取帧、播放时钟) */
+    /** Record an interactive frame request (frame fetching during scrub, playback clock) */
     note(at = now()) { if (at > noted) noted = at; },
-    /** 能不能认领新任务 */
+    /** Whether new tasks can be claimed */
     idle: (at = now()) => reason(at) === null,
     reason,
     get lastInteractionAt() { return latest(); },

@@ -1,11 +1,17 @@
 /**
- * 浏览器端视频小尺寸转码与流式哈希计算。
+ * In-browser video small-size transcoding and streaming hash calculation.
  *
- * 语义：`docs/plan/user-decisions-2026-10-14.md` 第 2.5 节「在线浏览器导入素材：页面上传，浏览器里转视频小尺寸」。
- * - 小尺寸规格：保持宽高比、缩放至 800×600 以内的偶数尺寸 H.264 MP4（无音频，仅供预览）。
- * - 抽帧与编码：复用 WebCodecs `VideoEncoder` + `src/export/mp4Mux.ts`，通过 `<video>` + Canvas 逐帧抽帧压制。
- * - 优雅降级：若浏览器不支持 WebCodecs、编码配置不支持或视频解码失败，则优雅降级为 null（只传原尺寸一档，绝不卡死导入流程）。
- * - 流式哈希：纯 TypeScript 实现 SHA-256 分块计算，支持任意大小的 Blob/File 流式哈希，避免大文件占用页面内存。
+ * Semantics: `docs/plan/user-decisions-2026-10-14.md` Section 2.5 "Import media in online browser:
+ * page upload, transcode small-size video in browser".
+ * - Small-size specs: H.264 MP4 scaled to even dimensions within 800×600 while preserving aspect
+ *   ratio (no audio, preview only).
+ * - Frame extraction and encoding: reuses WebCodecs `VideoEncoder` + `src/export/mp4Mux.ts`,
+ *   extracting frames and encoding frame-by-frame via `<video>` + Canvas.
+ * - Graceful downgrade: if browser lacks WebCodecs support, encoding config is unsupported, or
+ *   video decoding fails, gracefully downgrades to null (uploads original size tier only, never
+ *   blocks import workflow).
+ * - Streaming hash: pure TypeScript implementation of SHA-256 chunked calculation, supporting
+ *   streaming hash for arbitrary Blob/File sizes to prevent large files from exhausting page memory.
  */
 import { Mp4Muxer, MemorySink } from "../export/mp4Mux.ts";
 import { tr } from "../i18n/index.ts";
@@ -15,7 +21,8 @@ export const SMALL_MAX_HEIGHT = 600;
 export const SMALL_DEFAULT_FPS = 24;
 
 /**
- * 计算素材小尺寸的偶数宽高（800×600 以内，保持宽高比，不放大）。
+ * Calculates even width and height for small-size asset (within 800×600,
+ * preserving aspect ratio, no upscaling).
  */
 export function smallVideoDimensions(srcWidth: number, srcHeight: number): { width: number; height: number } {
   if (srcWidth <= 0 || srcHeight <= 0) return { width: SMALL_MAX_WIDTH, height: 450 };
@@ -33,7 +40,7 @@ export function smallVideoDimensions(srcWidth: number, srcHeight: number): { wid
 }
 
 /**
- * 根据编码画面的像素量挑 H.264 编码级别。
+ * Selects H.264 encoding level based on the pixel count of the encoded frame.
  */
 export function avcCodecFor(width: number, height: number): string {
   const px = width * height;
@@ -66,7 +73,7 @@ export interface TranscodeResult {
 }
 
 /* ------------------------------------------------------------------ *
- * 流式 SHA-256
+ * Streaming SHA-256
  * ------------------------------------------------------------------ */
 
 const K = new Uint32Array([
@@ -197,8 +204,9 @@ export class Sha256 {
 }
 
 /**
- * 流式计算一个 Blob/File 的 SHA-256（小写 64 位十六进制）。
- * 按 2 MiB 分片顺序读取，常数内存开销，大文件不会爆页面内存。
+ * Stream-calculates SHA-256 of a Blob/File (lowercase 64-character hex).
+ * Reads sequentially in 2 MiB chunks with constant memory overhead;
+ * large files will not exhaust page memory.
  */
 export async function sha256Blob(blob: Blob, signal?: AbortSignal): Promise<string> {
   const hasher = new Sha256();
@@ -216,7 +224,7 @@ export async function sha256Blob(blob: Blob, signal?: AbortSignal): Promise<stri
 }
 
 /* ------------------------------------------------------------------ *
- * 浏览器端视频小尺寸转码
+ * In-browser video small-size transcoding
  * ------------------------------------------------------------------ */
 
 function resolveEnv(env?: Partial<TranscodeEnv>): TranscodeEnv {
@@ -248,7 +256,7 @@ function resolveEnv(env?: Partial<TranscodeEnv>): TranscodeEnv {
 }
 
 /**
- * 等待视频就绪或超时（默认 5 秒）。
+ * Waits for video to be ready or time out (defaults to 5 seconds).
  */
 function waitForVideoReady(video: any, timeoutMs = 5000): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -268,7 +276,7 @@ function waitForVideoReady(video: any, timeoutMs = 5000): Promise<void> {
 }
 
 /**
- * 等待视频单次 seek 完成。
+ * Waits for a single video seek to complete.
  */
 function waitForSeeked(video: any, timeoutMs = 3000): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -280,17 +288,18 @@ function waitForSeeked(video: any, timeoutMs = 3000): Promise<void> {
     };
     const onSeeked = () => { cleanup(); resolve(); };
     const onError = () => { cleanup(); reject(new Error(tr("seek error"))); };
-    timer = setTimeout(() => { cleanup(); resolve(); }, timeoutMs); // seek 超时容忍按当前帧过
+    timer = setTimeout(() => { cleanup(); resolve(); }, timeoutMs); // Tolerate seek timeout and proceed with current frame
     video.addEventListener?.("seeked", onSeeked);
     video.addEventListener?.("error", onError);
   });
 }
 
 /**
- * 当在线浏览器导入视频文件时，在页面内转出一份「素材小尺寸」：
- * 800×600 以内保持宽高比的偶数尺寸 H.264 MP4（无音频，仅供预览）。
+ * When the online browser imports a video file, transcode a "small-size asset" in-page:
+ * even-dimension H.264 MP4 within 800×600 preserving aspect ratio (no audio, preview only).
  *
- * 若浏览器不支持 WebCodecs、编码配置不支持或视频解码失败，优雅降级返回 null。
+ * If the browser does not support WebCodecs, encoding config is unsupported, or video decoding
+ * fails, gracefully downgrade and return null.
  */
 export async function transcodeVideoSmall(file: Blob, opts: TranscodeOptions = {}): Promise<TranscodeResult | null> {
   const env = resolveEnv(opts.env);
@@ -322,7 +331,7 @@ export async function transcodeVideoSmall(file: Blob, opts: TranscodeOptions = {
     const fps = opts.fps && opts.fps > 0 ? opts.fps : SMALL_DEFAULT_FPS;
     const bitrate = Math.max(500_000, Math.min(2_000_000, Math.round(width * height * fps * 0.15)));
 
-    // 探测编码器配置支持
+    // Probe encoder config support
     const candidateCodecs = [avcCodecFor(width, height), "avc1.42001e", "avc1.4d001f", "avc1.640028"];
     let chosenCodec: string | null = null;
     for (const codec of candidateCodecs) {
@@ -340,7 +349,7 @@ export async function transcodeVideoSmall(file: Blob, opts: TranscodeOptions = {
           break;
         }
       } catch {
-        // 继续试下一个候选
+        // Continue trying the next candidate
       }
     }
     if (!chosenCodec) return null;
@@ -402,7 +411,7 @@ export async function transcodeVideoSmall(file: Blob, opts: TranscodeOptions = {
     }
 
     const dt = 1 / fps;
-    const totalFrames = Math.max(1, Math.min(3600, Math.ceil(duration * fps))); // 最多采样 3600 帧（约 2.5 分钟）
+    const totalFrames = Math.max(1, Math.min(3600, Math.ceil(duration * fps))); // Sample at most 3600 frames (approx. 2.5 minutes)
     for (let i = 0; i < totalFrames; i++) {
       opts.signal?.throwIfAborted();
       if (encodeErr) break;

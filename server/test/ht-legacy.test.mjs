@@ -1,9 +1,12 @@
 /**
- * HT 通用验收：旧客户端（握手里不带会话项）行为不变（契约 `docs/plan/http-transport-contract.md` 第 3.6 节、第 11 节「通用」）。
- * 跑：node --test server/test/ht-legacy.test.mjs
+ * HT common acceptance check: legacy client (without session items in handshake) behavior remains
+ * unchanged (contract `docs/plan/http-transport-contract.md` Section 3.6, Section 11 "General").
+ * Run: node --test server/test/ht-legacy.test.mjs
  *
- * 这组用例不依赖会话层到位：会话层合入前后都要通过（合入前它们描述的就是现状）。
- * 只照契约写，没看实现；公共件在 `ht-kit.mjs`。
+ * This test suite does not depend on session layer being in place: must pass both before and after
+ * merging the session layer (before merging, they describe the current status).
+ * Written solely according to contract without inspecting implementation; common utilities in
+ * `ht-kit.mjs`.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,7 +21,7 @@ test('HT-legacy-1 a handshake without session items works as before: 101, echoes
   c.send({ type: 'ht.echo', n: 1 });
   c.send({ type: 'ht.echo', n: 2 });
   await c.next((m) => m.type === 'ht.echoed' && m.n === 2);
-  await sleep(1300); // 过了会话层单发确认的 1 s，旧客户端也不该收到 session.ack
+  await sleep(1300); // Even after the 1 s where session layer sends ack alone, legacy clients should not receive session.ack
   assert.equal(c.all.filter((m) => String(m?.type).startsWith('session.')).length, 0, `old clients receive no session.* control messages: ${JSON.stringify(c.all)}`);
   for (const m of c.all) {
     assert.ok(!('seq' in m) && !('ack' in m), `messages received by old clients carry no seq / ack: ${JSON.stringify(m)}`);
@@ -54,7 +57,7 @@ test('HT-legacy-3 the existing createWsEndpoint (the pre-upgrade desktop app and
   await waitFor(() => got.some((m) => m.type === 'ht.echoed'), 2000, 'reply');
   assert.deepEqual(got.find((m) => m.type === 'ht.echoed'), { type: 'ht.echoed', n: 7 }, 'reply carries no seq / ack');
   assert.equal(got.filter((m) => String(m?.type).startsWith('session.')).length, 0);
-  // 服务端断它：旧端点照旧重连（新连接），模块见一次断开、两次 connect
+  // Server disconnects it: legacy endpoint reconnects as before (new connection), module sees one disconnect and two connects
   assert.equal(env.service.closeConn(env.mod.connects[0].connId, 1011, 'test'), true);
   await waitFor(() => opens === 2, 3000, 'reconnect');
   assert.equal(env.mod.disconnects.length, 1);

@@ -1,19 +1,28 @@
 /**
- * 视频 seek 竞态的最小复现(不起 dev server、不走导出管线):受帧控制的 chrome-headless-shell 里一个不挂进文档的
- * <video>,照 `src/render/cards/mediaSource.ts` 的写法「设 currentTime → 等 seeked → 读当前帧」连做若干遍,
- * 数「seeked 之后当场读到的不是目标那一帧」有几次。读帧同时用 `new VideoFrame(video).timestamp` 和
- * `createImageBitmap` 的像素(第 n 帧整幅灰度 16 × (n mod 16)),两边互证。
+ * Minimal reproduction of video seek race conditions (without starting a dev server or running
+ * the export pipeline): an unattached `<video>` inside frame-controlled chrome-headless-shell
+ * repeatedly performs "set currentTime → wait for seeked → read current frame" following
+ * `src/render/cards/mediaSource.ts`, counting how many times "the frame read immediately after
+ * seeked is not the target frame" occurs. Frames are read using both
+ * `new VideoFrame(video).timestamp` and `createImageBitmap` pixels (frame n has full grayscale
+ * 16 × (n mod 16)), cross-verifying both sides.
  *
  *   node scripts/probes/video-seek-race-probe.mjs [--port 6211] [--loops 20] [--hogs 0] [--mode seeked|fixed]
  *
- *   --mode seeked  取帧只等 seeked(改前的写法)
- *   --mode fixed   取帧直接用 `src/render/cards/mediaSource.ts` 的 `CardMediaSource`(经 Vite 中间件按源码加载)
- *   --hogs N       另起 N 个占满一个核的 node 进程
- *   --busy         页面上放一块每拍重画的 1280×720 WebGL 画布,beginFrame 带截图(让合成与光栅线程忙起来;不加时复现不出)
- *   --settle MS    每次取帧后隔多久再取下一帧(默认 30;0 = 紧接着取,更接近导出)
+ *   --mode seeked  Frame fetching only waits for seeked (pre-fix implementation)
+ *   --mode fixed   Frame fetching directly uses `CardMediaSource` from
+ *                  `src/render/cards/mediaSource.ts` (loaded from source via Vite middleware)
+ *   --hogs N       Spawn N additional node processes that fully saturate one core
+ *   --busy         Place a 1280×720 WebGL canvas on the page repainted every tick, with beginFrame
+ *                  taking screenshots (keeps compositor and raster threads busy; cannot reproduce
+ *                  without this)
+ *   --settle MS    Delay before fetching the next frame after each frame fetch (default 30;
+ *                  0 = fetch immediately, closer to export)
  *
- * 取帧期间 Node 侧每 4 ms 发一拍 beginFrame(与 `server/bakery/frame-ready.mjs` 的 waitFrameReady 同样的节奏)。
- * 输出最后一行 JSON:`{ ok, seeks, stale, wrongPixel, samples }`;退出码 0 当且仅当 stale 与 wrongPixel 都是 0。
+ * During frame fetching, Node side dispatches a beginFrame tick every 4 ms (matching the cadence
+ * of waitFrameReady in `server/bakery/frame-ready.mjs`).
+ * Outputs JSON on the last line: `{ ok, seeks, stale, wrongPixel, samples }`; exit code 0 if and
+ * only if both stale and wrongPixel are 0.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -38,7 +47,7 @@ const WORK = path.join(os.tmpdir(), `pc-seek-race-${Date.now().toString(36)}${cr
 fs.mkdirSync(WORK, { recursive: true });
 
 const hogs = [];
-const stopHogs = () => { for (const h of hogs.splice(0)) { try { h.kill(); } catch { /* 已退出 */ } } };
+const stopHogs = () => { for (const h of hogs.splice(0)) { try { h.kill(); } catch { /* Exited */ } } };
 process.on('exit', stopHogs);
 
 const ffmpeg = await findFfmpeg();
@@ -49,7 +58,7 @@ const r = spawnSync(ffmpeg, ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'color=bl
 if (r.status !== 0) throw new Error(r.stderr);
 const bytes = fs.readFileSync(mp4);
 
-/* 页面:判据写在这里,修法改了要同步 */
+/* Page: criteria are written here, keep in sync if the fix changes */
 const PAGE = `<!doctype html><meta charset="utf-8"><body><script>
 const LEAD = 0.002;
 const video = document.createElement('video');
@@ -145,7 +154,7 @@ try {
   await page.waitForFunction(() => window.fixedReady === true, { timeout: 60000 });
   await page.evaluate(() => window.ready);
   for (let i = 0; i < HOGS; i++) hogs.push(spawn(process.execPath, ['-e', 'for(;;){}'], { stdio: 'ignore', windowsHide: true }));
-  // ①素材效果卡 rate 0.5 offset 0.35 与 rate 0.5 offset 0 两段的取帧时刻
+  // (1) Frame fetch timestamps for media effect card rate 0.5 offset 0.35 and rate 0.5 offset 0 segments
   const times = [];
   for (const offset of [0.35, 0]) for (let n = 0; n < 60; n++) times.push(offset + 0.5 * n / 30);
   for (let loop = 0; loop < LOOPS; loop++) {
@@ -162,7 +171,8 @@ try {
     console.log(`[seek-race] loop ${loop + 1}/${LOOPS}: seeks=${result.seeks} stale=${result.stale} wrongPixel=${result.wrongPixel}`);
   }
   if (MODE === 'fixed') {
-    // 核对确实生效(返回 true/false,而不是读不出帧时的 null):否则 fixed 等于没修
+    // Verify that it actually takes effect (returns true/false rather than null when frames cannot be
+    // read): otherwise fixed is equivalent to not being fixed
     result.coversCheck = await page.evaluate(async () => (await import('/src/render/cards/mediaSource.ts')).currentFrameCovers(await window.__fixedVideo()));
     if (result.coversCheck !== true) result.stale++;
     result.settleWaits = await page.evaluate(() => window.__fixedWaits());
@@ -173,7 +183,7 @@ try {
   await browser.close().catch(() => {});
   server.close();
   await vite.close().catch(() => {});
-  try { fs.rmSync(WORK, { recursive: true, force: true }); } catch { /* 留给系统清 */ }
+  try { fs.rmSync(WORK, { recursive: true, force: true }); } catch { /* Left for the system to clean */ }
 }
 result.ok = result.stale === 0 && result.wrongPixel === 0;
 console.log(JSON.stringify(result));

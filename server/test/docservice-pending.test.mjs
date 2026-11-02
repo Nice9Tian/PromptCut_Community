@@ -1,8 +1,10 @@
 /**
- * 文档服务核心给模块的积压读数，以及项目快照取回按积压节流（契约 `docs/plan/render-queue-contract.md` J.11，用例 C8、C9）。
- * 跑：node --test server/test/docservice-pending.test.mjs
+ * Document service core backlog readings to modules, and project snapshot retrieval throttled by
+ * backlog (contract `docs/plan/render-queue-contract.md` J.11, test cases C8, C9).
+ * Run: node --test server/test/docservice-pending.test.mjs
  *
- * 端口一律 0。慢连接用 `fake-raw-ws.mjs` 的原始 TCP 客户端：它能停读 socket，服务端的发送缓冲才会真的积压。
+ * Ports are always 0. Slow connections use the raw TCP client from `fake-raw-ws.mjs`: it can stop
+ * reading socket, so server send buffer truly backs up.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,7 +28,7 @@ async function startService(options) {
 test('C8 ctx.pendingBytes: increases when a backlog builds and returns to zero once drained; returns 0 for a nonexistent connection; ctx.maxPendingBytes is the configured limit', { timeout: 30_000 }, async (t) => {
   const MAX = 64 * 1024 * 1024;
   const PART = 'x'.repeat(256 * 1024);
-  const N = 64;   // 共 16 MiB：本机回环的内核缓冲吞不下，停读时一定积压在服务端
+  const N = 64;   // 16 MiB total: local loopback kernel buffer cannot hold it; when reading stops, it definitely backs up on the server
   let ctxRef = null;
   let connRef = null;
   const probe = {
@@ -65,10 +67,10 @@ test('C8 ctx.pendingBytes: increases when a backlog builds and returns to zero o
 });
 
 test('C9 a slow consumer fetches a 5 MiB snapshot: throttled by backlog, not dropped with 1013, received in full', { timeout: 60_000 }, async (t) => {
-  const env = await startService({ modules: [projectModule({ store: createMemoryStore() })] });   // maxPendingBytes 取缺省 1 MiB
+  const env = await startService({ modules: [projectModule({ store: createMemoryStore() })] });   // maxPendingBytes takes default 1 MiB
   t.after(() => env.service.close());
 
-  // 5 MiB 的项目 JSON，带中文与需要转义的字符
+  // 5 MiB project JSON, containing Chinese and characters that need escaping
   const tracks = [];
   let text = '';
   for (let i = 0; Buffer.byteLength(text, 'utf8') < 5 * 1024 * 1024; i += 1) {
@@ -77,7 +79,7 @@ test('C9 a slow consumer fetches a 5 MiB snapshot: throttled by backlog, not dro
   }
   const digest = sha256(text);
 
-  // 上传方：正常速度的节点客户端
+  // Uploader: normal-speed node client
   const ep = createWsEndpoint({ url: `ws://127.0.0.1:${env.port}/`, log: () => {} });
   t.after(() => ep.close());
   await waitFor(() => ep.connected, 3000, 'the uploader connected');
@@ -85,7 +87,7 @@ test('C9 a slow consumer fetches a 5 MiB snapshot: throttled by backlog, not dro
   const { projectRev } = await client.announce('c9', digest);
   await client.putSnapshot('c9', projectRev, digest, text);
 
-  // 慢消费者：每读到一块就停读，按约 0.8 MiB/s 的速率再恢复
+  // Slow consumer: pauses reading after each chunk read, resumes at a rate of about 0.8 MiB/s
   const RATE = 0.8 * 1024 * 1024;
   const slow = await rawWsClient(env.port, { keep: true });
   t.after(() => slow.destroy());

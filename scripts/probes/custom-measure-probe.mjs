@@ -1,20 +1,31 @@
 /**
- * 自定义测量(measure_audio_js)的端到端探针(计划 `docs/plan/agent-workflow-plan.md` A6;报告 `docs/archive/agent-reports/AGENT-custom-measure.md`)。
+ * End-to-end probe for custom measurement (measure_audio_js) (plan `docs/plan/agent-workflow-plan.md`
+ * A6; report `docs/archive/agent-reports/AGENT-custom-measure.md`).
  *
- *   node scripts/probes/custom-measure-probe.mjs [--port 5860] [--keep]   (端口段由派活的一方分,例如 5860、5920)
+ *   node scripts/probes/custom-measure-probe.mjs [--port 5860] [--keep]   (port range is allocated by dispatcher, e.g. 5860, 5920)
  *
- * 自己起一个编辑器 dev server(`--port`,缺省 5860,舞台另占 +1、+2;带 PROMPTCUT_NO_PORT_FILE=1,不写公共的 port.json),
- * 产物与素材落在新建的临时目录(PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR),再用 puppeteer 打开编辑台,依次:
- *   M1 ffmpeg lavfi 生成 1 kHz、振幅 0.5 的正弦波(48 kHz 立体声 3 秒),放进这次的素材目录,加进项目、放上时间轴(第 1 秒起 2 秒);
- *   M2 以一个登记为「高」的对话(真的 POST /api/ai/chat,provider 故意给不存在的名字:登记在起模型之前,不花额度)
- *      经 POST /api/mcp/call 调 measure_audio_js 测整个素材:RMS 与峰值与理论值一致(-9.03 / -6.02 dBFS);
- *      片段档(clipId)与时间轴混音档也各测一次;
- *   M3 同一个对话改登记成「低」「中」:调用被拒,回 A1 统一格式的越级错误(creativity.current / required = high);
- *   M4 改回「高」:死循环在时限内终止、错误写明超时;联网尝试(fetch 本机 / 外网)失败、错误写明「沙箱里不能联网」;
- *      抛异常带报错文字;之后编辑器照常应答、正常测量照常。
- * 结束时只停自己起的进程(编辑器进程树,含它起的预渲染进程与沙箱 Chrome;探针自己的 puppeteer Chrome);`--keep` 不关、不删临时目录。
+ * Start an editor dev server itself (`--port`, defaults to 5860, stage occupies additional +1, +2;
+ * with PROMPTCUT_NO_PORT_FILE=1, does not write shared port.json), artifacts and assets land in newly
+ * created temporary directory (PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR), then open editor with
+ * puppeteer, in sequence:
+ *   M1 ffmpeg lavfi generates a sine wave of 1 kHz and amplitude 0.5 (48 kHz stereo, 3 seconds),
+ *      places it into this asset directory, adds it to project, and puts it on timeline (2 seconds
+ *      starting at second 1);
+ *   M2 Using a chat registered as "high" (actually POST /api/ai/chat, provider intentionally given
+ *      nonexistent name: registered before launching model, spends no quota), call measure_audio_js
+ *      via POST /api/mcp/call to measure entire asset: RMS and peak match theoretical values (-9.03 /
+ *      -6.02 dBFS); also measure clip tier (clipId) and timeline mix tier once each;
+ *   M3 Re-register same chat as "low" and "medium": calls rejected, returns A1 unified format
+ *      tier-exceeded error (creativity.current / required = high);
+ *   M4 Switch back to "high": infinite loop terminates within time limit, error specifies timeout;
+ *      network attempts (fetch local / external network) fail, error specifies "no network access
+ *      inside sandbox"; thrown exceptions include error message; afterward editor responds normally,
+ *      normal measurements proceed as usual.
+ * On exit, stop only processes started by itself (editor process tree, including prerender process
+ * and sandboxed Chrome it started; probe's own puppeteer Chrome); `--keep` does not shut down or
+ * delete temporary directory.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,并设 PROMPTCUT_NO_PORT_FILE=1
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR, and set PROMPTCUT_NO_PORT_FILE=1
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -31,7 +42,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const args = process.argv.slice(2);
 const PORT = Number(args.includes('--port') ? args[args.indexOf('--port') + 1] : 5860);
 const KEEP = args.includes('--keep');
-// 编辑器 + 两个舞台端口占 PORT～PORT+2,要落在同一个 10 口的段里;用户常驻的 5190～5192 与 5580～5599 不用
+// Editor + two stage ports occupy PORT to PORT+2, which must fall into the same 10-port block; user resident 5190-5192 and 5580-5599 are not used
 const clashes = (p) => (p >= 5190 && p <= 5192) || (p >= 5580 && p <= 5599);
 if (!(PORT >= 1024 && PORT % 10 <= 7) || [PORT, PORT + 1, PORT + 2].some(clashes)) throw new Error(`--port ${PORT} is not allowed: it must be among the first 8 ports of a 10-port block (using PORT to PORT+2), and must not touch 5190-5192 or 5580-5599`);
 const EDITOR = `http://127.0.0.1:${PORT}`;
@@ -42,7 +53,7 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(MEDIA_DIR, { recursive: true });
 
 const fails = [];
-/** 耗时只记录(docs/semantics/guide_files/verification.md「耗时只记录,不当闸门」):死循环脚本被终止用了多久只写进 TIMINGS 行,不决定过不过 */
+/** Elapsed time is only recorded (docs/semantics/guide_files/verification.md "Elapsed time is only recorded, not used as a gate"): how long the infinite loop script took to terminate is only written into the TIMINGS line, not deciding whether it passes */
 const timingLog = createTimings('custom-measure-probe');
 const passes = [];
 const out = { port: PORT, exportDir: EXPORT_DIR };
@@ -83,7 +94,7 @@ async function startEditor() {
 }
 function stopEditor() {
   if (!editor || editor.exitCode !== null || !editor.pid) return;
-  // 整棵进程树:编辑器起的预渲染进程、沙箱 Chrome 都是它的子孙
+  // Entire process tree: prerender process and sandboxed Chrome spawned by the editor are its descendants
   if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(editor.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
   else editor.kill('SIGKILL');
 }
@@ -97,7 +108,7 @@ const mcpCall = async (tool, callArgs, agent) => {
   const body = await res.json().catch(() => null);
   return body?.result ?? body;
 };
-/** 登记这个对话的等级:真的走 /api/ai/chat,provider 不存在,登记之后起模型那一步直接报错,不花额度 */
+/** Register this chat's tier: actually hits /api/ai/chat; provider does not exist, so starting model right after registration directly throws error without spending quota */
 const register = (conv, creativity) => fetch(`${EDITOR}/api/ai/chat`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ provider: 'probe-none', prompt: 'x', conversationId: conv, creativity, projectCreativity: 'high' }),
@@ -118,7 +129,7 @@ const near = (a, b, tol) => typeof a === 'number' && Math.abs(a - b) < tol;
 
 let browser = null;
 try {
-  /* ---- M1 测试音频 ---- */
+  /* ---- M1 Test audio ---- */
   const ffmpeg = findFfmpeg();
   if (!ffmpeg) throw new Error('ffmpeg not found (put it on PATH or set PROMPTCUT_FFMPEG)');
   const wav = path.join(MEDIA_DIR, 'probe-sine.wav');
@@ -143,10 +154,10 @@ try {
   out.placed = placed;
   check(!!placed.clipId, 'M1 the media got into the project and was placed on the timeline', placed);
 
-  /* ---- M2 高档正常测量 ---- */
+  /* ---- M2 High tier normal measurement ---- */
   const conv = `cmprobe${Date.now().toString(36)}`;
   await register(conv, 'high');
-  // 项目经页面(或文档服务的副本)到服务端要一会儿:等到不再是「找不到素材」
+  // Project takes a moment to reach server via page (or document service replica): wait until it is no longer "Asset not found"
   const media = await until('high tier measures the whole media', async () => {
     const r = await mcpCall('measure_audio_js', { mediaId: placed.mediaId, code: RMS_PEAK }, conv);
     return r && r.ok === true ? r : (r && !/media not found|no clip|editor is not open/.test(String(r.error || '')) ? r : null);
@@ -167,7 +178,7 @@ try {
   out.timeline = tl;
   check(tl?.ok === true && near(tl.value?.channels?.[0]?.rmsDb, RMS, 0.1), 'M2 timeline mix mode: seconds 1 to 3 (where it sounds) RMS matches the theoretical value', tl);
 
-  /* ---- M3 低、中档被拒 ---- */
+  /* ---- M3 Low and medium tiers rejected ---- */
   for (const level of ['low', 'medium']) {
     await register(conv, level);
     const r = await mcpCall('measure_audio_js', { mediaId: placed.mediaId, code: RMS_PEAK }, conv);
@@ -178,7 +189,7 @@ try {
     check(builtin && !builtin.creativity && typeof builtin.integrated === 'number', `M3 the built-in measure_audio at the "${level === 'low' ? 'Low' : 'Medium'}" tier works as usual`, builtin && { integrated: builtin.integrated, error: builtin.error });
   }
 
-  /* ---- M4 高档的错误路径 ---- */
+  /* ---- M4 High tier error paths ---- */
   await register(conv, 'high');
   let t0 = Date.now();
   const loop = await mcpCall('measure_audio_js', { mediaId: placed.mediaId, sampleRate: 8000, code: 'while (true) {}', timeoutMs: 2000 }, conv);

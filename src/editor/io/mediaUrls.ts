@@ -5,29 +5,32 @@ import { confirmedMissing, MISSING_NAME_MARK, hasMissingMark } from "../../audio
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 素材地址在「存盘 → 再打开」之间怎么保持能播。
+ * How an asset URL stays playable across "save → reopen".
  *
- * 编辑器里刚导入的素材,url 是 URL.createObjectURL 出来的 blob: —— 只在当前这个页面活着,
- * 存进 .proc 之后再打开就是一个死地址。能跨会话找回文件的只有 path:导入时上传到服务端
- * 素材目录(见 index.ts 的 importVideoFiles / importVideoFromServer),按文件名走
- * /@media/<文件名> 就能取到。
+ * A freshly imported asset in the editor has a blob: url from URL.createObjectURL. It only lives in the
+ * current page, and after saving into .proc and reopening it is a dead URL. The only thing that can find the
+ * file again across sessions is path: on import the file is uploaded to the server's asset directory
+ * (see importVideoFiles / importVideoFromServer in index.ts), and it can be fetched by file name through
+ * /@media/<file name>.
  *
- * 以前只有旧格式导入 importProjectFile 做这步换算;.proc 改走 parseProc 之后这步被绕开,
- * 打开项目后 url 是一个裸文件名,<video> 拿到的是 index.html:预览里视频层是空的,
- * 导出页等不到视频就绪,导出卡在第 0 帧。所以两条路现在都调这里,只有一份规则。
+ * Previously only the old-format import importProjectFile did this conversion; after .proc switched to
+ * parseProc, this step was bypassed, and after opening a project the url was a bare file name, so <video>
+ * got index.html: the video layer in the preview was empty, the export page waited forever for the video to
+ * be ready, and export stuck at frame 0. So both paths now call this, and there is only one set of rules.
  *
- * 这个文件不引任何运行时模块,单测可以直接加载(见 mediaUrls.test.mjs)。
+ * This file imports no runtime modules, so unit tests can load it directly (see mediaUrls.test.mjs).
  */
 
 /**
- * 素材键(内容 sha256)的地址。A1 之后这是素材地址的唯一正解:
- * 换文件名、改 mtime、换一台机器打开,只要内容一样就还是这个地址。
+ * URL of the asset key (content sha256). Since A1 this is the only correct asset URL:
+ * rename the file, change mtime, open on another machine, and as long as the content is the same it is
+ * still this URL.
  */
 export function mediaUrlFromHash(hash: string | undefined): string | null {
   return hash && /^[0-9a-f]{64}$/i.test(hash) ? `/@media/${hash.toLowerCase()}` : null;
 }
 
-/** 服务端素材目录里这个文件的地址。没有 path 返回 null */
+/** URL of this file in the server's asset directory. Returns null if there is no path */
 export function mediaUrlFromPath(path: string | undefined, opts: { external?: boolean } = {}): string | null {
   const base = path ? path.split(/[/\\]/).pop() : "";
   if (!base) return null;
@@ -40,20 +43,24 @@ export function mediaUrlFromPath(path: string | undefined, opts: { external?: bo
     : `/@media/${encodeURIComponent(base)}`;
 }
 
-/** 不随页面失效的地址:网络地址、data:、同源绝对路径(/@media/...) */
+/** URLs that do not expire with the page: network URLs, data:, same-origin absolute paths (/@media/...) */
 function isDurable(url: string): boolean {
   return /^(https?:|data:)/.test(url) || url.startsWith("/");
 }
 
 
 /**
- * 从文件里读回来的素材表 → 能播的素材表。不改入参。
+ * Asset table read back from a file → playable asset table. Does not modify the input.
  *
- * - 有 hash(A1 之后导入的):换成 /@media/<hash>,优先级最高 —— 哈希是身份,文件在内容库里;
- * - 只有 path(迁移期的老 .proc):换成 /@media/<文件名>(和旧格式导入一样);
- * - 没 path 但地址本来就能用:原样;
- * - 其余(死掉的 blob:、裸文件名):清空 url、名字前面标「(缺失)」,并记进 missing ——
- *   空 url 的素材预览和导出都会跳过,不会再拿一个打不开的地址去等。
+ * - Has a hash (imported after A1): replace with /@media/<hash>, highest priority — the hash is the
+ *   identity, and the file is in the content store;
+ * - Only has a path (old .proc from the migration period): replace with /@media/<file name> (same as the
+ *   old-format import);
+ * - No path but the URL is already usable: keep as is;
+ * - The rest (dead blob:, bare file name): clear the url, prefix the name with "(missing)", and record it in
+ *   missing —
+ *   assets with an empty url are skipped by preview and export, so nothing waits on a URL that cannot be
+ *   opened.
  */
 export function restoreMediaUrls(media: MediaAsset[], opts: { externalPathUrl?: boolean } = {}): { media: MediaAsset[]; missing: MediaAsset[]; moved: MediaKindMigration[] } {
   const missing: MediaAsset[] = [];
@@ -62,15 +69,15 @@ export function restoreMediaUrls(media: MediaAsset[], opts: { externalPathUrl?: 
     const extKind = kindFromExtension(m.name) ?? kindFromExtension(m.path || "") ?? kindFromExtension(m.url || "");
     // A derived audio asset intentionally keeps audio kind even when its source is .mp4.
     const shouldMove = !!extKind && extKind !== m.kind && !(m.kind === "audio" && m.soundOf);
-    // 认定过「确认缺失」的素材原样留着:占位核对的是记录与素材的类别、名字、地址逐字相同,这里改了哪一项占位就失效
-    // (重新找回、清掉记录是 mediaUpload.ts 后台检查的事)。
+    // Assets judged "confirmed missing" are left as is: the placeholder checks that the record and the asset have the same kind, name and URL verbatim, and changing any of them here would invalidate the placeholder
+    // (recovering and clearing the record is the job of the background check in mediaUpload.ts).
     if (confirmedMissing(m) && m.url) {
       return m.pending ? { ...m, pending: undefined } : m;
     }
     const normalized = shouldMove ? { ...m, kind: extKind as AssetKind } : m;
     if (shouldMove) moved.push({ id: m.id, name: m.name, from: m.kind, to: extKind as AssetKind });
-    // 有内容哈希就只认 /@media/<hash> —— 文件在内容库里按哈希存,path 只是它当时的落点。
-    // pending 是「这一次会话里还没传完」,从文件读回来时一定已经过期,顺手清掉。
+    // With a content hash, only /@media/<hash> is used — the file is stored by hash in the content store, and path is just where it was at the time.
+    // pending means "not finished uploading in this session"; when read back from a file it is always stale, so clear it while here.
     const fromHash = mediaUrlFromHash(normalized.hash);
     if (fromHash) return { ...normalized, url: fromHash, pending: undefined };
     const fromPath = mediaUrlFromPath(normalized.path, { external: opts.externalPathUrl });

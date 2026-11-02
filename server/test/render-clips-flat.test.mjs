@@ -1,5 +1,6 @@
 /**
- * 云端 Agent 写入后要发布的片段收进剪辑段里的卡(`server/agent/service/render-clips.mjs`)。跑:node --test server/test/render-clips-flat.test.mjs
+ * Clips to be published after Cloud Agent writes are collected into cards inside cut segments
+ * (`server/agent/service/render-clips.mjs`). Run: node --test server/test/render-clips-flat.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -50,11 +51,11 @@ test('cards written into a referenced cut: both instances are collected (at any 
 test('changes in ops that cannot name a clip id (switching the active cut, a whole-cut rewrite of another cut): worked out by comparing the signatures of the flattened view', () => {
   const picker = createRenderClipPicker(kernel);
   picker.prime(project());
-  // 剪辑2 里那张卡改了文字,这次写入报上来的片段 id 是空的
+  // That card in Cut 2 had its text changed; the clip id reported in this write is empty
   assert.deepEqual(picker.pick(project({ innerText: 'changed' }), []).sort(), ['S2~H', 'S~H']);
-  // 剪辑2 里新加一张卡
+  // Added a new card in Cut 2
   const added = picker.pick(project({ innerText: 'changed', extra: [card('N', 1, 3)] }), []);
   assert.deepEqual(added.sort(), ['S2~N', 'S~N']);
-  // 没变:什么都不收
+  // Unchanged: nothing is collected
   assert.deepEqual(picker.pick(project({ innerText: 'changed', extra: [card('N', 1, 3)] }), []), []);
 });

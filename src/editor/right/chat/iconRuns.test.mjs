@@ -1,6 +1,7 @@
 /**
- * 操作图标的分组:每个图标最多叠 5 个、失败的自成一类、stt_install 单独、报告工具不出图标。
- * 跑:node --experimental-test-module-mocks --test src/editor/right/chat/iconRuns.test.mjs
+ * Grouping of action icons: up to 5 stacked per icon, failed ones form their own group,
+ * stt_install is standalone, reporting tools do not display icons.
+ * Run: node --experimental-test-module-mocks --test src/editor/right/chat/iconRuns.test.mjs
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -15,7 +16,8 @@ test("Tool names with a server prefix are still classified: Claude reports mcp__
   assert.equal(toolKind("mcp__promptcut__see_frames"), "look");
   assert.equal(toolKind("mcp__promptcut__list_media"), "read");
   assert.equal(toolKind("promptcut.remove_clip"), "remove");
-  // 前缀不同、裸名同类的相邻操作照样合进一个图标;stt_install 带前缀也单独成一个
+  // Adjacent actions with different prefixes but same bare-name category still merge into one icon;
+  // stt_install remains separate even with a prefix
   assert.deepEqual(sizes(iconRuns([ok("mcp__promptcut__get_clip"), ok("get_clip")])), [2]);
   const runs = iconRuns([ok("mcp__promptcut__stt_install"), ok("mcp__promptcut__stt_install")]);
   assert.deepEqual(runs.map((r) => r.items), [[0], [1]]);

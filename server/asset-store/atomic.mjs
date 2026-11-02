@@ -1,4 +1,4 @@
-/** 纯 Node 原子文件写入；frame-mov 保持原导出。 */
+/** Pure Node atomic file write; frame-mov keeps original exports. */
 import fs from 'node:fs/promises';
 import path from 'node:path';
 

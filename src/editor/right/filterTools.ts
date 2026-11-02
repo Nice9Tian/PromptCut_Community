@@ -1,9 +1,12 @@
 /**
- * 滤镜库的工具:list_filters / create_filter / update_filter / remove_filter / apply_filter。
- * Agent(MCP)和素材库「转场/滤镜」页、编辑页的滤镜那一栏共用这一份校验和门槛。
+ * Tools of the filter library: list_filters / create_filter / update_filter / remove_filter / apply_filter.
+ * The Agent (MCP), the "Transitions / Filters" tab of the media library and the filter section of the
+ * editing page share this one set of validation and gates.
  *
- * 滤镜是项目级的对象(project.filters),片段用 clip.filter 引用它 —— 改滤镜,挂着它的片段全跟着变;
- * 同一个滤镜挂到哪一段都一样用,因为表达式里的 t 是片段内时间。数值和三条合成管线的翻译在 kernel/filters.mjs。
+ * A filter is a project-level object (project.filters), and a clip references it with clip.filter: change
+ * the filter and every clip using it changes along; the same filter works the same on any segment, because
+ * t in the expression is the time within the clip. The values and the translation to the three composite
+ * pipelines are in kernel/filters.mjs.
  */
 
 import { findClip, newId, type Project } from "../../kernel/project";
@@ -24,7 +27,7 @@ export interface FilterStore {
   };
 }
 
-/** 哪些片段挂着这个滤镜:激活剪辑的 + 停放剪辑里的(带剪辑名) */
+/** Which clips use this filter: those in the active cut + those in parked cuts (with the cut name) */
 export function usesOf(p: Project, filterId: string): { clipId: string; cut?: string }[] {
   const out: { clipId: string; cut?: string }[] = [];
   for (const t of p.tracks) for (const c of t.clips) if (c.filter?.id === filterId) out.push({ clipId: c.id });
@@ -61,7 +64,7 @@ export function createFilterTools(store: FilterStore) {
     return f;
   };
 
-  /** 能挂滤镜的片段:有画面的素材段(视频 / 图片),序列没锁 */
+  /** Clips a filter can be attached to: media clips with picture (video / image), on a track that is not locked */
   const mediaClip = (p: Project, clipId: unknown) => {
     const id = str(clipId);
     const hit = id ? findClip(p, id) : null;
@@ -87,7 +90,7 @@ export function createFilterTools(store: FilterStore) {
       };
     },
 
-    /** 建一个放进库里;给了 clipId 就顺手挂上(先校验片段,不合规就什么都不建) */
+    /** Create one and put it in the library; if clipId is given, attach it too (validate the clip first, and create nothing if it does not qualify) */
     createFilter(args: any) {
       const base = normalizeFilterDef(args);
       const def: FilterDef = { id: newId("fx"), ...base, createdBy: args?.createdBy === "user" ? "user" : "agent", createdAt: Date.now() };
@@ -96,7 +99,7 @@ export function createFilterTools(store: FilterStore) {
         mediaClip(project(), args.clipId);
         clipParams = normalizeClipParams(def, args.clipParams);
       }
-      // 入库和挂上是同一步(一步撤销)
+      // Adding to the library and attaching are one step (one undo)
       store.actions.addFilter(def, args?.clipId !== undefined ? { clipId: str(args.clipId), filter: { id: def.id, ...(clipParams ? { params: clipParams } : null) } } : undefined);
       return {
         ok: true,
@@ -107,7 +110,7 @@ export function createFilterTools(store: FilterStore) {
       };
     },
 
-    /** 改库里的一条:没给的项沿用原来的,给了的整项替换;挂着它的片段全跟着变 */
+    /** Edit one entry in the library: omitted fields keep their old values, given ones are replaced whole; clips attached to it all change with it */
     updateFilter(args: any) {
       const cur = findDef(project(), args?.filterId);
       const merged = normalizeFilterDef({
@@ -120,7 +123,8 @@ export function createFilterTools(store: FilterStore) {
       store.actions.updateFilter(cur.id, next);
       const p = project();
       const uses = usesOf(p, cur.id);
-      // 片段上覆盖的参数名如果被删掉了,留着也不生效(求值只认声明过的),提一句
+      // If the parameter name overridden on a clip has been deleted, keeping it has no effect (evaluation only
+      // recognizes declared ones), so mention it
       const declared = new Set(Object.keys(next.params ?? {}));
       const everywhere = [...p.tracks, ...(p.cuts ?? []).filter((c) => c.id !== p.activeCutId).flatMap((c) => c.tracks ?? [])].flatMap((t) => t.clips);
       const stale = everywhere.filter((c) => c.filter?.id === cur.id && Object.keys(c.filter.params ?? {}).some((k) => !declared.has(k)));
@@ -132,7 +136,7 @@ export function createFilterTools(store: FilterStore) {
       };
     },
 
-    /** 删:还挂着就要 force + reason(理由回显给用户),所有剪辑里的挂载一起摘掉 */
+    /** Delete: if still attached, force + reason are required (the reason is echoed back to the user), and the attachments in all cuts are removed together */
     removeFilter(args: any) {
       const p = project();
       const f = findDef(p, args?.filterId);
@@ -149,7 +153,7 @@ export function createFilterTools(store: FilterStore) {
       return { ok: true, removed: f.id, name: f.name, ...(uses.length ? { detached: uses, reason } : null) };
     },
 
-    /** 挂 / 换 / 摘(filterId 空 = 摘) */
+    /** Attach / swap / detach (empty filterId = detach) */
     applyFilter(args: any) {
       const p = project();
       const hit = mediaClip(p, args?.clipId);

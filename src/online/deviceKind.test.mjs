@@ -1,5 +1,6 @@
 /**
- * 在线浏览器身份「电脑 / 手机」与界面选择(`src/online/deviceKind.ts`;语义 `mechanism/platforms.md`「身份」)。
+ * Online browser identity "desktop / mobile" and UI selection (`src/online/deviceKind.ts`;
+ * semantics `mechanism/platforms.md` "Identity").
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -55,26 +56,28 @@ test('DK7 layout selection: identity is phone → mobile app, regardless of wher
 });
 
 test('DK7b no userAgentData over plain HTTP: Android phones must still be recognized by user agent (2026-10-26 end-to-end probe)', () => {
-  // `navigator.userAgentData` 只在安全上下文里有；局域网里用 http://192.168.x.y:口 打开时读不到，
-  // 只剩标识可看。不认安卓的话，手机在局域网里会拿到桌面界面。
+  // `navigator.userAgentData` is only available in secure contexts; when opened via
+  // http://192.168.x.y:port on a LAN, it cannot be read, leaving only user agent string to inspect.
+  // If Android is not recognized, phones on the LAN will receive the desktop interface.
   const androidNoHints = judgeDeviceKind({ ua: UA.androidChrome, uaData: null });
   assert.equal(androidNoHints.kind, 'phone');
   assert.equal(androidNoHints.by, 'ua');
   assert.equal(pickLayout({ kind: androidNoHints.kind, search: '' }), 'mobile');
-  // 安卓平板(标识里没有 Mobile)照旧按电脑算
+  // Android tablets (no Mobile in user agent) are still treated as desktop as before
   assert.equal(judgeDeviceKind({ ua: UA.androidChrome.replace(' Mobile', ''), uaData: null }).kind, 'desktop');
-  // 有 client hints 时仍以它为准
+  // Still takes precedence when client hints are present
   assert.equal(judgeDeviceKind({ ua: UA.androidChrome, uaData: { mobile: false } }).kind, 'desktop');
 });
 
 test('DK8 second screen on the LAN: a phone identity on a local page still gets the mobile app layout', () => {
-  // 2026-10-26 之前这里是 `online: false → 恒为桌面界面`,所以局域网里的手机拿不到手机版;
-  // 语义改成「界面跟身份走,不看文档服务在哪」(product/platforms.md「桌面应用」的「局域网里的第二块屏」)。
+  // Before 2026-10-26 this was `online: false → always desktop interface`, so phones on LAN could not
+  // get the mobile app; semantics changed to "UI follows identity, regardless of where document
+  // service is" (product/platforms.md "Desktop app", "Second screen on LAN").
   const phone = judgeDeviceKind({ ua: UA.androidChrome, uaData: { mobile: true } });
   assert.equal(phone.kind, 'phone');
   assert.equal(pickLayout({ kind: phone.kind, search: '?join=abc123' }), 'mobile', 'scanning the code with a phone to join a local project must give the mobile app layout');
   const pc = judgeDeviceKind({ ua: UA.desktopChrome, uaData: { mobile: false } });
   assert.equal(pickLayout({ kind: pc.kind, search: '?join=abc123' }), 'desktop', 'the desktop app\'s own window is still the desktop layout');
-  // 开发和验收用的强制参数在本机页面上也认
+  // Forced parameters for development and acceptance checks are also recognized on local pages
   assert.equal(pickLayout({ kind: pc.kind, search: '?editor&layout=mobile' }), 'mobile');
 });

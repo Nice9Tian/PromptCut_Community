@@ -1,20 +1,20 @@
 import { tr } from "../../i18n/index.ts";
 /**
- * 导出时因素材缺失被跳过的片段怎么告诉用户(`server/vite-plugin-export.ts` 的 `dropSkippedMediaClips`:
- * 没有哈希、地址为空 —— 打开项目后本机取不到文件、已标「(缺失)」的老素材 —— 所在的片段不进这次导出)。
- * 不静默:导出完成的对话框里列出这些素材(写法同打包保存的 `packMissingMessage`)。本模块不引别的模块,Node 单测直接 import。
+ * How to tell the user about clips skipped during export because media is missing (`dropSkippedMediaClips` in `server/vite-plugin-export.ts`:
+ * with no hash and an empty address (old media that this machine cannot fetch after opening the project, already marked "(missing)"), the clips they belong to are left out of this export).
+ * Not silent: the export-complete dialog lists this media (worded like `packMissingMessage` of pack-and-save). This module imports no other module, so Node unit tests can import it directly.
  */
 
 export interface ExportSkipped {
   id: string;
   name: string;
-  /** 这条素材在这次导出里被去掉的片段数 */
+  /** Number of clips of this media removed in this export */
   clips?: number;
 }
 
 const MISSING_PREFIX = tr("(missing) ");
 
-/** 回包里的 `skippedMedia` 整理成数组;不合格的条目丢掉 */
+/** Normalize `skippedMedia` in the response into an array; drop invalid entries */
 export function parseExportSkipped(raw: unknown): ExportSkipped[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -23,7 +23,7 @@ export function parseExportSkipped(raw: unknown): ExportSkipped[] {
     .filter((x) => x.id || x.name);
 }
 
-/** 导出完成时给用户的那句话:哪些素材因缺失被跳过(名字去重、去掉「(缺失) 」标记,太多时只列前面若干条);没有就回空串 */
+/** The message shown to the user when export completes: which media were skipped because they are missing (names deduplicated, the "(missing) " marker removed, only the first several listed if there are too many); an empty string if none */
 export function exportSkippedMessage(skipped: readonly ExportSkipped[], limit = 12): string {
 // i18n-allow: names in older projects carry the Chinese marker
   const names = [...new Set(skipped.map((m) => (m.name || m.id).replace(/^\((?:missing|缺失)\) /, "")))];

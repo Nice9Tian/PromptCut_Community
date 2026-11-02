@@ -1,14 +1,16 @@
 /**
  * node --test server/test/env-snapshot.test.mjs
  *
- * 诊断报告里服务端那一半的现场。
+ * Server-side state in the diagnostic report.
  *
- * 重点是**会话文件柜**:界面上的对话按项目走,而服务端接哪段历史取决于
- * localStorage 里那把会话 id,两者脱节时界面上一点症状都没有(见 81f255b)。
- * 报告要能把「这台机器上躺着几段历史、各几条」摆出来,这类串台才有物证。
+ * The key focus is the **session file cabinet**: chats in the UI are organized by project,
+ * while which history the server connects to depends on the session id in localStorage;
+ * when the two are disconnected, the UI shows no symptoms at all (see 81f255b).
+ * The report must expose "how many histories exist on this machine and how many entries each",
+ * providing hard evidence for this type of session mix-up.
  *
- * 同样重要的是它**不能报出对话内容** —— 用户点「诊断」是为了把报告发给我们,
- * 报告里多一句原话,就是多一次不该发生的外泄。
+ * Equally important: it **must not report chat content**: the user clicks "diagnose" to send
+ * the report to us, and every extra original word in the report is an unnecessary leak.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

@@ -1,8 +1,10 @@
 /**
- * 页面纯浏览器节点的让路补丁(M7 验收探针 A5 / A6 查出):播放、拖动时后台活的门关了,正在做的那一帧在舞台里被挡住,
- * 「当前帧做完再放回」就一直等不到 —— 既不出帧也不放回。让路之后当前帧 `YIELD_FRAME_MAX_MS` 之内做不完,就像页面隐藏那样
- * 中止它、立即放回(节拍 `tick()` 里判,时钟是注入的)。
- * 跑:node --test src/online/browserNode.test.mjs
+ * Yield patch for in-page pure browser nodes (found by M7 acceptance check probes A5 / A6): during
+ * playback and scrubbing, background live render gate is closed, and frame being worked on is blocked
+ * in stage; "finish current frame before releasing" never completes: neither outputting frames nor
+ * releasing. After yielding, if current frame cannot finish within `YIELD_FRAME_MAX_MS`, abort it and
+ * release immediately just like on page hide (checked in tick `tick()`, clock is injected).
+ * Run: node --test src/online/browserNode.test.mjs
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

@@ -2,14 +2,17 @@ import { useCallback, useRef } from "react";
 import type { PointerEvent, MouseEvent } from "react";
 
 /**
- * 「点遮罩关闭」的正确写法。
+ * The right way to write "click the backdrop to close".
  *
- * 直接给遮罩挂 onClick 有一个坑:用户在输入框里按下鼠标拖着选文字,松手时鼠标已经
- * 滑到了对话框外面 —— 浏览器把 click 派发给按下和松开两点的**共同祖先**,也就是遮罩,
- * 于是选个字就把窗口关了(Router / API 设置页实测)。
+ * Attaching onClick directly to the backdrop has a pitfall: the user presses the mouse in an input box
+ * and drags to select text, and by the time they release, the mouse has slid outside the dialog. The
+ * browser dispatches the click to the **common ancestor** of the press point and the release point,
+ * which is the backdrop, so selecting a word closes the window (observed on the Router / API settings
+ * page).
  *
- * 所以要求按下和松开都落在遮罩本身:pointerdown 时记一下目标是不是遮罩,click 时
- * 两样都对上才关。对话框内部的事件照旧 stopPropagation 也行,这里不依赖它。
+ * So both the press and the release are required to land on the backdrop itself: at pointerdown, note
+ * whether the target is the backdrop, and at click close only when both match. Events inside the dialog
+ * may still call stopPropagation as before, and nothing here relies on that.
  */
 export function useBackdropClose(onClose: () => void): {
   onPointerDown: (e: PointerEvent<HTMLElement>) => void;

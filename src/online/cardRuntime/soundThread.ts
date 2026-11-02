@@ -1,17 +1,22 @@
 /**
- * 声音线程的消息处理(`docs/plan/online-card-exec-contract.md` 3.5)。纯逻辑:模块表、怎么发消息都由创建者给,
- * 所以线程入口(`soundWorker.ts`)与单测用同一份。
+ * Message handling for the sound thread (`docs/plan/online-card-exec-contract.md` 3.5). Pure logic:
+ * module table and messaging methods are both supplied by the creator, so the thread entry
+ * (`soundWorker.ts`) and unit tests share the same implementation.
  *
- * 线程里有一个加载器(与舞台同一个 `createCardLoader`,模块表换成带占位的那一张)和一个求值引擎(`soundEngine.ts`)。
- * 舞台(`soundHost.ts`)发来三种消息:
+ * The thread contains a loader (the same `createCardLoader` as the stage, with the module table
+ * replaced by the one containing placeholders) and an evaluation engine (`soundEngine.ts`).
+ * The stage (`soundHost.ts`) sends three kinds of messages:
  *
  *   { t: "load", seq, bundles }                                → { t: "loaded", seq, results, audioCards, blocked }
- *   { t: "project", key, project }                             (不回;同一个 key 只发一次)
- *   { t: "render", id, key, nodeId, start, count, sampleRate } → { t: "block", id, samples }(缓冲区转移)或 { t: "error", id, message }
+ *   { t: "project", key, project }                             (no response; a given key is sent only once)
+ *   { t: "render", id, key, nodeId, start, count, sampleRate } → { t: "block", id, samples }(buffer transfer) or { t: "error", id, message }
  *
- * `audioCards`:载入成功、写了 `audio()` 的卡片 id —— 只有它们的声音能在线合成。`blocked`:入口键 → 原因,
- * 载入不成的(顶层碰了占位模块、引用了线程里没有的模块、抛错)。舞台把这两样报给编辑页面,分派与面板说明据此判。
- * 线程自己不设时限:超时由舞台 `terminate()`(死循环只有这样掐得断)。
+ * `audioCards`: card ids loaded successfully with `audio()` defined: only their audio can be
+ * synthesized online. `blocked`: entry key → reason, for failed loads (touched placeholder module
+ * at top level, referenced module absent from thread, threw error). The stage reports both to the
+ * editor page, which determines dispatch and panel descriptions from them.
+ * The thread itself sets no timeout: timeouts are handled by stage `terminate()` (an infinite loop
+ * can only be interrupted this way).
  */
 import type { CardDef } from "../../kernel/types.ts";
 import { createCardLoader, type CardLoaderOptions, type HostModules } from "./loader.ts";
@@ -34,11 +39,11 @@ export interface SoundThreadOptions {
   host: HostModules;
   compile?: CardLoaderOptions["compile"];
   post: (message: SoundThreadOut, transfer?: Transferable[]) => void;
-  /** 测试换掉引擎 */
+  /** Swap out engine for tests */
   engine?: (getCard: (id: string) => CardDef<any> | undefined) => SoundEngine;
 }
 
-/** 手里留几份项目(同一段声音连着求很多块,项目只传一次;编辑中项目常换,留最近的几份) */
+/** How many project copies to retain (evaluating many blocks in a row for the same audio sends the project only once; projects change frequently during editing, so keep the most recent copies) */
 export const SOUND_PROJECTS_KEPT = 4;
 
 const firstLine = (err: unknown) => String((err as Error)?.message ?? err).split("\n")[0].slice(0, 240);
@@ -82,7 +87,7 @@ export function createSoundThread(opts: SoundThreadOptions): { handle(message: S
         try {
           if (!projects.has(message.key)) throw new Error("The sound thread does not have this project revision");
           const samples = await engine.render({ project: projects.get(message.key), nodeId: message.nodeId, start: message.start, count: message.count, sampleRate: message.sampleRate });
-          // 复制一份再转移:卡片代码可能回的是它自己留着的缓冲区的视图
+          // Copy before transferring: card code might return a view of a buffer it retains
           const out = new Float32Array(samples);
           opts.post({ t: "block", id, samples: out }, [out.buffer]);
         } catch (err) {

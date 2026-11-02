@@ -1,47 +1,53 @@
 /**
- * 聊天页(`ChatView.tsx`)跟 Agent 之间的那层约定:消息、能不能发、发、停、要给人看的那一句。
+ * The contract layer between the chat page (`ChatView.tsx`) and the Agent: messages, whether sending is
+ * possible, send, stop, and the one sentence to show to the user.
  *
- * 氛围式有两种 Agent 接入(`user-workflow.md`「Agent 接入方式」),聊天页对两种一视同仁:
- *   - **云端**:在线浏览器里那一种,`useVibeCloud.ts`(底下是 `src/ai/cloud/useCloud.ts`,和编辑器右栏、手机版同一套);
- *   - **CLI / API**:桌面版那一种,`useVibeLocal.ts`(底下是 `src/ai/useAiChat.ts`,和编辑界面 AI 栏同一套)。
+ * Vibe mode has two kinds of Agent connection (`user-workflow.md` "Agent connection types"), and the
+ * chat page treats both alike:
+ *   - **Cloud**: the one in the online browser, `useVibeCloud.ts` (underneath is
+ *     `src/ai/cloud/useCloud.ts`, the same set as the editor's right rail and the mobile app);
+ *   - **CLI / API**: the one on the desktop app, `useVibeLocal.ts` (underneath is `src/ai/useAiChat.ts`,
+ *     the same set as the AI panel of the editor).
  *
- * 所以聊天页拿的是本接口,不是其中某一种的具体类型 —— 桌面版没有账号、没有共有 / 私有、没有告知托管方,
- * 这些在本接口里都退化成「没有」(`me` 为 null、`consent.open` 恒假),聊天页照样跑。
+ * So the chat page takes this interface rather than the concrete type of either one: the desktop app has
+ * no account, no shared / private, and no host notice, and all of these degrade to "none" in this
+ * interface (`me` is null, `consent.open` is always false), and the chat page runs just the same.
  */
 import type { ChatMessage } from "../ai/types";
 import type { CloudSender } from "../ai/chatTypes";
 
 export interface VibeAgent {
-  /** 这条对话本身。字段名沿用云端那一套,本机的照同样的形状填 */
+  /** The chat itself. Field names follow the cloud's set, and the local one is filled in with the same shape */
   chat: {
     messages: readonly ChatMessage[];
-    /** 聊天页用它当 key:换对话时清掉没发出去的草稿 */
+    /** The chat page uses it as a key: when the chat changes, the unsent draft is cleared */
     conversationId: string;
-    /** 共有对话里别人发的那条标是谁发的;本机 Agent 没有别人,给 undefined */
+    /** In a shared chat, a message sent by someone else is marked with who sent it; the local Agent has no one else, so give undefined */
     view: { senders?: Record<string, CloudSender> };
-    /** 历史读回来了没有。开始页带过来的那句话要等它为真才发(免得发进一条还没对上的对话) */
+    /** Whether the history has been read back. The sentence carried over from the start page must wait for it to be true before being sent (so it is not sent into a chat that has not been matched up yet) */
     history: { loaded: boolean };
   };
-  /** 「我」是谁(共有对话里判哪条是别人发的);本机 Agent 没有账号,是 null */
+  /** Who "I" am (used in a shared chat to decide which message was sent by someone else); the local Agent has no account, so it is null */
   me: string | null;
-  /** 此刻连着的项目;没连上是 null。聊天页据此决定要不要把 `whyNot` 显示在输入框下面 */
+  /** The project currently connected; null if not connected. The chat page uses it to decide whether to show `whyNot` under the input box */
   projectId: string | null;
   canSend: boolean;
   whyNot: string | null;
   streaming: boolean;
   canStop: boolean;
-  /** 排在后面等着的消息条数 */
+  /** Number of messages queued up waiting behind */
   queued: number;
-  /** 云端的执行服务此刻没在接活(账号模式、`info.executorMounted` 不为真):消息会持久排着,等执行服务来了再跑。
-   * 只有云端有;本机 Agent 的 Agent 就在本机,恒为假 */
+  /** The cloud execution service is not taking jobs right now (account mode, `info.executorMounted` is
+   * not true): messages stay queued persistently and run once the execution service arrives.
+   * Only the cloud has this; the local Agent runs on this machine, so it is always false */
   waitingExecutor: boolean;
-  /** 告知托管方能读(`product/agent.md`)。只有云端有;本机 Agent 恒为关 */
+  /** Host-can-read notice (`product/agent.md`). Only the cloud has it; the local Agent is always off */
   consent: { open: boolean; pending: boolean; error: string | null; accept: () => void; reject: () => void };
   send: (text: string) => Promise<boolean>;
   stop: () => Promise<void>;
-  /** 顶上那一条要给人看的话(连接断了、开关关着、发送失败的原因) */
+  /** The one line at the top that is meant to be shown to people (connection lost, switch off, reason a send failed) */
   banner: string | null;
   clearBanner: () => void;
-  /** 输入框下面那一行的兜底说明:云端说「关掉还在跑」,本机说的是另一回事,所以由实现方给 */
+  /** Fallback description for the line under the input box: the cloud says "Keeps running after you close it", while the local one says something different, so the implementation supplies it */
   hint: string;
 }

@@ -1,37 +1,53 @@
 /**
- * 仅供测试，生产代码不得引用。
+ * For test use only; production code must not reference this.
  *
- * 最小的内存 IndexedDB 桩（C10 契约测试用，`docs/plan/c10-contract.md` 第 4 节）。仓库没有 `fake-indexeddb`，
- * 按任务书不引新依赖，这里自写一份够 L2 用的子集：
+ * Minimal in-memory IndexedDB stub (for C10 contract tests, `docs/plan/c10-contract.md` section 4).
+ * The repository does not have `fake-indexeddb`, and per the task brief no new dependencies are
+ * introduced, so a subset sufficient for L2 is written here:
  *
- * - `IDBFactory.open / deleteDatabase / databases`，版本升级走 `onupgradeneeded`（带 `versionchange` 事务）；
- * - 库：`objectStoreNames`、`createObjectStore / deleteObjectStore`（只在升级事务里）、`transaction(names, mode)`、`close`；
- * - 表：`put / add / get / getAll / getAllKeys / getKey / delete / clear / count / openCursor / openKeyCursor / createIndex / index`，
- *   行内键（`keyPath`，字符串或字符串数组）、行外键、`autoIncrement`；
- * - 索引：`get / getAll / getAllKeys / count / openCursor / openKeyCursor`（按当时的数据现算）；
- * - 游标：`continue / advance / delete / update`；
- * - `IDBKeyRange.only / lowerBound / upperBound / bound`；
- * - 事务：请求按序在后续的宏任务里执行（`setImmediate`），成功回调及其微任务期间事务是活的，之后没有新请求就提交（`complete`）；
- *   请求出错时先对请求派 `error`，没被 `preventDefault` 就冒泡到事务的 `error`、再中止事务（`abort`，`tx.error` 是那个错误），
- *   写入回滚。事件同时支持 `onxxx` 与 `addEventListener`。
+ * - `IDBFactory.open / deleteDatabase / databases`, version upgrades go through `onupgradeneeded`
+ *   (with a `versionchange` transaction);
+ * - Database: `objectStoreNames`, `createObjectStore / deleteObjectStore` (upgrade transactions
+ *   only), `transaction(names, mode)`, `close`;
+ * - Store:
+ *   `put / add / get / getAll / getAllKeys / getKey / delete / clear / count / openCursor / openKeyCursor / createIndex / index`,
+ *   inline keys (`keyPath`, string or string array), out-of-line keys, `autoIncrement`;
+ * - Index: `get / getAll / getAllKeys / count / openCursor / openKeyCursor` (computed on the fly
+ *   from current data);
+ * - Cursor: `continue / advance / delete / update`;
+ * - `IDBKeyRange.only / lowerBound / upperBound / bound`;
+ * - Transaction: requests execute sequentially in subsequent macrotasks (`setImmediate`); during
+ *   the success callback and its microtasks the transaction remains active, committing
+ *   (`complete`) afterward if no new requests are queued; on request error, `error` is first
+ *   dispatched to the request, and if not `preventDefault`ed bubbles to the transaction's `error`,
+ *   then aborts the transaction (`abort`, where `tx.error` is that error), rolling back writes.
+ *   Events support both `onxxx` and `addEventListener`.
  *
- * # 配额（第 4 节「写入遇到 QuotaExceededError」）
+ * # Quotas (section 4 "Write encounters QuotaExceededError")
  *
- * `new FakeIDBFactory({ quotaBytes, quotaMode })`：
- * - `quotaBytes`：全部库的记录字节数之和的上限（值与键按 `sizeOf` 算，字节类按 `byteLength` / `size`），缺省不限；
- * - `quotaMode: 'request'`：超额的那一条写请求当场出错（请求 `error` → 事务 `error` → 事务 `abort`）；
- *   `quotaMode: 'abort'`：请求照常成功，提交时整个事务中止，只派事务的 `abort`（`tx.error` 为 `QuotaExceededError`），
- *   不派任何 `error` 事件。两种都真有（Chrome 多见后一种），契约要求 `error` 与 `abort` 都接。
- * - `factory.forceQuota = true`：此后凡是含写入（`put` / `add` / `update`）的事务一律按配额错误失败（删除照常成功），
- *   用来造「回收之后仍失败」。
+ * `new FakeIDBFactory({ quotaBytes, quotaMode })`:
+ * - `quotaBytes`: upper limit on total record bytes across all databases (values and keys computed
+ *   via `sizeOf`, byte classes via `byteLength` / `size`), unlimited by default;
+ * - `quotaMode: 'request'`: the write request that exceeds the quota fails immediately (request
+ *   `error` → transaction `error` → transaction `abort`);
+ *   `quotaMode: 'abort'`: requests succeed as usual, but on commit the entire transaction is
+ *   aborted, dispatching only the transaction's `abort` (`tx.error` is `QuotaExceededError`)
+ *   without dispatching any `error` events. Both genuinely exist (Chrome often exhibits the
+ *   latter); the contract requires handling both `error` and `abort`.
+ * - `factory.forceQuota = true`: from then on, all transactions containing writes (`put` / `add` /
+ *   `update`) fail with a quota error (deletions still succeed), used to simulate "still fails after
+ *   cleanup".
  *
- * # 观测
+ * # Observability
  *
- * `factory.log`：每个事务一条 `{ id, db, mode, stores, ops: [{ op, store, key, bytes }], outcome, error }`，
- * `outcome` 为 `complete` / `abort`；`factory.usage()` 当前字节数；`factory.dbNames()`；`factory.storeNamesOf(db)`。
+ * `factory.log`: one `{ id, db, mode, stores, ops: [{ op, store, key, bytes }], outcome, error }`
+ * per transaction, where `outcome` is `complete` / `abort`; `factory.usage()` current byte count;
+ * `factory.dbNames()`; `factory.storeNamesOf(db)`.
  *
- * 字节类的值（`ArrayBuffer`、TypedArray、`DataView`、`Blob`）按引用存、不复制：测试用同一块缓冲的不同长度视图
- * 造出几十 MiB 的「块」而不真的占那么多内存。其余的值用 `structuredClone` 深拷贝（里面嵌的字节类同样按引用）。
+ * Byte-like values (`ArrayBuffer`, TypedArray, `DataView`, `Blob`) are stored by reference without
+ * copying: tests use views of different lengths on the same buffer to create tens of MiB of
+ * "chunks" without actually consuming that much memory. Other values are deep-cloned with
+ * `structuredClone` (embedded byte-like objects are likewise kept by reference).
  */
 
 const MiB = 1024 * 1024;
@@ -50,7 +66,7 @@ const domError = (name, message = name) => {
   }
 };
 
-/* ------------------------------------------------------------------ 事件 */
+/* ------------------------------------------------------------------ Events */
 
 class Target {
   constructor() {
@@ -67,7 +83,7 @@ class Target {
     const i = list.indexOf(fn);
     if (i >= 0) list.splice(i, 1);
   }
-  /** 派一个事件：先 `on<type>` 再监听器；回调里抛的错不影响派发（与浏览器一样只报告） */
+  /** Dispatches an event: `on<type>` first, then listeners; callback errors do not affect dispatch (reported only, matching browser behavior) */
   _fire(event) {
     event.currentTarget = this;
     const handler = this[`on${event.type}`];
@@ -100,7 +116,7 @@ class FakeEvent {
   stopImmediatePropagation() { this._stopped = true; this._stopImmediate = true; }
 }
 
-/* ------------------------------------------------------------------ 键 */
+/* ------------------------------------------------------------------ Keys */
 
 const typeRank = (k) => {
   if (typeof k === 'number') return 1;
@@ -177,11 +193,11 @@ const toRange = (q) => {
   return FakeIDBKeyRange.only(q);
 };
 
-/* ------------------------------------------------------------------ 值 */
+/* ------------------------------------------------------------------ Values */
 
 const isBytes = (v) => v instanceof ArrayBuffer || ArrayBuffer.isView(v) || (typeof Blob !== 'undefined' && v instanceof Blob);
 
-/** 深拷贝，字节类按引用（见文件头） */
+/** Deep copy, byte classes by reference (see file header) */
 function cloneValue(v, seen = new Map()) {
   if (v === null || typeof v !== 'object') {
     if (typeof v === 'function' || typeof v === 'symbol') throw domError('DataCloneError');
@@ -210,7 +226,7 @@ function cloneValue(v, seen = new Map()) {
   }
   const proto = Object.getPrototypeOf(v);
   if (proto !== Object.prototype && proto !== null) {
-    // 别的类实例（比如 Error）交给 structuredClone，它不认的就报 DataCloneError
+    // Other class instances (such as Error) are passed to structuredClone; it throws DataCloneError for unrecognized ones
     try { return structuredClone(v); } catch { throw domError('DataCloneError'); }
   }
   const out = {};
@@ -222,7 +238,7 @@ function cloneValue(v, seen = new Map()) {
   return out;
 }
 
-/** 一条记录占多少字节（配额与观测用；近似即可，字节类取真实长度） */
+/** Bytes occupied by a record (for quota and observability; an approximation is fine, byte classes take their actual length) */
 export function sizeOf(v) {
   if (v === null || v === undefined) return 0;
   if (typeof v === 'string') return v.length * 2;
@@ -260,7 +276,7 @@ function injectKey(value, keyPath, key) {
   cur[parts[parts.length - 1]] = key;
 }
 
-/* ------------------------------------------------------------------ 列表 */
+/* ------------------------------------------------------------------ Lists */
 
 class StringList {
   constructor(names) {
@@ -273,7 +289,7 @@ class StringList {
   [Symbol.iterator]() { return this._names[Symbol.iterator](); }
 }
 
-/* ------------------------------------------------------------------ 请求 */
+/* ------------------------------------------------------------------ Requests */
 
 class FakeIDBRequest extends Target {
   constructor(source, transaction) {
@@ -304,9 +320,9 @@ class FakeIDBOpenDBRequest extends FakeIDBRequest {
   }
 }
 
-/* ------------------------------------------------------------------ 数据 */
+/* ------------------------------------------------------------------ Data */
 
-/** 一个库的真实数据：name → { keyPath, autoIncrement, next, records: Map<serialKey, { key, value }>, indexes: Map } */
+/** Real database data: name → { keyPath, autoIncrement, next, records: Map<serialKey, { key, value }>, indexes: Map } */
 class DbData {
   constructor(name) {
     this.name = name;
@@ -328,7 +344,7 @@ function sortedRecords(store) {
   return [...store.records.values()].sort((a, b) => cmp(a.key, b.key));
 }
 
-/* ------------------------------------------------------------------ 事务 */
+/* ------------------------------------------------------------------ Transactions */
 
 let txSeq = 0;
 
@@ -347,11 +363,11 @@ class FakeIDBTransaction extends Target {
     this._active = true;
     this._state = 'active'; // active → committing → finished
     this._undo = new Map(); // `${store}\u0000${serial}` → { store, sk, prev }
-    this._storeUndo = null; // 升级事务里建表、删表的回滚
+    this._storeUndo = null; // Rollback for creating and deleting stores in upgrade transactions
     this._log = { id: ++txSeq, db: db.name, mode, stores: [...names].sort(), ops: [], outcome: null, error: null };
     db._factory.log.push(this._log);
     this._requestError = null;
-    // 建事务的这个任务（连同它的微任务）结束后，事务变成不活跃；没排请求就直接提交
+    // Once the task creating the transaction (along with its microtasks) ends, the transaction becomes inactive; if no requests were queued, it commits immediately
     setImmediate(() => { this._active = false; this._pump(); });
   }
 
@@ -382,7 +398,7 @@ class FakeIDBTransaction extends Target {
     if (this._state === 'finished' || !this._active) throw domError('TransactionInactiveError', 'The transaction is not active (requests can only be issued in the tick where the transaction was created or in the callback of the previous request)');
   }
 
-  /** 排一个请求；`run()` 回结果或抛 DOMException */
+  /** Queues a request; `run()` returns the result or throws a DOMException */
   _request(source, run) {
     this._assertActive();
     const req = new FakeIDBRequest(source, this);
@@ -416,7 +432,7 @@ class FakeIDBTransaction extends Target {
       this._active = true;
       const ev = new FakeEvent('error', req);
       req._fire(ev);
-      // 冒泡到事务与库
+      // Bubbles to transaction and database
       if (!ev._stopped) this._fire(Object.assign(ev, { currentTarget: this }));
       if (!ev._stopped) this.db._fire(Object.assign(ev, { currentTarget: this.db }));
       this._running = false;
@@ -430,7 +446,7 @@ class FakeIDBTransaction extends Target {
       req._fire(new FakeEvent('success', req));
       this._running = false;
     }
-    // 回调里排的微任务跑完之后事务才变不活跃，再接着跑下一个请求
+    // The transaction becomes inactive only after microtasks queued in the callback finish, then the next request runs
     setImmediate(() => { this._active = false; this._pump(); });
   }
 
@@ -449,7 +465,7 @@ class FakeIDBTransaction extends Target {
     this._fire(new FakeEvent('complete', this));
   }
 
-  /** 中止：回滚、记 error、派 abort（请求出错冒泡时事务的 error 事件已经派过） */
+  /** Abort: roll back, record error, dispatch abort (when a request error bubbles up, the transaction's error event has already been dispatched) */
   _abort(error, byUser, { silentError = false } = {}) {
     if (this._state === 'finished') return;
     this._state = 'finished';
@@ -464,7 +480,7 @@ class FakeIDBTransaction extends Target {
     this.error = byUser ? null : error;
     this._log.outcome = 'abort';
     this._log.error = error?.name ?? String(error);
-    // 还没跑的请求一律以 AbortError 失败（不再冒泡）
+    // Unexecuted requests all fail with AbortError (no longer bubble)
     for (const { req } of this._queue.splice(0)) {
       req.readyState = 'done';
       req._error = domError('AbortError', 'The transaction was aborted');
@@ -477,7 +493,7 @@ class FakeIDBTransaction extends Target {
   }
 }
 
-/* ------------------------------------------------------------------ 游标 */
+/* ------------------------------------------------------------------ Cursors */
 
 class FakeIDBCursor {
   constructor(tx, source, req, { range, direction = 'next', keyOnly = false, index = null }) {
@@ -519,7 +535,7 @@ class FakeIDBCursor {
     return rows;
   }
 
-  /** 找当前位置之后的下一条（可带目标键）；回 null 表示到头 */
+  /** Finds the next entry after the current position (optional target key); returns null when reaching the end */
   _step(target, count = 1) {
     const rows = this._entries();
     const fwd = !this.direction.startsWith('prev');
@@ -585,7 +601,7 @@ class FakeIDBCursor {
   }
 }
 
-/* ------------------------------------------------------------------ 表与索引 */
+/* ------------------------------------------------------------------ Stores and indexes */
 
 class FakeIDBObjectStore {
   constructor(tx, name) {
@@ -803,7 +819,7 @@ class FakeIDBIndex {
   openKeyCursor(query, direction) { return this.objectStore._cursor(query, direction, true, this._def); }
 }
 
-/* ------------------------------------------------------------------ 库 */
+/* ------------------------------------------------------------------ Databases */
 
 class FakeIDBDatabase extends Target {
   constructor(factory, data) {
@@ -858,7 +874,7 @@ class FakeIDBDatabase extends Target {
   }
 }
 
-/* ------------------------------------------------------------------ 工厂 */
+/* ------------------------------------------------------------------ Factory */
 
 export class FakeIDBFactory {
   constructor({ quotaBytes = Infinity, quotaMode = 'request' } = {}) {
@@ -878,7 +894,7 @@ export class FakeIDBFactory {
 
   dbNames() { return [...this._dbs.keys()].sort(); }
   storeNamesOf(name) { return [...(this._dbs.get(name)?.stores.keys() ?? [])].sort(); }
-  /** 某张表里全部记录（观测用，不经事务） */
+  /** All records in a store (for observability, bypasses transactions) */
   records(dbName, storeName) {
     const store = this._dbs.get(dbName)?.stores.get(storeName);
     return store ? sortedRecords(store).map((r) => ({ key: r.key, value: r.value, bytes: r.bytes })) : [];
@@ -961,7 +977,7 @@ export class FakeIDBFactory {
   }
 }
 
-/** 把桩装到全局（`indexedDB`、`IDBKeyRange`），回一个还原函数 */
+/** Installs stubs onto globals (`indexedDB`, `IDBKeyRange`), returning a restore function */
 export function installFakeIndexedDB(factory) {
   const keys = ['indexedDB', 'IDBKeyRange'];
   const saved = keys.map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);

@@ -1,29 +1,34 @@
 /**
- * 云端 Agent 动作前的最后一道:**这个编号此刻指的还是清单里那个元素吗,点下去会不会落到别的元素上**。
+ * Final guard before Cloud Agent acts: **does this ID still point to the element in the manifest at
+ * this moment, and will clicking it hit another element?**
  *
- * 坐标 → 编号用桌面版那一份(`server/web/hit.mjs` 的 `resolveAt`:名字对不上、位置附近有多个候选都不替模型赌)。
- * 本文件加的是桌面版没有的「对指纹」:
+ * Coordinates → ID uses the desktop app implementation (`resolveAt` in `server/web/hit.mjs`:
+ * never gambles for the model if name mismatches or multiple candidates exist nearby).
+ * This file adds "fingerprint verification" not present in the desktop app:
  *
- *   - `gone`     页面上已经没有带这个编号的元素(跳转、重绘);
- *   - `changed`  元素还在,但标签或名字和出清单时不一样了(列表复用了节点、内容被换掉);
- *   - `moved`    按坐标点的时候,元素已经不在出图时的位置(图上看到的和现在不是一回事);
- *   - `offscreen` 元素滚出了视口;
- *   - `covered`  元素上面盖着别的东西,点下去会打在上面那层身上。
+ *   - `gone`      The element with this ID is no longer on the page (navigation, repaint);
+ *   - `changed`   The element exists, but tag or name differs from manifest generation (list reused node, content replaced);
+ *   - `moved`     When clicking by coordinates, element is no longer at capture position (seen in image differs from now);
+ *   - `offscreen` Element has scrolled out of the viewport;
+ *   - `covered`   Element is covered by something else; clicking would hit the overlaying layer.
  *
- * 任何一条都不点,回一句说得清的话让模型重新 web_view。点击用 `locate` 回的那个点(已核过这个点最上面就是该元素)。
+ * Do not click for any of these; return a clear message prompting the model to re-run web_view.
+ * Clicks use the point returned by `locate` (verified that the element is top-most at this point).
  *
- * **给模型看的句子(`error`)都是这里写死的,里面不拼页面上的字。** 页面上的字(盖住元素的那层写着什么、候选元素叫什么)
- * 只放在单独的字段里(`coveredBy`、`candidates`、`seen`),带这类字段的结果一律带 `dataNotice`——
- * 网页可以把「忽略之前的要求」写进任何一个元素的名字里,不能让它混进工具自己说的话。
+ * **Sentences shown to the model (`error`) are hardcoded here and never interpolate page text.**
+ * Page text (what is written on the obscuring layer, candidate element names) is only placed in
+ * separate fields (`coveredBy`, `candidates`, `seen`), and results containing such fields always
+ * include `dataNotice`: web pages can put "ignore previous instructions" into any element name,
+ * and it must not contaminate what the tool itself says.
  */
 import { resolveAt } from '../hit.mjs';
 
 export { resolveAt };
 
-/** 按坐标点时,元素相对出图时最多许挪多少(页面像素)。只挡「页面动过」,不挡亚像素抖动 */
+/** Max allowed movement (page px) relative to capture time when clicking by coords. Only blocks "page moved", not subpixel jitter */
 export const MOVE_TOLERANCE_PX = 6;
 
-/* c8 ignore start — 页面内执行 */
+/* c8 ignore start - Executed inside page */
 function probe(u, mark, positional, tolerance) {
   const el = document.querySelector(`[data-pcuid="${u}"]`);
   if (!el || !el.isConnected) return { ok: false, reason: 'gone' };
@@ -31,7 +36,8 @@ function probe(u, mark, positional, tolerance) {
   const name = (el.getAttribute('aria-label') || el.innerText || el.value
     || el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('alt') || '')
     .trim().replace(/\s+/g, ' ').slice(0, 40);
-  // 输入框的名字会随它的值变(没有 aria-label 时名字取的就是 value);输入框只比标签,不比名字
+  // Input box name changes with its value (when aria-label is absent, name is taken from value);
+  // input boxes only compare tag, not name
   const isField = tag === 'input' || tag === 'textarea' || tag === 'select' || el.isContentEditable;
   if (tag !== mark.t || (!isField && name !== mark.n)) return { ok: false, reason: 'changed' };
   const r = el.getBoundingClientRect();
@@ -55,7 +61,8 @@ function probe(u, mark, positional, tolerance) {
   for (const [x, y] of points) {
     const top = document.elementFromPoint(x, y);
     if (top && (top === el || el.contains(top))) {
-      // 不代填的那几类:口令、一次性验证码、验证码、卡号。只看这个元素自己的属性
+      // Categories not autofilled: passphrase, OTP, verification code, card number. Only inspect this
+      // element's own attributes
       let secret = null;
       const type = (el.getAttribute('type') || '').toLowerCase();
       const auto = (el.getAttribute('autocomplete') || '').toLowerCase();
@@ -84,11 +91,11 @@ function focusOn(u) {
   const el = document.querySelector(`[data-pcuid="${u}"]`);
   if (!el) return false;
   const inside = () => document.activeElement === el || el.contains(document.activeElement);
-  if (!inside()) { try { el.focus(); } catch { /* 聚不上就算了,下面如实回 */ } }
+  if (!inside()) { try { el.focus(); } catch { /* If focus fails, let it be; report truthfully below */ } }
   return inside();
 }
 
-/** 只看不动:焦点此刻是不是还在这个元素上、它此刻是不是不代填的那几类 */
+/** Inspect only: whether focus is still on this element, and whether it belongs to non-autofill categories */
 function focusProbe(u) {
   const el = document.querySelector(`[data-pcuid="${u}"]`);
   if (!el || !el.isConnected) return { ok: false, focused: false, secret: null };
@@ -114,28 +121,29 @@ function clearField(u) {
 /* c8 ignore stop */
 
 /**
- * 核对编号此刻指的还是那个元素,并给出点哪里。
+ * Verify that the ID still points to that element right now, and return where to click.
  *
  * @param {import('puppeteer').Page} page
- * @param {string} u 带版本的编号
- * @param {{ t: string, n: string, box: number[] }} mark 出清单时服务端留的指纹
- * @param {{ positional?: boolean }} [o] 按坐标点的(要再核位置没动)
+ * @param {string} u Versioned ID
+ * @param {{ t: string, n: string, box: number[] }} mark Fingerprint recorded by server when generating manifest
+ * @param {{ positional?: boolean }} [o] Clicking by coordinates (needs re-verifying position has not moved)
  */
 export async function locate(page, u, mark, { positional = false } = {}) {
   return page.evaluate(probe, u, mark, positional, MOVE_TOLERANCE_PX);
 }
 
-/** 把焦点放到这个元素上并回「放上了没有」(打字之前用;放不上就不打,免得字进了别处) */
+/** Focus this element and return "whether focused" (used before typing; skip typing if focus fails to avoid misentry) */
 export const focusElement = (page, u) => page.evaluate(focusOn, u);
 
-/** 焦点此刻还在不在这个元素上、它此刻是不是口令这类字段(打字的前后与中途核;只看不动) */
+/** Whether focus remains on this element and whether it is a passphrase-like field (checked before, during, after typing; inspect only) */
 export const focusState = (page, u) => page.evaluate(focusProbe, u);
 
-/** 清空输入框(与桌面版相同的清法) */
+/** Clear input box (same clearing logic as desktop app) */
 export const clearElement = (page, u) => page.evaluate(clearField, u);
 
 /**
- * 编号用不了时给模型看的话。全是固定句子:`u` 是模型自己传来的编号(已经按 `r<数>e<数>` 的形状核过,或者就不带进句子)。
+ * Messages shown to model when an ID cannot be used. All fixed sentences: `u` is the ID passed by
+ * the model (already validated against `r<number>e<number>` format, or omitted from the sentence).
  */
 export function explainStale(reason, { u } = {}) {
   const id = typeof u === 'string' && /^r\d{1,9}e\d{1,4}$/.test(u) ? u : 'this id';
@@ -164,8 +172,9 @@ export function explainStale(reason, { u } = {}) {
 }
 
 /**
- * 按坐标找元素没找准时给模型看的话(桌面版 `explain` 的云端版:句子固定,候选元素的名字不拼进句子,留在 `candidates` 里)。
- * @param {{ reason: string }} res `resolveAt` 的失败结果
+ * Messages shown to model when finding elements by coordinates misses (cloud version of desktop
+ * app `explain`: sentences are fixed, candidate element names are not interpolated, left in `candidates`).
+ * @param {{ reason: string }} res Failure result of `resolveAt`
  */
 export function explainPick(res) {
   switch (res?.reason) {
@@ -180,7 +189,7 @@ export function explainPick(res) {
   }
 }
 
-/** 不代填的字段 → 给模型看的话 */
+/** Non-autofill fields → message shown to the model */
 export function explainSecret(kind) {
   const what = { password: 'password', code: 'verification code', card: 'bank card details' }[kind] ?? 'account credentials';
   return `This is an input field for ${what}. The Cloud Agent does not fill in passwords, verification codes or any account credentials, so nothing was entered.`

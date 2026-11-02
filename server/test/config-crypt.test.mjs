@@ -1,4 +1,4 @@
-// API Key 落盘加密。用 PROMPTCUT_AI_CONFIG 指到临时文件,不碰真配置。
+// API Key encrypted on disk. Point PROMPTCUT_AI_CONFIG to a temporary file, not touching real config.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -53,7 +53,7 @@ test("The ai.json written to disk has no plaintext key, yet reading it back give
   const previous = process.env.PROMPTCUT_AI_CONFIG;
   process.env.PROMPTCUT_AI_CONFIG = file;
   try {
-    // 环境变量要在模块读取路径之前生效,所以这里才 import
+    // Environment variables must take effect before the module reads paths, so import here
     const { writeConfig, readConfig, publicConfig } = await import(
       `../ai-config.mjs?cfg=${encodeURIComponent(file)}`
     );
@@ -61,7 +61,7 @@ test("The ai.json written to disk has no plaintext key, yet reading it back give
 
     const onDisk = fs.readFileSync(file, "utf8");
     assert.ok(!onDisk.includes(KEY), "The plaintext key was written to disk");
-    // Key 现在单独存在 keys/custom.key 里,ai.json 只留 source
+    // Key is now stored separately in keys/custom.key; ai.json keeps only source
     assert.ok(!onDisk.includes("PCENC1."), "ai.json should no longer contain ciphertext");
     const keyFile = fs.readFileSync(path.join(dir, "keys", "custom.key"), "utf8");
     assert.ok(keyFile.startsWith("PCENC1.") && !keyFile.includes(KEY), "The key file should contain ciphertext");

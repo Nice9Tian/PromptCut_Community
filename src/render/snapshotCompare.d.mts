@@ -15,7 +15,7 @@ export function valuesCloseEnough(a: string, b: string, tolerance?: number): boo
 
 export interface SnapshotCompareResult {
   same: boolean;
-  /** 给诊断和报告看的，不参与判定 */
+  /** For diagnostics and reports; does not participate in determination */
   reason?: string;
   at?: number;
   expected?: string;

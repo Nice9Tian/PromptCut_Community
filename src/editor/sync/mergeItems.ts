@@ -1,23 +1,33 @@
 /**
- * 「冲突合并」窗口的逐项合并引擎(纯函数,Node 单测可载入,不碰 store、不碰网络)。
+ * The per-item merge engine of the "conflict merge" window (pure functions, loadable in Node unit tests,
+ * touches neither the store nor the network).
  *
- * 语义:`docs/semantics/workflow/editing.md`「撤销、重做」的「两级可勾选列表」,
- * `docs/semantics/product/document-service.md`「冲突」(2026-10-22 用户定)。
+ * Semantics: `docs/semantics/workflow/editing.md`, "Undo, redo", the "two-level checkable list";
+ * `docs/semantics/product/document-service.md`, "Conflicts" (user decision, 2026-10-22).
  *
- * - **一级(「东西」)**:时间轴上的每个片段(卡片段、素材段、剪辑段)、每条字幕、项目设置,各算一条;
- *   序列、剪辑、转场、素材与各效果库里的条目同样按「东西」各算一条(不然它们的改动无处可列)。
- * - **二级(属性)**:这样东西被改的各个属性。比较的是「基准 → 我这边」两份,所以同一个属性改了几次只出一条;
- *   先改长度、又改透明度是两条。片段的开始与结束合成一条「时间」,换了所在序列另算一条「所在序列」。
- * - **增删也算**:我删了 / 我新增了各是一条整件的项(属性记为 `""`);我改了而云端已删除,各属性照列、都算冲突,
- *   「合并」时连同我的修改恢复回来。
- * - **冲突与「云端现在是什么」不入表**:每次显示、每次点「合并」都拿当时的项目现算(「每次点合并时重新核对」)。
+ * - **Level 1 ("things")**: each clip on the timeline (card clip, media clip, cut segment), each caption
+ *   line, and the project settings count as one entry each; entries in tracks, cuts, transitions, media and
+ *   the effects libraries likewise count as one "thing" each (otherwise their changes would have nowhere to
+ *   be listed).
+ * - **Level 2 (properties)**: the properties of that thing that were changed. The comparison is between two
+ *   copies, "baseline → my side", so a property changed several times yields only one entry; changing the
+ *   length and then the opacity gives two. A clip's start and end are merged into one "time"; a change of
+ *   track is counted separately as "track".
+ * - **Additions and deletions count too**: "I deleted" / "I added" are each one whole-thing item (the
+ *   property is recorded as `""`); if I changed it and the cloud has deleted it, the properties are still
+ *   listed and all count as conflicts, and on "merge" it is restored together with my changes.
+ * - **Conflicts and "what the cloud has now" are not stored in the list**: each display and each click on
+ *   "merge" computes them from the project at that moment ("recheck on every merge click").
  *
- * 待合并表里的一条记录是一样东西(`MergeThing`),里面带它的各个属性(`MergeProp`)。
- * 表按「项目 × 用户」存在文档服务(`server/docservice/modules/pending-merge.mjs`),本文件只管内容。
+ * An entry in the pending merge list is one thing (`MergeThing`), carrying its properties (`MergeProp`).
+ * The list is stored per "project × user" in the document service
+ * (`server/docservice/modules/pending-merge.mjs`); this file handles only the content.
  *
- * **给 0.7.20「撤销冲突」留的口子**:每条记录带 `source`(现在只有 `offline`,0.7.20 加 `undo`)。
- * 撤销冲突照同一个形状写:`base` 是那一步落地后的值(期望云端仍是它),`mine` 是撤回后要变成的值;
- * 判冲突、显示、合并、删除选中都不分来源,一个窗口一套代码。
+ * **Hook left for 0.7.20 "undo conflicts"**: each record carries `source` (currently only `offline`; 0.7.20
+ * adds `undo`). Undo conflicts are written in the same shape: `base` is the value after that step landed
+ * (the cloud is expected to still have it), and `mine` is the value it should become after the revert;
+ * conflict detection, display, merging and deleting the selection do not distinguish the source, so one
+ * window uses one set of code.
  */
 import { deepEqual } from "../../kernel/diffProject";
 import { parseCaptions, formatCaptions, isCaptionClip, type CaptionLine } from "../../kernel/captions";
@@ -27,61 +37,63 @@ import { getCard } from "../../kernel/registry";
 import { tr as trText } from "../../i18n/index.ts";
 import { shownName, shownNameOf } from "../../i18n/names.ts";
 
-/* ---------------- 形状 ---------------- */
+/* ---------------- Shapes ---------------- */
 
-/** 待合并项从哪来:离线重连(本版),撤销冲突(0.7.20 接入) */
+/** Where a pending merge item comes from: offline reconnect (this version), undo conflict (hooked up in 0.7.20) */
 export type MergeSource = "offline" | "undo";
 
 /**
- * `card`:一张卡片(一个卡片源码文件)。卡片源码不在项目 JSON 里,由编辑器进程的卡片源码同步(`server/card-sync.mjs`)经内容库同步;
- * 断网期间改过、云端也被别人改过的卡由它交过来(`cardConflictThing`),合并走它的 `takeMine`,不经 `applyMerge` 写项目。
+ * `card`: one card (one card source file). Card source is not in the project JSON; it is synced through the
+ * content store by the editor process's card source sync (`server/card-sync.mjs`). A card that was changed
+ * while offline and also changed by someone else in the cloud is handed over by it (`cardConflictThing`),
+ * and its merge goes through its `takeMine`, not through `applyMerge` writing to the project.
  */
 export type ThingKind = "clip" | "caption" | "settings" | "track" | "cut" | "transition" | "library" | "card";
 
-/** 「有没有、是什么」:null 表示这一份里没有它(JSON 里放不下 undefined) */
+/** "Whether it exists, and what it is": null means it is absent from this copy (JSON cannot hold undefined) */
 export type Box = { v: unknown } | null;
 
 export interface ThingRef {
   kind: ThingKind;
-  /** 片段、序列、剪辑、转场、库条目的 id;字幕是行的身份;项目设置是 `settings` */
+  /** The id of a clip, track, cut, transition or library entry; for a caption it is the row identity; for project settings it is `settings` */
   id: string;
-  /** 库条目所在的集合:media / filters / pixelMaps / audioFx / cardNodes */
+  /** The collection a library entry belongs to: media / filters / pixelMaps / audioFx / cardNodes */
   coll?: string;
-  /** 字幕:所在的字幕片段 */
+  /** Caption: the caption clip it belongs to */
   clipId?: string;
-  /** 片段:我这边它在哪条序列(新增、恢复、换序列时放进去) */
+  /** Clip: which track it is on, on my side (filled in on add, restore and track change) */
   trackId?: string;
-  /** 片段、序列、转场:我这边它在哪条剪辑里(null 是当前激活的那条) */
+  /** Clip, track, transition: which cut it is in, on my side (null is the currently active one) */
   cutId?: string | null;
 }
 
 export interface MergeProp {
-  /** 属性键;`""` 是整件(新增 / 删除) */
+  /** Property key; `""` is the whole thing (add / delete) */
   prop: string;
   base: Box;
   mine: Box;
 }
 
 export interface MergeThing {
-  /** `<来源>:<东西的键>`;同一样东西同一来源只有一条,后来的批次并进去 */
+  /** `<source>:<thing key>`; the same thing from the same source has only one entry, and later batches are merged into it */
   key: string;
   source: MergeSource;
-  /** 最近一次并进来的批次号 */
+  /** The batch number of the most recent batch merged in */
   batch: string;
-  /** 基准的历史序号 */
+  /** History sequence number of the baseline */
   baseRev: number;
   at: number;
   ref: ThingRef;
   change: "modify" | "add" | "delete";
-  /** 记表时的称呼(云端、我这边都没有它时也叫得出来) */
+  /** The name used when recording to the list (so it can still be named when neither the cloud nor my side has it) */
   label: string;
-  /** 整件:基准与我这边(新增、删除、云端已删时恢复用) */
+  /** Whole item: baseline and my side (used for add, delete, and restore when deleted in the cloud) */
   base: Box;
   mine: Box;
   props: MergeProp[];
 }
 
-/* ---------------- 小工具 ---------------- */
+/* ---------------- Helpers ---------------- */
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -90,37 +102,43 @@ const val = (b: Box): unknown => (b ? b.v : undefined);
 const sameBox = (a: Box, b: Box): boolean => (a === null || b === null ? a === b : deepEqual(a.v, b.v));
 const clone = <T>(v: T): T => (v === undefined ? v : structuredClone(v));
 
-/** 短哈希(字幕行的身份用;不求抗碰撞,同一片段里够分) */
+/** Short hash (identity of caption lines; not collision-resistant, enough within one clip) */
 function shortHash(s: string): string {
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
   return (h >>> 0).toString(36);
 }
 
-/* ---------------- 东西在项目里的位置 ---------------- */
+/* ---------------- Where items live in the project ---------------- */
 
-/** 项目顶层里不是「项目设置」的键(集合与运行时字段) */
+/** Top-level project keys that are not "project settings" (collections and runtime fields) */
 const NOT_SETTINGS = new Set(["version", "id", "media", "tracks", "cuts", "transitions", "activeCutId", "filters", "pixelMaps", "audioFx", "cardNodes"]);
 
 /**
- * 〔裁:2026-10-22 主会话,三级〕这张表只列用户直接改的东西,不列由别的东西算出来的值。下面这些是算出来的,不进二级:
- * - 项目设置 `duration`:总时长缺省等于内容末尾、跟着片段走(`kernel/duration.ts`;手动截断的值不落盘,只在编辑器状态里),
- *   挪一个片段就会变,用户没直接改过它。合并之后由 `applyMerge` 按内容末尾重算。
- * - 素材 `pending` `tiers` `hash` `ext` `size` `duration` `width` `height` `url` `path`:导入、入库、上传、补元数据时由系统写
- *   (「素材元数据回填」那类不进撤销栈的提交),不是用户编辑出来的。素材整件的新增、删除照列;改名(`name`)照列。
- * - 片段 `cardAudio` `embeddedAudio`:带声音的动效卡生成的声音产物与它的能力标记,由生成流程维护(`kernel/project.ts`)。
+ * [ruling: 2026-10-22 lead session, level 3] This table lists only what users edit directly, not
+ * values computed from something else. The following are computed and do not go into level 2:
+ * - Project setting `duration`: the total duration defaults to the end of the content and follows
+ *   the clips (`kernel/duration.ts`; a manually truncated value is not persisted, it lives only in
+ *   the editor state). Moving one clip changes it, and the user did not edit it directly. After a
+ *   merge, `applyMerge` recomputes it from the end of the content.
+ * - Asset `pending` `tiers` `hash` `ext` `size` `duration` `width` `height` `url` `path`: written
+ *   by the system on import, storage, upload, and metadata backfill (commits such as "asset
+ *   metadata backfill" that skip the undo stack), not produced by user edits. Adding or deleting a
+ *   whole asset is still listed; renaming (`name`) is still listed.
+ * - Clip `cardAudio` `embeddedAudio`: the generated audio output of a motion graphics card with
+ *   sound, plus its capability flag, maintained by the generation flow (`kernel/project.ts`).
  */
 export const DERIVED_PROPS = {
   settings: ["duration"],
   media: ["pending", "tiers", "hash", "ext", "size", "duration", "width", "height", "url", "path"],
   clip: ["cardAudio", "embeddedAudio"],
 } as const;
-/** 各算一条的库集合 */
+/** Library collections, one entry each */
 export const LIBRARY_COLLS = ["media", "filters", "pixelMaps", "audioFx", "cardNodes"] as const;
 
 interface TrackHome { list: Obj[]; cutId: string | null }
 
-/** 项目里所有的序列表:激活剪辑的 `/tracks`,以及每条停放剪辑的 `tracks` */
+/** All track lists in the project: `/tracks` of the active cut, and `tracks` of each parked cut */
 function trackLists(p: Obj): TrackHome[] {
   const out: TrackHome[] = [];
   if (Array.isArray(p.tracks)) out.push({ list: p.tracks as Obj[], cutId: null });
@@ -158,13 +176,13 @@ function findClip(p: Obj, clipId: string): { clip: Obj; track: Obj; cutId: strin
   return null;
 }
 
-/** 在项目里找到的一样东西:值,以及片段的位置 */
+/** An item found in the project: its value, plus the clip's position */
 interface Found {
   ref: ThingRef;
   value: unknown;
 }
 
-/** 一样东西的键(不含来源) */
+/** Key of an item (without the source) */
 export function thingKeyOf(ref: ThingRef): string {
   switch (ref.kind) {
     case "clip": return `clip:${ref.id}`;
@@ -184,7 +202,7 @@ function settingsOf(p: Obj): Obj {
   return out;
 }
 
-/** 项目里的全部「东西」(字幕行另算,见 `captionThings`) */
+/** All "items" in the project (caption lines are handled separately, see `captionThings`) */
 function collect(p: Obj): Map<string, Found> {
   const out = new Map<string, Found>();
   const add = (ref: ThingRef, value: unknown) => {
@@ -215,7 +233,7 @@ function collect(p: Obj): Map<string, Found> {
   return out;
 }
 
-/** 剪辑的整件:激活的那条内容在项目顶层,停放的在自己身上 */
+/** Whole cut: for the active one the content is at the project top level, for parked ones on itself */
 function cutValue(p: Obj, c: Obj): Obj {
   if (p.activeCutId === c.id && c.tracks === undefined) {
     return { id: c.id, name: c.name, tracks: p.tracks, duration: p.duration, transitions: p.transitions ?? [] };
@@ -223,20 +241,20 @@ function cutValue(p: Obj, c: Obj): Obj {
   return c;
 }
 
-/* ---------------- 属性 ---------------- */
+/* ---------------- Properties ---------------- */
 
-/** 片段的属性:开始与结束合成「时间」,`params` / `frame` 展开一层,换序列是「所在序列」 */
+/** Clip properties: start and end combine into "time", `params` / `frame` are expanded one level, a track change is "owning track" */
 function clipProps(c: Obj, ref: ThingRef): Map<string, unknown> {
   const out = new Map<string, unknown>();
   out.set("@time", [c.start, c.end]);
   out.set("@track", ref.trackId);
   for (const [k, v] of Object.entries(c)) {
     if (k === "id" || k === "start" || k === "end" || v === undefined) continue;
-    if ((DERIVED_PROPS.clip as readonly string[]).includes(k)) continue; // 算出来的(生成产物),不列
+    if ((DERIVED_PROPS.clip as readonly string[]).includes(k)) continue; // Computed (generated output), not listed
     if ((k === "params" || k === "frame") && isObj(v)) {
       for (const [sk, sv] of Object.entries(v)) {
         if (sv === undefined) continue;
-        if (k === "params" && sk === "lines" && isCaptionClip(c as { cardId?: string })) continue; // 字幕逐条另算
+        if (k === "params" && sk === "lines" && isCaptionClip(c as { cardId?: string })) continue; // Caption lines are computed one by one separately
         out.set(`${k}.${sk}`, sv);
       }
       continue;
@@ -280,11 +298,11 @@ function propDiff(a: Found, b: Found): MergeProp[] {
   return out;
 }
 
-/* ---------------- 字幕行 ---------------- */
+/* ---------------- Caption lines ---------------- */
 
 const overlap = (a: CaptionLine, b: CaptionLine) => Math.max(0, Math.min(a.end, b.end) - Math.max(a.start, b.start));
 
-/** 两份字幕行对齐:先认一模一样的,剩下的按时间重叠最多的配对,其余是增删 */
+/** Align two sets of caption lines: first match identical ones, pair the rest by largest time overlap, the others are adds or deletes */
 export function alignLines(a: CaptionLine[], b: CaptionLine[]): { pairs: [number, number][]; onlyA: number[]; onlyB: number[] } {
   const usedB = new Set<number>();
   const pairOf = new Map<number, number>();
@@ -312,7 +330,7 @@ function linesOf(clip: unknown): CaptionLine[] {
   return isObj(clip) && isObj(clip.params) ? parseCaptions(clip.params.lines) : [];
 }
 
-/** 字幕片段在基准与我这边都在:逐行对齐出「字幕」这一类东西 */
+/** Caption clip exists in both baseline and my side: align line by line to produce the "captions" kind of item */
 function captionThings(clipId: string, baseClip: Obj, mineClip: Obj): { base: Found | null; mine: Found | null }[] {
   const a = linesOf(baseClip), b = linesOf(mineClip);
   const { pairs, onlyA, onlyB } = alignLines(a, b);
@@ -327,7 +345,7 @@ function captionThings(clipId: string, baseClip: Obj, mineClip: Obj): { base: Fo
   return out;
 }
 
-/** 在一份项目里找某条字幕行:新增的认一模一样的那行,其余先认原样、再认时间重叠最多的那行 */
+/** Find a caption line in a project: added ones match the identical line, the rest match as-is first, then by largest time overlap */
 function locateLine(p: Obj, ref: ThingRef, base: CaptionLine | undefined, mine: CaptionLine | undefined): { lines: CaptionLine[]; index: number; clip: Obj } | null {
   const at = findClip(p, ref.clipId ?? "");
   if (!at) return null;
@@ -345,7 +363,7 @@ function locateLine(p: Obj, ref: ThingRef, base: CaptionLine | undefined, mine: 
   return { lines, index, clip: at.clip };
 }
 
-/* ---------------- 称呼 ---------------- */
+/* ---------------- Display names ---------------- */
 
 const quoted = (s: string) => trText("\"{0}\"", s);
 const short = (s: string, n = 24) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
@@ -361,7 +379,7 @@ function clipName(c: Obj | undefined, id: string): string {
 
 const LIB_KIND: Record<string, string> = { media: trText("media"), filters: trText("Filters"), pixelMaps: trText("Pixel map"), audioFx: trText("Audio effects"), cardNodes: trText("Media effect card nodes") };
 
-/** 一样东西给人看的名字 */
+/** Human-readable name of an item */
 export function thingLabel(ref: ThingRef, value: unknown): string {
   const v = isObj(value) ? value : undefined;
   const named = (kind: string) => `${kind}${quoted(v && typeof v.name === "string" && v.name.trim() ? v.name.trim() : ref.id)}`;
@@ -414,7 +432,7 @@ export function propLabel(kind: ThingKind, prop: string): string {
   }
 }
 
-/** 值给人看的样子 */
+/** Human-readable form of a value */
 export function formatValue(v: unknown, prop = "", names?: (trackId: string) => string | undefined): string {
   if (v === undefined || v === null) return trText("none");
   if ((prop === "@time" || prop === "time") && Array.isArray(v) && v.length === 2) {
@@ -435,7 +453,7 @@ function num(n: unknown): string {
   return String(Math.round(n * 1000) / 1000);
 }
 
-/* ---------------- 算差异:基准 → 我这边 ---------------- */
+/* ---------------- Compute the diff: baseline → my side ---------------- */
 
 export interface DiffMeta {
   source: MergeSource;
@@ -445,7 +463,8 @@ export interface DiffMeta {
 }
 
 /**
- * 基准与我这边比出待合并的东西。只列「我这边改了」的;云端改没改不在这里定(显示和合并时现算)。
+ * Compare baseline and my side to get the pending merge items. Lists only what "my side changed"; whether
+ * the cloud changed is not decided here (computed on demand when displaying and merging).
  */
 export function diffThings(base: Project, mine: Project, meta: DiffMeta): MergeThing[] {
   const B = collect(base as unknown as Obj), M = collect(mine as unknown as Obj);
@@ -466,7 +485,7 @@ export function diffThings(base: Project, mine: Project, meta: DiffMeta): MergeT
   for (const key of new Set([...B.keys(), ...M.keys()])) {
     const b = B.get(key) ?? null, m = M.get(key) ?? null;
     if (b && m) {
-      // 片段换了地方:我这边的位置为准(新增、恢复、换序列都放到这儿)
+      // Clip moved: my side's position wins (adds, restores, and track changes all go here)
       const ref = m.ref;
       const props = propDiff(b, m);
       if (props.length) out.push(make(ref, "modify", b, m, props.map((p) => ({ ...p, base: clone(p.base), mine: clone(p.mine) }))));
@@ -488,8 +507,10 @@ export function diffThings(base: Project, mine: Project, meta: DiffMeta): MergeT
 }
 
 /**
- * 新的一批并进已有的表:同一来源同一样东西只留一条(「同一个属性只列一条」);同一属性以新的为准。
- * 改动种类不同(先前记的是删除,这回是修改)时两条都留,新的键带上批次号。
+ * Merge a new batch into the existing table: for the same source and the same item keep only one entry
+ * ("one entry per property"); for the same property the newer one wins.
+ * When the change kinds differ (earlier recorded a delete, now a modification) keep both, and the new
+ * key carries the batch number.
  */
 export function mergeIntoTable(table: MergeThing[], incoming: MergeThing[]): MergeThing[] {
   const out = [...table];
@@ -510,9 +531,9 @@ export function mergeIntoTable(table: MergeThing[], incoming: MergeThing[]): Mer
   return out;
 }
 
-/* ---------------- 对照当前项目:冲突、云端现在是什么 ---------------- */
+/* ---------------- Check against the current project: conflicts, what the cloud has now ---------------- */
 
-/** 在一份项目里找某样东西(片段按 id,不管住在哪条序列、哪条剪辑) */
+/** Find an item in a project (clips by id, regardless of which track or cut they live in) */
 function locate(p: Obj, t: MergeThing): Found | null {
   const ref = t.ref;
   switch (ref.kind) {
@@ -555,14 +576,14 @@ function propValue(f: Found, prop: string): unknown {
 export type PropState = "clean" | "conflict" | "same" | "cloud-gone";
 
 export interface PropRow {
-  /** 二级项的键 `<东西的键>|<属性>` */
+  /** Key of a level-2 entry `<item key>|<property>` */
   id: string;
   prop: string;
   label: string;
   text: string;
   state: PropState;
   conflict: boolean;
-  /** 云端现在的值(「每次点合并时重新核对」拿它比) */
+  /** Current value in the cloud (compared against for "re-verify on every Merge click") */
   cloud: Box;
 }
 
@@ -571,7 +592,7 @@ export interface ThingRow {
   source: MergeSource;
   label: string;
   change: MergeThing["change"];
-  /** 一级的说法:新增 / 删除 / 修改 / 云端已删除 */
+  /** Level-1 wording: added / deleted / modified / deleted in the cloud */
   changeText: string;
   conflict: boolean;
   props: PropRow[];
@@ -579,7 +600,7 @@ export interface ThingRow {
 
 export const propRowId = (thingKey: string, prop: string) => `${thingKey}|${prop}`;
 
-/** 二级项现在的状态与云端的值 */
+/** Current state of a level-2 entry and the cloud's value */
 function propState(t: MergeThing, p: MergeProp, cloud: Found | null): { state: PropState; cloud: Box } {
   if (t.change === "add") {
     if (!cloud) return { state: "clean", cloud: null };
@@ -595,7 +616,7 @@ function propState(t: MergeThing, p: MergeProp, cloud: Found | null): { state: P
   return { state: sameBox(c, p.base) ? "clean" : "conflict", cloud: c };
 }
 
-/** 窗口里显示的两级列表,按当前项目现算冲突与云端的值 */
+/** Two-level list shown in the window; conflicts and cloud values are computed against the current project */
 export function mergeRows(project: Project, table: MergeThing[]): ThingRow[] {
   const p = project as unknown as Obj;
   const trackName = (id: string) => {
@@ -636,8 +657,9 @@ export function mergeRows(project: Project, table: MergeThing[]): ThingRow[] {
 }
 
 /**
- * 冲突横条与按钮的「N 处改动待合并，其中 M 处有冲突」:按一级(被改的那样东西)数,与手机版演示稿一致;
- * `items` 是二级项的总数(「已选 N 项」那一边用二级项数)。
+ * "N changes pending merge, M of them in conflict" on the conflict banner and buttons: counted by level 1
+ * (the item that was changed), consistent with the mobile app demo; `items` is the total number of
+ * level-2 entries (the "N selected" side counts level-2 entries).
  */
 export function mergeCounts(rows: ThingRow[]): { total: number; conflicts: number; items: number } {
   let items = 0;
@@ -645,15 +667,15 @@ export function mergeCounts(rows: ThingRow[]): { total: number; conflicts: numbe
   return { total: rows.length, conflicts: rows.filter((r) => r.conflict).length, items };
 }
 
-/* ---------------- 合并:把选中的二级项照我这边写进项目 ---------------- */
+/* ---------------- Merge: write the selected level-2 entries into the project as on my side ---------------- */
 
 export interface ApplyResult {
   project: Project;
-  /** 不在项目 JSON 里、要由别处写的(卡片源码:编辑器进程的卡片源码同步 `takeMine`);写成了再从表里拿掉 */
+  /** Not in the project JSON, must be written elsewhere (card source: the editor process's card source sync `takeMine`); removed from the table once written */
   external: { key: string; props: string[]; thing: MergeThing }[];
-  /** 写进去了的(含为了它连带并进来的序列、剪辑、素材);从表里拿掉 */
+  /** Written (including tracks, cuts, and assets merged in along with them); removed from the table */
   done: { key: string; props: string[] }[];
-  /** 没写成的及原因;留在表里 */
+  /** Not written, with reasons; kept in the table */
   failed: { key: string; prop: string; reason: string }[];
 }
 
@@ -670,7 +692,7 @@ function setProp(kind: ThingKind, obj: Obj, prop: string, b: Box) {
     obj.start = s; obj.end = e;
     return;
   }
-  if (kind === "clip" && prop === "@track") return; // 位置另办
+  if (kind === "clip" && prop === "@track") return; // Position is handled separately
   if (kind === "clip" && (prop.startsWith("params.") || prop.startsWith("frame."))) {
     const [k, ...rest] = prop.split(".");
     const sk = rest.join(".");
@@ -690,15 +712,17 @@ function setProp(kind: ThingKind, obj: Obj, prop: string, b: Box) {
   else obj[prop] = clone(v);
 }
 
-/** 片段要放进某条序列,同一序列里不能和别的片段重叠 */
+/** A clip to be placed into a track must not overlap other clips in the same track */
 function overlapsIn(track: Obj, clip: Obj): boolean {
   const s = Number(clip.start), e = Number(clip.end);
   return (Array.isArray(track.clips) ? (track.clips as Obj[]) : []).some((c) => c.id !== clip.id && Number(c.start) < e && s < Number(c.end));
 }
 
 /**
- * 在当前项目(云端现状加本页面还没确认的修改)上照我这边写选中的项。不改入参,回一份新项目。
- * `selection`:东西的键 → 选中的属性。新增要放进去的序列、剪辑、素材不在云端时,表里有它的新增就连带并进来。
+ * On the current project (the cloud's current state plus this page's unconfirmed edits), write the
+ * selected entries as on my side. Does not mutate the input; returns a new project.
+ * `selection`: item key → selected properties. When a track, cut, or asset to be added is not in the
+ * cloud, and the table has its add, it is merged in along with it.
  */
 export function applyMerge(project: Project, table: MergeThing[], selection: Map<string, Set<string>>, opts: { manualDuration?: number | null } = {}): ApplyResult {
   const p = structuredClone(project) as unknown as Obj;
@@ -712,7 +736,7 @@ export function applyMerge(project: Project, table: MergeThing[], selection: Map
   };
   const byKey = new Map(table.map((t) => [t.key, t]));
 
-  /** 表里待并的某样东西的新增(序列、剪辑、素材的连带) */
+  /** The add of an item pending in the table (dependency of a track, cut, or asset) */
   const pendingAdd = (kind: ThingKind, id: string, coll?: string) =>
     table.find((t) => t.change === "add" && t.ref.kind === kind && t.ref.id === id && (coll === undefined || t.ref.coll === coll) && !done.has(t.key));
 
@@ -744,7 +768,7 @@ export function applyMerge(project: Project, table: MergeThing[], selection: Map
     mark(dep.key, [""]);
   };
 
-  /** 把一样东西整件写成 value(undefined = 删掉) */
+  /** Write a whole item as value (undefined = delete it) */
   function writeThing(t: MergeThing, value: Obj | CaptionLine | undefined, opts: { move?: boolean } = {}) {
     const ref = t.ref;
     switch (ref.kind) {
@@ -805,7 +829,7 @@ export function applyMerge(project: Project, table: MergeThing[], selection: Map
         ensureCut(ref.cutId);
         const home = ref.cutId ? ((p.cuts as Obj[]).find((c) => c.id === ref.cutId) as Obj) : p;
         if (!Array.isArray(home.tracks)) {
-          // 剪辑是云端当前激活的那条:内容在项目顶层
+          // The cut is the one currently active in the cloud: content is at the project top level
           if (ref.cutId && p.activeCutId === ref.cutId) (p.tracks as Obj[]).push({ ...clone(value as Obj), clips: [] });
           else throw new Skip(trText("The containing cut no longer exists in the cloud"));
           return;
@@ -823,7 +847,7 @@ export function applyMerge(project: Project, table: MergeThing[], selection: Map
           return;
         }
         if (i >= 0) { cuts[i] = { ...cuts[i], name: (value as Obj).name }; return; }
-        // 新增的剪辑以停放的样子放进去,序列与片段各自逐条并
+        // A newly added cut is inserted in its parked form; tracks and clips are merged one by one
         const v = value as Obj;
         cuts.push({ id: v.id, name: v.name, tracks: [], duration: typeof v.duration === "number" ? v.duration : 0, transitions: [] });
         return;
@@ -860,7 +884,7 @@ export function applyMerge(project: Project, table: MergeThing[], selection: Map
   for (const [key, props] of selection) {
     const t = byKey.get(key);
     if (!t || !props.size) continue;
-    if (done.has(key) && t.change !== "modify") continue; // 已经作为连带并进来了
+    if (done.has(key) && t.change !== "modify") continue; // Already merged in as a dependency
     if (t.ref.kind === "card") { external.push({ key, props: [...props], thing: t }); continue; }
     try {
       if (t.change === "add") {
@@ -877,7 +901,7 @@ export function applyMerge(project: Project, table: MergeThing[], selection: Map
       if (!chosen.length) continue;
       const cloud = locate(p, t);
       if (!cloud) {
-        // 我改了、云端删了:「合并」= 连同我的修改恢复回来;没勾的属性按基准
+        // I changed it, the cloud deleted it: "Merge" = restore it together with my changes; unchecked properties follow the baseline
         const restored = clone(val(t.mine)) as Obj;
         for (const x of t.props) if (!props.has(x.prop)) setProp(t.ref.kind, restored, x.prop, x.base);
         writeThing(t, restored, { move: true });
@@ -894,14 +918,14 @@ export function applyMerge(project: Project, table: MergeThing[], selection: Map
       for (const x of t.change === "modify" ? t.props.filter((y) => props.has(y.prop)) : t.props) failed.push({ key, prop: x.prop, reason: e.message });
     }
   }
-  // 总时长是算出来的(不进表):并了片段之后照规则跟着内容末尾重算(手动截断的值由调用方从编辑器状态给)
+  // The total duration is computed (not in the table): after merging clips, recompute it by the rules from the end of the content (a manually truncated value is supplied by the caller from the editor state)
   if (done.size && Array.isArray(p.tracks) && typeof p.duration === "number") {
     p.duration = effectiveDuration(contentEndOf(p.tracks as Track[]), p.duration, opts.manualDuration ?? null);
   }
   return { project: p as unknown as Project, done: [...done].map(([key, s]) => ({ key, props: [...s] })), failed, external };
 }
 
-/** 两份文本按行比:我这边比对方多几行、少几行(冲突窗口里卡片源码那一句用;太长时按行的多重集合估) */
+/** Compare two texts by line: how many lines my side has more or fewer than the other (used for the card source sentence in the conflict window; when too long, estimated from the line multiset) */
 const NL = "\n";
 export function lineDelta(from: string, to: string): { added: number; removed: number } {
   const a = from.split(NL), b = to.split(NL);
@@ -923,8 +947,10 @@ export function lineDelta(from: string, to: string): { added: number; removed: n
 }
 
 /**
- * 一张卡的冲突(卡片源码同步在断网重连时交过来的:本机改过、云端也被别人改过)→ 待合并表里的一条。
- * 一级是这张卡(源码文件),二级是「源码」;`base` 记云端在冲突那一刻的版本(本机已经装上它),`mine` 是我这边的。
+ * A card's conflict (handed over by card source sync on reconnect after being offline: changed locally,
+ * and changed in the cloud by someone else too) → one entry in the pending merge table.
+ * Level 1 is this card (the source file), level 2 is "source"; `base` records the cloud's version at the
+ * moment of conflict (already installed locally), `mine` is my side's.
  */
 export function cardConflictThing(o: { key: string; mine: string; cloud: string; rev: number; at: number; batch: string; source?: MergeSource }): MergeThing {
   const ref: ThingRef = { kind: "card", id: o.key };
@@ -936,7 +962,7 @@ export function cardConflictThing(o: { key: string; mine: string; cloud: string;
   };
 }
 
-/** 从表里拿掉这些二级项;一样东西的二级项拿光了,这一条也拿掉 */
+/** Remove these level-2 entries from the table; when an item's level-2 entries are all removed, remove that item too */
 export function removeFromTable(table: MergeThing[], remove: { key: string; props: string[] }[]): MergeThing[] {
   const drop = new Map(remove.map((r) => [r.key, new Set(r.props)]));
   const out: MergeThing[] = [];
@@ -950,8 +976,9 @@ export function removeFromTable(table: MergeThing[], remove: { key: string; prop
 }
 
 /**
- * 「每次点合并时重新核对」:窗口里显示时记下的云端值,和现在的比;变了的二级项这次不并,刷新给用户再看。
- * `seen`:二级项的键 → 显示时的云端值。
+ * "Re-verify on every Merge click": compare the cloud values recorded when displayed in the window with
+ * the current ones; level-2 entries that changed are not merged this time and are refreshed for the user to review.
+ * `seen`: level-2 entry key → the cloud value at display time.
  */
 export function staleSelections(project: Project, table: MergeThing[], seen: Map<string, Box>, selection: Map<string, Set<string>>): string[] {
   const rows = mergeRows(project, table.filter((t) => selection.has(t.key)));
@@ -965,12 +992,12 @@ export function staleSelections(project: Project, table: MergeThing[], seen: Map
   return out;
 }
 
-/* ---------------- 勾选(桌面窗口与手机面板共用) ---------------- */
+/* ---------------- Selection (shared by the desktop window and the mobile panel) ---------------- */
 
-/** 勾选状态:东西的键 → 勾了的属性 */
+/** Selection state: item key → checked properties */
 export type Selection = Map<string, Set<string>>;
 
-/** 「选中无冲突项」:勾上所有不冲突的二级项(已有的勾选不动) */
+/** "Select non-conflicting": check all non-conflicting level-2 entries (existing selections are left alone) */
 export function selectNonConflict(rows: ThingRow[], prev: Selection = new Map()): Selection {
   const next: Selection = new Map([...prev].map(([k, s]) => [k, new Set(s)]));
   for (const r of rows) for (const p of r.props) {
@@ -982,14 +1009,14 @@ export function selectNonConflict(rows: ThingRow[], prev: Selection = new Map())
   return next;
 }
 
-/** 一级的勾选框:全勾 / 部分 / 没勾 */
+/** Level-1 checkbox: all checked / partial / none checked */
 export function thingCheck(row: ThingRow, sel: Selection): "all" | "some" | "none" {
   const s = sel.get(row.key);
   const n = s ? row.props.filter((p) => s.has(p.prop)).length : 0;
   return n === 0 ? "none" : n === row.props.length ? "all" : "some";
 }
 
-/** 点一级的勾选框:没全勾就全勾,全勾了就全取消 */
+/** Click a level-1 checkbox: check all if not all checked, uncheck all if all checked */
 export function toggleThing(row: ThingRow, sel: Selection): Selection {
   const next: Selection = new Map(sel);
   if (thingCheck(row, sel) === "all") next.delete(row.key);
@@ -997,7 +1024,7 @@ export function toggleThing(row: ThingRow, sel: Selection): Selection {
   return next;
 }
 
-/** 点二级的勾选框 */
+/** Click a level-2 checkbox */
 export function toggleProp(row: ThingRow, prop: string, sel: Selection): Selection {
   const next: Selection = new Map(sel);
   const s = new Set(next.get(row.key) ?? []);
@@ -1008,14 +1035,14 @@ export function toggleProp(row: ThingRow, prop: string, sel: Selection): Selecti
   return next;
 }
 
-/** 勾了几项(二级项计数),只数还在列表里的 */
+/** How many are checked (counting level-2 entries), only those still in the list */
 export function selectedCount(rows: ThingRow[], sel: Selection): number {
   let n = 0;
   for (const r of rows) { const s = sel.get(r.key); if (s) n += r.props.filter((p) => s.has(p.prop)).length; }
   return n;
 }
 
-/** 勾选里去掉已不在列表里的项(合并、删除之后) */
+/** Drop entries from the selection that are no longer in the list (after merge or delete) */
 export function pruneSelection(rows: ThingRow[], sel: Selection): Selection {
   const next: Selection = new Map();
   for (const r of rows) {
@@ -1027,7 +1054,7 @@ export function pruneSelection(rows: ThingRow[], sel: Selection): Selection {
   return next;
 }
 
-/** 勾选换成「东西的键 + 属性」的清单(删除选中、从表里拿掉用) */
+/** Turn the selection into a manifest of "item key + property" (used for delete selected and removal from the table) */
 export function selectionList(sel: Selection): { key: string; props: string[] }[] {
   return [...sel].map(([key, s]) => ({ key, props: [...s] }));
 }

@@ -1,8 +1,9 @@
 /**
- * 总时长规则的单测。跑:node --test src/kernel/duration.test.mjs
+ * Unit tests for total duration rules. Run: node --test src/kernel/duration.test.mjs
  *
- * 钉的是 product/project-model.md「总时长」那一条:缺省等于内容末尾、跟着内容走;
- * 可以手动截短,不能拉长到内容末尾之后;空项目保留原值。
+ * Pins down the "Total duration" rule in product/project-model.md: defaults to content end,
+ * tracks content; can be manually shortened, cannot be extended past the content end;
+ * empty projects retain their original value.
  */
 import test from "node:test";
 import assert from "node:assert/strict";

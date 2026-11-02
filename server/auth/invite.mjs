@@ -1,51 +1,58 @@
 /**
- * 邀请码（C10a 契约 `docs/plan/c10a-contract.md` 第 5 节）：生成、摘要、状态、兑换。
+ * Invite codes (C10a contract `docs/plan/c10a-contract.md` section 5): generation, digest, status, redemption.
  *
- * - 邀请码：`crypto.randomBytes(32)` 编成不带填充的 base64url，43 个字符。原文只在签发的那一次回包里出现，不落盘、不进日志。
- * - 存在项目记录里（`store.mjs`，与凭证同处）：
- *   `invite: { id, digest, createdAt, expiresAt, maxUses, used, redeemed: [userId…], revokedAt }`，
- *   `digest = base64url(HMAC-SHA256(serverSecret, code))`。
- * - 一个项目只有一个有效邀请码：签发新的同时作废旧的（旧记录整条换掉，旧摘要随之失效）。
- * - 缺省有效期 7 天、次数不限（`maxUses: null`）；创建者签发时可以改。
- * - 「有效」= 存在、未作废、未过期、次数未满。兑换时同一 `userId`（用户名 + 设备 id）再兑换不重复扣次。
+ * - Invite code: `crypto.randomBytes(32)` encoded as unpadded base64url, 43 characters. Raw code
+ *   appears only in the issuance response, never written to disk or logged.
+ * - Stored in project records (`store.mjs`, co-located with credentials):
+ *   `invite: { id, digest, createdAt, expiresAt, maxUses, used, redeemed: [userId…], revokedAt }`,
+ *   `digest = base64url(HMAC-SHA256(serverSecret, code))`.
+ * - A project has only one valid invite code: issuing a new one invalidates the old one (entire
+ *   old record replaced, old digest invalidated accordingly).
+ * - Default validity is 7 days, unlimited uses (`maxUses: null`); creator can change this at issuance.
+ * - "Valid" = exists, not invalidated, not expired, uses not exhausted. On redemption, re-redemption
+ *   by same `userId` (username + device id) does not deduct uses again.
  *
- * 本模块只有纯函数与 Node 内置的 `node:crypto`；HTTP 端点在 `http.mjs`，创建者操作在
- * `../docservice/modules/shared.mjs`。以后 HT-a 改 `http.mjs` / `shared.mjs` 时，邀请码的规则都在这里，不用跟着动。
+ * This module contains only pure functions and Node built-in `node:crypto`; HTTP endpoints reside in
+ * `http.mjs`, and creator operations reside in `../docservice/modules/shared.mjs`. When HT-a modifies
+ * `http.mjs` / `shared.mjs` later, invite code rules remain here and do not need to change.
  */
 import { createHmac, randomBytes } from 'node:crypto';
 import { b64urlEncode } from './protocol.mjs';
 
-/** 邀请码的字节数与编码后的长度（契约第 5 节） */
+/** Invite code byte length and encoded length (contract section 5) */
 export const INVITE_BYTES = 32;
 export const INVITE_LENGTH = 43;
 
 export const INVITE_DEFAULTS = Object.freeze({
-  /** 缺省有效期：7 天（秒） */
+  /** Default validity: 7 days (seconds) */
   EXPIRES_IN_SEC: 604_800,
-  /** 有效期上限：一年（秒）。契约没给上限，这里只挡明显写错的值 */
+  /** Maximum validity: one year (seconds). Contract specifies no upper bound; only blocks obvious errors here */
   MAX_EXPIRES_IN_SEC: 365 * 86_400,
-  /** 次数上限：契约没给，挡明显写错的值 */
+  /** Maximum uses: contract specifies no upper bound; blocks obvious errors */
   MAX_USES: 1_000_000,
-  /** 兑换过的 userId 记多少条：次数不限时也不让记录无限长；超过后最早的不再算「已兑换」（再兑换会再扣一次） */
+  /**
+   * Number of redeemed userId entries to record: prevents unbounded growth when uses are unlimited;
+   * once exceeded, earliest entries are no longer considered "redeemed" (re-redemption will deduct again)
+   */
   MAX_REDEEMED: 10_000,
 });
 
 const INVITE_RE = /^[A-Za-z0-9_-]{43}$/;
 
-/** 邀请码的形状：43 个 base64url 字符（不带 `=`） */
+/** Invite code shape: 43 base64url characters (without `=`) */
 export const isInviteCode = (v) => typeof v === 'string' && INVITE_RE.test(v);
 
-/** 新的邀请码原文 */
+/** New raw invite code */
 export const newInviteCode = () => b64urlEncode(randomBytes(INVITE_BYTES));
 
-/** 邀请码的摘要：`base64url(HMAC-SHA256(serverSecret, code))` */
+/** Invite code digest: `base64url(HMAC-SHA256(serverSecret, code))` */
 export function inviteDigest(serverSecret, code) {
   return b64urlEncode(createHmac('sha256', serverSecret).update(String(code), 'utf8').digest());
 }
 
 /**
- * 校验并规整 `invite-create` 的字段：`expiresInSec?`（正整数秒，缺省 604800）、`maxUses?`（正整数或 null，缺省 null）。
- * 不合格回 null。
+ * Validate and normalize `invite-create` fields: `expiresInSec?` (positive integer seconds, default 604800),
+ * `maxUses?` (positive integer or null, default null). Returns null if invalid.
  */
 export function parseInviteOptions(msg) {
   const expiresInSec = msg?.expiresInSec ?? INVITE_DEFAULTS.EXPIRES_IN_SEC;
@@ -56,10 +63,10 @@ export function parseInviteOptions(msg) {
 }
 
 /**
- * 签发：回 `{ code, invite }`，`invite` 是要写进项目记录的那一条（不含原文）。
+ * Issue: returns `{ code, invite }`, where `invite` is the entry to write into project records (without raw code).
  * @param {Buffer | Uint8Array} serverSecret
- * @param {{ expiresInSec: number, maxUses: number | null }} options 已经 `parseInviteOptions` 过
- * @param {number} now 毫秒
+ * @param {{ expiresInSec: number, maxUses: number | null }} options Already processed by `parseInviteOptions`
+ * @param {number} now Milliseconds
  */
 export function issueInvite(serverSecret, { expiresInSec, maxUses }, now) {
   const code = newInviteCode();
@@ -76,7 +83,7 @@ export function issueInvite(serverSecret, { expiresInSec, maxUses }, now) {
   return { code, invite };
 }
 
-/** 这条邀请码记录现在有没有效（存在、未作废、未过期、次数未满） */
+/** Whether this invite code record is currently valid (exists, not invalidated, not expired, uses not exhausted) */
 export function inviteActive(invite, now) {
   if (!invite || typeof invite !== 'object') return false;
   if (invite.revokedAt !== null && invite.revokedAt !== undefined) return false;
@@ -85,7 +92,7 @@ export function inviteActive(invite, now) {
   return true;
 }
 
-/** `invite-status` 的回包字段：`{ active, expiresAt, maxUses, used, revokedAt }`，不含原文与摘要 */
+/** Response fields for `invite-status`: `{ active, expiresAt, maxUses, used, revokedAt }`, excluding raw code and digest */
 export function inviteStatus(invite, now) {
   if (!invite) return { active: false, expiresAt: null, maxUses: null, used: 0, revokedAt: null };
   return {
@@ -98,15 +105,18 @@ export function inviteStatus(invite, now) {
 }
 
 /**
- * 兑换时的扣次数（契约第 5 节「扣次数」）：先核对有效，再给 `used` 加一；同一 `userId` 再兑换不重复扣。
- * 在草稿上改（`store.update` 的 mutate 里调）；回 `'ok'`（扣了）、`'again'`（同一 userId 兑换过，不扣）或 `'invalid'`。
- * 文档服务单进程、同步处理，核对与加一之间没有别的请求插进来。
+ * Deduct uses during redemption (contract section 5 "Deduct uses"): verify validity first, then
+ * increment `used` by one; re-redemptions by same `userId` do not deduct again. Modifies on draft
+ * (called inside `store.update` mutate); returns `'ok'` (deducted), `'again'` (already redeemed by
+ * same userId, not deducted), or `'invalid'`. Document service is single-process and synchronous,
+ * so no other requests can intervene between verification and increment.
  */
 export function redeemOn(invite, userId, now) {
   if (!invite) return 'invalid';
   const redeemed = Array.isArray(invite.redeemed) ? invite.redeemed : [];
   const seen = redeemed.includes(userId);
-  // 已兑换过的人：邀请码还在有效期内、没作废就放行，不看次数（他那一次早算过了）
+  // Already redeemed users: allow entry if invite code is still within validity period and not
+  // invalidated, without checking uses (their redemption was counted already)
   if (seen) {
     if (invite.revokedAt !== null && invite.revokedAt !== undefined) return 'invalid';
     if (!(Number(invite.expiresAt) > now)) return 'invalid';

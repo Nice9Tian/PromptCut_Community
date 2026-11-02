@@ -73,7 +73,8 @@ export const checklist: CardDef<Params> = {
   useWhen: "Use when the narration lists parallel key points (\"key points\", \"including\", \"namely\", \"three points\", \"need\") and the items do not depend on each other in order; it ticks them off one by one. Use step-timeline for ordered steps.",
   tags: ["Checklist","Key points","tick","list"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,

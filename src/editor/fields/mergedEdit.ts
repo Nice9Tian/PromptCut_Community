@@ -1,28 +1,29 @@
 /**
- * 编辑面板里「连续的一串改动只算一步」的小工具(`NumberField` / `RangeField` / 参数名上的拖动微调共用)。
+ * Small helper for "a run of consecutive changes counts as one step" in the editor panel (shared by `NumberField` /
+ * `RangeField` / drag-to-tweak on parameter names).
  *
- * 撤销栈的合并走 store 现成的 mergeKey(`src/store/core.ts` 的 `setProject`、`docsync.ts` 的 `commit`):
- * 同一个 key、合并窗口内的连续修改并进撤销栈上的同一步。这里只负责
- *   - 给每一次拖动发一个独一份的 key(`newGestureKey`),窗口取无穷(只认 key、不看时间);
- *   - 步进(方向键、上下箭头)用一个较宽的滚动窗口(`STEP_BURST_MS`),连按并成一步;
- *   - 拖动中途的提交限速(`createLatestThrottle`),免得每次指针移动都往文档服务发一条提交。
+ * Undo stack merging relies on the store's existing mergeKey (`setProject` in `src/store/core.ts`, `commit` in `docsync.ts`):
+ * consecutive changes with the same key inside the merge window fold into the same undo step. This module only handles
+ *   - issuing a unique key for each drag (`newGestureKey`), with an infinite window (only the key counts, not time);
+ *   - for stepping (arrow keys, up/down arrows), a wider rolling window (`STEP_BURST_MS`), so repeated presses merge into one step;
+ *   - throttling commits during a drag (`createLatestThrottle`), so not every pointer move sends a commit to the document service.
  */
 import { withMerge } from "../../store/project";
 
-/** 一次拖动里最多每隔这么久提交一次(松手时一定补交最后一个值) */
+/** Within one drag, commit at most once per this interval (the last value is always committed on release) */
 export const GESTURE_COMMIT_INTERVAL_MS = 50;
-/** 连续步进:两次步进相隔不超过这么久就并成一步撤销(以最近一次为准往后滚) */
+/** Continuous stepping: two steps no more than this far apart merge into one undo step (rolling forward from the latest one) */
 export const STEP_BURST_MS = 1000;
-/** 一次拖动:只认 key,不看时间 */
+/** One drag: only the key counts, not time */
 export const GESTURE_WINDOW_MS = Infinity;
 
 let seq = 0;
-/** 每次拖动取一个独一份的 key,下一次拖动不会并进上一次 */
+/** Each drag gets a unique key, so the next drag does not merge into the previous one */
 export function newGestureKey(tag: string): string {
   return `${tag}#${++seq}`;
 }
 
-/** 在 `fn` 里发生的项目修改都并进同一个撤销步 */
+/** All project changes made inside `fn` merge into the same undo step */
 export function commitMerged<T>(key: string, windowMs: number, fn: () => T): T {
   return withMerge({ key, windowMs }, fn);
 }
@@ -40,8 +41,9 @@ const realEnv: ThrottleEnv = {
 };
 
 /**
- * 只留最新值的限速:第一个值立刻交,之后的值最快每 `intervalMs` 交一次(中间的被后来的顶掉);
- * `flush()` 把还没交的最新值马上交出去(松手时调),`cancel()` 丢掉没交的。
+ * Latest-value-only throttle: the first value is committed immediately, later values at most once per `intervalMs`
+ * (intermediate ones are replaced by newer ones); `flush()` commits the latest pending value right away (call on release),
+ * `cancel()` drops anything uncommitted.
  */
 export function createLatestThrottle<T>(apply: (v: T) => void, intervalMs: number, env: ThrottleEnv = realEnv) {
   let last = -Infinity;

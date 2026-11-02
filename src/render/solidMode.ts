@@ -1,114 +1,141 @@
 import { measureContentBox, measureInk, type Ink } from "./contentBox";
 
 /**
- * 实体模式:浏览时把每张卡画成一个色块,不渲真内容。暂停了再渲真的。
+ * Solid mode: paints each card as a color block during browsing without rendering real content.
+ * Renders real content once paused.
  *
- * # ⚠ 现在没有任何地方打开它
+ * # ⚠ Currently not enabled anywhere
  *
- * 编辑台的 2D 预览曾经在播放时切到这里,后来撤了 —— 2D 那一页的契约是
- * 「预览所见 = 导出所得」,播放时换成色块就把这条破了:用户按播放是要看成片长什么样,
- * 不是要看构图草图。代理现在只活在 3D 视图里(`src/editor/preview/Scene3DView.tsx`),
- * 而且只是「贴图还没渲好」时的过渡,渲好立刻换成真图。
+ * 2D preview in the editor once switched here during playback, but it was later reverted: the
+ * contract of the 2D page is "what you see in preview = what you get in export", and replacing
+ * cards with color blocks during playback broke this: when users hit play they want to see what the
+ * final video looks like, not a composition sketch. Proxies now live only in the 3D view
+ * (`src/editor/preview/Scene3DView.tsx`), and merely as a transition while "textures have not
+ * finished rendering yet", swapping in the real image as soon as rendering finishes.
  *
- * 这套东西留着没删,是因为「浏览时降级、暂停时真渲」这个思路本身还成立:
- * 将来真遇到预览卡顿(同屏很多毛玻璃之类)可以再接回去。接的时候记住两条 ——
- * 必须**显式**打开(`?stage=1&proxy=1`),而且导出那条路永远拿不到这个参数。
+ * This system was kept rather than deleted because the idea of "downgrade during browsing, real
+ * render when paused" remains valid: if preview stuttering is actually encountered in the future
+ * (many frosted glass elements on screen at once, etc.), it can be hooked back up. Remember two
+ * rules when hooking it back up: it must be enabled **explicitly** (`?stage=1&proxy=1`), and the
+ * export path must never receive this parameter.
  *
- * # 硬规矩:绝不进 Agent 的眼睛
+ * # Hard rule: never enter Agent's eyes
  *
- * `see_frames` 走 `server/bakery/` 另起一个 Chrome、加载 `?export=1`,
- * 根本不经过编辑台那个窗口。所以只要实体模式活在 `?stage=1` 这条路上,vision 那边读都读不到。
+ * `see_frames` goes through `server/bakery/` to launch a separate Chrome and load `?export=1`,
+ * bypassing the editor window entirely. So as long as solid mode lives on the `?stage=1` path,
+ * vision cannot read it at all.
  *
- * 而且必须**显式打开**:
+ * Furthermore, it must be **explicitly enabled**:
  *
- *     ?stage=1            → 真渲(默认)
- *     ?stage=1&proxy=1    → 实体模式(只有编辑台预览会加)
+ *     ?stage=1            → real render (default)
+ *     ?stage=1&proxy=1    → solid mode (added only by editor preview)
  *
- * 反过来设计(默认开、导出时关)的话,一个漏掉的判断就能让导出悄悄输出彩色方块,
- * 而那种错不会报,只会被当成渲染 bug 查半天。**退化方向必须是「慢但正确」。**
+ * If designed in reverse (on by default, off for export), a single missed check could let export
+ * silently output colored boxes, and that error would throw no exception, only to be chased as a
+ * rendering bug for hours. **The degradation direction must be "slow but correct".**
  *
- * `src/StageView.tsx` 开头写着「预览所见 = 导出所得」。实体模式是这句话的例外,
- * 破得**自明**(彩色方块没人会当成成品),而且只破在人这一侧。
+ * `src/StageView.tsx` starts with "what you see in preview = what you get in export". Solid mode is
+ * an exception to this statement, broken in a **self-evident** way (no one mistakes colored boxes
+ * for a finished product), and broken only on the human side.
  *
- * # 换挡不能靠卸载重挂
+ * # Tier switches cannot rely on unmount and remount
  *
- * `src/render/pinAnimations.ts` 的锚点是「**头一次出现时**的舞台时间」。卡片卸载再挂回来
- * 会拿到新锚点,进场动画在升级那一刻从头播一遍 —— 用户看到的是「每次暂停,字都重新飞进来一次」。
+ * The anchor point in `src/render/pinAnimations.ts` is the "stage time **at first appearance**".
+ * If a card is unmounted and remounted, it receives a new anchor point, and its entrance animation
+ * replays from the beginning the moment it is upgraded: what the user sees is "every time you
+ * pause, the text flies in all over again".
  *
- * 所以真卡一直挂着,只是被一条 CSS 规则藏起来:
- *   - `display:none` 跳过布局和绘制 → backdrop-filter / blur 的开销归零,这正是要省的;
- *   - 元素还在 DOM 里 → 锚点不丢;
- *   - 动画本来就被 pinAnimations 钉住并暂停了 → 藏着几乎不花钱。
+ * Therefore real cards remain mounted continuously, merely hidden by a CSS rule:
+ *   - `display:none` skips layout and paint → backdrop-filter / blur overhead drops to zero, which
+ *     is exactly what needs to be saved;
+ *   - Elements remain in the DOM → anchor points are not lost;
+ *   - Animations are already pinned and paused by pinAnimations → hiding costs almost nothing.
  *
- * 用 class + 样式表而不是给卡片套一层 div:套 div 会让 React 在切换那一刻重挂载卡片,
- * 正好踩中上面那个坑。
+ * Using class + stylesheet rather than wrapping the card in an extra div: wrapping in a div causes
+ * React to remount the card at the moment of switching, stumbling directly into the pitfall above.
  *
- * # 铺满整幅的背景不画色块,是有意的
+ * # Omitting color blocks for full-bleed backgrounds is intentional
  *
- * 色块的框来自 measureContentBox,而它把「占了这张卡九成以上」的元素当背景跳过。
- * 于是满屏渐变、粒子底纹这类卡在实体模式下是看不见的 —— 这正合适:实体模式要回答的是
- * 「这块压上去会不会打架、会不会盖住人」,而铺底的东西恰恰是不需要看的那一类。
- * 全画出来的话满屏一片色,什么也判断不出来。
+ * The color block box comes from measureContentBox, which skips elements that "occupy over 90% of
+ * this card" as background. Consequently, cards like full-screen gradients or particle underlays
+ * are invisible in solid mode: which is just right: solid mode is meant to answer "will overlaying
+ * this clash or cover up subjects?", while background underlays are precisely the category that
+ * does not need inspection. Drawing everything would flood the screen with a wash of color, making
+ * it impossible to judge anything.
  */
 
-/** 这一趟页面能不能用实体模式。只看 URL,和当前开没开无关 */
+/**
+ * Whether this page pass can use solid mode. Checks only the URL, regardless of whether
+ * it is currently active.
+ */
 export function proxyAllowed(): boolean {
   if (typeof location === "undefined") return false;
   return new URLSearchParams(location.search).has("proxy");
 }
 
 /**
- * 卡片的墨色缓存,按 clipId。
+ * Ink color cache for cards, by clipId.
  *
- * 「实例这一层是白捡的」:按「暂停 = 真渲」,卡片每次真渲都是一次采样机会。
- * **用得越久,实体模式越准** —— 用户改了 accent、换了文案,方块跟着变。
- * 一次都没真渲过的卡没有条目,代理平面退回一个中性灰,浏览一下就自愈。
+ * "The instance layer comes for free": following "paused = real render", every real render of a
+ * card is a sampling opportunity. **The longer it is used, the more accurate solid mode becomes**:
+ * when the user changes accent or copy, the block updates accordingly. Cards that have never had a
+ * real render have no entry; proxy planes fall back to a neutral gray and self-heal after browsing.
  */
 const inkByClip = new Map<string, Ink>();
 
 /**
- * 这张卡真正画了东西的那一块,坐标**相对卡片自己的框**(不是舞台)。
- * null = 内容基本铺满这张卡,代理平面直接 inset:0。
+ * The area where this card actually painted content, coordinates **relative to the card's own box**
+ * (not the stage). null = content substantially fills this card, proxy plane uses inset:0 directly.
  *
- * 用内容框而不是卡片框:大多数卡是整屏画布、内容只在中间一小块。拿卡片框画色块的话,
- * 满屏一片,构图什么也判断不出来 —— 而"这块压上去是不是太重了"正是实体模式要回答的问题。
+ * Uses the content box instead of the card box: most cards are full-screen canvases with content
+ * only in a small patch in the middle. Drawing color blocks with the card box covers the entire
+ * screen, making composition impossible to evaluate: and "is this block too heavy when overlaid?"
+ * is precisely the question solid mode needs to answer.
  */
 const boxByClip = new Map<string, { left: number; top: number; width: number; height: number } | null>();
 
 export interface Proxy {
-  /** 代理平面用的颜色,已经是可以直接写进 CSS 的 rgba() */
+  /** Color used by the proxy plane, already in an rgba() format ready to write directly to CSS */
   color: string;
-  /** 相对卡片自己框的矩形;null = 铺满整张卡 */
+  /** Rectangle relative to the card's own box; null = fills the entire card */
   box: { left: number; top: number; width: number; height: number } | null;
 }
 
-/** 一次都没采过样的卡用它。中性灰、半透明 —— 一眼看得出「这块还没量过」,又不至于喧宾夺主 */
+/**
+ * Used for cards that have never been sampled. Neutral gray, semi-transparent: immediately
+ * recognizable as "this area has not been measured yet" without being overpowering.
+ */
 const UNKNOWN: Proxy = { color: "rgba(148, 163, 184, 0.35)", box: null };
 
 export function proxyOf(clipId: string): Proxy {
   const ink = inkByClip.get(clipId);
   if (!ink) return UNKNOWN;
   const [r, g, b] = ink.rgb;
-  // cover 太低的话方块几乎看不见,给一个下限:它要能表达「这儿有东西」
+  // If cover is too low the block is barely visible; set a lower bound: it must convey that
+  // "something is here"
   const a = Math.max(0.12, Math.min(1, ink.cover));
   return { color: `rgba(${r}, ${g}, ${b}, ${a.toFixed(3)})`, box: boxByClip.get(clipId) ?? null };
 }
 
 /**
- * 真渲之后采一次样。每个 `[data-pc-clip]` 各量各的。
+ * Samples once after a real render. Each `[data-pc-clip]` is measured independently.
  *
- * 只在真渲那一帧调 —— 实体模式下画面上是色块,量它等于把上一次的结论抄一遍再劣化。
- * 量不到的(canvas 还没画、整张卡全透明)保持上一次的结论,不覆盖成 null:
- * 一次量空就把颜色清掉的话,色块会在浏览时忽明忽暗。
+ * Called only on that real render frame: under solid mode the screen shows color blocks, and
+ * measuring them is equivalent to copying the previous conclusion and degrading it further.
+ * If unmeasurable (canvas has not drawn yet, entire card is transparent), keep the previous
+ * conclusion without overwriting with null: if a single empty measurement cleared the color,
+ * color blocks would flicker on and off during browsing.
  */
 export function sampleAll(stageEl: HTMLElement): void {
   for (const el of stageEl.querySelectorAll<HTMLElement>("[data-pc-clip]")) {
     const id = el.getAttribute("data-pc-clip");
     if (!id) continue;
     /*
-     * 内容框和墨色用同一趟量:measureContentBox 把这张卡里所有「画了东西」的元素矩形并起来,
-     * 坐标是相对传进去的那个元素的(这里就是卡片自己),正好可以直接给代理平面用。
-     * 它对「内容铺满整张卡」的情况返回 null —— 那时候平面就该铺满,语义正好对上。
+     * Content box and ink color are measured in the same pass: measureContentBox unions the rectangles
+     * of all elements with "painted content" in this card, with coordinates relative to the element
+     * passed in (here the card itself), perfectly suited for direct use by proxy planes. It returns
+     * null when "content fills the entire card": at that point the plane should fill the card,
+     * matching the semantics exactly.
      */
     const box = measureContentBox(el);
     const ink = measureInk(el, box);
@@ -117,17 +144,20 @@ export function sampleAll(stageEl: HTMLElement): void {
   }
 }
 
-/** 换项目时清掉:clipId 会复用,留着旧颜色就会张冠李戴 */
+/**
+ * Cleared when switching projects: clipId gets reused, so retaining old colors would
+ * misattribute them.
+ */
 export function resetInk(): void {
   inkByClip.clear();
   boxByClip.clear();
 }
 
 /**
- * 藏真卡的样式表。只在实体模式这条路上注入一次。
+ * Stylesheet hiding real cards. Injected only once along the solid mode path.
  *
- * `.pc-proxy > *` 命中的是卡片组件的根元素(以及代理平面本身,所以要排除掉它)。
- * 用 `!important` 是因为卡片自己可能写了 display —— 这条规则必须赢。
+ * `.pc-proxy > *` matches root elements of card components (and the proxy plane itself, so it must
+ * be excluded). `!important` is used because cards themselves may set display: this rule must win.
  */
 let styleInjected = false;
 export function ensureProxyStyle(): void {

@@ -1,30 +1,45 @@
 /**
- * 侧栏那棵树里「整理信息」那一半:分组、项目放在哪个分组、置顶、归档、手排的顺序。
+ * The "organization data" half of the sidebar tree: groups, which group a project is in, pins, archive,
+ * and the manual order.
  *
- * **两套分组,互不混放**(用户 2026-10-23 定:「分本地分组(桌面版的本地 Agent)和云端分组。云端分组存云端,本地分组存本地。
- * 本地项目放不进云端的分组(反之云端也放不进本地)」):
+ * **Two realms of groups, never mixed** (user decision, 2026-10-23: "Split into local groups (the desktop
+ * app's local Agent) and cloud groups. Cloud groups are stored in the cloud, local groups are stored
+ * locally. A local project cannot be put into a cloud group (and vice versa)"):
  *
- * |          | 装什么项目                         | 存在哪                   | 哪一屏用            |
- * |----------|------------------------------------|--------------------------|---------------------|
- * | 本地分组 `local` | 本机草稿项目(`editor/io/drafts.ts`) | 本机(`localStorage`)      | `DesktopStart.tsx`  |
- * | 云端分组 `cloud` | 云端项目(云端文档服务的项目列表)   | 云端,跟着账号走(见下)   | `OnlineStart.tsx`   |
+ * |                     | Which projects it holds                                         | Where it is stored                     | Which screen uses it |
+ * |---------------------|-----------------------------------------------------------------|----------------------------------------|----------------------|
+ * | Local group `local` | Local draft projects (`editor/io/drafts.ts`)                    | Locally (`localStorage`)               | `DesktopStart.tsx`   |
+ * | Cloud group `cloud` | Cloud projects (the project list of the cloud document service) | Cloud, follows the account (see below) | `OnlineStart.tsx`    |
  *
- * 一份 `OrgState` 只属于一套(`realm`),键、内容里的标记、拼清单、放进分组四处都按它认,任何一处对不上都拒绝:
- * - **存储键按套分开**(`orgKey`):`pc.start.org.local.<范围>` 与 `pc.start.org.cloud.<范围>`,前缀就不同,谁也盖不到谁;
- * - **内容里带标记**(`parseOrg`):读出来的东西标着另一套的,当没记过,不会把一套的内容当成另一套的;
- * - **拼清单只收同一套的项目**(`mergeProjects`);
- * - **放进分组只能同一套**(`moveProject`、`moveRefusal`):跨套返回一句说明,整理信息原样不动。
+ * One `OrgState` belongs to only one realm (`realm`), and four places go by it: the key, the marker in the
+ * content, building the manifest, and putting into a group; a mismatch in any one of them is rejected:
+ * - **Storage keys are split by realm** (`orgKey`): `pc.start.org.local.<scope>` and
+ *   `pc.start.org.cloud.<scope>`, whose prefixes differ, so neither can overwrite the other;
+ * - **The content carries a marker** (`parseOrg`): something read back that is marked as the other realm
+ *   is treated as never recorded, so one realm's content is never taken as the other's;
+ * - **Building the manifest accepts only projects of the same realm** (`mergeProjects`);
+ * - **Putting into a group is only allowed within the same realm** (`moveProject`, `moveRefusal`): across
+ *   realms a sentence of explanation is returned and the organization data is left unchanged.
  *
- * **云端那一套存哪**:存在云端文档服务、按账号一份,整份(分组、项目放在哪、置顶、归档、顺序、对话标记)一起上云
- * (接口 `POST /hosted/shared/account/start-org`,服务端 `cloud/docservice/modules/account-org.mjs`,裁定 V22-05～09)。
- * 本机的键 `pc.start.org.cloud.<账号>` 是它在这台浏览器里的缓存:打开先用它,同步逻辑见 `orgSync.ts`、`orgMerge.ts`、`useCloudOrg.ts`。
- * 服务端还没有这条路由(老服务端)时安静地退回「只记在这台浏览器里」,界面据此改口。游客没有云端那一份(游客身份不跨设备、只有一个项目),也就没有分组。
+ * **Where the cloud realm is stored**: in the cloud document service, one copy per account, and the whole
+ * copy (groups, which group a project is in, pins, archive, order, chat markers) goes to the cloud
+ * together (interface `POST /hosted/shared/account/start-org`, server
+ * `cloud/docservice/modules/account-org.mjs`, rulings V22-05~09).
+ * The local key `pc.start.org.cloud.<account>` is its cache in this browser: it is used first on open;
+ * for the sync logic see `orgSync.ts`, `orgMerge.ts` and `useCloudOrg.ts`.
+ * When the server does not have this route yet (an old server) it quietly falls back to "recorded only in
+ * this browser" and the UI changes its wording accordingly. Guests have no cloud copy (a guest identity
+ * does not cross devices and has just one project), and so no groups.
  *
- * 项目本身(有哪些、叫什么、谁建的)一律以项目列表为准:这里只记整理信息,列表里没有的项目不会凭空出现;
- * 列表暂时取不到时也不丢已经记下的整理信息(`withProjects` 把这次没出现的条目原样留着)。
+ * The projects themselves (which exist, what they are called, who created them) always follow the project
+ * list: only the organization data is recorded here, and a project that is not in the list does not appear
+ * out of nowhere; when the list is temporarily unavailable, the organization data already recorded is not
+ * lost either (`withProjects` leaves entries that did not appear this time as they are).
  *
- * 纯函数加一对读写,不碰 React;读写都包 try/catch(无痕窗口、禁了站点数据会直接抛),取不到就当没记过。
- * 一律返回新对象,不原地改(仓库约束)。单测 `vibeOrg.test.mjs`、`orgRealm.test.mjs`。
+ * Pure functions plus one pair of read/write, without touching React; reading and writing are both
+ * wrapped in try/catch (incognito windows and disabled site data throw outright), and when it cannot be
+ * read it is treated as never recorded. Always return new objects, never modify in place (repository
+ * constraint). Unit tests: `vibeOrg.test.mjs`, `orgRealm.test.mjs`.
  */
 import type { OrgRealm, Ratio, TreeFlags, VibeChat, VibeGroup, VibeProject } from "./types.ts";
 import { tr } from "../i18n/index.ts";
@@ -41,15 +56,15 @@ export interface OrgChat extends TreeFlags {
   projectId: string;
 }
 
-/** 存起来的分组:属于哪一套由整份 `OrgState` 的 `realm` 说了算,每个分组不再各记一遍 */
+/** The saved groups: which realm a group belongs to is decided by the `realm` of the whole `OrgState`, and each group no longer records it again */
 export type OrgGroup = Omit<VibeGroup, "realm">;
 
 export interface OrgState {
   v: 1;
-  /** 这一份属于哪一套;键、内容、拼清单、放进分组都按它核对 */
+  /** Which realm this copy belongs to; the key, the content, building the manifest and putting into a group are all checked against it */
   realm: OrgRealm;
   groups: OrgGroup[];
-  /** 数组顺序就是显示顺序(同级之间) */
+  /** The array order is the display order (among siblings) */
   projects: OrgProject[];
   chats: OrgChat[];
 }
@@ -59,25 +74,27 @@ const EMPTY: Readonly<Record<OrgRealm, OrgState>> = Object.freeze({
   cloud: Object.freeze({ v: 1, realm: "cloud", groups: [], projects: [], chats: [] }) as OrgState,
 });
 
-/** 这一套里什么都没记过的整理信息(共用的冻住对象,不要改它) */
+/** The organization data of a realm in which nothing has been recorded (a shared frozen object, do not modify it) */
 export const emptyOrg = (realm: OrgRealm): OrgState => EMPTY[realm];
 
-/** 本机分组在本机存储里只有一份:桌面版是一台机器,范围固定用它 */
+/** There is only one copy of local groups in local storage: the desktop app is one machine, so the scope is fixed to this */
 export const LOCAL_ORG_SCOPE = "desktop";
 
-/** 云端分组的范围:登录账号的编号。游客没有(游客没有分组,见文件头) */
+/** The scope of cloud groups: the id of the logged-in account. Guests have none (guests have no groups, see the file header) */
 export const cloudOrgScope = (accountId: string): string => `acc:${accountId}`;
 
 /**
- * 本机存储的键。**两套的前缀不同**(`pc.start.org.local.` / `pc.start.org.cloud.`),所以任何范围名都撞不到对面那一套去。
- * 云端那一套按账号各一份;本机那一套按范围(现在只有 `LOCAL_ORG_SCOPE` 一个)。
+ * Keys in local storage. **The prefixes of the two realms differ** (`pc.start.org.local.` /
+ * `pc.start.org.cloud.`), so no scope name can collide with the opposite realm.
+ * The cloud realm has one copy per account; the local realm goes by scope (currently there is only
+ * `LOCAL_ORG_SCOPE`).
  */
 export const orgKey = (realm: OrgRealm, scope: string): string => `pc.start.org.${realm}.${scope}`;
 
-/** 分套之前的老键(`pc.start.org.<范围>`):读不到新键时认一次,写只写新键 */
+/** The old key from before the realms were split (`pc.start.org.<scope>`): recognized once when the new key cannot be read; only the new key is ever written */
 const legacyOrgKey = (scope: string): string => `pc.start.org.${scope}`;
 
-/** 本地项目放不进云端分组、云端项目放不进本地分组:说给用户的那一句。同一套返回 null */
+/** A local project cannot go into a cloud group and a cloud project cannot go into a local group: the sentence addressed to the user. Returns null for the same realm */
 export function moveRefusal(projectRealm: OrgRealm, groupRealm: OrgRealm): string | null {
   if (projectRealm === groupRealm) return null;
   return projectRealm === "local"
@@ -86,22 +103,27 @@ export function moveRefusal(projectRealm: OrgRealm, groupRealm: OrgRealm): strin
 }
 
 /**
- * 云端分组是不是存在云端。云端存储接上之后(服务端有 `start-org`、页面有同步)恒为 true;
- * 保留成常量是为了:服务端没部署到位的版本可以改回 false,界面立刻只说「只记在这台浏览器里」,不假装已经跨设备。
- * 运行时探到老服务端(没有这条路由)另有一道,见 `orgWhereText` 的第二个参数。
+ * Whether cloud groups are stored in the cloud. Always true once cloud storage is connected (the server
+ * has `start-org` and the page has sync); it is kept as a constant so that a build whose server is not
+ * deployed properly can switch it back to false, and the UI then says only "recorded only in this
+ * browser" at once, without pretending it already works across devices.
+ * Detecting an old server at runtime (one without this route) is a separate path, see the second
+ * parameter of `orgWhereText`.
  */
 export const CLOUD_ORG_IN_CLOUD = true;
 
 /**
- * 这一套的整理信息存在哪,说给用户的一句(新建分组的提示、侧栏的说明都用它)。
- * `inCloud`:云端这一套此刻是不是真存在云端;缺省看 `CLOUD_ORG_IN_CLOUD`,在线屏在探到老服务端时传 false。
+ * Where this realm's organization data is stored, as one sentence addressed to the user (used by the hint
+ * for creating a group and by the sidebar's description).
+ * `inCloud`: whether the cloud realm is really stored in the cloud right now; by default it follows
+ * `CLOUD_ORG_IN_CLOUD`, and the online screen passes false when it detects an old server.
  */
 export function orgWhereText(realm: OrgRealm, inCloud: boolean = CLOUD_ORG_IN_CLOUD): string {
   if (realm === "local") return tr("Only remembered on this machine");
   return inCloud ? tr("Stored in the cloud, visible on other devices too") : tr("Only remembered in this browser for now");
 }
 
-/** 「新建分组」处说的话:这是哪一套分组、存在哪、装什么 */
+/** What is said at "New group": which realm of group this is, where it is stored, and what it holds */
 export function groupNoteText(realm: OrgRealm, inCloud: boolean = CLOUD_ORG_IN_CLOUD): string {
   return realm === "local"
     ? tr("Local group: {0}. Only local projects can go in it.", orgWhereText("local"))
@@ -109,9 +131,13 @@ export function groupNoteText(realm: OrgRealm, inCloud: boolean = CLOUD_ORG_IN_C
 }
 
 /**
- * 云端项目列表取到了之后,把整理信息里**已经不在列表里**的项目清掉,免得云端那一份只增不减:
- * 项目条目没有分组、置顶、归档(没有任何整理信息,只剩一个位置)的去掉;项目下的对话条目跟着项目去掉。
- * 有整理信息的条目留着(也许是列表一时没取全)。列表没取到(`ids` 为 null)不清理。没有要清的返回原对象。
+ * After the cloud project list has been fetched, remove from the organization data the projects that are
+ * **no longer in the list**, so the cloud copy does not only grow and never shrink:
+ * project entries with no group, pin or archive (no organization data at all, just a position) are
+ * removed; the chat entries under a project are removed together with the project.
+ * Entries that do have organization data are kept (perhaps the list was only partially fetched). If the
+ * list was not fetched (`ids` is null) nothing is cleaned up. When there is nothing to clean, the
+ * original object is returned.
  */
 export function pruneOrg(org: OrgState, ids: ReadonlySet<string> | null): OrgState {
   if (!ids) return org;
@@ -123,7 +149,7 @@ export function pruneOrg(org: OrgState, ids: ReadonlySet<string> | null): OrgSta
   return { ...org, projects, chats };
 }
 
-/** 侧栏要的分组清单:存起来的分组盖上这一套的标记 */
+/** The group manifest the sidebar needs: the saved groups, stamped with this realm's marker */
 export function groupsOf(org: OrgState): VibeGroup[] {
   return org.groups.map((g) => ({ ...g, realm: org.realm }));
 }
@@ -144,8 +170,11 @@ type Loose = Record<string, unknown>;
 const rows = (x: unknown): Loose[] => (Array.isArray(x) ? x.filter((r) => r && typeof r === "object") : []) as Loose[];
 
 /**
- * 读回来的东西不可信(手改过、旧版本写的别的形状):逐条认,认不出的丢掉。
- * `realm` 是调用方要读的那一套:内容里标着另一套的整份不认(当没记过);没标的是分套之前写的老格式,按调用方要的这一套认。
+ * What is read back cannot be trusted (edited by hand, or another shape written by an old version):
+ * recognize it entry by entry and drop what cannot be recognized.
+ * `realm` is the realm the caller wants to read: a whole copy marked as the other realm is not accepted
+ * (treated as never recorded); one with no marker is the old format written before the realms were split,
+ * and is accepted as the realm the caller wants.
  */
 export function parseOrg(raw: string | null, realm: OrgRealm): OrgState {
   if (!raw) return emptyOrg(realm);
@@ -170,11 +199,12 @@ export function parseOrg(raw: string | null, realm: OrgRealm): OrgState {
   return { v: 1, realm, groups, projects, chats };
 }
 
-/** 读这一套在本机存的那一份。没有范围(没登录)、读不到、读出来不对,都当没记过 */
+/** Read the copy of this realm stored locally. No scope (not logged in), cannot be read, or what is read is wrong: all treated as never recorded */
 export function loadOrg(realm: OrgRealm, scope: string | null): OrgState {
   if (!scope) return emptyOrg(realm);
   try {
-    // 新键没有就认一次分套之前的老键(它没有套的标记,按调用方要的这一套认)
+    // If the new key is absent, recognize the old key from before the realms were split once (it has no realm
+    // marker, and is accepted as the realm the caller wants)
     const raw = localStorage.getItem(orgKey(realm, scope)) ?? localStorage.getItem(legacyOrgKey(scope));
     return parseOrg(raw, realm);
   } catch {
@@ -182,17 +212,17 @@ export function loadOrg(realm: OrgRealm, scope: string | null): OrgState {
   }
 }
 
-/** 写在本机。键按这一份自己的套来定(`org.realm`),调用方没有机会把一套写进另一套的键 */
+/** Write locally. The key is decided by this copy's own realm (`org.realm`), so the caller has no chance to write one realm into the other realm's key */
 export function saveOrg(scope: string | null, org: OrgState): void {
   if (!scope) return;
   try {
     localStorage.setItem(orgKey(org.realm, scope), JSON.stringify(org));
   } catch {
-    /* 存不了就只在这次打开期间有效 */
+    /* If it cannot be saved, it is only valid for this session of the page */
   }
 }
 
-/** 项目清单里的一个项目:带它属于哪一套(本机草稿是 local;云端列表里的我创建的、我加入的、游客自己的是 cloud) */
+/** One project in the project manifest: carries which realm it belongs to (a local draft is local; ones in the cloud list that I created, that I joined, and the guest's own are cloud) */
 export interface OrgEntry {
   id: string;
   name: string;
@@ -200,7 +230,7 @@ export interface OrgEntry {
   realm: OrgRealm;
 }
 
-/** 这台浏览器打开过这个项目时记下的画面信息(`thumbCache.ts`) */
+/** The picture info recorded when this browser opened the project (`thumbCache.ts`) */
 export interface SeenMeta {
   ratio: Ratio | null;
   duration: number | null;
@@ -209,9 +239,12 @@ export interface SeenMeta {
 }
 
 /**
- * 把项目列表和整理信息拼成侧栏要的项目清单。顺序:记过顺序的按记的排;这次新出现的(刚建的、刚被拉进来的)排最前面,
- * 彼此之间保持列表里的先后。同一个项目在「我创建的」「我加入的」里都出现时只留第一次。
- * **只收和这份整理信息同一套的项目**:本地整理信息里不会出现云端项目,云端的里也不会出现本机草稿。
+ * Build the project manifest the sidebar needs from the project list and the organization data. Order:
+ * those with a recorded order go by that order; newly appearing ones this time (just created, just pulled
+ * in) go to the very front, keeping their order from the list among themselves. When the same project
+ * appears in both "Created by me" and "Joined by me", only the first occurrence is kept.
+ * **Only projects of the same realm as this organization data are accepted**: cloud projects never appear
+ * in local organization data, and local drafts never appear in the cloud's.
  */
 export function mergeProjects(org: OrgState, cloud: readonly OrgEntry[], meta: Readonly<Record<string, SeenMeta>> = {}): VibeProject[] {
   const byId = new Map<string, OrgEntry>();
@@ -241,10 +274,13 @@ export function mergeProjects(org: OrgState, cloud: readonly OrgEntry[], meta: R
 }
 
 /**
- * 侧栏改过项目之后(置顶、归档、排序、换分组)写回整理信息。这次清单里没有的条目(列表暂时取不到、换了账号范围)原样留在后面,不丢。
+ * After the sidebar has changed projects (pin, archive, sort, change group), write back the organization
+ * data. Entries that are not in this manifest (the list is temporarily unavailable, or the account scope
+ * changed) are left behind as they are, not lost.
  */
 export function withProjects(org: OrgState, list: readonly Pick<VibeProject, "id" | "realm" | "groupId" | "pinned" | "archived">[]): OrgState {
-  // 另一套的项目不进这一份(正常走不到:清单是 `mergeProjects` 拼的,已经只有同一套)
+  // Projects of the other realm do not enter this copy (normally unreachable: the manifest is built by
+  // `mergeProjects` and already contains only the same realm)
   const mine = list.filter((p) => p.realm === org.realm);
   const ids = new Set(mine.map((p) => p.id));
   const rest = org.projects.filter((p) => !ids.has(p.id));
@@ -255,13 +291,13 @@ export function withProjects(org: OrgState, list: readonly Pick<VibeProject, "id
 }
 
 export function withGroups(org: OrgState, groups: readonly (OrgGroup & { realm?: OrgRealm })[]): OrgState {
-  // 另一套的分组不进这一份
+  // Groups of the other realm do not enter this copy
   groups = groups.filter((g) => g.realm === undefined || g.realm === org.realm);
   const ids = new Set(groups.map((g) => g.id));
   return {
     ...org,
     groups: groups.map((g) => ({ id: g.id, name: g.name, ...flagsOf(g) })),
-    // 删掉的分组:里面的项目回到「没放进分组」
+    // A deleted group: the projects in it go back to "Ungrouped"
     projects: org.projects.map((p) => (p.groupId && !ids.has(p.groupId) ? { ...p, groupId: null } : p)),
   };
 }
@@ -272,7 +308,7 @@ export function withChats(org: OrgState, projectId: string, list: readonly Pick<
   return { ...org, chats: [...list.map((c) => ({ id: c.id, projectId, ...flagsOf(c) })), ...rest] };
 }
 
-/** 新建分组。名字空白就叫「新分组」;编号在这一份里不重复 */
+/** Create a group. A blank name is called "New group"; the id is unique within this copy */
 export function addGroup(org: OrgState, name: string, rand: () => string = () => Math.random().toString(36).slice(2, 8)): { org: OrgState; id: string } {
   const taken = new Set(org.groups.map((g) => g.id));
   let id = `g-${rand()}`;
@@ -282,8 +318,11 @@ export function addGroup(org: OrgState, name: string, rand: () => string = () =>
 }
 
 /**
- * 把一个项目放进某个分组(null 是移出分组)。**只许同一套**:项目属于另一套(本地项目对云端分组、云端项目对本地分组)时
- * 整理信息原样不动、`refused` 是说给用户的那一句。放进分组的入口(右键菜单、将来的拖拽)都得走这一个函数。
+ * Put a project into a group (null means move it out of its group). **Only the same realm is allowed**:
+ * when the project belongs to the other realm (a local project into a cloud group, a cloud project into a
+ * local group) the organization data is left unchanged and `refused` is the sentence addressed to the
+ * user. Every entry point for putting into a group (the context menu, drag-and-drop in the future) must go
+ * through this one function.
  */
 export function moveProject(org: OrgState, project: Pick<VibeProject, "id" | "realm">, groupId: string | null): { org: OrgState; refused: string | null } {
   const refused = moveRefusal(project.realm, org.realm);
@@ -296,7 +335,7 @@ export function moveProject(org: OrgState, project: Pick<VibeProject, "id" | "re
   return { org: { ...org, projects }, refused: null };
 }
 
-/** 右键「移到分组」里的一项。`blocked` 有值是放不进去:置灰,悬停说为什么 */
+/** One item of the context menu "Move to group". A `blocked` value means it cannot be put in: grayed out, with the reason on hover */
 export interface MoveTarget {
   id: string | null;
   name: string;
@@ -304,8 +343,11 @@ export interface MoveTarget {
 }
 
 /**
- * 一个项目右键「移到分组」能列哪些。别的套的分组也列出来、置灰并说明(侧栏一旦同时有两套分组,
- * 用户会想把项目往那边放,得告诉他为什么不行,而不是悄悄不列)。当前所在的分组、归档的分组不列;已在某个分组里时多一项「移出分组」。
+ * Which groups a project's context menu "Move to group" can list. Groups of the other realm are listed
+ * too, grayed out with an explanation (once the sidebar has both realms of groups at the same time, users
+ * will want to put the project over there, and we must tell them why it cannot be done rather than quietly
+ * not listing it). The group it is currently in and archived groups are not listed; when it is already in
+ * some group there is one more item, "Move out of group".
  */
 export function moveTargetsFor(project: Pick<VibeProject, "realm" | "groupId">, groups: readonly VibeGroup[]): MoveTarget[] {
   const targets: MoveTarget[] = groups
@@ -318,9 +360,9 @@ export function moveTargetsFor(project: Pick<VibeProject, "realm" | "groupId">, 
   return targets;
 }
 
-/* ---------------- 项目 Agent:看得到哪些对话 ---------------- */
+/* ---------------- Project Agent: which chats are visible ---------------- */
 
-/** 云端历史列表里的一条(`src/ai/cloud/types.ts` 的 `CloudChatItem`,这里只认用得到的几项) */
+/** One entry in the cloud history list (`CloudChatItem` in `src/ai/cloud/types.ts`; only the fields that are used are recognized here) */
 export interface ChatItemLike {
   id: string;
   title: string;
@@ -331,9 +373,12 @@ export interface ChatItemLike {
 }
 
 /**
- * 当前账号看得到的对话(`product/agent.md`「接入」):共有对话同项目有效成员都看得到;私有对话只有所属账号,
- * 例外是项目创建者能只读地看。服务端已经按这条过滤过,页面再复核一遍:**不能把别人的私有对话列出来**。
- * 没带归属的老条目(服务端没给 `ownerAccountId`)以服务端的过滤为准、照列。
+ * The chats the current account can see (`product/agent.md` "Connection"): a shared chat is visible to all
+ * valid members of the same project; a private chat is visible only to the account that owns it, with
+ * the exception that the project creator can view it read-only. The server has already filtered by this
+ * rule, and the page re-checks it: **other people's private chats must never be listed**.
+ * Old entries without an owner (the server did not give `ownerAccountId`) go by the server's filtering
+ * and are listed as they are.
  */
 export function viewableChats(items: readonly ChatItemLike[], viewer: { accountId: string | null; creator: boolean }, projectId: string): VibeChat[] {
   const out: VibeChat[] = [];
@@ -342,7 +387,7 @@ export function viewableChats(items: readonly ChatItemLike[], viewer: { accountI
     const owned = typeof it.ownerAccountId === "string" && it.ownerAccountId !== "";
     const mine = owned && viewer.accountId !== null && it.ownerAccountId === viewer.accountId;
     if (visibility === "private") {
-      // 私有:没带归属的只在服务端说了是创建者只读时才列;带了归属的,是自己的或自己是创建者才列
+      // Private: one without an owner is listed only when the server said the creator is viewing read-only; one with an owner is listed only if it is mine or I am the creator
       if (!owned && !it.creatorReadOnly && viewer.accountId === null) continue;
       if (owned && !mine && !viewer.creator) continue;
     }
@@ -358,7 +403,7 @@ export function viewableChats(items: readonly ChatItemLike[], viewer: { accountI
   return out;
 }
 
-/** 把本机记的置顶、归档、顺序套到这个项目的对话上。服务端新出现的对话排前面(和项目同一个规矩) */
+/** Apply the pins, archive and order recorded locally to this project's chats. Chats newly appearing on the server go to the front (the same rule as projects) */
 export function mergeChats(org: OrgState, projectId: string, chats: readonly VibeChat[]): VibeChat[] {
   const byId = new Map(chats.map((c) => [c.id, c]));
   const known = org.chats.filter((c) => c.projectId === projectId && byId.has(c.id));

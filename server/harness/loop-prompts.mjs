@@ -1,17 +1,18 @@
 /**
- * 审查环路(worker / reviewer / judger)的提示词和工具名单。
+ * Prompts and tool lists for the review loop (worker / reviewer / judger).
  *
- * 为什么要这个环路:单个 Agent 只要有一轮不调工具就收工(agent.mjs),自己说「做完了」
- * 就算做完了,于是经常交半成品。这里把「完成」的判定从干活的人手里拿走,交给 judger。
+ * Why this loop: a single Agent wraps up as soon as it skips calling tools for a round (agent.mjs),
+ * considering itself done whenever it says "completed", thus often delivering half-finished work.
+ * Here the determination of "completion" is taken away from the worker and handed to the judger.
  */
 
-/** judger 的项目要求。用户原话,原样写进 judger 的系统提示 */
+/** Project requirements for judger. User's exact words, written as-is into judger's system prompt */
 export const PROJECT_REQUIREMENTS =
   'The visuals meet commercial delivery standards. There is no obvious template reuse or samey style. The design style of the animation effects matches the content the video expresses and has a distinctive aesthetic value. The shot pacing is reasonable.';
 
 /**
- * reviewer 和 judger 能用的工具。代码里没有「只读」标记,所以按名字写死;
- * 名单外的工具它们根本拿不到,调用会得到 agent.mjs 的「未知工具」错误。
+ * Tools available to reviewer and judger. There is no "read-only" marker in code, so hardcode by name;
+ * they cannot access tools outside the list at all, and invoking them yields an "unknown tool" error from agent.mjs.
  */
 export const READ_ONLY_TOOLS = [
   'get_project', 'get_clip', 'get_track', 'get_layout', 'get_selection', 'get_transcript', 'get_card_source',

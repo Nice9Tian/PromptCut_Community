@@ -1,6 +1,7 @@
 /**
- * 聊天记录列表窗口化的纯函数:高度记账、可见区计算、渲染计划(占位高度)、贴底判定。
- * 跑:node --test src/editor/right/chat/listWindow.test.mjs
+ * Pure functions for chat history list windowing: height accounting, visible area calculation,
+ * render plan (placeholder height), stick-to-bottom determination.
+ * Run: node --test src/editor/right/chat/listWindow.test.mjs
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -25,20 +26,20 @@ test("Prefix offsets: a gap between every two items, and the total height exclud
   assert.deepEqual(off, [0, 112, 174, 216]);
   assert.equal(contentHeight(off, 12), 204);
   assert.equal(contentHeight(prefixOffsets([], 12), 12), 0);
-  // 负数、NaN 以外的负高度按 0 算,不会让偏移倒退
+  // Negative heights other than NaN are treated as 0, and will not cause offset to regress
   assert.deepEqual(prefixOffsets([-5, 10], 0), [0, 0, 10]);
 });
 
 test("Visible range: items that intersect the interval; a boundary that falls inside a gap does not count", () => {
-  const off = prefixOffsets([100, 100, 100, 100], 10); // 条:[0,100) [110,210) [220,320) [330,430)
+  const off = prefixOffsets([100, 100, 100, 100], 10); // Items: [0,100) [110,210) [220,320) [330,430)
   assert.deepEqual(rangeInView(off, 0, 100, 10), { first: 0, last: 1 });
   assert.deepEqual(rangeInView(off, 50, 150, 10), { first: 0, last: 2 });
-  // 顶边正好在 gap 里:第 0 条已经整个滚出去了
+  // Top edge is exactly in the gap: item 0 has completely scrolled out
   assert.deepEqual(rangeInView(off, 105, 215, 10), { first: 1, last: 2 });
-  // 整个区间落在 gap 里:空区间
+  // The entire interval falls within the gap: empty interval
   const r = rangeInView(off, 101, 109, 10);
   assert.equal(r.first, r.last);
-  // 超出末尾
+  // Past the end
   assert.deepEqual(rangeInView(off, 1000, 1200, 10), { first: 4, last: 4 });
 });
 
@@ -47,7 +48,7 @@ test("Window: when pinned to the bottom, compute as scrolled to the bottom, igno
   const off = prefixOffsets(heights, LIST_GAP);
   const r = windowRange(off, { scrollTop: 0, clientHeight: 600, stick: true }, { overscan: 300 });
   assert.equal(r.last, 2000);
-  // 可视 600 + 余量 300:最多往上 (600 + 300) / 112 + 1 条左右
+  // Visible 600 + margin 300: at most about (600 + 300) / 112 + 1 items upward
   assert.ok(r.last - r.first <= 10, JSON.stringify(r));
   assert.ok(r.last - r.first >= 6, JSON.stringify(r));
 });
@@ -58,9 +59,9 @@ test("Window: in the middle, extend a margin above and below; the item count is 
   const mid = LIST_PAD + off[1000];
   const r = windowRange(off, { scrollTop: mid, clientHeight: 600, stick: false }, { overscan: 600, maxEntries: 44 });
   assert.ok(r.first < 1000 && r.last > 1000 + 600 / 32, JSON.stringify(r));
-  // 可视区本身约 19 条;加上余量会远超 44,被封顶
+  // The visible area itself has about 19 items; adding margin would far exceed 44, capped
   assert.equal(r.last - r.first, 44);
-  // 上下余量交替扩:两边大致对称
+  // Expand top and bottom margins alternately: roughly symmetric on both sides
   const up = 1000 - r.first;
   const visible = rangeInView(off, mid - LIST_PAD, mid - LIST_PAD + 600, LIST_GAP);
   const down = r.last - visible.last;
@@ -91,7 +92,8 @@ test("Render plan: placeholder height = the items it stands for + the gaps betwe
     { kind: "item", index: 3 },
     { kind: "spacer", from: 4, to: 6, height: 30 + 12 + 70 },
   ]);
-  // flex 的 gap 加在每两个相邻子元素之间:子元素高度之和 + (子元素数 - 1) * gap 应等于全渲染的总高
+  // flex gap is added between every two adjacent child elements: sum of child element heights +
+  // (child count - 1) * gap should equal the total height of a full render
   const childHeights = segs.map((s) => (s.kind === "spacer" ? s.height : heights[s.index]));
   const total = childHeights.reduce((a, b) => a + b, 0) + (childHeights.length - 1) * 12;
   assert.equal(total, contentHeight(off, 12));
@@ -105,9 +107,9 @@ test("Render plan: force-rendered items (streaming ones, focused ones) sit betwe
     segs.map((s) => (s.kind === "item" ? s.index : `[${s.from},${s.to}):${s.height}`)),
     [0, "[1,2):10", 2, 3, "[4,9):50", 9],
   );
-  // 越界的强制下标忽略
+  // Out-of-bounds forced index is ignored
   assert.deepEqual(planSegments(off, 0, 0, [-1, 10], 0), [{ kind: "spacer", from: 0, to: 10, height: 100 }]);
-  // 全在窗口里:没有占位
+  // All inside the window: no placeholder
   assert.ok(planSegments(off, 0, 10, [], 0).every((s) => s.kind === "item"));
 });
 
@@ -128,27 +130,27 @@ test("Height bookkeeping: measured values take priority; once the estimates of t
   const book = new HeightBook({ user: 60, assistant: 200 }, 3);
   assert.equal(book.get("x", "user"), 60);
   assert.equal(book.set("a", "user", 100), true);
-  assert.equal(book.set("a", "user", 100.3), false); // 半像素以内不算变
+  assert.equal(book.set("a", "user", 100.3), false); // Within half a pixel does not count as a change
   assert.equal(book.set("b", "user", 300), true);
   assert.equal(book.get("a", "user"), 100);
-  // 只量了 2 条:还用缺省值
+  // Only measured 2 items: still use default value
   assert.equal(book.estimate("user"), 60);
   book.set("c", "user", 200);
-  // 量满 3 条:定成平均值 200
+  // Measured a full 3 items: set to average value 200
   assert.equal(book.estimate("user"), 200);
   assert.equal(book.get("x", "user"), 200);
-  // 之后再量、同一条改高度,估计值都不再变
+  // Subsequent measurements or changing height of the same item no longer change the estimated value
   book.set("d", "user", 1000);
   book.set("a", "user", 10);
   assert.equal(book.estimate("user"), 200);
-  // 别的类不受影响
+  // Other classes are not affected
   assert.equal(book.get("t", "assistant"), 200);
   assert.equal(book.get("t", "time"), 100);
   book.prune(new Set(["d"]));
   assert.equal(book.size, 1);
   assert.equal(book.measured("a"), undefined);
   assert.equal(book.measured("d"), 1000);
-  // 非法高度不记
+  // Invalid height is not recorded
   assert.equal(book.set("z", "user", NaN), false);
   assert.equal(book.set("z", "user", -1), false);
 });

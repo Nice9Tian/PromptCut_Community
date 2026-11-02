@@ -1,5 +1,7 @@
-// 替身:按 `python -m promptcut_subject` 的命令行与 JSONL 约定回话,行为由「素材文件的内容」和权重目录里的 engine.txt 决定。
-// 只给单测(cloud-tools-p4-subject.test.mjs)用:让取消、超时、失败、孤儿进程这些路径不依赖真模型就能反复跑。
+// Stub: replies per CLI and JSONL conventions of `python -m promptcut_subject`; behavior is
+// determined by "asset file contents" and engine.txt in the weights directory.
+// For unit tests (cloud-tools-p4-subject.test.mjs) only: allows paths like cancellation, timeout,
+// failure, and orphan processes to run repeatedly without depending on the real model.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';

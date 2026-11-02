@@ -5,8 +5,9 @@ import "../../cards/native/hud.css";
 import { fitOr } from "../fit";
 
 /**
- * 排版流文字:草稿感多行文字自动重排定型。从 type-shift 拆出。
- * 支持首行主标题、星号次重点、横线署名层级。
+ * Type-shift text: draft-feel multi-line text that automatically reflows and settles. Extracted
+ * from type-shift.
+ * Supports first-line main title, asterisk sub-emphasis, and dash attribution hierarchy.
  */
 interface Params {
   lines: string;

@@ -6,34 +6,40 @@ import { Worker } from 'node:worker_threads';
 import { opaqueFrame } from './frame-video-worker.mjs';
 
 /**
- * worker 线程的脚本。本模块在预渲染进程里是被 Vite 打进配置包里加载的(`import.meta.url` 指到仓库根上的临时配置文件),
- * 直接 import 时(测试、脚本)才指到本目录:两处都找一找,都没有回 null(退回主线程做)。
+ * Script for the worker thread. In the prerender process, this module is bundled by Vite into a
+ * config bundle and loaded (`import.meta.url` points to a temporary config file at the repository
+ * root); only direct imports (tests, scripts) point to this directory: check both locations, and
+ * return null if neither is found (falls back to running on the main thread).
  */
 function workerScript() {
   const candidates = [];
-  try { candidates.push(fileURLToPath(new URL('./frame-video-worker.mjs', import.meta.url))); } catch { /* 不是文件地址 */ }
-  try { candidates.push(fileURLToPath(new URL('./server/bakery/frame-video-worker.mjs', import.meta.url))); } catch { /* 同上 */ }
+  try { candidates.push(fileURLToPath(new URL('./frame-video-worker.mjs', import.meta.url))); } catch { /* Not a file URL */ }
+  try { candidates.push(fileURLToPath(new URL('./server/bakery/frame-video-worker.mjs', import.meta.url))); } catch { /* Same as above */ }
   candidates.push(path.join(process.cwd(), 'server', 'bakery', 'frame-video-worker.mjs'));
   return candidates.find(file => { try { return fs.statSync(file).isFile(); } catch { return false; } }) ?? null;
 }
 
-/** 每个进程只记一次用的是哪条路(排障:看得出 worker 起没起来) */
+/**
+ * Log which path is used only once per process (troubleshooting: reveals whether worker started).
+ */
 let modeNoted = false;
 function noteMode(mode, fields = {}) {
   if (modeNoted) return;
   modeNoted = true;
-  try { console.info(`[frame-video] converter.${mode} ${JSON.stringify(fields)}`); } catch { /* 日志出错不影响 */ }
+  try { console.info(`[frame-video] converter.${mode} ${JSON.stringify(fields)}`); } catch { /* Logging errors do not affect execution */ }
 }
 
 /**
- * 把一帧 PNG 压成不透明 PNG 的活交给一个 worker 线程(`frame-video-worker.mjs`),主线程只转交字节。
- * 起不了 worker、或 worker 中途出错,就退回在主线程上做(同一个函数,结果相同),不让这一趟失败。
+ * Delegates flattening a PNG frame into an opaque PNG to a worker thread
+ * (`frame-video-worker.mjs`), with the main thread only transferring bytes. If the worker cannot
+ * be spawned or errors midway, falls back to running on the main thread (same function, identical
+ * result) so this pass does not fail.
  */
 export function createConverter() {
   let worker = null;
   let broken = false;
   let seq = 0;
-  /** id → { buffer(原帧,退回主线程时用), resolve, reject } */
+  /** id → { buffer (original frame, used when falling back to main thread), resolve, reject } */
   const waiting = new Map();
   const inline = (buffer) => Promise.resolve().then(() => opaqueFrame(buffer));
   const fallBack = () => {
@@ -70,14 +76,18 @@ export function createConverter() {
       const w = ensure();
       if (!w) return inline(buffer);
       const id = ++seq;
-      // 拷进一块独立的 ArrayBuffer 再转交(调用方的 Buffer 可能落在共享池里;原帧留着,worker 出错时退回主线程用)
+      // Copy into an independent ArrayBuffer before transfer (caller's Buffer might reside in a shared
+      // pool; keep original frame for falling back to main thread if worker errors)
       const data = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.length);
       return new Promise((resolve, reject) => {
         waiting.set(id, { buffer, resolve, reject });
         try { w.postMessage({ id, data }, [data]); } catch { fallBack(); }
       });
     },
-    /** 诊断:'worker' 在用 worker 线程、'inline' 退回了主线程、null 还没转过 */
+    /**
+     * Diagnostics: 'worker' using worker thread, 'inline' fell back to main thread, null not yet
+     * converted.
+     */
     get mode() { return worker ? 'worker' : broken ? 'inline' : null; },
     close() {
       const w = worker;
@@ -102,7 +112,8 @@ export function frameVideo(ffmpeg, file, fps) {
   });
   done.catch(() => {});
   // H.264 has no alpha. Use the same transparency checker as Agent images, at native resolution.
-  // 解码、合成、编码在 worker 线程里做(`frame-video-worker.mjs`),不占预渲染进程的主线程
+  // Decoding, compositing, and encoding run in a worker thread (`frame-video-worker.mjs`),
+  // without occupying the prerender process main thread.
   const converter = createConverter();
   return {
     async write(buffer) {

@@ -1,7 +1,7 @@
 /**
- * 手机版 Agent 分页的画法探针用的页面(只给 `scripts/probes/mobile-agent-view-probe.mjs` 用,不进任何构建):
- * 不接云端、不接项目,直接用探针给的假消息画一页对话,好和演示稿并排看、量尺寸。
- * 外面的顶栏和底部导航栏照 `MobileEditor.tsx` 的写法摆,整屏位置才和演示稿对得上。
+ * Page for the render-style probe of the mobile app's Agent tab (used only by `scripts/probes/mobile-agent-view-probe.mjs`, not in any build):
+ * not connected to the cloud or a project, it renders one chat page straight from the fake messages the probe supplies, to view side by side with the demo mockup and measure sizes.
+ * The outer top bar and bottom nav bar are laid out as written in `MobileEditor.tsx`, so the whole-screen positions match the demo mockup.
  */
 import { createRoot } from "react-dom/client";
 import "./mobile.css";

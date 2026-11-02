@@ -1,11 +1,15 @@
 /**
- * 总时长跟内容走(durationSync.ts):对时长排在渲染之前,一次编辑只渲一遍。
- * 跑:node --test src/editor/timeline/durationSync.test.mjs
+ * Total duration follows content (durationSync.ts): duration reconciliation is scheduled before
+ * rendering, rendering only once per edit.
+ * Run: node --test src/editor/timeline/durationSync.test.mjs
  *
- * 来历:tiers-probe T4(docs/archive/agent-reports/AGENT-perf-t4.md)。以前是时间轴渲染完在 effect 里 `syncDuration`,
- * 挪最后一段 → 整个编辑器渲一遍 → effect 改时长 → 同一个任务里再渲一遍。
- * 这里用一个「后订阅、收到通知就排一个微任务去读 state」的监听模拟 React 的 useSyncExternalStore
- * (React 也是在监听里排微任务刷新渲染),看它刷新时读到的是不是已经对好的时长。
+ * Origin: tiers-probe T4 (docs/archive/agent-reports/AGENT-perf-t4.md). Previously, `syncDuration`
+ * ran in an effect after the timeline finished rendering:
+ * moving the last clip → entire editor renders once → effect updates duration → renders once more
+ * in the same task.
+ * Here, a listener that "subscribes late and schedules a microtask to read state upon notification"
+ * simulates React's useSyncExternalStore (React also schedules microtasks in listeners to refresh
+ * rendering), checking whether what it reads on refresh is the already reconciled duration.
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test from "node:test";
@@ -23,7 +27,7 @@ function load(clips) {
   core.set({ durationManual: null });
 }
 
-/** 模拟 React:第一次收到通知时排一个微任务「渲染」,渲染时记下这一刻的项目时长 */
+/** Simulate React: schedule a "render" microtask on first notification, and record project duration at that moment during render */
 function fakeRenderer() {
   const renders = [];
   let pending = false;

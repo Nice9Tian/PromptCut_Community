@@ -20,7 +20,7 @@ let pending: { contentId: string; descriptor: CollaborationDescriptor | null } |
 let active: CollaborationDescriptor | null = null;
 let recovering = false;
 
-/** 只校验、不记:文件里的协作关联写坏了就抛错(打开文件时先于一切副作用调用) */
+/** Validate only, do not record: throw if the collaboration association in the file is corrupted (called when opening a file, before any side effect) */
 export function checkAssociation(value: unknown): void { parseCollaboration(value); }
 export function noteLoadedAssociation(project: Project, value: unknown) {
   pending = { contentId: project.id!, descriptor: parseCollaboration(value) as CollaborationDescriptor | null };
@@ -35,9 +35,9 @@ export function setAssociation(value: CollaborationDescriptor | null, restoring 
 export function isRecoveringAssociation(): boolean { return recovering; }
 
 /**
- * 「过期的云端项目转成了本地项目」的出处记录（随 `.proc` 的壳保存，只供提示与追溯）：
- * 原来的房间号、协作服务地址，以及文档服务那份「已不存在」证明里的签发方、墓碑版本、钥匙号。
- * 不含任何账号凭证，也不是恢复关联：带着它的文件重开就是一个普通的本地项目，不再去连旧云端。
+ * Provenance record for "an expired cloud project was converted to a local project" (saved in the `.proc` shell, used only for notices and tracing):
+ * the original room ID and collaboration service address, plus the issuer, tombstone version and key ID from the document service's "no longer exists" proof.
+ * It contains no account credentials and is not a recovery association: reopening a file that carries it gives an ordinary local project and no longer connects to the old cloud.
  */
 export interface ConvertedFrom {
   v: 1;
@@ -57,7 +57,7 @@ export function parseConvertedFrom(value: unknown): ConvertedFrom | null {
   return { v: 1, roomId: v.roomId, service: v.service, authorityId: v.authorityId, tombstoneRevision: v.tombstoneRevision!, kid: v.kid, convertedAt: v.convertedAt };
 }
 let convertedFrom: { contentId: string; info: ConvertedFrom } | null = null;
-/** 载入文件、或刚转换完时记下；换了别的项目（项目号不同）就不再回这一份 */
+/** Recorded when a file is loaded or just after a conversion; once a different project is switched to (different project ID) this one is no longer returned */
 export function noteConvertedFrom(project: Pick<Project, "id">, value: unknown) {
   const info = parseConvertedFrom(value);
   convertedFrom = info && project.id ? { contentId: project.id, info } : null;
@@ -66,7 +66,7 @@ export function convertedFromOf(project: Pick<Project, "id">): ConvertedFrom | n
   return convertedFrom && convertedFrom.contentId === project.id ? convertedFrom.info : null;
 }
 
-/** 转换完成的通知：保存落点与草稿归属据此清掉（原文件保留），界面据此提示一次。 */
+/** Notification that a conversion finished: the save target and draft ownership are cleared accordingly (the original file is kept), and the UI shows a notice once. */
 export interface GoneConversion { projectId: string; name: string; from: ConvertedFrom }
 const goneListeners = new Set<(event: GoneConversion) => void>();
 let goneNotices: GoneConversion[] = [];
@@ -75,13 +75,13 @@ export function onGoneConversion(listener: (event: GoneConversion) => void): () 
 }
 export function publishGoneConversion(event: GoneConversion) {
   goneNotices = [...goneNotices, event];
-  for (const listener of [...goneListeners]) { try { listener(event); } catch { /* 一个订阅者出错不挡别的 */ } }
+  for (const listener of [...goneListeners]) { try { listener(event); } catch { /* One subscriber failing does not block the others */ } }
 }
-/** 界面取走还没提示过的那几条（每条只提示一次） */
+/** The UI takes the entries that have not been notified yet (each entry is notified only once) */
 export function takeGoneNotices(): GoneConversion[] { const out = goneNotices; goneNotices = []; return out; }
 
 /**
- * 账号云端项目另存为 .proc / .procp 时的云端关联记号（10-14 第 3.4 节）
+ * Cloud association marker when an account cloud project is saved as .proc / .procp (10-14 section 3.4)
  */
 export interface CloudProjectAssociation {
   accountProject: true;
@@ -91,8 +91,8 @@ export interface CloudProjectAssociation {
   savedRev: number;
   savedAt: string;
   /**
-   * 固定非本机快照(`cloudSnapshot.ts`):另存那一刻文档服务确认过的那一版(基准内容)与它的哈希。
-   * 老文件没有;读回时哈希对不上的丢掉(当没有),都照旧能打开。
+   * Pinned non-local snapshot (`cloudSnapshot.ts`): the version the document service confirmed at the moment of save-as (the baseline content) and its hash.
+   * Old files do not have it; on read-back, one whose hash does not match is discarded (treated as absent), and the file still opens as before.
    */
   base?: Project;
   baseSha256?: string;
@@ -139,8 +139,8 @@ export function setCloudAssociation(value: CloudProjectAssociation | null) {
 }
 
 /**
- * 另存时取「当下连着的这个云端项目」的确认副本与序号(`syncManager.ts` 装上);没连着这个项目回 null,
- * 另存就沿用文件里原来的基准(`cloudSnapshot.ts` 的 `snapshotForSave`)。
+ * On save-as, fetches the confirmed copy and sequence number of "the cloud project currently connected" (installed by `syncManager.ts`); returns null if this project is not connected,
+ * and save-as then keeps the baseline already in the file (`snapshotForSave` in `cloudSnapshot.ts`).
  */
 let cloudSnapshotGetter: ((projectId: string) => CloudSnapshot | null) | null = null;
 export function setCloudSnapshotGetter(getter: ((projectId: string) => CloudSnapshot | null) | null) {
@@ -155,11 +155,11 @@ export function setRealtimeRevGetter(getter: () => number | null) {
   realtimeRevGetter = getter;
 }
 /**
- * 「这个云端项目是不是真的已经不在了」的查询（替换型接缝）。
+ * Query for "whether this cloud project is really gone" (a replaceable seam).
  *
- * 真实现在 `server/recovery/gone-proof.mjs`（归闭源），由 `cloud/account/manifest.ts` 注册进来。
- * 公开侧的缺省是「查不到凭据」—— 社区版没有云端项目，这条路本来就走不到；
- * 缺省返回 null 时调用方按原样提示「打不开」，不会把本地项目标成「从已消失的云端项目转来」。
+ * The real implementation is `server/recovery/gone-proof.mjs` (closed source), registered by `cloud/account/manifest.ts`.
+ * The default on the public side is "no credentials found": the community edition has no cloud projects, so this path is never reached;
+ * when the default returns null the caller shows "cannot open" as before and never marks a local project as "converted from a vanished cloud project".
  */
 let goneQuery: ((descriptor: CollaborationDescriptor) => Promise<GoneProof | null>) | null = null;
 
@@ -171,15 +171,15 @@ export function currentRealtimeRev(): number | null {
   return realtimeRevGetter ? realtimeRevGetter() : null;
 }
 
-/** `pushToast` 的样子:回这条气泡的号(关它用),带按钮的不自己消失 */
+/** The shape of `pushToast`: returns the ID of the bubble (used to close it); one with a button does not disappear by itself */
 type ReopenToast = (msg: string, tone?: "info" | "warn", duration?: number, action?: { label: string; run: () => void; pc?: string }) => number | void;
 type JoinRequestClient = { joinRequestStatus?: (projectId: string) => Promise<JoinRequestStatus>; sendJoinRequest?: (projectId: string, requestId: string) => Promise<JoinRequestStatus> };
 /**
- * 重开文件时「这个账号不是这个云端项目的成员」那条提示。只在被账号名单挡住(`not-listed`)、项目只放账号名单时另带「发送申请」按钮
- * (先问一次自己那一条申请:已经在等、被拒且次数用完的不给按钮,把现状接在后面说);被踢(`banned`)、问不到的照旧只有那一句。
- * 点了按钮发申请:没收到回包再点沿用原请求号(`src/account/requestIds.ts`,与开始页、成员浮层共用);一次只发一个。
- * 发成了就把这条带按钮的提示关掉、之后再点也不再发(语义「发出后显示『已发送，等创建者通过』」;不能一直挂着让人反复发、白耗申请次数),
- * 另起一条「已发送，等创建者通过」并说明通过以后怎么连回去。
+ * The notice "This account is not a member of this cloud project" shown when reopening a file. Only when blocked by the account list (`not-listed`) and the project allows only its account list does it also carry a "Send request" button
+ * (first look up the account's own request: if one is already waiting, or it was rejected and the attempts are used up, no button is given, and the current status is appended after the message); for kicked (`banned`) or unknown cases there is just the message as before.
+ * Clicking the button sends the request: if no reply was received, clicking again reuses the original request ID (`src/account/requestIds.ts`, shared with the start page and the member popover); only one is sent at a time.
+ * Once sent, this notice with the button is closed and later clicks no longer send (semantics: after sending, show "Sent, waiting for the creator to approve"; it must not stay up and let people send repeatedly, wasting request attempts),
+ * and a new notice "Sent, waiting for the creator to approve" is raised, explaining how to reconnect after approval.
  */
 async function notMemberToast(toast: ReopenToast, dismissToast: ((id: number) => void) | undefined, client: JoinRequestClient | null | undefined,
   projectId: string, code: unknown) {
@@ -207,12 +207,12 @@ async function notMemberToast(toast: ReopenToast, dismissToast: ((id: number) =>
 }
 
 /**
- * 账号云端项目另存为 .proc / .procp 后的重开四规则（10-14 第 3.4 节）：
- * 1. 没登录：提示登录，以本地副本打开，保留关联；
- * 2. 登录的账号不是成员：提示「这个账号不是这个云端项目的成员」，以本地副本打开；项目只放账号名单时，提示里另有「发送申请」按钮
- *    （2026-10-22 用户定，`workflow/project.md` 第 44 行；`notMemberToast`）；
- * 3. 云端项目已删：凭已删证明（goneProof）转成独立本地项目打开；
- * 4. 有权限且有离线修改：连回云端项目合并离线修改，网络错误回退本地副本。
+ * The four rules for reopening after an account cloud project is saved as .proc / .procp (10-14 section 3.4):
+ * 1. Not logged in: prompt to log in, open the local copy, keep the association;
+ * 2. The logged-in account is not a member: show "This account is not a member of this cloud project" and open the local copy; if the project allows only its account list, the notice also has a "Send request" button
+ *    (user decision, 2026-10-22, `workflow/project.md` line 44; `notMemberToast`);
+ * 3. The cloud project was deleted: using the deletion proof (goneProof), convert to a standalone local project and open it;
+ * 4. Has permission and has offline changes: reconnect to the cloud project and merge the offline changes; on a network error fall back to the local copy.
  */
 export async function handleCloudAssociationReopen(
   project: Project,
@@ -227,19 +227,19 @@ export async function handleCloudAssociationReopen(
     queryGone?: (descriptor: CollaborationDescriptor) => Promise<GoneProof | null>;
     isOfflineModified?: boolean;
     cloudProject?: Project;
-    /** 第 4 个参数是气泡上的按钮(重开时「不是成员」那条提示的「发送申请」);`pushToast` 本来就收它 */
+    /** The 4th parameter is the button on the bubble (the "Send request" of the "not a member" notice when reopening); `pushToast` already accepts it */
     toast?: (msg: string, tone?: "info" | "warn", duration?: number, action?: { label: string; run: () => void; pc?: string }) => number | void;
-    /** 关掉一条气泡(`syncManager.ts` 的 `dismissToast`):重开文件那条带「发送申请」的提示,发成了就关掉 */
+    /** Close a bubble (`dismissToast` in `syncManager.ts`): the notice with "Send request" from reopening a file is closed once the request is sent */
     dismissToast?: (id: number) => void;
     openAsLocal?: (p: Project) => void;
     /**
-     * 连回云端项目并处理文件里的修改;回 `"pending-merge"` 表示云端在另存之后被别人改过、修改进了「冲突合并」(没直接提交)。
+     * Reconnect to the cloud project and handle the changes in the file; returns `"pending-merge"` when the cloud was changed by someone else after the save-as and the changes went into "conflict merge" (not committed directly).
      */
     enterProject?: (options: any) => Promise<void | "pending-merge">;
   } = {},
 ): Promise<{ status: "opened" | "merged" | "pending-merge" | "converted" | "login-required" | "forbidden"; project?: Project }> {
   const toast = options.toast ?? (() => {});
-  // 1. 规则 1：未登录
+  // 1. Rule 1: not logged in
   let account = options.account;
   let client = options.client;
   if (account === undefined) {
@@ -260,7 +260,7 @@ export async function handleCloudAssociationReopen(
     return { status: "login-required", project };
   }
 
-  // 2. 核对成员权限与状态
+  // 2. Check member permissions and status
   let session: any = null;
   const descriptor: CollaborationDescriptor = {
     version: 1,
@@ -275,7 +275,7 @@ export async function handleCloudAssociationReopen(
     } catch (error: any) {
       const status = error?.status;
       const code = error?.code;
-      // 规则 3：云端项目已被创建者删除
+      // Rule 3: the cloud project was deleted by its creator
       if (status === 404 || code === "project-gone" || code === "no-project") {
         const query = options.queryGone ?? goneQuery ?? (async () => null);
         let proof: GoneProof | null = null;
@@ -289,14 +289,14 @@ export async function handleCloudAssociationReopen(
           return { status: "converted", project: converted.project };
         }
       }
-      // 规则 2：已登录但不是该项目成员（只放账号名单的项目另给「发送申请」）
+      // Rule 2: logged in but not a member of this project (a project that allows only its account list also gets "Send request")
       if (status === 403 || code === "not-listed" || code === "banned" || code === "forbidden") {
         await notMemberToast(toast, options.dismissToast, client, assoc.projectId, code);
         setCloudAssociation(assoc);
         options.openAsLocal?.(project);
         return { status: "forbidden", project };
       }
-      // 网络错误或其他临时故障：回退以本地副本打开
+      // Network error or other temporary failure: fall back to opening the local copy
       options.openAsLocal?.(project);
       toast(tr("Can't reach the cloud project; opening a local copy for now."), "warn", 6000);
       return { status: "opened", project };
@@ -310,7 +310,7 @@ export async function handleCloudAssociationReopen(
     return { status: "forbidden", project };
   }
 
-  // 规则 4：有权限。检查是否有离线修改
+  // Rule 4: has permission. Check for offline changes
   const isOfflineModified = options.isOfflineModified ?? (
     ((project as any).rev !== undefined && (project as any).rev > assoc.savedRev) ||
     (options.cloudProject && JSON.stringify(project) !== JSON.stringify(options.cloudProject))
@@ -336,7 +336,7 @@ export async function handleCloudAssociationReopen(
 
   if (isOfflineModified) {
     if (outcome === "pending-merge") {
-      // 另存之后云端被别人改过:修改按另存时的基准逐项比出来放进「冲突合并」,不直接盖上去
+      // The cloud was changed by someone else after the save-as: compare the changes item by item against the baseline at save-as time and put them into "conflict merge", instead of overwriting directly
       toast(tr("Reconnected to the cloud project. Others changed the cloud project after you saved a copy, so your changes were placed in \"Conflict merge\", where you can merge them item by item."), "info", 8000);
       return { status: "pending-merge", project };
     }

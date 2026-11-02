@@ -1,25 +1,37 @@
 /**
- * 在线浏览器(电脑身份)的登录页。
+ * Login page of the online browser (desktop identity).
  *
- * 原来登录就是开始页上那一小块表单(`src/account/AccountProjects.tsx`),和「新建云端项目」「凭链接加入」
- * 挤在一起。这里把它拆成独立的一页:没登录先看到它,登录成功才进开始页 —— 在线浏览器里项目一律是
- * 放云端的多用户协作项目(`product/platforms.md`「能新建放云端的项目」),所以账号是进门的前提。
+ * Login used to be a small form on the start page (`src/account/AccountProjects.tsx`), crowded in
+ * with "New cloud project" and "Join by link". Here it is split into its own page: users see it
+ * first when not logged in, and only reach the start page after a successful login. In the online
+ * browser, projects are always cloud multi-user collaboration projects (`product/platforms.md`,
+ * "Projects that can be created in the cloud"), so an account is the precondition for getting in.
  *
- * **只有「用 Google 继续」这一条是真的**(2026-10-23 接上):它真向账号服务发请求、真建立会话、
- * 真换到编辑器令牌。账号名加密码那条、游客那条、项目链接那条仍然只跑界面,提交不发请求。
- * 这是两个会话分工的结果 —— 这一页的界面和其余几条路归别人,第三方登录这一条归
- * `claude/editor-google-login`,它只改这一页里 Google 那一块,不动其余部分。
+ * **Only "Continue with Google" is real** (wired up 2026-10-23): it really sends requests to the
+ * account service, really establishes a session, and really exchanges for an editor token. The
+ * account name + password path, the guest path and the project link path still only run the UI;
+ * submitting sends no request.
+ * This is the result of splitting work between two sessions: this page's UI and the other paths
+ * belong to someone else, while the third-party login path belongs to `claude/editor-google-login`,
+ * which changes only the Google part of this page and leaves the rest alone.
  *
- * Google 这条路后半段和密码登录是同一套:先建立网站会话(cookie),再由 `client.ensureLogin()`
- * 去换编辑器令牌(`/api/account/editor/session`)。所以账号服务没为编辑器另开接口。
+ * The second half of the Google path is the same as password login: first establish the website
+ * session (cookie), then `client.ensureLogin()` exchanges for an editor token
+ * (`/api/account/editor/session`). So the account service has no separate endpoint for the editor.
  *
- * 待办(业务层):
- * - 接 `src/account/useAccountProjects.ts` 的 `login`(账号服务在 VisuHive 仓库,见 `architecture.md` 的角色表);
- * - 「记住登录状态」是在线页面才有的那个勾(`workflow/project.md`「在线浏览器和官网共用登录」);
- * - 官网已登录时这一页应该直接跳过,不再问一遍;
- * - 游客身份(进入时随机分配 ID 和头像)的入口摆在下面「或」那一段(用户 2026-10-23 要求两个登录页
- *   都摆上)。**按钮只是入口,随机 ID 和头像那套逻辑仍归另一个会话**(`游客身份随机分配`);
- *   在它接上之前,这颗键和这一页的其余部分一样走 `onDone()` —— 这一页现在整体是界面桩,登录也不发请求。
+ * TODO (business layer):
+ * - Hook up `login` of `src/account/useAccountProjects.ts` (the account service is in the VisuHive
+ *   repo, see the role table in `architecture.md`);
+ * - "Remember login state" is the checkbox that only online pages have (`workflow/project.md`,
+ *   "Online browser and website share login");
+ * - When the website is already logged in, this page should be skipped directly instead of asking
+ *   again;
+ * - The entry for guest identity (a random ID and avatar are assigned on entry) sits in the "or"
+ *   section below (user requested on 2026-10-23 that both login pages have it). **The button is
+ *   only the entry; the random ID and avatar logic still belongs to another session**
+ *   (`random guest identity assignment`); until that is hooked up, this button, like the rest of
+ *   this page, goes through `onDone()`: the whole page is currently a UI stub, and login sends no
+ *   request.
  */
 import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
@@ -30,17 +42,21 @@ import { ensureDevice } from "../editor/sync/syncManager";
 import { tr } from "../i18n/index.ts";
 
 /**
- * Google 自己的脚本。`hl` 要带上：不带的话按钮文案跟浏览器语言走，中文界面上会冒出日文
- * （2026-10-23 在官网那边实测到）。按钮由它自己画，不自制，免得违反它的品牌规范。
+ * Google's own script. `hl` must be passed: without it, the button text follows the browser
+ * language, and Japanese shows up on a Chinese UI (observed on the website side on 2026-10-23).
+ * The button is drawn by Google itself, not hand-made, to avoid violating its brand guidelines.
  */
 const GSI_SRC = "https://accounts.google.com/gsi/client?hl=zh-CN";
 /**
- * 等这么久按钮还没画出来，就当 Google 这一块不可用，显示一句说明。
+ * If the button still hasn't been drawn after this long, treat the Google part as unavailable and
+ * show a note.
  *
- * **它抓的是「按钮根本没画出来」**（脚本被拦、GIS 内部出错），不是「来源没授权」：
- * 2026-10-23 实测，来源没授权时 `gsi/button` 虽然回 403，GIS 仍然自己把按钮画了出来，
- * 要到用户点下去才由 Google 自己弹窗说「禁止访问：发生了授权错误 … 错误 400：origin_mismatch」。
- * 那种情况我们这边拦不住也测不出，只能靠部署时把来源配对（见 VisuHive 的 docs/third-party-login.md）。
+ * **What it catches is "the button wasn't drawn at all"** (script blocked, GIS internal error), not
+ * "origin not authorized": in the 2026-10-23 test, when the origin was not authorized, `gsi/button`
+ * returned 403 but GIS still drew the button itself, and only when the user clicked did Google
+ * itself pop up a dialog saying "Access blocked: authorization error ... Error 400:
+ * origin_mismatch". We can neither block nor detect that case on our side; the only way is to get
+ * the origins configured correctly at deploy time (see docs/third-party-login.md in VisuHive).
  */
 const BUTTON_WAIT_MS = 2500;
 
@@ -52,8 +68,9 @@ declare global {
 }
 
 /**
- * 把 Google 的脚本放进页面。已经在加载了就不再加一遍 —— 这时**不等它的 load 事件**：
- * 事件可能在我们挂监听之前就过去了，等下去会一直挂着。等它装好交给下面的 `gsiApi()` 轮询。
+ * Put Google's script into the page. If it is already loading, don't add it again: in that case
+ * **don't wait for its load event**: the event may have passed before we attached the listener, and
+ * waiting would hang forever. Once it is installed, hand over to the `gsiApi()` polling below.
  */
 function loadGsi(): Promise<void> {
   if (window.google?.accounts?.id) return Promise.resolve();
@@ -68,8 +85,9 @@ function loadGsi(): Promise<void> {
 }
 
 /**
- * 等 `window.google.accounts.id` 真的出现。
- * 脚本的 load 事件和它把全局装好之间有一道缝，只查一次会误判成「没装载」（2026-10-23 真跑时撞到）。
+ * Wait until `window.google.accounts.id` really appears.
+ * There is a gap between the script's load event and the moment it installs its globals; checking
+ * only once would misjudge it as "not loaded" (hit during a real run on 2026-10-23).
  */
 async function gsiApi(timeoutMs = 4000): Promise<NonNullable<NonNullable<NonNullable<Window["google"]>["accounts"]>["id"]> | null> {
   const deadline = Date.now() + timeoutMs;
@@ -81,7 +99,7 @@ async function gsiApi(timeoutMs = 4000): Promise<NonNullable<NonNullable<NonNull
   }
 }
 
-/** Google 这一块的状态：后端没开就整块不显示，连不上或来源没授权就显示一句说明 */
+/** State of the Google part: if the backend is off, hide the whole part; if it can't connect or the origin isn't authorized, show a note */
 type GoogleState =
   | { kind: "loading" }
   | { kind: "off" }
@@ -89,12 +107,14 @@ type GoogleState =
   | { kind: "unavailable"; message: string };
 
 /**
- * `onThirdPartyDone` 是 Google 这条路**专用**的出口：它和 `onDone()` 走的不是同一件事。
- * `onDone()` 由外层（`VibeLogin.tsx`）拿去问「刚才按的是哪一颗键、表单里填了什么」，
- * 而 Google 的按钮是 Google 自己在跨源 iframe 里画的，外层根本收不到那次点击，
- * 于是第三方登录成功后走 `onDone()` 会被外层当成「没有出口」丢掉 ——
- * 用户 2026-10-24 报的「授权以后没有反应」就是这个。给它一条自己的出口，外层据此去认会话。
- * 没传这个属性时退回 `onDone()`（桌面与别处原样）。
+ * `onThirdPartyDone` is an exit **dedicated** to the Google path: it is not the same thing as
+ * `onDone()`. `onDone()` is used by the outer layer (`VibeLogin.tsx`) to ask "which button was just
+ * pressed, and what was filled in the form", while Google's button is drawn by Google itself in a
+ * cross-origin iframe, so the outer layer never receives that click. So going through `onDone()`
+ * after a successful third-party login would be dropped by the outer layer as "no exit":
+ * the "nothing happens after authorizing" reported by the user on 2026-10-24 was exactly this. Give
+ * it its own exit, and the outer layer recognizes the session through it.
+ * When this prop is not passed, fall back to `onDone()` (desktop and elsewhere stay as they were).
  */
 export function OnlineLogin(props: { onDone: () => void; onThirdPartyDone?: () => void }): JSX.Element {
   const [name, setName] = useState("");
@@ -104,20 +124,20 @@ export function OnlineLogin(props: { onDone: () => void; onThirdPartyDone?: () =
   const [byLink, setByLink] = useState(false);
   const origin = typeof location !== "undefined" ? location.origin : "";
 
-  // —— Google 登录 ——
+  // -- Google login --
   const [google, setGoogle] = useState<GoogleState>({ kind: "loading" });
-  /** 第一次用这个 Google 账号：Google 不给账号名，要用户自己起一个 */
+  /** First time using this Google account: Google doesn't give an account name, so the user has to pick one */
   const [needName, setNeedName] = useState<{ ticket: string; email: string | null } | null>(null);
   const [googleName, setGoogleName] = useState("");
   const [googleBusy, setGoogleBusy] = useState(false);
   const [googleError, setGoogleError] = useState("");
   const slot = useRef<HTMLDivElement>(null);
   const client = useRef<CloudAccountClient | null>(null);
-  // 回调是在 effect 里注册给 Google 的，闭包会把这两样钉死在首次渲染的值上，所以用 ref 取当下的
+  // The callback is registered with Google inside an effect, and the closure pins these two to the first render's values, so read the current ones through a ref
   const rememberRef = useRef(remember); rememberRef.current = remember;
   const onDoneRef = useRef(props.onDone); onDoneRef.current = props.onDone;
   const thirdPartyRef = useRef(props.onThirdPartyDone); thirdPartyRef.current = props.onThirdPartyDone;
-  /** 第三方登录成功后往哪儿走：有专用出口就走它，没有就退回 `onDone()` */
+  /** Where to go after a successful third-party login: use the dedicated exit if there is one, otherwise fall back to `onDone()` */
   const thirdPartyDone = () => { (thirdPartyRef.current ?? onDoneRef.current)(); };
 
   useEffect(() => {
@@ -128,14 +148,14 @@ export function OnlineLogin(props: { onDone: () => void; onThirdPartyDone?: () =
       if (!device) return setGoogle({ kind: "off" });
       const c = createAccountClient({ online: true, origin: location.origin, device });
       client.current = c;
-      // 后端没开（没配客户端 ID），或者后端还是旧版没有这条接口，都回空数组 —— 整块不显示
+      // Backend off (no client ID configured), or backend is an old version without this endpoint: both return an empty array, and the whole part is hidden
       const providers = await c.thirdPartyProviders();
       if (!alive) return;
       const google = providers.find((p) => p.provider === "google");
       if (!google) return setGoogle({ kind: "off" });
 
       try { await loadGsi(); } catch {
-        // 连不上 Google（断网、被挡、脚本被拦）不该把人堵在这一页：说一句，账号密码和游客照常可用
+        // Being unable to reach Google (offline, blocked, script blocked) must not trap people on this page: show a note, and account/password and guest still work as usual
         if (alive) setGoogle({ kind: "unavailable", message: tr("Can't reach Google. Use an account name and password, or enter as a guest.") });
         return;
       }
@@ -164,7 +184,7 @@ export function OnlineLogin(props: { onDone: () => void; onThirdPartyDone?: () =
         locale: document.documentElement.lang || "zh-CN", width: 320,
       });
       setGoogle({ kind: "ready" });
-      // 按钮没画出来(脚本被拦、GIS 内部出错)时,不能只留一块点不动的空白
+      // When the button isn't drawn (script blocked, GIS internal error), don't leave just a blank block that can't be clicked
       window.setTimeout(() => {
         if (!alive) return;
         if ((slot.current?.getBoundingClientRect().height ?? 0) < 20) {
@@ -206,7 +226,7 @@ export function OnlineLogin(props: { onDone: () => void; onThirdPartyDone?: () =
           data-pc="start-login-form"
           onSubmit={(e) => {
             e.preventDefault();
-            // 待办:这里要调账号服务。现在只跑界面,填了就算过
+            // TODO: call the account service here. For now only the UI runs; filling it in counts as passing
             props.onDone();
           }}
         >
@@ -241,18 +261,22 @@ export function OnlineLogin(props: { onDone: () => void; onThirdPartyDone?: () =
           <div className="ps-login-sep">{tr("or")}</div>
 
           {/*
-            第三方登录。语义那条冲突已经解了:`product/document-service.md` 第 66 行 2026-10-23 改成
-            「云端网站账号除账号名加密码外,还支持用 Google 账号登录」(main 的 ef68582b)。
+            Third-party login. The semantics conflict has been resolved: `product/document-service.md` line 66
+            was updated on 2026-10-23 to "In addition to username and password, cloud website accounts also
+            support signing in with a Google account" (ef68582b on main).
 
-            按钮由 Google 自己的脚本画进下面这个槽,我们不自制:它的品牌规范对图形、文案、配色都有规定。
-            后端没开这一块时整段不显示(`thirdPartyProviders()` 回空),连不上或来源没授权时显示一句说明 ——
-            不留白、也不静默失败,账号密码和游客那两条路都不受影响。
+            The button is rendered into the slot below by Google's own script; we do not build our own: its
+            brand guidelines dictate graphics, copy, and color scheme. When the backend has not enabled this,
+            the entire section is hidden (`thirdPartyProviders()` returns empty); when unreachable or origin
+            is unauthorized, an explanation is displayed: no blank state and no silent failure, with neither
+            username/password nor guest paths affected.
 
-            后端在 VisuHive 仓库:`account/app.mjs` 的 `/third-party/*`,令牌的验签在它的 `identity/` 服务里。
+            Backend is in the VisuHive repository: `/third-party/*` in `account/app.mjs`, and token signature
+            verification is in its `identity/` service.
           */}
           <div className="ps-login-oauth" data-pc="start-login-oauth">
             {needName ? (
-              // 第一次用这个 Google 账号:Google 不给账号名,网站账号名又全站唯一,所以要用户自己起一个
+              // First time using this Google account: Google doesn't give an account name, and website account names are unique site-wide, so the user has to pick one
               <div className="ps-field" data-pc="start-login-google-name">
                 <span className="ps-muted">
                   {tr("{0}Pick an account name. It must be unique across the site and cannot be changed later.", needName.email ? tr("Signing in with {0}.", needName.email) : tr("Almost done."))}
@@ -278,10 +302,12 @@ export function OnlineLogin(props: { onDone: () => void; onThirdPartyDone?: () =
             ) : (
               <>
                 {/*
-                  Google 把按钮画进这里。**这个槽要一直在**:effect 是往 `slot.current` 里画的,
-                  按状态把它摘掉就成了鸡生蛋 —— 还没问出结果时摘掉,等问出来要画了,槽已经不在了
-                  (2026-10-23 真跑时撞到:热更新保留住 `off` 状态,再跑 effect 就画不进去)。
-                  后端没开时它是个零高度的空 div,看不见;来源没授权时也一样,靠下面那句说明顶上。
+                  Google renders the button here. **This slot must remain mounted**: the effect renders into
+                  `slot.current`; removing it based on state creates a chicken-and-egg problem: removed before the
+                  result is returned, then when it's time to render, the slot is gone (encountered during a real run
+                  on 2026-10-23: hot reload preserved the `off` state, and subsequent effect runs could not render
+                  into it). When the backend has it disabled, it is a zero-height empty div, invisible; likewise
+                  when the origin is unauthorized, covered by the explanation below.
                 */}
                 <div ref={slot} data-pc="start-login-google" aria-busy={googleBusy} />
                 {google.kind === "unavailable" ? (
@@ -294,7 +320,7 @@ export function OnlineLogin(props: { onDone: () => void; onThirdPartyDone?: () =
             ) : null}
           </div>
 
-          {/* 游客身份的入口(用户 2026-10-23)。和上面那颗用同一套长相,两行对齐 */}
+          {/* Entry for guest identity (user, 2026-10-23). Uses the same look as the button above, so the two rows line up */}
           <button type="button" className="ps-oauth-btn" data-pc="start-login-guest" onClick={props.onDone}>
             <span className="ps-oauth-mark" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor">

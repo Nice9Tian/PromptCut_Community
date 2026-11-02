@@ -1,11 +1,16 @@
 /**
- * 浏览器替剪辑段里的卡产流(〔裁〕R02):生成快照的活(`stageBake.ts`)给剪辑段里的卡(摊平出来的虚拟片段)灌带着剪辑段链的隔离工程、
- * 每一帧的请求带 `frameBase`(本地帧 0 是项目的第几帧);顶层的卡照旧(隔离单卡工程、不带 `frameBase`)。不起浏览器,舞台是假的。
+ * Browser produces streams for cards in cut segments ([ruling] R02): snapshot generation job
+ * (`stageBake.ts`) feeds cards in cut segments (virtual clips flattened out) an isolated project
+ * with the cut segment chain, and each frame's request carries `frameBase` (which project frame
+ * local frame 0 corresponds to); top-level cards remain as before (isolated single-card project,
+ * without `frameBase`). Does not launch a browser; the stage is fake.
  *
- *   QM-FLAT-01 剪辑段里的卡:灌的工程顶层只有剪辑段、被引用剪辑里只有目标卡(时间不平移);请求带 frameBase = 卡的第一帧
- *   QM-FLAT-02 顶层的卡:灌的是隔离单卡工程,请求不带 frameBase(与原来逐字相同)
+ *   QM-FLAT-01 Cards in cut segments: fed project top level only has cut segment, referenced cut
+ *   only has target card (time not shifted); request carries frameBase = first frame of card
+ *   QM-FLAT-02 Top-level cards: feeds isolated single-card project, request does not carry
+ *   frameBase (verbatim identical to before)
  *
- * 跑:npm test -- src/editor/stageBakeFlat.test.mjs
+ * Run: npm test -- src/editor/stageBakeFlat.test.mjs
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

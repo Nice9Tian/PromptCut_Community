@@ -1,10 +1,13 @@
 /**
- * M6a 共享项目：独立模式的失败即关、日志不泄密（契约 `docs/plan/auth-contract.md` 第 5、10 节，用例 AU12、AU13）。
- * 跑：node --test server/test/auth-main.test.mjs
+ * M6a shared project: standalone mode fail-closed and no log leaks (contract
+ * `docs/plan/auth-contract.md` sections 5 and 10, test cases AU12 and AU13).
+ * Run: node --test server/test/auth-main.test.mjs
  *
- * AU12 起 `server/docservice/main.mjs` 子进程（环境变量同现有 main.mjs：PROMPTCUT_DOCSERVICE_HOST / _PORT / _DATA、
- * PROMPTCUT_CLUSTER_TOKEN），端口 0，从 stdout 的 `listen` 行取端口。
- * AU13 在进程内跑一遍完整流程（起服务的接口是测试方的假设，见 `auth-kit.mjs` 文件头），收全部日志行与错误回包检查。
+ * AU12 starts a `server/docservice/main.mjs` child process (environment variables match existing
+ * main.mjs: PROMPTCUT_DOCSERVICE_HOST / _PORT / _DATA, PROMPTCUT_CLUSTER_TOKEN), port 0,
+ * extracting the port from the stdout `listen` line.
+ * AU13 runs a full workflow in-process (service startup interface is a test assumption, see
+ * `auth-kit.mjs` file header), collecting all log lines and error responses for inspection.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -48,7 +51,7 @@ async function listenPort(run, ms = 8000) {
       try {
         const j = JSON.parse(line);
         if (j.event === 'listen' && Number.isInteger(j.port)) return j.port;
-      } catch { /* 不是 JSON 行 */ }
+      } catch { /* Not a JSON line */ }
     }
     return null;
   }, ms, `main.mjs prints the listen line (output so far: ${run.output().slice(0, 400)})`);
@@ -84,11 +87,11 @@ test('AU12 standalone mode binds non-loopback, no cluster token set, credential 
   const h = await (await fetch(`http://127.0.0.1:${port}/healthz`)).json();
   assert.equal(h.ok, true);
   assert.doesNotMatch(run.output(), /token-required/);
-  // 管理接口（带令牌的握手）全部 401
+  // Admin endpoints (handshake with token) all return 401
   const r = await rawHandshake(port, { protocols: [PROTOCOL, `promptcut.token.${randomToken()}`] });
   r.sock.destroy();
   assert.equal(r.status, 401);
-  // shared/* 端点可用
+  // shared/* endpoints are available
   const l = await fetch(`http://127.0.0.1:${port}/shared/lookup?name=nothing-here`);
   assert.equal(l.status, 404);
   assert.deepEqual(await l.json(), { ok: false, error: 'no-project' });
@@ -116,7 +119,7 @@ test('AU12 standalone mode child process: creates a project, handshake, credenti
       const r = await fetch(`http://127.0.0.1:${port}/${rel}`, { method, headers: body ? { 'content-type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
       const text = await r.text();
       let json = null;
-      try { json = JSON.parse(text); } catch { /* 不是 JSON */ }
+      try { json = JSON.parse(text); } catch { /* Not JSON */ }
       return { status: r.status, json, text, headers: r.headers };
     },
     async handshake(protocols) {
@@ -127,7 +130,7 @@ test('AU12 standalone mode child process: creates a project, handshake, credenti
   };
   const proj = await createProject(env, { mode: 'free', password: 'sub-proc-pw-123', creator: { username: 'alice', password: 'sub-creator-pw-456' } });
   const p = await proofFor(env, proj, { username: 'zoe' });
-  // 回环来源带证明：按证明进（至多一项鉴权，证明算一项）
+  // Loopback origin with proof: enter via proof (at most one authentication method, proof counts as one)
   assert.equal((await env.handshake(p.protocols)).status, 101);
   assert.equal((await env.handshake([PROTOCOL, `promptcut.token.${token}`])).status, 101, 'token set: admin interface available');
   assert.ok(fs.existsSync(path.join(data, 'auth', 'projects', `${proj.projectId}.json`)));
@@ -155,7 +158,7 @@ test('AU13 in all log lines and all error replies of one full flow, no passphras
   const free = await createProject(env, { mode: 'free', password: freePw, creator: { username: 'alice', password: creatorPw } });
   const restricted = await createProject(env, { mode: 'restricted', creator: { username: 'alice', password: creatorPw }, list: [{ username: 'bob', password: bobPw }] });
 
-  // 成功的握手（成员、创建者、限定进入）
+  // Successful handshakes (member, creator, restricted entry)
   const dev = newDevice();
   const ok1 = await proofFor(env, free, { username: 'zoe', device: dev, remote: '192.168.5.1' });
   note(ok1.key, ok1.fields.m, ok1.protocols[1]);
@@ -167,7 +170,8 @@ test('AU13 in all log lines and all error replies of one full flow, no passphras
   note(bp.key, bp.fields.m);
   await env.open(bp.protocols, '192.168.5.3');
 
-  // 失败的握手：口令错、nonce 复用、名单外、多项、无凭证、格式错、项目不存在（本机声明）
+  // Failed handshakes: wrong passphrase, nonce reuse, not on list, multiple items, missing credentials,
+  // bad format, project does not exist (local declaration)
   const wrong = await proofFor(env, free, { username: 'zoe', password: 'totally-wrong-pw', remote: '192.168.5.4' });
   note('totally-wrong-pw', wrong.key, wrong.fields.m, wrong.protocols[1]);
   assert.equal((await env.handshake(wrong.protocols, '192.168.5.4')).status, 401);
@@ -182,7 +186,7 @@ test('AU13 in all log lines and all error replies of one full flow, no passphras
   assert.equal((await env.handshake([PROTOCOL, 'promptcut.auth.@@@'], '192.168.5.9')).status, 401, 'bad format');
   assert.equal((await env.handshake([PROTOCOL, 'promptcut.tenant.sp_aaaaaaaaaaaaaaaaaaaaaaaaaa'])).status, 401, 'Project does not exist');
 
-  // 票据与素材
+  // Tickets and assets
   const at = await ticketOf(zoe, { kind: 'asset', access: 'r' });
   const ct = await ticketOf(zoe, { kind: 'conn', role: 'render' });
   note(at.ticket, ct.ticket, parseTicket(at.ticket).payload, parseTicket(at.ticket).sig, parseTicket(ct.ticket).sig);
@@ -194,7 +198,7 @@ test('AU13 in all log lines and all error replies of one full flow, no passphras
   errors.push(writeRo.buf.toString());
   assert.equal((await env.handshake([PROTOCOL, `promptcut.ticket.${flipSignature(ct.ticket)}`], '192.168.5.10')).status, 401);
 
-  // 创建者操作：证明错、成功的 set-password 与 kick，被踢者再进入
+  // Creator operations: wrong proof, successful set-password and kick, kicked member re-entering
   const badAdmin = await adminOp(creator, free, 'unban', { username: 'x', deviceId: newDevice().deviceId }, { badProof: true });
   errors.push(JSON.stringify(badAdmin));
   const newPw = `new-${b64u(randomBytes(6))}`;
@@ -209,13 +213,13 @@ test('AU13 in all log lines and all error replies of one full flow, no passphras
   note(again.key, again.fields.m);
   assert.equal((await env.handshake(again.protocols, '192.168.5.11')).status, 401, 'banned');
 
-  // HTTP 错误回包
+  // HTTP error responses
   for (const r of [
     await env.http('shared/create', { method: 'POST', body: { name: free.name, mode: 'free', kdf: KDF, creator: credential(creatorPw, 'alice'), project: credential(freePw) } }),
     await env.http('shared/create', { method: 'POST', body: { name: 'x', mode: 'free', kdf: KDF, creator: { username: 'a', salt: 'zz', key: ok1.key } } }),
     await challenge(env, { projectId: 'sp_aaaaaaaaaaaaaaaaaaaaaaaaaa', username: 'zoe', deviceId: dev.deviceId }),
   ]) errors.push(r.text);
-  // WS 错误回包：收过的全部 error 消息
+  // WS error responses: all received error messages
   for (const c of [zoe, creator]) for (const m of c.all) if (m?.type === 'error') errors.push(JSON.stringify(m));
 
   const logText = env.logs.map((l) => JSON.stringify(l)).join('\n');

@@ -5,33 +5,38 @@ import { tr } from "../i18n/index.ts";
 // headers, raw settings files, or provider reasoning channels in an export.
 export function redactDebug(value: unknown): unknown {
   /*
-   * 键名匹配**不能用首尾锚点**。原来写的是 /^(api[_-]?key|authorization|…)$/,
-   * 于是 `x-api-key`、`anthropic-api-key`、`proxy-authorization` 这些真实请求头
-   * 一个都不匹配 —— 明文 Key 就这么原样进了上传的诊断报告。
+   * Key matching **must not use start/end anchors**. Originally written as
+   * /^(api[_-]?key|authorization|…)$/, so real request headers like `x-api-key`,
+   * `anthropic-api-key`, `proxy-authorization` did not match at all: plaintext keys entered
+   * the uploaded diagnostic report untouched.
    *
-   * 但也不能放宽成「含 token 就打码」:`max_tokens`、`promptTokens` 这些是排查时
-   * 最有用的数字。所以改成「在词边界(开头或 - _ . 之后)上整段结尾匹配」:
-   * `x-api-key` 命中、`max_tokens` 不命中。
+   * But we cannot loosen it to "mask if it contains token": `max_tokens` and `promptTokens` are the
+   * most useful numbers during troubleshooting. So changed to "match full segment suffix on word
+   * boundary (start or after - _ .)": `x-api-key` matches, `max_tokens` does not.
    */
   const secret = /(^|[-_.])(api[_-]?key|authorization|access[_-]?token|refresh[_-]?token|id[_-]?token|password|passwd|client[_-]?secret|secret|cookie|credential|ticket|delegation|delegate|grant)s?$/i;
   const walk = (v: unknown): unknown => {
     if (typeof v === 'string') return v.replace(/\bBearer\s+[^\s"'<>]+/gi, 'Bearer [REDACTED]')
       .replace(/\bsk-[A-Za-z0-9_-]{12,}/g, '[REDACTED]')
-      // 另几家厂商的 Key 形状,以及托管端的委托票据与对话委托(v1.<段>.<段>,见 server/auth/tickets.mjs)。
-      // 云端对话的报告早就按这些形状扫;本机对话的报告同样可能从工具结果、错误消息或用户粘贴里把它们带进来,是同一道底线。
+      // Key shapes from other vendors, plus delegation tickets and chat delegations on the hosted side
+      // (v1.<segment>.<segment>, see server/auth/tickets.mjs). Reports for cloud chats have long scanned
+      // for these shapes; local chat reports could also bring them in from tool results, error messages,
+      // or user pastes, sharing the same baseline.
       .replace(/\bAIza[0-9A-Za-z_-]{20,}/g, '[REDACTED]')
       .replace(/\bxai-[A-Za-z0-9_-]{16,}/g, '[REDACTED]')
       .replace(/\bgsk_[A-Za-z0-9]{16,}/g, '[REDACTED]')
       .replace(/\bv1\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, '[TICKET-REDACTED]')
-      // 本机识别码是配置分发的解密口令，整串不能进报告。服务端那份已经先截过了，
-      // 这里再兜一道：它也可能从执行日志、错误消息、用户粘进来的文本里溜进来。
+      // The local identifier is the decryption passphrase for config distribution; the whole string
+      // must not enter reports. The server side already intercepts it, but we add a fallback here:
+      // it could also slip in via execution logs, error messages, or text pasted by the user.
       .replace(/\bPCM-[0-9A-HJKMNP-TV-Z]{5}(?:-[0-9A-HJKMNP-TV-Z]{5}){3}\b/gi, (m) => `${m.slice(0, 9)}-…`)
-      // 查询串里的凭据。原来只列了四个固定名字，漏掉了最常见的裸 `token=`；
-      // 改成「参数名里带 key/token/secret/password/auth/sig 就打码」——
-      // 诊断报告这种场合，宁可多打掉几个也不能漏一个。
+      // Credentials in query strings. Originally only four fixed names were listed, missing the most
+      // common bare `token=`; changed to "mask if parameter name contains
+      // key/token/secret/password/auth/sig": for diagnostic reports, better to over-mask than miss one.
       .replace(/([?&][\w.-]*(?:key|token|secret|password|passwd|auth|sig)[\w.-]*=)[^&\s"']+/gi, '$1[REDACTED]')
-      // 用户名是 PII，而本机路径几乎每条日志里都有。只抹掉家目录那一段，
-      // 后面的相对结构留着——排查要靠它看出文件放在哪一层。
+      // Usernames are PII, while local paths appear in almost every log. We only wipe the home directory
+      // portion and keep the relative structure after it: troubleshooting relies on seeing which level
+      // files reside in.
       .replace(/([A-Za-z]:[\\/]Users[\\/])[^\\/"'\s]+/gi, '$1[USER]')
       .replace(/(\/(?:home|Users)\/)[^/"'\s]+/g, '$1[USER]');
     if (Array.isArray(v)) return v.map(walk);
@@ -62,18 +67,19 @@ export function recordTrace(message: ChatMessage, event: RunEvent): ChatMessage 
   return { ...message, traceBytes: (message.traceBytes || 0) + Math.min(serialized.length, 32000), trace: [...trace, { at: new Date().toISOString(), event: safeEvent }], traceTruncated: message.traceTruncated || serialized.length > 32000 };
 }
 
-/** 同一套设置压成一行,用来数「这段对话里前后到底用过几种配置」 */
+/** Compress the same settings into one line to count "how many configurations were used across this chat" */
 function runtimeKey(r: MessageRuntime): string {
   return [r.provider, r.model || tr("(default)"), r.effort || tr("(default)"), r.fast ? 'fast' : '-', r.deepAuto ? 'deep' : '-', r.toolProtocol ? 'textproto' : '-'].join(' / ');
 }
 
 /**
- * 一句人话描述这条回复用的是什么，放进报告顶上，省得从几百行 JSON 里翻。
+ * Human-readable description of what this reply used, placed atop the report to avoid digging
+ * through hundreds of lines of JSON.
  */
 function describeRuntime(r: MessageRuntime): string {
   const bits = [r.provider, tr("model {0}", r.model || tr("default")), tr("thinking {0}", r.effort || tr("default"))];
   if (r.fast) bits.push(tr("fast"));
-  // 具体多少轮在设置里(deepAutoRounds),这条 runtime 没记,所以只说开着,不报一个可能是错的数
+  // Specific rounds are in settings (deepAutoRounds); unrecorded in runtime, so only note it is on without guessing
   if (r.deepAuto) bits.push(tr("deep autonomy"));
   if (r.toolProtocol) bits.push(tr("text protocol mode"));
   return bits.join(tr(","));
@@ -81,9 +87,10 @@ function describeRuntime(r: MessageRuntime): string {
 
 export function conversationReport(messages: ChatMessage[], provider: string | null, config?: PublicAiConfig | null, environment?: unknown): string {
   /*
-   * 每条回复自己带 runtime。只报「当前选的是什么」会看错人：模型、思考档、加速档
-   * 都是发送那一刻现读的，用户聊到一半换一次，前后几条就来自不同的模型；分工模式
-   * 下还会按角色临时改用别家。中途换过就在这里直接点出来。
+   * Each reply carries its own runtime. Reporting only "what is currently selected" misidentifies:
+   * model, thinking tier, and acceleration tier are all read live at send time. If the user switches
+   * mid-chat, adjacent messages come from different models; in split-work mode, other providers are
+   * temporarily used per role. If changed midway, point it out directly here.
    */
   const used = new Map<string, MessageRuntime>();
   let unrecorded = 0;
@@ -104,20 +111,22 @@ export function conversationReport(messages: ChatMessage[], provider: string | n
           ? tr("One config throughout: {0}", describeRuntime(distinct[0]))
           : tr("⚠ Config changed midway, {0} in total, see messages[].runtime for each message", distinct.length),
       used: distinct.map((r) => ({ ...r, note: describeRuntime(r) })),
-      // 旧历史里的回复没有这个字段，说清楚是「没记」而不是「没换过」
+      // Replies in older history lack this field; clarify that it was "unrecorded" rather than "never changed"
       unrecordedAssistantMessages: unrecorded,
       textProtocolEverUsed: distinct.some((r) => r.toolProtocol),
     },
     api: provider === 'api' ? { vendor: config?.api.vendor, model: config?.api.model, maxTokens: config?.api.maxTokens } : undefined,
     /*
-     * 出问题那一刻的现场:模式、项目和素材、后端会话文件柜、Node 进程状态。
+     * State at time of failure: mode, project and media, backend session cabinet, Node process status.
      *
-     * 只有对话的话,「产品的 bug」和「这台机器的环境问题」一条都排除不掉。
-     * 用户报「Agent 看得见别的项目的素材」时就是这样:报告里看得到模型说出一个
-     * 不存在的文件名,却看不到当时素材库是不是空的、项目存在哪 —— 只能来回问。
+     * With chat alone, neither "product bug" nor "environment issue on this machine" can be ruled out.
+     * This happens when users report "Agent can see media from other projects": the report shows the
+     * model uttering a nonexistent filename, but cannot show whether the media library was empty or
+     * where the project resided: leaving no choice but to ask back and forth.
      *
-     * 采集失败不挡报告:少一段现场也比整份导不出来强,所以这里收的是
-     * 「拿到了什么」而不是「一定拿得到」,失败时上游填一个 error 进来。
+     * Collection failure does not block the report: missing a piece of context is better than failing
+     * to export the whole thing, so what is gathered here is "what was obtained" rather than
+     * "guaranteed to obtain", with upstream filling in an error on failure.
      */
     environment,
     note: tr("Contains the visible chat, execution events and a snapshot of the environment at the time; does not contain keys or the model's private thinking. Large outputs and overlong events are marked as truncated."), messages,
@@ -125,14 +134,15 @@ export function conversationReport(messages: ChatMessage[], provider: string | n
 }
 
 /**
- * 超过这个长度就锁住「复制」,只留存文件那条路。
+ * Lock "Copy" when exceeding this length, leaving only the save-to-file path.
  *
- * 挑 10 万字符是按「还贴得动吗」来的:带上每一步执行事件之后报告轻松几百 KB,
- * 粘进聊天框既卡又没人看得下去,不如给个文件让用户直接发过来。
+ * Choosing 100,000 characters is based on "can it still be pasted": with every execution event
+ * included, reports easily reach hundreds of KB; pasting into chat is laggy and unreadable, so
+ * offering a file for the user to send directly is better.
  */
 export const DEBUG_INLINE_LIMIT = 100_000;
 
-/** 存到本地的「诊断报告」目录并打开所在文件夹,返回落盘路径 */
+/** Save to local "diagnostic report" directory and open containing folder, returning path on disk */
 export async function saveReportToFile(text: string, label: string): Promise<{ dir: string; file: string }> {
   const res = await fetch('/api/ai/diagnostics/save', {
     method: 'POST',
@@ -154,8 +164,9 @@ export async function copyDebugReport(text: string): Promise<void> {
 }
 
 /**
- * 在浏览器里把报告存成文件(下载一份)。在线页面没有编辑器进程可以替它写盘(也不许请求 `/api/*`),云端对话的诊断报告走这条;
- * 返回一句给用户看的回执。
+ * Save report as a file in browser (download a copy). Online pages have no editor process to write
+ * to disk for them (and cannot request `/api/*`), so cloud chat diagnostic reports take this path;
+ * returns a receipt message for the user.
  */
 export function downloadReportFile(text: string, label: string): string {
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-');

@@ -10,11 +10,12 @@ import { tr } from "../../i18n/index.ts";
 
 export const cuts = {
 
-  /* ---------- 剪辑(多条时间轴) ---------- */
+  /* ---------- Cuts (multiple timelines) ---------- */
   /**
-   * 切到另一条剪辑。当前的 tracks / duration / 播放头存回它的条目,目标的换进来。
-   * 进撤销栈(整份 project 一起,撤销就是切回去);选中清空、停播、总时长手动值清掉 —— 这些都是
-   * 上一条剪辑的东西。播放头用目标上次离开时的。
+   * Switch to another cut. Current tracks / duration / playhead are saved back to its entry, and the
+   * target's are swapped in. Enters the undo stack (together with the entire project; undoing simply
+   * switches back); selection is cleared, playback stops, and manual total duration is cleared: these
+   * all belong to the previous cut. Playhead uses the target's position when last exited.
    */
   switchCut(cutId: string) {
     const { project, t } = switchCutPure(state.project, cutId, state.t);
@@ -22,7 +23,7 @@ export const cuts = {
     setProject(project);
     set({ t, playing: false, selection: [], playToken: state.playToken + 1, durationManual: null });
   },
-  /** 新建一条剪辑,默认切过去(和剪辑软件新建序列的习惯一致) */
+  /** Create a new cut and switch to it by default (consistent with NLE conventions for creating a sequence) */
   addCut(name?: string, opts: { switchTo?: boolean } = {}) {
     const { project, cut } = addCutPure(state.project, name);
     setProject(project);
@@ -33,9 +34,11 @@ export const cuts = {
     setProject(renameCutPure(state.project, cutId, name));
   },
   /**
-   * 删一条剪辑。删激活那条会先切到相邻的;最后一条不能删(纯逻辑里会抛)。
-   * 被别的剪辑引用着时,引用它的剪辑段连同转场一起删(说明与确认是调用方的事:素材库弹确认、
-   * Agent 工具要 force)。一步撤销就全回来。返回删掉的剪辑段在哪些剪辑里。
+   * Delete a cut. Deleting the active cut switches to an adjacent one first; the last cut cannot be
+   * deleted (throws in pure logic). When referenced by other cuts, cut segments referencing it are
+   * deleted along with transitions (explanation and confirmation are caller responsibilities: media
+   * library prompts confirmation, Agent tools require force). One-step undo restores everything.
+   * Returns which cuts contain the deleted cut segments.
    */
   removeCut(cutId: string) {
     const { project, switchedTo, t, removedSegments } = removeCutPure(state.project, cutId, state.t);
@@ -45,24 +48,28 @@ export const cuts = {
     return { removedSegments };
   },
   /**
-   * 就地改停放剪辑里的片段:fn 里的 actions 照常按「这条剪辑当激活」写,提交时只改它的条目,
-   * 激活剪辑与 activeCutId 不动(不切换、不翻任何人的界面)。fn 必须同步。见 store/core.ts `runInCutScope`。
+   * Modify clips in a parked cut in place: actions inside fn are written as usual assuming "this cut
+   * is active"; upon commit, only its entry is modified, leaving the active cut and activeCutId
+   * untouched (no switching, without flipping anyone's UI). fn must be synchronous. See store/core.ts
+   * `runInCutScope`.
    */
   editInCut<T>(cutId: string, fn: () => T): T {
     return runInCutScope(cutId, fn);
   },
-  /** 直接引用了这条剪辑的那些剪辑(删之前给人看) */
+  /** Cuts that directly reference this cut (shown to user prior to deletion) */
   cutReferences(cutId: string) {
     return cutReferences(state.project, cutId);
   },
-  /** 把剪辑 `childCutId` 放进激活剪辑会不会循环引用;会的话返回原因 */
+  /** Whether placing cut `childCutId` into the active cut causes circular references; returns the reason if so */
   cutCycleReason(childCutId: string): string | null {
     const host = state.project.activeCutId;
     return host ? cutCycleReason(state.project, host, childCutId) : null;
   },
   /**
-   * 在激活剪辑里放一个引用 `childCutId` 的剪辑段(拖放、Agent 工具)。`newTrackIndex` 给了就新建一条序列放上去;
-   * 循环引用、找不到剪辑、序列放不下都抛,错误信息给人看。默认长度 = 被引用剪辑(从 offset 起)剩下的长度。
+   * Places a cut segment referencing `childCutId` in the active cut (drag and drop, Agent tool).
+   * If `newTrackIndex` is provided, creates a new track and places it there; circular references,
+   * cut not found, or track cannot fit all throw, with human-readable error messages.
+   * Default duration = remaining duration of the referenced cut (from offset onwards).
    */
   addCutSegment(childCutId: string, start: number, opts: { trackId?: string; newTrackIndex?: number; duration?: number; offset?: number } = {}): TrackClip {
     let p = state.project;
@@ -75,7 +82,7 @@ export const cuts = {
       p = { ...p, tracks };
       trackId = track.id;
     } else if (!trackId) {
-      // 不指定序列:挑第一条这段时间空着、没锁的
+      // No track specified: pick the first one that is unlocked and unoccupied during this time
       const free = p.tracks.find((t) => !t.locked && !t.clips.some((c) => c.start < start + 0.05 && start < c.end));
       trackId = (free ?? p.tracks.find((t) => !t.locked))?.id;
     }
@@ -85,10 +92,13 @@ export const cuts = {
     return clip;
   },
   /**
-   * 改剪辑段从被引用剪辑的哪一秒开始。偏移超出被引用剪辑的总长抛。
-   * 引用哪条剪辑不能改(2026-10-21 用户定,`workflow/editing.md`「剪辑段的属性」):要换就删掉这段重新放,
-   * 所以这个动作只收 `cutOffset`,别处也换不了引用。
-   * 改完段太长的话出点截到被引用剪辑剩下的长度(新建或拉长剪辑段时不能超出被引用剪辑当时的总时长)。
+   * Changes which second of the referenced cut the cut segment starts from. Throws if the offset
+   * exceeds the total duration of the referenced cut. Which cut is referenced cannot be changed
+   * (user decision, 2026-10-21, `workflow/editing.md` "Cut segment properties"): to replace it,
+   * delete this segment and place it again, so this action only accepts `cutOffset`, and the reference
+   * cannot be changed elsewhere either. If the segment is too long after the change, the out point is
+   * clamped to the remaining duration of the referenced cut (when creating or extending a cut segment,
+   * it cannot exceed the referenced cut's total duration at that time).
    */
   setCutSegment(clipId: string, patch: { cutOffset?: number }): TrackClip {
     const p = state.project;

@@ -30,7 +30,8 @@ export const wordRotateCard: CardDef<Params> = {
   useWhen: "A fixed prefix followed by several sibling words that rotate in a loop (e.g. \"You are\" + \"excellent|outstanding|perfect\"), suited to parallel phrasing. Each word stays for 1 second, hardcoded and not adjustable, and the loop never stops on the last word. It cannot do progressive sentences like \"Not just A, but B\" where both halves change.",
   tags: ["rotate","parallel phrasing","words"],
   source: "magicui",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: { words: "优秀|卓越|完美|无瑕", prefix: "你是" },
   controls: [

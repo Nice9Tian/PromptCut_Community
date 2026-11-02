@@ -1,10 +1,12 @@
 /**
- * M7-T：队列侧的 D1（双份出键：先认领者得卡、建锁时作废另一份）与 D2（锁闲置：回包带 lockIdleMs / lockedByProfile，
- * 续约刷新 touchedAt）。依据：`docs/plan/m7-contract.md` 第 3.3、3.4 节与第 13 节裁定；`render-queue-contract.md` F.1、I 节。
- * 假设见 `m7-kit.mjs` 的 K4、K5；实现不在时整组 skip。
- * 跑：node --experimental-test-module-mocks --test server/test/m7-queue-lock.test.mjs
+ * M7-T: D1 on the queue side (dual key emission: first claimant gets the card, invalidates the other
+ * copy upon lock creation) and D2 (idle lock: response includes lockIdleMs / lockedByProfile, lease
+ * renewal refreshes touchedAt). Basis: `docs/plan/m7-contract.md` Sections 3.3 and 3.4 and Section 13
+ * ruling; `render-queue-contract.md` Sections F.1 and I. Assumptions see K4 and K5 in `m7-kit.mjs`;
+ * skip the entire group when implementation is absent.
+ * Run: node --experimental-test-module-mocks --test server/test/m7-queue-lock.test.mjs
  *
- * 全部用假时钟（`createQueueHarness`），没有真实计时断言。
+ * All use fake timers (`createQueueHarness`), with no real timing assertions.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,13 +14,13 @@ import { createRenderQueue } from '../render-queue/index.mjs';
 import { createQueueHarness } from './fake-render-queue-env.mjs';
 import { snapTask, queueDualGate, lockIdleGate, gateOpts } from './m7-kit.mjs';
 
-const OWN = '1111111111111111';     // 切分方（pc / host）的指纹
-const BR = '2222222222222222';      // 纯浏览器的指纹
+const OWN = '1111111111111111';     // Fingerprint of the splitter (pc / host)
+const BR = '2222222222222222';      // Fingerprint of pure browser
 const THIRD = '3333333333333333';
 const CK = 'ck-motion-1';
 const USER = 'zoe@devA';
 
-/** 一张卡的双份：每段两份（OWN、BR），都 input.dual；浏览器那份带 bake 与 compositing */
+/** Dual copies of a card: two copies per segment (OWN, BR), both with input.dual; browser copy includes bake and compositing */
 function dualPair(seg, { contentKey = CK } = {}) {
   return [
     snapTask({ contentKey, fp: OWN, seg, input: { dual: true } }),
@@ -26,7 +28,7 @@ function dualPair(seg, { contentKey = CK } = {}) {
   ];
 }
 
-/** pc（OWN）、本人的纯浏览器（BR）、页面发布方；都 watch p1 */
+/** pc (OWN), user's own pure browser (BR), and page publisher; all watch p1 */
 function rig(constants = {}) {
   const h = createQueueHarness(createRenderQueue, { constants });
   h.publisher('page', 'pub-page', { userId: USER });
@@ -61,13 +63,13 @@ test('D1 browser claims first: when the lock is created, all open dual tasks wit
   assert.equal(stateOf(h, br0.id).state, 'claimed');
   assert.equal(stateOf(h, br1.id).state, 'open', 'The remaining segments of the browser\'s copy stay open as usual');
 
-  // 作废的没人认领过：不发 lease-lost
+  // Invalidated task was never claimed: do not send lease-lost
   assert.equal(h.bus.ofType('task.lease-lost').length, 0, 'Nobody claimed the invalidated dual task, so no lease-lost is sent');
-  // pc 再也认领不到切分方那一份
+  // pc can no longer claim the splitter's copy
   const again = h.claim('pc', own1.id, stateOf(h, own1.id).version).last('pc', ['task.claimed', 'task.claim-rejected']);
   assert.equal(again.type, 'task.claim-rejected', JSON.stringify(again));
 
-  // 浏览器做完两段：每个任务恰好一次 task.done（作废的没有）
+  // Browser finishes two segments: exactly one task.done per task (none for invalidated ones)
   h.complete('br', br0.id, c.token, { v: 1 });
   const c1 = claimOk(h, 'br', br1);
   h.complete('br', br1.id, c1.token, { v: 1 });
@@ -87,7 +89,7 @@ test('D1 splitter claims first: the browser\'s copy is entirely invalidated, and
   }
   const r = h.claim('br', br1.id, stateOf(h, br1.id).version).last('br', ['task.claimed', 'task.claim-rejected']);
   assert.equal(r.type, 'task.claim-rejected', JSON.stringify(r));
-  // 浏览器节点收到过这两段的撤回（hidden 或 failed 都算）
+  // Browser node has received revocations for both segments (both hidden and failed count)
   const closed = new Set(h.bus.of('br', 'task.closed').map((m) => m.id));
   assert.ok(closed.has(br0.id) && closed.has(br1.id), `The browser should receive the withdrawal: ${JSON.stringify([...closed])}`);
 });
@@ -179,7 +181,7 @@ test('D2 lease renewal (task.progress) refreshes touchedAt: a lock that is still
   h.progress('br', br.id, c.token, 10);
   const lock = h.describe().locks.find((l) => l.lockKey === `snapshot:${CK}`);
   assert.equal(lock.touchedAt, t0 + 20_000, `Lease renewal should refresh touchedAt: ${JSON.stringify(lock)}`);
-  // 进度不变的续约也刷新（续约 = 还在产出）
+  // Lease renewal with unchanged progress also refreshes (renewal = still producing)
   h.clock.advance(10_000);
   h.progress('br', br.id, c.token, 10);
   assert.equal(h.describe().locks.find((l) => l.lockKey === `snapshot:${CK}`).touchedAt, t0 + 30_000);

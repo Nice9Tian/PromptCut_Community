@@ -1,15 +1,21 @@
 /**
- * M6b 独立渲染主机：契约测试（`docs/plan/render-host-contract.md` 第 2～4 节里能在单进程里验的行为，用例 RHC*）。
- * 跑：node --test server/test/render-host-contract.test.mjs
+ * M6b standalone render host: Contract tests (behaviors verifiable in a single process from
+ * Sections 2 to 4 of `docs/plan/render-host-contract.md`, test cases RHC*).
+ * Run: node --test server/test/render-host-contract.test.mjs
  *
- * 只照契约写，不看实现。主机本身的接口（配置解析、多项目编排、诊断）是测试方的假设，集中在
- * `render-host-kit.mjs` 文件头；节点会话、队列、文档服务、鉴权用的是 M5 / M6a 已有的公共接口。
+ * Written strictly to contract, ignoring implementation. Host's own interfaces (configuration
+ * parsing, multi-project arrangement, diagnostics) are test-side assumptions, centralized in the
+ * `render-host-kit.mjs` header; node sessions, queue, document service, and authentication use
+ * existing public interfaces from M5 / M6a.
  *
- * 分组：
- *   RHC1～RHC4    配置解析（第 2 节）
- *   RHC5～RHC8    节点侧过滤：plan 跳过、代码版本（第 3、4 节），内存传输 + 真队列
- *   RHC9～RHC10   队列侧：本空间任何成员的细任务可认领；没有凭证握手 401、收到本项目消息 0 条（H3）
- *   RHC11～RHC19  主机编排：多项目多连接、node.hello 字段、并发上限、plan 跳过、H2、H3、退出让掉认领、诊断
+ * Groups:
+ *   RHC1-RHC4    Configuration parsing (Section 2)
+ *   RHC5-RHC8    Node-side filtering: plan skip, code versions (Sections 3 and 4), in-memory
+ *                transport + real queue
+ *   RHC9-RHC10   Queue side: fine-grained tasks of any member in this space claimable;
+ *                handshake 401 without credentials, 0 messages received for this project (H3)
+ *   RHC11-RHC19  Host arrangement: multi-project multi-connection, node.hello fields, concurrency
+ *                cap, plan skip, H2, H3, exit yielding claims, diagnostics
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -51,7 +57,7 @@ const baseEntry = (over = {}) => ({
 
 const isConfigError = (err) => /^bad-(host|shared)-config$/.test(String(err?.code));
 
-// ================================================================== 配置解析（第 2 节）
+// ================================================================== Configuration parsing (Section 2)
 
 test('RHC1 config parsing: a single object → one entry; maxConcurrent defaults to 1; fields are kept as given', async () => {
   const { parseHostConfig } = await loadHostModule();
@@ -62,10 +68,10 @@ test('RHC1 config parsing: a single object → one entry; maxConcurrent defaults
   const [e] = r.entries;
   for (const k of ['url', 'projectId', 'username', 'deviceId', 'deviceName', 'as', 'role']) assert.equal(e[k], raw[k], `field ${k}`);
   assert.equal(e.role, 'render');
-  // 用 key（已派生的 K）代替口令也行
+  // Using key (derived K) instead of passphrase also works
   const withKey = parseHostConfig(baseEntry({ password: undefined, key: 'A'.repeat(43) }));
   assert.equal(withKey.entries.length, 1);
-  // 单个对象上给 maxConcurrent
+  // Provide maxConcurrent on a single object
   assert.equal(parseHostConfig(baseEntry({ maxConcurrent: 3 })).maxConcurrent, 3);
 });
 
@@ -102,7 +108,7 @@ test('RHC3 config parsing: missing fields, empty array, role is not render, maxC
       return true;
     }, what);
   }
-  // 上限 4：超出要么报错、要么压到 4，不能照收
+  // Cap of 4: exceeding it must either throw an error or clamp to 4; cannot accept as is
   for (const over of [5, 64]) {
     let got;
     try {
@@ -136,11 +142,12 @@ test('RHC4 config file: loadHostConfig reads an array file; a file that does not
   }
 });
 
-// ================================================================== 节点侧过滤（第 3、4 节）
+// ================================================================== Node-side filtering (Sections 3 and 4)
 
 /**
- * 真队列 + 内存传输：一个发布方、若干节点会话。节点认领到就立即完成。
- * 回 { lb, q, publish, addNode, run, claimsOf }。
+ * Real queue + in-memory transport: one publisher, multiple node sessions. Nodes complete
+ * immediately upon claiming.
+ * Returns { lb, q, publish, addNode, run, claimsOf }.
  */
 function inprocQueue() {
   const clock = createFakeClock();
@@ -219,14 +226,14 @@ test('RHC6 queue + node session (in-memory transport): a host node that receives
   for (const s of snaps) assert.equal(env.state(s.id), 'done', s.id);
   assert.equal(env.state(plan.id), 'open', 'plan is still open');
 
-  // 只有 plan 的队列：再多拍也 0 条认领
+  // Queue with only plan: 0 claims no matter how many ticks
   const only = inprocQueue();
   only.publish([planTask(2)]);
   only.addNode('host', 'node-host', HOST_NODE);
   await only.run(40);
   assert.deepEqual(only.claimsOf('node-host'), [], 'host made 0 claims on plan');
 
-  // 对照：pc 节点认领这个 plan
+  // Control: pc node claims this plan
   env.addNode('pc', 'node-pc', PC_NODE, { complete: false });
   await env.run(5);
   assert.deepEqual(env.claimsOf('node-pc'), [plan.id], 'pc node claims plan');
@@ -284,7 +291,7 @@ test('RHC8 filtering: tasks whose requires.codeVersion is not in codeVersions ge
   assert.deepEqual(env.claimsOf('node-host'), [same.id], 'Control: a same-version task is claimed');
 });
 
-// ================================================================== 队列侧（第 4 节，经真文档服务）
+// ================================================================== Queue side (Section 4, via real document service)
 
 test('RHC9 queue side: a render connection that checks in with profile host can claim fine-grained tasks published by any member of this space; a host of another project cannot claim them', async (t) => {
   const { s, projects: [P, Q] } = await sharedService(t, { projects: 2 });
@@ -316,16 +323,16 @@ test('RHC9 queue side: a render connection that checks in with profile host can 
 
 test('RHC10 H3: a connection without project credentials gets handshake 401 and receives 0 messages of this project; a wrong passphrase also gets 401; members of another project receive 0', async (t) => {
   const { s, projects: [P, Q] } = await sharedService(t, { projects: 2 });
-  // 只带 promptcut.v1（非回环来源）：401
+  // Only with promptcut.v1 (non-loopback source): 401
   const bare = await rawHandshake(s.port, { protocols: [PROTOCOL], path: '/' });
   bare.sock.destroy();
   assert.equal(bare.status, 401, '401 without credentials');
-  // 什么都不带：401
+  // With nothing provided: 401
   const none = await rawHandshake(s.port, { path: '/' });
   none.sock.destroy();
   assert.equal(none.status, 401, '401 with nothing at all');
 
-  // 口令错：401（经 client.mjs 拼证明）
+  // Wrong passphrase: 401 (assembling proof via client.mjs)
   const { buildAuthProtocols } = await import('../auth/client.mjs');
   const wrong = await buildAuthProtocols({
     base: s.base, projectId: P.projectId, username: 'rig', deviceId: 'render-host-device-0009', deviceName: 'RH', as: 'member', password: 'wrong-pw', role: 'render',
@@ -334,7 +341,8 @@ test('RHC10 H3: a connection without project credentials gets handshake 401 and 
   wr.sock.destroy();
   assert.equal(wr.status, 401, '401 on a wrong passphrase');
 
-  // 连不上的客户端与别的项目的成员，在本项目发布、认领、完成的全过程里收到 0 条本项目的消息
+  // Clients that cannot connect and members of other projects receive 0 messages from this
+  // project throughout its publishing, claiming, and completion
   const outsider = wsClient(s.url, [PROTOCOL]);
   await assert.rejects(outsider.opened, 'A connection without credentials cannot open');
   const q = await member(s, Q, { username: 'quinn', role: 'render' });
@@ -356,7 +364,7 @@ test('RHC10 H3: a connection without project credentials gets handshake 401 and 
   assert.deepEqual(leaked, [], 'Members of another project receive 0 messages of this project');
 });
 
-// ================================================================== 主机编排（第 2、3 节）
+// ================================================================== Host arrangement (Sections 2 and 3)
 
 test('RHC11 multiple projects: two configs → two render connections, each with one node.hello and each in its own space; the local space has no host node', async (t) => {
   const { s, projects: [P, Q] } = await sharedService(t, { projects: 2 });
@@ -388,15 +396,16 @@ test('RHC12 node.hello: profile host, capabilities { userCards: true, graphCards
   const { s, projects: [P] } = await sharedService(t);
   const rec = recordWebSocket(t);
   const { logs } = await startHost(t, { entries: [hostEntry(s, P)], executor: createGateExecutor({ autoMs: 5 }), codeVersion: 'cv-rhc12', envFingerprint: 'fp-rhc12' });
-  // 「最终会发出 node.hello」：按 20 s 截止时间等（并行跑几份 npm test 时这里曾 10 s 没等到，原因未明），
-  // 等不到时把主机与连接层的日志带进报错。发出的 hello 内容的断言不变。
+  // "Will eventually emit node.hello": wait with a 20 s deadline (when running several npm test
+  // instances in parallel, 10 s once timed out here for unknown reasons); if timed out, include host
+  // and connection layer logs in error. Assertion on emitted hello content remains unchanged.
   const hello = await waitFor(() => rec.sentBy('render').find((x) => x.message.type === 'node.hello')?.message, 20_000, 'node.hello')
     .catch((err) => { throw new Error(`${err.message}; host logs: ${JSON.stringify(logs).slice(0, 3000)}; recorded connections: ${JSON.stringify(rec.sockets.map((x) => ({ url: x.url, r: x.proof?.r, sent: x.sent.length })))}`); });
   assert.equal(hello.profile, 'host');
   assert.deepEqual(hello.capabilities, { userCards: true, graphCards: false });
   assert.deepEqual(hello.codeVersions, ['cv-rhc12']);
   assert.equal(hello.envFingerprint, 'fp-rhc12');
-  // 主机不替任何页面发布 plan
+  // Host does not publish plan on behalf of any page
   await sleep(200);
   const plans = rec.sentBy('render').filter((x) => x.message.type === 'task.publish');
   assert.deepEqual(plans, [], 'The host publishes no tasks');
@@ -431,7 +440,7 @@ test('RHC13 multiple projects: the fine-grained tasks of each project (from diff
   assert.equal(byProject[Q.projectId]?.claimed, 3);
 });
 
-/** 跑一轮并发实验：边放行边采样；回 { maxClaimed, maxRunning } */
+/** Run a round of concurrency experiments: sample while releasing; returns { maxClaimed, maxRunning } */
 async function concurrencyRun(t, { maxConcurrent, perProject = 4 }) {
   const { s, projects } = await sharedService(t, { projects: 2 });
   const tag = Date.now();
@@ -451,7 +460,8 @@ async function concurrencyRun(t, { maxConcurrent, perProject = 4 }) {
   while (doneCount() < total) {
     assert.ok(Date.now() < until, `Concurrency experiment timed out: ${JSON.stringify(ids.map((pid) => statesOf(s, pid)))}`);
     maxClaimed = Math.max(maxClaimed, claimedCount(s, ids));
-    // 等所有空位都被占上（或者没有剩余任务）再放行一个，这样上限若被突破一定会被采样到
+    // Wait until all slots are occupied (or no tasks remain) before releasing one, so any breach
+    // of the cap will definitely be sampled
     const open = ids.reduce((n, pid) => n + (statesOf(s, pid).open ?? 0), 0);
     if (executor.waiting.length >= limit || (open === 0 && executor.waiting.length > 0)) {
       await sleep(60);
@@ -544,7 +554,8 @@ test('RHC19 exit: stop() releases the claims it holds (without waiting for the l
   const { stop } = await startHost(t, { entries: [hostEntry(s, P), hostEntry(s, Q)], executor, maxConcurrent: 2 });
   await waitFor(() => claimedCount(s, [P.projectId, Q.projectId]) === 2 && executor.waiting.length === 2, 10000, 'Host holds two claims');
   await stop();
-  // 文档服务 autoTick 关着：租约不会过期，任务回到 open 只能是主机让掉的（或断开时队列回收的）
+  // Document service autoTick is off: leases will not expire; tasks returning to open can only be
+  // yielded by the host (or reclaimed by the queue upon disconnect)
   await waitFor(() => statesOf(s, P.projectId).open === 1 && statesOf(s, Q.projectId).open === 1, 3000, 'Both tasks return to open');
   await waitFor(() => [P, Q].every((p) => !queueOf(s, p.projectId).nodes.some((n) => n.connected)), 3000, 'All host connections are closed');
   assert.equal(executor.waiting.length, 0, 'Work waiting in the executor is aborted');
@@ -583,6 +594,6 @@ test('RHC20 diagnostics: describe() shape { nodes: [{ projectId, connected, clai
   assert.equal(n.failed, 0);
   assert.equal(n.lost, 0);
   assert.deepEqual(executor.stats.rendered, [fresh.id], 'Deduplicated tasks are not rendered');
-  // 诊断能过 JSON（HTTP 诊断口原样回它）
+  // Diagnostics can pass JSON (HTTP diagnostic endpoint returns it as is)
   assert.deepEqual(JSON.parse(JSON.stringify(d)), d);
 });

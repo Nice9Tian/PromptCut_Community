@@ -1,44 +1,60 @@
 /**
- * 生成快照第五步里「整场景的 id 改名」(见 `createSnapshot.ts` 文件头):把整场景 html 里收到的每个 id
- * 改成 `${id}__r`,并同步改掉 `url(#…)` / `href="#…"` 引用。
+ * Whole-scene id renaming in step 5 of snapshot generation (see `createSnapshot.ts` file header):
+ * rename each id collected in the whole scene HTML to `${id}__r`, and synchronously update
+ * `url(#…)` / `href="#…"` references.
  *
- * 原来的写法是对每个 id 各跑三条正则、每条都扫整段 html(下面的 `renameSceneIdsSequential`),
- * 带 id 的元素一多就是平方级:1400 个带 id 的元素约 6.5 s(`docs/reports/AGENT-c10-probe.md`「旁证」)。
- * 现在三条正则各扫一遍、每处命中查表决定改不改,整趟线性。**输出与原写法逐字节相同**,
- * 对拍见 `renameSceneIds.test.mjs`(原写法原样拷在那里当对照)。
+ * The original implementation ran three regular expressions for each id, each scanning the entire
+ * HTML (see `renameSceneIdsSequential` below), which becomes quadratic as elements with ids
+ * increase: ~6.5 s for 1,400 elements with ids (`docs/reports/AGENT-c10-probe.md` "Corroboration").
+ * Now each of the three regexes scans once, checking a lookup table at each match to decide whether
+ * to rename, making the whole pass linear. **The output is byte-for-byte identical to the original
+ * implementation**; see `renameSceneIds.test.mjs` for side-by-side tests (where the original
+ * implementation is copied verbatim as a reference).
  *
- * # 为什么查表能和逐个 id 串行改得出同一个结果
+ * # Why table lookup produces the same result as sequentially renaming each id
  *
- * 原写法对某个 id `X` 的三条正则是
+ * The three regexes used by the original implementation for an id `X` were:
  *
  *   `(\sid=")X(")`      `(url\((?:&quot;|["'])?[^)"'&]*#)X((?:&quot;|["'])?\))`      `((?:xlink:)?href="#)X(")`
  *
- * 当 `X` 里没有 `"'()&#$=` 和空白(下称「普通 id」)时:
+ * When `X` contains none of `"'()&#$=` or whitespace (hereafter "normal id"):
  *
- *   - 每一处能命中的位置,`X` 都只能是那里的一整段:`id="` / `href="#` 之后到下一个 `"` 为止;
- *     `url(` 那条是那一串 `[^)"'&]` 里最后一个 `#` 之后到串尾。所以一趟扫出每个位置的那一段、
- *     查它在不在 id 集合里,就是「哪个 id 会在这里命中」。
- *   - 改名只是在那一段末尾接上 `__r`。`__r` 和普通 id 都不含上面那几个字符,接上以后既造不出、
- *     也毁不掉别的命中位置;三条正则的命中位置也两两不重合。所以三趟的先后、各 id 的先后都不影响结果,
- *     **唯一的例外是连环改名**:集合里同时有 `a` 和 `a__r`、且 `a` 在前时,原写法先把 `a` 改成 `a__r`,
- *     轮到 `a__r` 时又把它改成 `a__r__r`。`finalNames` 按集合顺序把这条链算好,查表时直接给终点。
- *   - `id=` 和 `href=` 两条用后顾(lookbehind),不吃掉前缀:原写法对每个 `X` 单独扫,
- *     某处前缀落在另一处命中的范围里时它照样能看到(例如文本里的 ` id=" id="a"`)。
- *     `url(` 那条照原样吃掉前缀:嵌在同一串里的 `url(` 收尾在同一个位置,取到的是同一段。
+ *   - At every matchable position, `X` can only be an entire segment there: from after `id="` /
+ *     `href="#` up to the next `"`; for `url(`, it is from after the last `#` in that run of
+ *     `[^)"'&]` to the end of the string. Scanning that segment at each position in one pass and
+ *     checking if it is in the set of ids determines "which id matches here".
+ *   - Renaming merely appends `__r` to the end of that segment. Neither `__r` nor normal ids
+ *     contain any of the characters above, so appending it neither creates nor destroys other
+ *     match positions; match positions of the three regexes are pairwise non-overlapping.
+ *     Therefore, neither the order of the three passes nor that of individual ids affects the
+ *     result. **The only exception is chained renaming**: when the set contains both `a` and
+ *     `a__r`, with `a` preceding, the original code first renames `a` to `a__r`, and renames it
+ *     again to `a__r__r` when reaching `a__r`. `finalNames` precomputes this chain in set order
+ *     and directly yields the final destination during table lookup.
+ *   - The `id=` and `href=` regexes use lookbehind to avoid consuming prefixes: the original
+ *     implementation scanned for each `X` individually, so it could still see prefixes even when
+ *     one fell within another match's range (e.g. ` id=" id="a"` in text). The `url(` regex
+ *     consumes prefixes as before: multiple `url(` instances embedded in the same string end at
+ *     the same position and capture the same segment.
  *
- * 集合里只要有一个 id 不是普通 id(含引号、括号、`&`、`#`、`$`、`=` 或空白),整趟退回原写法 ——
- * 这些字符会让上面几条推理不成立(例如 `$` 在替换串里有特殊含义),而真实卡片的 id
- * (React 19 的 `_r_0_`、`grad-x` 之类)都是普通 id。
- * 除空白以外,每个字符都有单测里的反例(去掉哪个排除,`renameSceneIds.test.mjs` 就挂);空白没找到反例,
- * 排除它只是保守。
+ * If even a single id in the set is not a normal id (contains quotes, parentheses, `&`, `#`, `$`, 
+ * `=`, or whitespace), the entire pass falls back to the original implementation: these characters
+ * invalidate the reasoning above (e.g. `$` has special meaning in replacement strings), whereas ids
+ * in real cards (such as React 19's `_r_0_`, `grad-x`) are all normal ids.
+ * Except for whitespace, every character has a counterexample in unit tests (removing any exclusion
+ * breaks `renameSceneIds.test.mjs`); no counterexample was found for whitespace, and excluding it
+ * is merely conservative.
  *
- * 纯字符串函数,不碰 DOM:Node 单测直接 import。
+ * Pure string function with no DOM access: imported directly by Node unit tests.
  */
 
-/** 普通 id 里不许出现的字符(见文件头) */
+/** Characters not permitted in a normal id (see file header) */
 const NOT_PLAIN = /[\s"'()&#$=]/;
 
-/** 原写法:逐个 id、三条正则各扫整段。非普通 id 时退回这里;不要改它 —— 它就是输出的定义。 */
+/**
+ * Original implementation: per-id, with three regexes each scanning the entire string. Falls
+ * back here for non-normal ids; do not modify it: it is the definition of the output.
+ */
 export function renameSceneIdsSequential(html: string, ids: Iterable<string>): string {
   const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   for (const id of ids) {
@@ -52,8 +68,9 @@ export function renameSceneIdsSequential(html: string, ids: Iterable<string>): s
 }
 
 /**
- * 每个 id 串行改完之后的终点名:`a` 先改成 `a__r`;集合里 `a__r` 排在 `a` 后面的话,
- * 轮到它时又被改一次,依此类推。倒着算,每个 id 只看一步。
+ * Final destination name of each id after sequential renaming: `a` is first renamed to `a__r`;
+ * if `a__r` is ordered after `a` in the set, it gets renamed again when reached, and so on.
+ * Computed in reverse order, looking only one step ahead for each id.
  */
 function finalNames(list: readonly string[]): Map<string, string> {
   const index = new Map<string, number>();
@@ -72,8 +89,9 @@ const HREF_RE = /(?<=href="#)[^"]*(?=")/g;
 const URL_RE = /(url\((?:&quot;|["'])?[^)"'&]*#)([^)"'&#]*)(?=(?:&quot;|["'])?\))/g;
 
 /**
- * 整场景 html 的 id 改名。`ids` 的顺序要和原写法一致(`createSnapshot` 里是 `querySelectorAll("[id]")`
- * 的文档序、根元素的 id 排最后,去重后的 Set 顺序)—— 连环改名的结果取决于它。
+ * Rename ids in the whole scene HTML. The order of `ids` must match the original implementation
+ * (in `createSnapshot`, document order from `querySelectorAll("[id]")` with the root element's
+ * id last, preserving deduplicated Set order): the outcome of chained renaming depends on it.
  */
 export function renameSceneIds(html: string, ids: Iterable<string>): string {
   const list = [...ids];

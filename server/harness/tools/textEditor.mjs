@@ -1,4 +1,4 @@
-// 对应 claude-quickstarts/agents/tools/text_editor.py
+// Corresponds to claude-quickstarts/agents/tools/text_editor.py
 import fs from 'node:fs';
 import path from 'node:path';
 

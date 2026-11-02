@@ -1,25 +1,39 @@
 /**
- * C10a 在线页面的探针（`docs/plan/c10a-contract.md` 第 2 节「在线页面不请求 /api/*」、第 4 节「读邀请码」、
- * 第 12 节「`/api` 守卫：在线构建里没有 `/api/` 请求」）。测试方写，只照契约，不看实现。
+ * Probe for C10a online page (`docs/plan/c10a-contract.md` section 2 "Online page makes no /api/* requests",
+ * section 4 "Read invite code", section 12 "`/api` guard: no `/api/` requests in online build").
+ * Written by the testing side; follows the contract only, ignoring implementation.
  *
- * 用法：
- *   node scripts/probes/c10a-online-probe.mjs [--dist <在线构建目录>] [--port 5650] [--out <截图目录>] [--headful] [--force]
+ * Usage:
+ *   node scripts/probes/c10a-online-probe.mjs [--dist <online-build-dir>] [--port 5650] [--out <shots-dir>] [--headful] [--force]
  *
- * - 没给 `--dist` 就自己跑一次 `vite build --mode online`，产物放临时目录（不碰 `dist-online/`）。
- * - 探针自己起一个静态服务（缺省 127.0.0.1:5650，C10a 测试方的端口段 5650～5659），照契约第 2 节 nginx 的形状：
- *   `/editor`、`/editor/index.html` 回 index.html（no-store），`/editor/assets/*` 找不到回 404，`/editor/*` 其余回落 index.html。
- *   `/hosted/shared/invite/resolve|redeem` 由探针假扮（按场景回失效或项目名），记下请求体；其余 `/hosted`、`/media`、`/api`
- *   一律 404 并记账，WebSocket 升级直接断开。不连任何真正的托管端。
- * - 浏览器按 Chrome 移动端仿真打开（390×844、触屏、Android UA、注入 `navigator.deviceMemory = 4`）。
- * - 场景（每项一行 JSON `{ check, ok, ... }`，最后一行 `{ summary }`；有失败退出码 1；`src/online/mode.ts` 不在时退出码 2，
- *   `--force` 照跑，用来查探针自己的管路）：
- *     S1 开 `/editor`：静置 4 s，同源没有任何 `/api/` 请求；控制台没有提到 `/api/` 的错误；`/editor/assets/` 的请求全是 200。
- *     S2 开 `/editor#invite=<失效码>`：5 s 内向同源 `…/shared/invite/resolve` 提交一次，码在请求体里、不在任何地址里；
- *        `#` 片段被清掉；localStorage / sessionStorage 里没有这个码；页面出现表 A「这个邀请链接已失效」。
- *     S3 开 `/editor#invite=<有效码>`：resolve 回项目名，页面上出现这个项目名。
- *     S4 开 `/editor#invite=<长度不对的码>`：3 s 内不发 resolve（字符集与长度先核对）。
- *     S5 开 `/editor/some/deep/route`：页面照常起来（SPA 回落 + `base: '/editor/'`），同源没有 `/api/` 请求。
- *   截图写进 `--out`（缺省 `out/c10a-online-probe`）：`s1-start.png`、`s2-invalid.png`、`s3-valid.png`、`s5-deep.png`。
+ * - If `--dist` is omitted, runs `vite build --mode online` once itself, placing output in a temporary
+ *   directory (without touching `dist-online/`).
+ * - Probe starts a static server itself (default 127.0.0.1:5650, C10a testing port range 5650-5659),
+ *   shaped after nginx in contract section 2:
+ *   `/editor`, `/editor/index.html` return index.html (no-store); `/editor/assets/*` returns 404 if not
+ *   found; all other `/editor/*` fall back to index.html.
+ *   `/hosted/shared/invite/resolve|redeem` is mocked by the probe (returns invalid or project name
+ *   depending on scenario) and records request bodies; all other `/hosted`, `/media`, and `/api`
+ *   requests return 404 and are logged, and WebSocket upgrades are immediately closed. Never connects
+ *   to any real hosted side.
+ * - Browser opens in Chrome mobile emulation (390×844, touch screen, Android UA, injected
+ *   `navigator.deviceMemory = 4`).
+ * - Scenarios (one JSON line `{ check, ok, ... }` per item, final line `{ summary }`; exit code 1 on
+ *   failure; exit code 2 when `src/online/mode.ts` is absent, `--force` runs anyway to check probe's
+ *   own pipeline):
+ *     S1 Open `/editor`: idle for 4 s; no same-origin `/api/` requests; no errors mentioning `/api/`
+ *        in console; all `/editor/assets/` requests return 200.
+ *     S2 Open `/editor#invite=<invalid-code>`: submits once to same-origin `…/shared/invite/resolve`
+ *        within 5 s; code is in the request body, not in any URL; `#` fragment is cleared; code is not
+ *        in localStorage / sessionStorage; Table A "This invite link has expired" appears on the page.
+ *     S3 Open `/editor#invite=<valid-code>`: resolve returns project name; that project name appears
+ *        on the page.
+ *     S4 Open `/editor#invite=<wrong-length-code>`: does not send resolve within 3 s (character set and
+ *        length verified first).
+ *     S5 Open `/editor/some/deep/route`: page comes up normally (SPA fallback + `base: '/editor/'`),
+ *        no same-origin `/api/` requests.
+ *   Screenshots written to `--out` (default `out/c10a-online-probe`): `s1-start.png`, `s2-invalid.png`,
+ *   `s3-valid.png`, `s5-deep.png`.
  */
 import puppeteer from 'puppeteer';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
@@ -49,7 +63,7 @@ if (!fs.existsSync(path.join(ROOT, 'src', 'online', 'mode.ts')) && !flag('force'
   process.exit(2);
 }
 
-// ------------------------------------------------------------------ 构建
+// ------------------------------------------------------------------ Build
 
 let dist = arg('dist');
 let tmpDist = null;
@@ -66,7 +80,7 @@ dist = path.resolve(dist);
 const INDEX = path.join(dist, 'index.html');
 if (!fs.existsSync(INDEX)) { report('build', false, { error: `${INDEX} not found` }); process.exit(1); }
 
-// ------------------------------------------------------------------ 静态服务 + 假托管端
+// ------------------------------------------------------------------ Static server + mock hosted side
 
 const TYPES = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.html': 'text/html; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.wasm': 'application/wasm', '.woff2': 'font/woff2', '.webp': 'image/webp' };
 const server = { log: [], invite: { mode: 'invalid', name: '' }, bodies: [] };
@@ -82,7 +96,7 @@ const httpServer = http.createServer(async (req, res) => {
   if (invite) {
     const text = await readBody(req);
     let body = null;
-    try { body = JSON.parse(text); } catch { /* 不是 JSON */ }
+    try { body = JSON.parse(text); } catch { /* Not JSON */ }
     server.bodies.push({ ep: invite[1], path: p, body });
     if (server.invite.mode === 'valid' && invite[1] === 'resolve') return json(res, 200, { ok: true, projectId: 'sp_probeprobeprobeprobeprobepr', name: server.invite.name, mode: 'free' });
     return json(res, 404, { ok: false, error: 'invite-invalid' });
@@ -109,7 +123,7 @@ httpServer.on('upgrade', (req, socket) => { server.log.push({ method: 'UPGRADE',
 await new Promise((resolve, reject) => { httpServer.once('error', reject); httpServer.listen(PORT, '127.0.0.1', resolve); });
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 
-// ------------------------------------------------------------------ 浏览器
+// ------------------------------------------------------------------ Browser
 
 const browser = await puppeteer.launch({
   headless: !flag('headful'),
@@ -149,7 +163,7 @@ async function waitFor(pred, ms) {
 const code43 = () => randomBytes(32).toString('base64url');
 
 try {
-  // S1 开始页不请求 /api/
+  // S1 Start page makes no /api/ requests
   {
     const { page, rec } = await openPage();
     await page.goto(`${ORIGIN}/editor`, { waitUntil: 'load', timeout: 30_000 }).catch((e) => rec.errors.push(`goto: ${e.message}`));
@@ -168,7 +182,7 @@ try {
     await page.close();
   }
 
-  // S2 失效的邀请码
+  // S2 Expired invite code
   {
     server.invite = { mode: 'invalid', name: '' };
     server.bodies.length = 0;
@@ -195,7 +209,7 @@ try {
     await page.close();
   }
 
-  // S3 有效的邀请码：显示项目名
+  // S3 Valid invite code: display project name
   {
     const name = `Probe project-${randomBytes(2).toString('hex')}`;
     server.invite = { mode: 'valid', name };
@@ -209,7 +223,7 @@ try {
     await page.close();
   }
 
-  // S4 长度不对的码：不提交
+  // S4 Code with invalid length: do not submit
   {
     server.invite = { mode: 'invalid', name: '' };
     server.bodies.length = 0;
@@ -220,7 +234,7 @@ try {
     await page.close();
   }
 
-  // S5 深路由
+  // S5 Deep route
   {
     const { page, rec } = await openPage();
     await page.goto(`${ORIGIN}/editor/some/deep/route`, { waitUntil: 'load', timeout: 30_000 }).catch((e) => rec.errors.push(`goto: ${e.message}`));

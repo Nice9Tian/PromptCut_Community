@@ -1,7 +1,10 @@
 /**
- * 页面触发预渲染的调度(`prerenderPreload.ts`)。跑:node --test src/editor/preview/prerenderPreload.test.mjs
+ * Scheduling for page-triggered prerendering (`prerenderPreload.ts`).
+ * Run: node --test src/editor/preview/prerenderPreload.test.mjs
  *
- * 钉的是:编辑后防抖、只在空闲时发、没就绪隔 2 秒再问、播放中停、空闲后复查一次、失败隔 4 秒重试、请求在飞时又编辑会再发一次。
+ * Pins down: debounce after edits, send only when idle, re-query after 2s if not ready, pause
+ * during playback, recheck once after idle, retry after 4s on failure, resend if edited while
+ * request in flight.
  */
 import "../../testing/registerTs.mjs";
 import { test } from "node:test";
@@ -9,7 +12,7 @@ import assert from "node:assert/strict";
 
 const { createPreloadScheduler, PRELOAD_DEBOUNCE_MS, PRELOAD_POLL_MS, PRELOAD_RETRY_MS, PRELOAD_REQUEST_TIMEOUT_MS } = await import("./prerenderPreload.ts");
 
-/** 假计时器:手动推进虚拟时间 */
+/** Fake timer: manually advance virtual time */
 function fakeClock() {
   let now = 0;
   let seq = 0;
@@ -25,7 +28,7 @@ function fakeClock() {
         timers.delete(next[0]);
         now = next[1].at;
         next[1].fn();
-        // 让 request 的 Promise 落定
+        // Let the request Promise settle
         for (let i = 0; i < 5; i++) await Promise.resolve();
       }
       now = until;

@@ -1,10 +1,14 @@
 /**
- * 编辑面板的数字框与滑块:草稿后提交、一次拖动一步撤销(2026-10-20 用户定,workflow/editing.md「撤销、重做」)。
- * 跑:node --test src/editor/fields/fields.test.mjs
+ * Number field and slider in editing panel: commit after draft, one drag one undo step (user
+ * decision, 2026-10-20, workflow/editing.md "Undo, redo").
+ * Run: node --test src/editor/fields/fields.test.mjs
  *
- * 单测里没有 DOM,所以数字框的逻辑放在纯状态机里(numberDraft.ts 的 reduceField)直接驱动;
- * 滑块的提交限速(createLatestThrottle)用假时钟;撤销合并走真的 store(快照栈模式、连文档服务模式各一遍)。
- * 真实浏览器里的敲字、回车、拖动由 scripts/probes/number-input-undo-probe.mjs 和 cut-segment-panel-probe.mjs 验。
+ * Since there is no DOM in unit tests, number field logic is directly driven in a pure state machine
+ * (`reduceField` in `numberDraft.ts`); slider commit rate limit (`createLatestThrottle`) uses mock
+ * clock; undo merge goes through real store (once in snapshot stack mode and once in connected document
+ * service mode).
+ * Typing, Enter, and dragging in a real browser are verified by
+ * `scripts/probes/number-input-undo-probe.mjs` and `cut-segment-panel-probe.mjs`.
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test, { mock } from "node:test";
@@ -17,9 +21,9 @@ const { actions, getState } = await import(srcUrl("store/project.ts"));
 const core = await import(srcUrl("store/core.ts"));
 const { DocSync, bindStore } = await import(srcUrl("store/docsync.ts"));
 
-/* ---------------- 数字框:草稿 ---------------- */
+/* ---------------- Number field: draft ---------------- */
 
-/** 模拟一个数字框:value 是项目里的值,commits 记下提交;按事件顺序喂 reduceField,和 NumberField 一样回车触发失焦 */
+/** Mock a number field: value is value in project, commits records submissions; feed reduceField in event order, Enter triggers blur just like NumberField */
 function box(value, opts = {}) {
   const s = { value, draft: null, commits: [], blurs: 0 };
   const send = (ev) => {
@@ -53,7 +57,7 @@ test("isTypingInput: events with an inputType are typing; events without one are
 
 test("While typing, only the draft changes and nothing is committed: changing 1 to 0.3, the intermediate \"0\" and \"0.\" never land in the project", () => {
   const b = box(1);
-  b.type("");   // 退格删掉 1
+  b.type("");   // Backspace to delete 1
   b.type("0");
   b.type("0.");
   b.type("0.3");
@@ -68,7 +72,7 @@ test("Enter commits once and blurs the field; a later blur does not commit a sec
   assert.equal(b.blurs, 1);
   assert.deepEqual(b.commits, [{ value: 0.3, step: false }]);
   assert.equal(b.draft, null);
-  b.blur(); // 没有草稿了,再失焦不提交
+  b.blur(); // Draft is gone; blurring again does not commit
   assert.equal(b.commits.length, 1);
 });
 
@@ -114,7 +118,7 @@ test("Arrow key / up-down arrow stepping: each press commits immediately (marked
   assert.equal(b.draft, null);
 });
 
-/* ---------------- 滑块:提交限速 ---------------- */
+/* ---------------- Slider: commit rate limit ---------------- */
 
 function fakeEnv() {
   let t = 0;
@@ -143,7 +147,7 @@ test("Throttling: the first value is submitted immediately, during a drag the la
   const th = createLatestThrottle((v) => seen.push(v), 50, clock.env);
   th.push(1);
   assert.deepEqual(seen, [1]);
-  for (let i = 2; i <= 9; i++) { clock.advance(5); th.push(i); } // 40 ms 内来了 8 个值
+  for (let i = 2; i <= 9; i++) { clock.advance(5); th.push(i); } // 8 values arrived within 40 ms
   assert.deepEqual(seen, [1], "Values within the window are buffered");
   clock.advance(10);
   assert.deepEqual(seen, [1, 9], "When time is up, only the latest value is submitted");
@@ -166,7 +170,7 @@ test("Throttling: cancel drops what has not been submitted", () => {
   assert.deepEqual(seen, [1]);
 });
 
-/* ---------------- 撤销合并:快照栈模式 ---------------- */
+/* ---------------- Undo merge: snapshot stack mode ---------------- */
 
 function loadCutProject() {
   actions.loadProject({
@@ -190,7 +194,7 @@ test("Snapshot stack: within one drag, a pause of more than 300 ms between commi
     const k1 = newGestureKey("test-drag");
     for (const v of [0.9, 0.7, 0.5]) {
       commitMerged(k1, GESTURE_WINDOW_MS, () => actions.updateClip(id, { opacity: v }));
-      mock.timers.tick(1500); // 按住不动一阵再动
+      mock.timers.tick(1500); // Hold down without moving for a while, then move
     }
     assert.equal(core.history.length - before, 1, "One drag adds only one step to the undo stack");
     assert.equal(opacityOf(id), 0.5);
@@ -215,7 +219,7 @@ test("Snapshot stack: stepping uses a rolling window, a gap longer than the wind
     commitMerged(k, STEP_BURST_MS, () => actions.updateClip(id, { opacity: 0.95 }));
     mock.timers.tick(600);
     commitMerged(k, STEP_BURST_MS, () => actions.updateClip(id, { opacity: 0.9 }));
-    mock.timers.tick(600); // 距第一下 1200 ms,但距上一下只有 600 ms:滚动窗口
+    mock.timers.tick(600); // 1200 ms from the first press, but only 600 ms from the previous one: sliding window
     commitMerged(k, STEP_BURST_MS, () => actions.updateClip(id, { opacity: 0.85 }));
     assert.equal(core.history.length - before, 1);
     mock.timers.tick(STEP_BURST_MS + 1);
@@ -238,7 +242,7 @@ test("Edits without withMerge (a single commit on Enter / blur in a number field
   assert.equal(core.history.length - before, 3);
 });
 
-/* ---------------- 撤销合并:连文档服务 ---------------- */
+/* ---------------- Undo merge: connect to document service ---------------- */
 
 test("With the document service: one drag merges into a single undo step, but each commit still sends its own message → throttling determines how many are sent; the next drag starts a new step", () => {
   const id = loadCutProject();
@@ -256,7 +260,7 @@ test("With the document service: one drag merges into a single undo step, but ea
     const k1 = newGestureKey("test-drag");
     for (const v of [0.9, 0.7, 0.5, 0.4]) {
       commitMerged(k1, GESTURE_WINDOW_MS, () => actions.updateClip(id, { opacity: v }));
-      t += 2000; // 停顿远超 300 ms
+      t += 2000; // Pause well over 300 ms
     }
     svc.drain();
     assert.equal(svc.log.length - logBefore, 4, "Merging only affects the undo stack; each commit still sends its own message (hence throttling during drags)");

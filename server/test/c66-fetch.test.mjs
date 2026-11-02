@@ -1,10 +1,14 @@
 /**
- * C6.6 可播性与导出拦截（`docs/plan/c66-design.md` 第 4 节「可播性」「导出」、第 8 节「可播性」；验收 T6、T7 的单进程部分）。
- * 跑：node --test server/test/c66-fetch.test.mjs
+ * C6.6 Playability and export interception (`docs/plan/c66-design.md` section 4 "Playability",
+ * "Export", section 8 "Playability"; single-process parts of acceptance check T6, T7).
+ * Run: node --test server/test/c66-fetch.test.mjs
  *
- * 只照设计稿写，没看实现。可播性模块是 `src/render/playability.ts`（设计稿点了名），跑在测试装的假 DOM 上；
- * 浏览器主版本、超时计时、本地 / 远端的区分是假设 K4。导出拦截的模块名与形状是假设 K3。
- * 换档（T5）、主线程长任务（T4）、跨机（T9）要浏览器或两台机器，不在本文件。
+ * Written strictly from the design draft without looking at the implementation. The playability
+ * module is `src/render/playability.ts` (named in the design draft), running on a fake DOM set up
+ * by the test; browser major version, timeout timing, and local / remote distinction are
+ * assumption K4. The module name and shape of export interception are assumption K3.
+ * Tier switch (T5), main-thread long tasks (T4), and cross-machine (T9) require a browser or two
+ * machines, not in this file.
  */
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -37,13 +41,15 @@ function play() {
   return P;
 }
 
-/** 在 ms 内等 promise；到点回 'pending' */
+/** Wait for promise within ms; return 'pending' when time is up */
 const within = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(() => r('pending'), ms))]);
 
-// ------------------------------------------------------------------ T6 可播性
+// ------------------------------------------------------------------ T6 Playability
 
-// 集成改动：MOV 的 canPlayType 按 video/mp4 问（设计稿第 9 节认可 c66-fetch 报告第 3 节第 1 条：Chrome 152 对
-// video/quicktime 恒回空串，按字面问会把 H.264 的 MOV 全判成放不了）；原断言是 /^video\/quicktime/。
+// Integration change: query canPlayType for MOV as video/mp4 (section 9 of the design draft approved
+// section 3 item 1 of the c66-fetch report: Chrome 152 always returns an empty string for
+// video/quicktime, and querying literally would classify all H.264 MOVs as unplayable); original
+// assertion was /^video\/quicktime/.
 test('C66-T6-02 canPlayType returns empty → judged unplayable directly, recorded in the local cache, no further attempt to play the first frame; MIME by container (mov → video/mp4)', async () => {
   const p = play();
   dom.ctl.canPlay = '';
@@ -65,7 +71,7 @@ test('C66-T6-03 canPlayType not empty → try playing: first frame arrived, judg
   const bad = H('3');
   assert.equal(await within(p.probePlayable(bad, `/@media/${bad}`, 'mov', 'video'), 5000), false, 'error, judged unplayable');
   assert.equal(p.playableOnThisHost(bad), false);
-  // 记进了 localStorage（新开页面还认得）
+  // Saved to localStorage (still recognized when opening a new page)
   p.forgetPlayable();
   assert.equal(p.playableOnThisHost(ok), true, 'read back from localStorage: playable');
   assert.equal(p.playableOnThisHost(bad), false, 'read back from localStorage: unplayable');
@@ -94,7 +100,8 @@ test('C66-T6-05 cache key includes the browser major version: the key that store
   const keys = [...dom.storage._map.keys()].filter((k) => k.toLowerCase().includes(hash));
   assert.equal(keys.length, 1, `one entry recorded for this hash: ${keys}`);
   assert.match(keys[0], /152/, `the key must contain browser major version 152: ${keys[0]}`);
-  // 旧格式（C6.5 及以前）：pc.playable.<hash>，不带版本 —— 浏览器升级后结论可能已经不对，不认
+  // Legacy format (C6.5 and earlier): pc.playable.<hash>, without version: conclusion may no longer
+  // be correct after a browser upgrade, not recognized
   const old = H('6');
   dom.storage.setItem(`pc.playable.${old}`, '0');
   p.forgetPlayable();
@@ -124,12 +131,12 @@ test('C66-T6-07 original-size asset judged unplayable on this machine: when both
   assert.equal(media.url, `/@media/${O}`, 'media.url used for export is still the original-size asset');
 });
 
-// ------------------------------------------------------------------ T7 导出拦截
+// ------------------------------------------------------------------ T7 Export interception
 
 const harness = createAssetHarness();
 after(() => harness.cleanup());
 
-/** 三个素材：两个视频（两档）、一张图片（只有素材原尺寸），都被片段引用 */
+/** Three assets: two videos (two tiers), one image (original-size asset only), all referenced by clips */
 function projectOf(h) {
   return {
     id: 'p-c66',

@@ -1,59 +1,80 @@
 /**
- * 把卡片(包括第三方库)能读到的「系统时间」和「真随机」全部钉死。
+ * Pins down all "system time" and "true randomness" readable by cards (including third-party
+ * libraries).
  *
- * # 为什么要有它
+ * # Why it is needed
  *
- * exportClock 早就钉了 performance.now / rAF / Math.random,但留了三个口子:
- *   1. `Date.now()` / `new Date()` —— 读的是墙上时钟,每次导出都不一样;
- *   2. `crypto.getRandomValues` / `crypto.randomUUID` —— 真随机;
- *   3. `Math.random` 在时间轴就位前回落到真随机,而且它是在 ExportView 模块**函数体**里装的 ——
- *      ESM 先把所有 import 求值完,`import "./cards"` 早已把第三方库加载好了,
- *      库在模块加载时抓走的是**原始的** Math.random。
+ * exportClock has long pinned performance.now / rAF / Math.random, but left three loopholes:
+ *   1. `Date.now()` / `new Date()`: reads the wall clock, differing on every export;
+ *   2. `crypto.getRandomValues` / `crypto.randomUUID`: true randomness;
+ *   3. `Math.random` falls back to true randomness before the timeline is ready, and it was
+ *      installed inside the ExportView module's **function body**: ESM evaluates all imports first,
+ *      and `import "./cards"` had already loaded third-party libraries, which captured the
+ *      **original** Math.random at module evaluation time.
  *
- * 实测踩中的是 lottie-web:它在模块加载时 `BMMath.random = Math.random`(lottie.js:202),
- * 又用 `crypto.getRandomValues` + `+new Date()` 给自带的 seedrandom 自动播种(13967~13978 行)。
- * AE 表达式里的 `wiggle()` / `random()` 走的就是它 —— 一个 wiggle 方块 + 一个 random 方块的
- * Lottie,现在的导出管线连导两遍 **89/90、90/90 帧不同**。卡片自己写的粒子不受影响
- * (particles.tsx 用参数里的 seed 自己播种),受影响的是这类「在库里偷偷取随机」的东西。
+ * What actually hit this was lottie-web: at module load time it sets `BMMath.random = Math.random`
+ * (lottie.js:202), and uses `crypto.getRandomValues` + `+new Date()` to auto-seed its built-in
+ * seedrandom (lines 13967~13978). Expressions like `wiggle()` / `random()` in AE rely on it:
+ * for a Lottie with one wiggle box + one random box, the current export pipeline exported twice
+ * with **differing 89/90 and 90/90 frames**. Particles written by cards themselves are unaffected
+ * (particles.tsx seeds itself using the seed in params); what is affected are things like this
+ * that "covertly draw randomness inside libraries".
  *
- * # 钉成什么
+ * # What it is pinned to
  *
- * - `Math.random` —— 带种子的 mulberry32,**从安装那一刻起**就是它(不再等时间轴就位)。
- *   初始状态和算法与原来 exportClock 里那份完全相同,`__pcResetRandom(1)` 之后的序列一个数都没变,
- *   所以重挂载之后的画面和旧基线一致;变的只是重挂载**之前**(模块加载期)那几次调用。
- * - `Date.now()`、不带参数的 `new Date()` / `Date()` —— 固定纪元 + 当前帧的毫秒数
- *   (导出页取 `__pcExportMs`,渲染面取舞台时钟;时钟还没就位时就是固定纪元本身)。
- *   带参数的 `new Date(x)`、`Date.parse`、`Date.UTC` 原样不动 —— 那些是计算,不是读时钟。
- *   时间跟着帧走而不是彻底冻住:有的库拿 `Date.now()` 算超时(lottie 的字体加载轮询),冻住的话
- *   它会一直等下去。
- * - `crypto.getRandomValues` / `crypto.randomUUID` —— 用同一个种子流填字节。
+ * - `Math.random`: seeded mulberry32, active **from the moment of installation** (no longer waiting
+ *   for the timeline to be ready). Initial state and algorithm are identical to the one in
+ *   exportClock; not a single number changed in the sequence after `__pcResetRandom(1)`, so visuals
+ *   after remount match the old baseline; only the few calls **before** remount (during module
+ *   load) changed.
+ * - `Date.now()`, parameterless `new Date()` / `Date()`: fixed epoch + current frame milliseconds
+ *   (export page uses `__pcExportMs`, render plane uses stage clock; before the clock is ready,
+ *   it is the fixed epoch itself). Parameterized `new Date(x)`, `Date.parse`, `Date.UTC` remain
+ *   untouched: those are calculations, not clock reads. Time advances with frames rather than
+ *   freezing completely: some libraries use `Date.now()` for timeouts (Lottie's font loading
+ *   polling), and freezing would cause them to wait indefinitely.
+ * - `crypto.getRandomValues` / `crypto.randomUUID`: fill bytes using the same seed stream.
  *
- * # 为什么必须最先装
+ * # Why it must be installed first
  *
- * 库在模块加载时抓引用,晚于它装的补丁它看不见。所以由 render/stageClockEntry.ts 调用,
- * 那个文件是 main.tsx / proto-main.tsx 的**第一个** import。
+ * Libraries capture references during module evaluation and cannot see patches installed later.
+ * It is therefore called by render/stageClockEntry.ts, which is the **first** import in
+ * main.tsx / proto-main.tsx.
  *
- * 只钉随机和墙上时钟,**不碰 performance.now 和 rAF**:那两个提前装会连带换掉 Motion 拿到的
- * 时间戳来源(见 exportClock.ts「DOM 变动计数」那段),是另一回事。
+ * Only pins randomness and the wall clock, **leaving performance.now and rAF untouched**:
+ * installing those early would prematurely swap the timestamp source received by Motion (see the
+ * "DOM mutation count" section in exportClock.ts), which is a different matter.
  *
- * 只在导出视图和渲染面里装。编辑器主文档不能装 —— 它自己的 id、时间戳要真的。
+ * Installed only in export view and render plane. It must not be installed in the editor main
+ * document: its own ids and timestamps must be real.
  *
- * # 带着指定种子执行一段函数(`withSeededRandom`,原型,2026-10-12)
+ * # Executing a function with a specified seed (`withSeededRandom`, prototype, 2026-10-12)
  *
- * 全页共用一个状态,意味着「谁先取、取了几次」会挪动后面所有人拿到的数。`withSeededRandom(seed, fn)`
- * 让 fn 在一串**自己的**随机数里跑(从 seed 起),跑完把全页的状态放回 fn 开始前的样子:fn 里取了几次,
- * 外面一次都看不到。只管同步执行的那一段;fn 里排出去的定时器、Promise 回调不在里面。
+ * A page-wide shared state means "who fetches first and how many times" shifts numbers received by
+ * everyone downstream. `withSeededRandom(seed, fn)` runs fn in a sequence of its **own** random
+ * numbers (starting from seed), restoring page-wide state afterwards to how it was before fn
+ * started: however many times fn drew numbers, nothing is visible outside. It only governs the
+ * synchronously executed portion; timers and Promise callbacks scheduled in fn are not included.
  *
- * 用它的是 `src/cards/native/lottie.tsx`(开关缺省关)。注意它**只是那边的第二层**:Lottie 播放库的表达式用的是
- * 它自己内部的一串(上面说的 `BMMath.random`),只有页面里还没有任何表达式给那一串播过种时,那一串才等于这里的
- * `Math.random`。所以那边真正起作用的是直接给播放库内部那一串播种;这里管的是「页面里第一个 Lottie 建图层时
- * 从全页这一串里取走的数」和播放库里直接调 `Math.random()` 的少数地方。
+ * Used by `src/cards/native/lottie.tsx` (disabled by default). Note that it is **only the second
+ * layer there**: Lottie player expressions use their own internal stream (the aforementioned
+ * `BMMath.random`); only when no expression on the page has seeded that stream yet does that stream
+ * equal `Math.random` here. Thus what actually takes effect there is directly seeding the player's
+ * internal stream; what is handled here are "numbers drawn from the page-wide stream when the first
+ * Lottie on the page creates layers" and the few places in the player library calling
+ * `Math.random()` directly.
  */
 
-/** 固定纪元。任何「现在几点」的读数都从这里起算;取一个整点,不为别的,只为好认 */
+/**
+ * Fixed epoch. Any "what time is it" reading counts from here; set to an exact hour mark just
+ * to be recognizable.
+ */
 export const PINNED_EPOCH_MS = Date.UTC(2026, 0, 1);
 
-/** 要被钉住的那几样东西所在的对象。浏览器里就是 window;单测传一个沙箱进来 */
+/**
+ * Target object containing items to be pinned. In browsers this is window; unit tests pass in a
+ * sandbox.
+ */
 export interface EntropyHost {
   Math: Math;
   Date: DateConstructor;
@@ -61,10 +82,16 @@ export interface EntropyHost {
   __pcExportMs?: number;
   __pcStageClock?: { now(): number };
   __pcResetRandom?: (seed?: number) => void;
-  /** 带着指定种子执行 fn,执行完把全页的随机状态放回 fn 开始前的样子(见文件头) */
+  /**
+   * Runs fn with specified seed, restoring page-wide random state to before fn started (see file
+   * header).
+   */
   __pcWithRandomSeed?: <T>(seed: number, fn: () => T) => T;
   __pcEntropyPinned?: boolean;
-  /** 接管前的真 `Date.now`(E4b 的口子;舞台那边 stageClock 会更早存一次,这里不覆盖) */
+  /**
+   * Real `Date.now` before takeover (E4b escape hatch; stage-side stageClock saves it earlier, not
+   * overwritten here).
+   */
   __pcRealDateNow?: () => number;
 }
 
@@ -72,7 +99,7 @@ export function installPinnedEntropy(host: EntropyHost = window as unknown as En
   if (host.__pcEntropyPinned) return;
   host.__pcEntropyPinned = true;
 
-  // ── Math.random:mulberry32,和原来 exportClock 里那份逐位相同 ──
+  // ── Math.random: mulberry32, bit-for-bit identical to the one in exportClock ──
   let rngState = 1;
   const seeded = () => {
     rngState = (rngState + 0x6d2b79f5) | 0;
@@ -95,7 +122,7 @@ export function installPinnedEntropy(host: EntropyHost = window as unknown as En
   };
   host.Math.random = seeded;
 
-  // ── 墙上时钟:固定纪元 + 当前帧毫秒 ──
+  // ── Wall clock: fixed epoch + current frame ms ──
   const pageMs = () => {
     if (typeof host.__pcExportMs === "number") return host.__pcExportMs;
     if (host.__pcStageClock) return host.__pcStageClock.now();
@@ -103,13 +130,14 @@ export function installPinnedEntropy(host: EntropyHost = window as unknown as En
   };
   const pinnedNow = () => PINNED_EPOCH_MS + Math.round(pageMs());
   const RealDate = host.Date;
-  // E4b 的口子:接管之后 Date.now() 是虚拟时间,量真墙钟的地方要拿得到原来那份
+  // E4b escape hatch: after takeover Date.now() is virtual time; places measuring real wall clock need
+  // access to the original
   host.__pcRealDateNow ??= RealDate.now.bind(RealDate);
-  // 共用原型:`x instanceof Date`、`Date.prototype` 上的方法都照旧
+  // Shared prototype: `x instanceof Date` and methods on `Date.prototype` remain unchanged
   function PinnedDate(this: unknown, ...args: unknown[]) {
-    if (!new.target) return new RealDate(pinnedNow()).toString();          // Date() 当函数调 = 读时钟
-    if (args.length === 0) return new RealDate(pinnedNow());                // new Date() = 读时钟
-    return new (RealDate as unknown as new (...a: unknown[]) => Date)(...args); // 带参数 = 计算,原样
+    if (!new.target) return new RealDate(pinnedNow()).toString();          // Date() called as a function = read clock
+    if (args.length === 0) return new RealDate(pinnedNow());                // new Date() = read clock
+    return new (RealDate as unknown as new (...a: unknown[]) => Date)(...args); // With arguments = calculation, unchanged
   }
   PinnedDate.prototype = RealDate.prototype;
   const P = PinnedDate as unknown as DateConstructor & { now: () => number };
@@ -118,7 +146,7 @@ export function installPinnedEntropy(host: EntropyHost = window as unknown as En
   P.UTC = RealDate.UTC;
   host.Date = P;
 
-  // ── crypto:和 Math.random 同一个种子流 ──
+  // ── crypto: same seed stream as Math.random ──
   const c = host.crypto;
   if (c) {
     const fill = (u8: Uint8Array) => {
@@ -131,8 +159,8 @@ export function installPinnedEntropy(host: EntropyHost = window as unknown as En
     c.randomUUID = () => {
       const b = new Uint8Array(16);
       fill(b);
-      b[6] = (b[6] & 0x0f) | 0x40; // 版本 4
-      b[8] = (b[8] & 0x3f) | 0x80; // 变体 10
+      b[6] = (b[6] & 0x0f) | 0x40; // Version 4
+      b[8] = (b[8] & 0x3f) | 0x80; // Variant 10
       const h = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
       return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
     };
@@ -140,13 +168,15 @@ export function installPinnedEntropy(host: EntropyHost = window as unknown as En
 }
 
 /**
- * 带着指定种子执行 fn:fn 里的 `Math.random`(钉住的页面里还有 `crypto.getRandomValues`)从 seed 起出数,
- * 执行完把随机状态放回 fn 开始前的样子,fn 取了几次对外面没有影响。可以嵌套。
+ * Executes fn with a specified seed: `Math.random` in fn (and `crypto.getRandomValues` on pinned
+ * pages) generates numbers from seed, restoring the random state afterwards to before fn started;
+ * how many times fn draws numbers has no effect externally. Can be nested.
  *
- * 钉住的页面(导出视图、渲染面)里换的是那一个共用状态;没钉的页面(编辑器主文档)里临时把 `Math.random`
- * 换成同一个算法的带种子版本,出来就换回原来那个真随机。
+ * On pinned pages (export view, render plane), the single shared state is swapped; on unpinned
+ * pages (editor main document), `Math.random` is temporarily swapped to a seeded version of the
+ * same algorithm, reverting to the original true randomness upon exit.
  *
- * 只罩同步执行的那一段(见文件头)。
+ * Only covers the synchronously executed portion (see file header).
  */
 export function withSeededRandom<T>(seed: number, fn: () => T, host: EntropyHost = globalThis as unknown as EntropyHost): T {
   if (host.__pcWithRandomSeed) return host.__pcWithRandomSeed(seed, fn);

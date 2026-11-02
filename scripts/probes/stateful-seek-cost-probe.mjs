@@ -1,26 +1,38 @@
 /**
- * 实验:有状态的卡(motion 式)在在线页面的后台舞台里,「直接跳到第 N 帧」要花多久。
- * 出处:`docs/plan/render-standard.md`(2026-10-10 用户要量:motion 式的卡要不要整张不拆开,取决于跳到指定时间的代价)。
+ * Experiment: how long it takes to "jump directly to frame N" for stateful cards (motion-style) in
+ * the background stage of the online page.
+ * Source: `docs/plan/render-standard.md` (user wanted measurements, 2026-10-10: whether to keep
+ * motion-style cards whole without splitting depends on the cost of jumping to a specified time).
  *
  *   node scripts/probes/stateful-seek-cost-probe.mjs [--dist dist-online] [--port-base 5760]
  *        [--cards punch-pill,odometer,checklist] [--seconds 20] [--targets 30,60,120,240,480,599] [--rounds 3]
- *        [--throttle 4] [--json <文件>]
- *        [--verify 150,240]   另核对:顺着做到第 N 帧的快照,和直接跳到第 N 帧的快照是不是同一份
- *                             (用 `compareSnapshotHtml`,样式数值带容差);给了就不量耗时。
- *                             这一项只报第一处不同;要把所有不同处分档、比像素、看同一帧几次是否一样,
- *                             用 `stateful-seq-vs-jump-probe.mjs`
+ *        [--throttle 4] [--json <file>]
+ *        [--verify 150,240]   Also verify: whether the snapshot generated sequentially to frame N
+ *                             and the snapshot jumping directly to frame N are identical (using
+ *                             `compareSnapshotHtml`, style values allow tolerance); elapsed time is
+ *                             not measured when provided.
+ *                             This item only reports the first difference; to classify all
+ *                             differences into tiers, compare pixels, and check consistency across
+ *                             runs for the same frame, use `stateful-seq-vs-jump-probe.mjs`.
  *
- * 要先有在线构建:`npx vite build --mode online`(产出 `dist-online/`)。
+ * Requires an online build first: `npx vite build --mode online` (outputs `dist-online/`).
  *
- * 做法:起静态服务(父页一个源、舞台另一个源,和线上的双舞台同形),父页照 stageRpc 协议把后台舞台切到生成快照的活,
- * 灌进一个只有一张卡的工程,然后调产品自己的 `bakeFrame`:
+ * Approach: start static servers (one origin for parent page, another for stage, matching the
+ * online dual stage layout); parent page switches background stage to snapshot generation task
+ * per stageRpc protocol, feeds in a project with only one card, then calls product's own `bakeFrame`:
  *
- *   顺着做   第 0、1、2…29 帧连着要:每帧接着上一帧推一步、生成一张快照。得到「不跳、顺着做」每帧多久;
- *   跳着做   每次先 `bakeCancel`(忘掉上一帧),再要第 N 帧:舞台从挂载帧重新挂载、一步一步推到第 N 帧、生成一张快照。
- *            得到「跳到第 N 帧」总共多久。减去第 0 帧那一次(只挂载、不推),就是推 N 步花的时间。
+ *   Sequential  Request frames 0, 1, 2...29 in sequence: each frame advances one step from the
+ *               previous frame and generates a snapshot. Yields time per frame for "sequential
+ *               without jumps";
+ *   Jump        Call `bakeCancel` first each time (forget the previous frame), then request frame N:
+ *               stage remounts from mount frame, advances step by step to frame N, and generates a
+ *               snapshot. Yields total time to "jump to frame N". Subtracting frame 0 (mount only,
+ *               no push) gives the time spent pushing N steps.
  *
- * 推帧时舞台每推一帧让出一次主线程(产品的做法,为了不卡住前台),这部分算在里面:量的就是用户机器上真实会花的时间。
- * 只记录,不判过不过;任何一次 `bakeFrame` 失败退出码 1。
+ * When pushing frames, stage yields the main thread once for each frame pushed (product's approach
+ * to avoid blocking foreground), which is included: what is measured is time that will actually be
+ * spent on user machines.
+ * Records only, without pass/fail judgment; exits with code 1 on any `bakeFrame` failure.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -106,8 +118,9 @@ try {
   await page.evaluate((src) => window.__setup(src), `http://127.0.0.1:${BASE + 2}/editor/stage.html?stage=1&id=B&preview=stage&dual=1&lm=0`);
   await sleep(1000);
   if (THROTTLE > 1) {
-    // 放慢的是舞台那个文档(跨源、独立进程):对每个页面目标都设
-    for (const target of browser.targets()) { try { const cdp = await target.createCDPSession(); await cdp.send('Emulation.setCPUThrottlingRate', { rate: THROTTLE }); } catch { /* 不是页面目标 */ } }
+    // What is throttled is the stage document (cross-origin, separate process): set for each page
+    // target
+    for (const target of browser.targets()) { try { const cdp = await target.createCDPSession(); await cdp.send('Emulation.setCPUThrottlingRate', { rate: THROTTLE }); } catch { /* Not a page target */ } }
   }
   const bake = async (clipId, localFrame) => {
     const { wall, r } = await page.evaluate((req) => window.__timed('bakeFrame', req), { session: 'seek', clipId, localFrame, mode: 'seq', small: false });
@@ -120,7 +133,8 @@ try {
     await page.evaluate((p) => window.__rpc('setProject', p, { reset: true }), project);
     const row = { cardId, seq: null, mount: null, jumps: [], verify: [] };
     if (VERIFY.length) {
-      // 顺着做到最大的那一帧,沿途记下要核对的帧的哈希;再逐个直接跳过去比
+      // Run sequentially up to the largest frame, recording hashes of frames to verify along the way;
+      // then jump directly to each and compare
       const want = new Map();
       await page.evaluate(() => window.__rpc('bakeCancel'));
       const htmlAt = (n) => page.evaluate((k) => window.__html(k), n);
@@ -129,7 +143,7 @@ try {
       for (const n of VERIFY) {
         await page.evaluate(() => window.__rpc('bakeCancel'));
         const b = await bake('clip', n); const h1 = b ? await htmlAt(n) : null;
-        // 同一帧连着跳两次,排除「这张卡本身每次都不一样」
+        // Jump to the same frame twice in succession to rule out "this card itself differs every time"
         await page.evaluate(() => window.__rpc('bakeCancel'));
         const b2 = await bake('clip', n); const h2 = b2 ? await htmlAt(n) : null;
         const why = diff(want.get(n) ?? null, h1);
@@ -138,12 +152,12 @@ try {
       report.cards.push(row);
       continue;
     }
-    // 顺着做:第 0 帧是挂载,之后 29 帧各推一步
+    // Sequential: frame 0 is mount, followed by 29 frames each pushed one step
     const seq = [];
     await page.evaluate(() => window.__rpc('bakeCancel'));
     for (let n = 0; n < SEQ_FRAMES; n++) { const b = await bake('clip', n); if (b && n > 0) seq.push(b); }
     row.seq = { frames: seq.length, wallMs: r1(med(seq.map((x) => x.wall))), stageMs: r1(med(seq.map((x) => x.ms))), continued: seq.filter((x) => !x.remounted).length, htmlKB: r1((med(seq.map((x) => x.bytes)) ?? 0) / 1024) };
-    // 只挂载、不推(第 0 帧,每次都先忘掉上一帧)
+    // Mount only, no push (frame 0, forgetting the previous frame each time)
     const mounts = [];
     for (let k = 0; k < ROUNDS; k++) { await page.evaluate(() => window.__rpc('bakeCancel')); const b = await bake('clip', 0); if (b) mounts.push(b); }
     row.mount = { wallMs: r1(med(mounts.map((x) => x.wall))), stageMs: r1(med(mounts.map((x) => x.ms))) };

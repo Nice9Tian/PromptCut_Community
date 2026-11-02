@@ -8,7 +8,7 @@ import "./cut-tabs.css";
 import { tr } from "../../i18n/index.ts";
 import { shownName, shownNameOf } from "../../i18n/names.ts";
 
-/** 胶片:圆角方块里一格画面,两侧各三个齿孔 */
+/** Film strip: one frame inside a rounded square, with three perforations on each side */
 export function IconFilm({ size = 12 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
@@ -20,11 +20,12 @@ export function IconFilm({ size = 12 }: { size?: number }) {
 }
 
 /**
- * 在时间轴上方打开并激活一条剪辑(素材库单击剪辑、双击时间轴上的剪辑段都走这里)。
- * 标签留着,直到用户点它的「×」。
+ * Open and activate a cut above the timeline (a single click on a cut in the media library and a double
+ * click on a cut segment on the timeline both go through here).
+ * The tab stays until the user clicks its "×".
  */
 export function openCutInTimeline(cutId: string): void {
-  // 哪条剪辑是激活的(`activeCutId`)是项目里的字段:切换是个写。只读项目(游客)里不切,免得白被服务端拒
+  // Which cut is active (`activeCutId`) is a project field: switching is a write. In a read-only project (guest) we do not switch, to avoid a pointless rejection by the server
   if (memberReadOnlyNow()) return;
   const p = getState().project;
   const ids = (p.cuts ?? []).map((c) => c.id);
@@ -34,14 +35,17 @@ export function openCutInTimeline(cutId: string): void {
 }
 
 /**
- * 时间轴上方的剪辑标签栏(`workflow/editing.md`「剪辑标签」,2026-10-20 用户定)。
+ * The cut tab bar above the timeline (`workflow/editing.md` "Cut tabs", user decision, 2026-10-20).
  *
- * 每条打开过的剪辑一个标签:单击切换激活的剪辑,双击改名,「×」只关标签、不删剪辑,最后一个标签不能关
- * (「×」不画,悬停说明为什么)。尾部「+」新建一条剪辑并打开。标签不会因为失去焦点、点了别处、切了面板而消失。
- * 删剪辑在素材库的「剪辑」组里做。
+ * One tab per opened cut: a click switches the active cut, a double click renames, "×" only closes the
+ * tab and does not delete the cut, and the last tab cannot be closed ("×" is not drawn, and hovering
+ * explains why). The "+" at the end creates a new cut and opens it. Tabs do not disappear because of
+ * lost focus, a click elsewhere, or a panel switch.
+ * Deleting a cut is done in the "Cuts" group of the media library.
  *
- * 打开了哪几条是本机界面状态(`cutTabsState.ts`),不进项目文档。
- * 以前左侧竖栏尾部的剪辑组(CutsRailGroup)按 Argon 审核意见撤掉:剪辑入口只留素材库剪辑组和这里两处。
+ * Which cuts are open is local UI state (`cutTabsState.ts`) and does not go into the project document.
+ * The cut group at the end of the old vertical left rail (CutsRailGroup) was removed per Argon's review
+ * comments: the only entry points for cuts are the media library cut group and here.
  */
 export function CutTabBar() {
   const project = useStore((s) => s.project);
@@ -54,7 +58,7 @@ export function CutTabBar() {
   const [editing, setEditing] = useState<string | null>(null);
   const ro = useReadOnly();
 
-  // 和项目对齐后的结果写回本地存储(激活的补进来、删掉的拿掉)
+  // Write the result back to local storage after aligning with the project (add the active one, drop the deleted ones)
   const key = tabs.join("|");
   useEffect(() => {
     if (projectId) saveTabs(projectId, tabs);
@@ -63,7 +67,7 @@ export function CutTabBar() {
 
   const byId = new Map(cuts.map((c) => [c.id, c]));
   const close = (id: string) => {
-    // 只读:关激活的那个标签要顺带切到相邻的剪辑(一个写),不给;关别的标签只是界面上收起来,照常
+    // Read-only: closing the active tab would also switch to the adjacent cut (a write), so it is not offered; closing other tabs only collapses them in the UI, so that works as usual
     if (ro.locked && id === active) return;
     const r = closeTab(tabs, id, active);
     if (!r) return;
@@ -97,7 +101,7 @@ export function CutTabBar() {
 
 function Tab({ id, name, active, canClose, locked, why, editing, onEdit, onDone, onClose }: {
   id: string; name: string; active: boolean; canClose: boolean;
-  /** 只读项目:切换(改激活的剪辑)、改名都不给;why 是置灰说明 */
+  /** Read-only project: neither switching (changing the active cut) nor renaming is offered; why is the grayed-out explanation */
   locked: boolean; why: string;
   editing: boolean; onEdit: () => void; onDone: () => void; onClose: () => void;
 }) {

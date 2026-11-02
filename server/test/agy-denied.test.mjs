@@ -1,13 +1,16 @@
 /**
- * agy 的内建工具被拒之后,这一轮该怎么收。
+ * How to wrap up this round after an agy built-in tool is denied.
  *
- * 跑法 —— **必须带这个 flag**:
+ * How to run: **must include this flag**:
  *   node --experimental-test-module-mocks --test server/test/agy-denied.test.mjs
  *
- * 钉的是用户报的那个现象:一串工具调用之后毫无征兆地结束,没有回复也没有报错。
- * 起因是 agy 在无人值守模式下把自己的 run_command 自动拒掉(它没法弹窗征求同意),
- * 然后放弃整轮 —— result 里 denied_actions 有值、response 是空的,但 status 不是 ERROR。
- * 原来这里只发一条 status 就照常 finish('done'),于是界面上看起来像正常结束了。
+ * Pins the symptom reported by users: ending without warning after a series of tool calls, with
+ * neither reply nor error.
+ * The cause is that agy automatically denies its own run_command in unattended mode (it cannot pop
+ * up a dialog to ask for consent), and then abandons the entire round: denied_actions in result has
+ * values, response is empty, but status is not ERROR.
+ * Originally it only sent one status and called finish('done') as usual, so in the UI it appeared
+ * to end normally.
  */
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,9 +18,9 @@ import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 import * as realChildProcess from 'node:child_process';
 
-/** 这一轮要让假的 agy 回什么 result */
+/** What result to have the fake agy return for this round */
 let nextResult = null;
-/** stdout 上先喂哪些事件行(模拟工具调用等) */
+/** Which event lines to feed on stdout first (simulating tool calls, etc.) */
 let preEvents = [];
 
 mock.module('node:child_process', { exports: { ...realChildProcess, spawn: () => {
@@ -98,9 +101,10 @@ test('response is empty but the stream has already produced text: counts as outp
 });
 
 /*
- * 自动续跑要用到的两个字段。前端拿它们决定「要不要自动接一句、接什么」,
- * 所以形状必须钉住:少一个,自动续跑就静默失效,而失效的表现和以前一模一样
- * (界面上一个错误躺在那儿),不会有人发现。
+ * Two fields used by auto-continuation. The front end uses them to decide "whether to automatically
+ * append a message and what to append", so the shape must be pinned down: missing one,
+ * auto-continuation silently fails, and the failure behaves exactly as before (an error just sitting
+ * there in the UI), and no one will notice.
  */
 test('A resumable interruption must carry retryable and an assembled retryPrompt', async () => {
   const events = await run({
@@ -159,12 +163,14 @@ test('With output, even when denied, no retryable is carried: there is nothing t
 });
 
 /*
- * 工具报错的分类:「找不到文件」和「被拒绝」是两回事。
+ * Categorization of tool errors: "file not found" and "denied" are two different things.
  *
- * agy 的权限判定会先把工具参数转一遍,这一步顺手读文件;读不到就把 ENOENT 原样往上抛,
- * 报错文本里因此同时出现 `declaring permissions` 和 `cannot find the file`。
- * 原来只按 includes('permission') 判,于是一个「路径写错了」被报成「无人值守没法征求同意」——
- * 模型照着这句去猜权限,怎么改都不对;用户看到的也是一个根本不存在的权限故障。
+ * agy's permission check first parses the tool arguments, reading files along the way; if unreadable,
+ * it throws ENOENT upward as-is, so the error text contains both `declaring permissions` and
+ * `cannot find the file`.
+ * Originally it checked only by includes('permission'), so a "mistyped path" was reported as
+ * "unattended mode cannot request consent": the model tried guessing permissions based on this
+ * sentence and nothing worked; what the user saw was also a nonexistent permission failure.
  */
 function toolError(message) {
   return [{

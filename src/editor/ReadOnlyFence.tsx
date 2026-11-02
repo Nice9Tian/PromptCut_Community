@@ -5,12 +5,17 @@ import "./readOnlyKeys";
 import "./readOnly.css";
 
 /**
- * 一整块表单的「只读围栏」：只读项目里，围栏里所有原生控件（按钮、输入框、下拉、滑块、勾选、文本框）一起置灰，
- * 值照常显示、能看能滚能选中文字；悬停在上面看到的是 `viewOnlyText()` 那一句。
+ * A "read-only fence" around a whole form: in a read-only project, all native controls inside the fence (buttons,
+ * inputs, dropdowns, sliders, checkboxes, text areas) are greyed out together,
+ * values display as usual, and can be viewed, scrolled and text-selected; hovering over them shows the
+ * `viewOnlyText()` sentence.
  *
- * 用 `<fieldset disabled>`：它让后代的原生控件整体禁用，键盘也聚焦不到，比逐个控件加 `disabled` 不会漏。
- * `display: contents`（readOnly.css）让它不占布局，套上去不改变里面的排版；不只读时它什么都不做。
- * 围栏管不到的：靠指针事件自己实现的「控件」（拖标签改数字之类），那些要在各自的处理函数里看 `useReadOnly()`。
+ * It uses `<fieldset disabled>`: this disables all descendant native controls as a whole and keeps them from
+ * keyboard focus, so it misses fewer than adding `disabled` to each control one by one.
+ * `display: contents` (readOnly.css) keeps it out of the layout, so wrapping it does not change the layout inside;
+ * when not read-only it does nothing.
+ * What the fence cannot manage: "controls" implemented on their own with pointer events (such as dragging a label
+ * to change a number); those must check `useReadOnly()` in their own handlers.
  */
 export function ReadOnlyFence({ children, className, style }: { children: ReactNode; className?: string; style?: CSSProperties }) {
   const ro = useReadOnly();
@@ -28,8 +33,10 @@ export function ReadOnlyFence({ children, className, style }: { children: ReactN
 }
 
 /**
- * 给 `<html>` 打上 `data-pc-readonly="member"`（只读项目里）：样式表和不在 React 树里的界面（桌面版标题栏菜单）
- * 凭它认出「此刻这个项目改不了」。顶栏常驻，渲在顶栏里。同时把快捷键闸（`readOnlyKeys.ts`）带进来。
+ * Puts `data-pc-readonly="member"` on `<html>` (in a read-only project): stylesheets and UI outside the React tree
+ * (the desktop app's title bar menu)
+ * use it to recognize that "this project cannot be changed right now". The top bar is always present, so this is
+ * rendered in the top bar. It also brings in the shortcut gate (`readOnlyKeys.ts`).
  */
 export function ReadOnlyMarker() {
   const locked = useMemberReadOnly();

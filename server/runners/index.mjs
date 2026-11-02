@@ -10,10 +10,11 @@ import { codexAuthState } from './codex-auth-state.mjs';
 export const resolveExe = resolveCli;
 
 /**
- * 探测 CLI 版本。npm 全局装出来的是 .cmd 包装器,而 Node 出于安全限制不允许
- * execFile 直接执行 .cmd/.bat(要么 shell: true,要么自己走 cmd.exe)——
- * 不绕这一下的话,用「安装」按钮装好的 CLI 会一直被判成「未安装」。
- * 返回版本字符串;跑不起来就抛错,由调用方记进 note。
+ * Detect CLI version. Global npm installs produce .cmd wrappers, while Node due to security
+ * restrictions does not allow execFile to execute .cmd/.bat directly (either shell: true, or invoke
+ * cmd.exe manually): without this workaround, a CLI installed via the "Install" button would
+ * constantly be deemed "not installed".
+ * Returns version string; throws if it cannot run, recorded into note by the caller.
  */
 export function probeVersion(exePath, args = ['--version']) {
   const opts = { timeout: 15000, encoding: 'utf8', windowsHide: true, env: cliEnv(), stdio: ['ignore', 'pipe', 'pipe'] };
@@ -90,7 +91,8 @@ import { tr } from '../i18n.mjs';
 
 export function startRun(opts) {
   if (opts.provider === 'claude') return startClaude(opts);
-  // 审查环路走 agy:每个角色回合起一次 agy(见 cli-loop.mjs)。开关规则和 API 直连一样
+  // Review loop runs via agy: launch agy once per role turn (see cli-loop.mjs). Toggle rules are the
+  // same as direct API
   if (opts.provider === 'agy' && (opts.reviewLoop ?? !!opts.deepAuto)) return startCliLoop(opts, startAgy);
   if (opts.provider === 'agy') return startAgy(opts);
   if (opts.provider === 'codex') return startCodex(opts);

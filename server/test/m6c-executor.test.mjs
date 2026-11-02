@@ -1,14 +1,18 @@
 /**
- * M6c 契约（`docs/plan/m6c-contract.md`）里要用执行器与预渲染管线的两项：
- *   MC-X1-exec-*  执行器接受 `kind: 'stream'` 的细任务，不再抛 `stream-not-supported`（烟测，〔假设 A-X1-1〕）
- *   MC-X5-*       本机队列节点的闲时门槛：执行器有空位、且最近 500 ms 没有交互帧请求就认领；
- *                 preload 没到 ready 也照样认领；拖动期间新认领 0 次，手里在做的做完
- * 跑：node --experimental-test-module-mocks --test server/test/m6c-executor.test.mjs
+ * Two items in M6c contract (`docs/plan/m6c-contract.md`) requiring executor and prerender pipeline:
+ *   MC-X1-exec-*  Executor accepts fine-grained tasks with `kind: 'stream'`, no longer throws
+ *                 `stream-not-supported` (smoke test, [Assumption A-X1-1])
+ *   MC-X5-*       Idle gate for local queue node: claims if executor has available slots and no
+ *                 interactive frame requests in last 500 ms; claims even if preload has not reached
+ *                 ready; 0 new claims during scrub, finishes what is currently in hand
+ * Run: node --experimental-test-module-mocks --test server/test/m6c-executor.test.mjs
  *
- * 只照契约写，不看实现。`server/bakery/index.mjs` 整个换成假的（`mock.module`），单测不开 Chrome、不找 ffmpeg。
- * X5 用真的 `FramePipeline`（`interactive: false`、注入 `environment` 与 `playhead`）和真的 `createPrerenderExecutor`；
- * Date 由 `mock.timers` 接管。preload 与交互的模拟方式见 `m6c-kit.mjs` 的〔假设 A-X5-1〕〔A-X5-2〕〔A-X5-3〕。
- * 实现不在测试分支上：新行为的用例在这里失败是预期的。
+ * Written strictly per contract, not looking at implementation. `server/bakery/index.mjs` entirely
+ * replaced with fake (`mock.module`), unit test does not launch Chrome or look for ffmpeg. X5 uses
+ * real `FramePipeline` (`interactive: false`, injects `environment` and `playhead`) and real
+ * `createPrerenderExecutor`; Date taken over by `mock.timers`. For simulation of preload and
+ * interaction, see [Assumption A-X5-1] [A-X5-2] [A-X5-3] in `m6c-kit.mjs`. Implementation is not
+ * on test branch: test cases for new behaviors are expected to fail here.
  */
 import { test, mock, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -42,7 +46,7 @@ const ENV = describeEnvironment({
 const temps = [];
 const pipelines = [];
 after(async () => {
-  for (const p of pipelines) { try { await p.closeNow?.(); } catch { /* 收尾出错不影响结果 */ } }
+  for (const p of pipelines) { try { await p.closeNow?.(); } catch { /* Finalize error does not affect result */ } }
   for (const dir of temps) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
 });
 
@@ -58,10 +62,10 @@ async function makePipeline(playhead) {
 
 const noProjects = { get: async () => null };
 
-/* ================================================================== X1 执行器接受流任务 */
+/* ================================================================== X1 executor accepts stream tasks */
 
 test('MC-X1-exec: the executor\'s render of a stream task is no longer rejected with stream-not-supported (smoke test)', async () => {
-  // 假管线：流生产者的任何方法都是异步空操作；真产流（ffmpeg）归 queue-mode-probe / stream-produce-probe
+  // Fake pipeline: any method of stream producer is an async no-op; real stream production (ffmpeg) belongs to queue-mode-probe / stream-produce-probe
   const producer = new Proxy({}, { get: (_, key) => (key === 'then' ? undefined : async () => ({})) });
   const pipeline = {
     closed: false, envFingerprint: ENV.fingerprint, entries: new Map(), generations: new Map(),
@@ -84,7 +88,7 @@ test('MC-X1-exec: the executor\'s render of a stream task is no longer rejected 
   }
 });
 
-/* ================================================================== X5 闲时门槛 */
+/* ================================================================== X5 idle gate */
 
 test('MC-X5-idle: when preload has not reached ready and there has been no interaction within 500 ms, the executor counts as idle', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 1_700_000_000_000 });
@@ -120,8 +124,8 @@ test('MC-X5-play: not idle during playback', async (t) => {
 });
 
 /**
- * 真队列 + 环回 + 本机节点：`isIdle` 接真执行器的闲时门槛，`render` 由测试控制（手动放行）。
- * 页面发布 4 段快照，preload 一直在跑。
+ * Real queue + loopback + local node: `isIdle` connects to idle gate of real executor, `render`
+ * controlled by test (manually released). Page publishes 4 snapshot clips, preload runs continuously.
  */
 async function idleRig(t) {
   t.mock.timers.enable({ apis: ['Date'], now: 1_700_000_000_000 });
@@ -139,7 +143,7 @@ async function idleRig(t) {
   page.send({ type: 'publisher.hello', publisherId: 'page-1' });
 
   const claims = [];
-  const gates = new Map();   // id → 放行函数
+  const gates = new Map();   // id → release function
   const ep = lb.connect('conn-node', { userId: 'u1', tenantId: 't1' });
   const endpoint = {
     send: (m) => { if (m?.type === 'task.claim') claims.push({ id: m.id, at: Date.now() }); ep.send(m); },
@@ -186,13 +190,13 @@ test('MC-X5-drag-no-claim: during a simulated drag there are 0 new claims and th
   assert.equal(rig.gates.size, 1, `First claimed a segment and started work: ${JSON.stringify(rig.claims)}`);
   const [heldId] = [...rig.gates.keys()];
 
-  // 拖动 2 秒：每 100 ms 报一次播放头
+  // Scrub for 2 seconds: report playhead every 100 ms
   const dragStart = Date.now();
   rig.playhead.drag(Date.now());
   let released = false;
   for (let i = 0; i < 20; i += 1) {
     rig.playhead.drag(Date.now());
-    if (i === 5 && !released) { rig.gates.get(heldId)(null); released = true; }   // 手里这段在拖动中途做完
+    if (i === 5 && !released) { rig.gates.get(heldId)(null); released = true; }   // Segment in hand completes halfway through scrub
     await rig.step(100);
   }
   const during = rig.claims.filter(c => c.at > dragStart);
@@ -200,7 +204,7 @@ test('MC-X5-drag-no-claim: during a simulated drag there are 0 new claims and th
   const done = rig.pageInbox.filter(m => m.type === 'task.done').map(m => m.id);
   assert.ok(done.includes(heldId), `The segment in hand should be finished: ${JSON.stringify(done)}`);
 
-  // 停下 500 ms 之后恢复
+  // Resumes after stopping for 500 ms
   const stopAt = Date.now();
   for (let i = 0; i < 10; i += 1) await rig.step(100);
   assert.ok(rig.claims.some(c => c.at > stopAt), `Claiming should resume after the drag stops: ${JSON.stringify(rig.claims)}`);

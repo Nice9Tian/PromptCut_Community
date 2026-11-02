@@ -1,11 +1,16 @@
 /**
- * 文档服务的频道与背压，真 WebSocket（契约 `docs/plan/render-queue-contract.md` H.2～H.5，用例 I1～I5，以及 C7 的组装层一半）。
- * 跑：node --test server/test/docservice-backpressure.test.mjs
+ * Channels and backpressure for the document service, real WebSocket (contract
+ * `docs/plan/render-queue-contract.md` H.2-H.5, test cases I1-I5, and the assembly layer half of C7).
+ * Run: node --test server/test/docservice-backpressure.test.mjs
  *
- * 只照契约写，不看实现。端口一律 0，`autoTick: false`，需要节拍时手动 `service.tick()`。
- * 队列照既有测试的接法：`createRenderQueue({ now: Date.now, send: service.send })` 后 `mountRenderQueue`。
- * 慢连接用 `fake-raw-ws.mjs` 的原始 TCP 客户端：握手后停止读取 socket，服务端的发送缓冲才会真的积压。
- * 大量连接的客户端只计数、不保留消息，免得测试进程自己的堆把 I3 的 heapUsed 门槛吃掉。
+ * Written strictly against the contract, ignoring implementation details. Port is always 0,
+ * `autoTick: false`; call `service.tick()` manually when ticks are needed.
+ * Queue wiring follows existing tests: `createRenderQueue({ now: Date.now, send: service.send })`
+ * followed by `mountRenderQueue`.
+ * Slow connections use the raw TCP client in `fake-raw-ws.mjs`: stops reading the socket after
+ * handshake so the server-side send buffer actually builds up a backlog.
+ * Clients with large numbers of connections only count and do not retain messages, avoiding the
+ * test process's own heap eating up the I3 `heapUsed` threshold.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,7 +28,7 @@ const DELTA_TYPES = new Set(['task.opened', 'task.taken', 'task.closed']);
 const pid = (i) => `p${String(i).padStart(2, '0')}`;
 const taskIdOfMsg = (m) => (m.type === 'task.opened' ? m.task?.id : m.id);
 
-/** 起服务并挂真队列。日志只留下调用方关心的事件，免得 I3 的日志本身占堆。 */
+/** Starts service and mounts real queue. Retains only caller-relevant events in logs to avoid consuming heap in I3 */
 async function startService(options = {}, { keepEvents = ['conn.backpressure'] } = {}) {
   const logs = [];
   const service = createDocService({
@@ -42,8 +47,8 @@ async function startService(options = {}, { keepEvents = ['conn.backpressure'] }
 }
 
 /**
- * 轻量客户端（Node 内置 WebSocket）：不保留消息，只把每条消息交给 onMessage；
- * request() 自动带 reqId、等对应回包。
+ * Lightweight client (Node built-in WebSocket): does not retain messages, passing each message
+ * to onMessage; request() automatically attaches reqId and waits for the corresponding response.
  */
 function lightClient(url, { onMessage } = {}) {
   const ws = new WebSocket(url);
@@ -75,11 +80,11 @@ function lightClient(url, { onMessage } = {}) {
         ws.send(JSON.stringify({ ...msg, reqId }));
       });
     },
-    close() { try { ws.close(); } catch { /* 已关 */ } },
+    close() { try { ws.close(); } catch { /* Closed */ } },
   };
 }
 
-/** 造一个 snapshot 细任务；resultKey 带运行 id，免得不同用例撞 id */
+/** Creates a snapshot fine-grained task; resultKey includes run id to prevent id collisions across test cases */
 let runSeq = 0;
 function makeTask(projectId, { priority = 0, fp, pad } = {}) {
   runSeq += 1;
@@ -96,7 +101,7 @@ async function nodeHello(c, nodeId, profile = 'pc', extra = {}) {
   return w;
 }
 
-/** 等 promise 至多 ms 毫秒；超时得 null。计时器会清掉，不拖住进程退出 */
+/** Wait for promise up to ms milliseconds; returns null on timeout. Timer cleared to not block process exit */
 function within(promise, ms) {
   let timer;
   const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(null), ms); });
@@ -108,7 +113,7 @@ function p95(list) {
   return s[Math.min(s.length - 1, Math.ceil(s.length * 0.95) - 1)];
 }
 
-// ------------------------------------------------------------------ C7（组装层）
+// ------------------------------------------------------------------ C7 (assembly layer)
 
 test('C7 assembly layer: /healthz has channels / subscriptions / pendingBytesMax / coalesced / backpressureCloses; describe() has channels and pendingBytes / subscriptions of conns[i]', { timeout: 20_000 }, async (t) => {
   const room = {
@@ -164,8 +169,9 @@ test('C7 assembly layer: /healthz has channels / subscriptions / pendingBytesMax
 // ------------------------------------------------------------------ I1 / I2
 
 /**
- * I1、I2 的共同场景：20 个项目，每个项目 10 个节点，只 watch 本项目。对项目 A（p00）连续做 500 次发布、认领、完成。
- * 记下每个节点收到的每条任务增量，按任务 id 与类型计数。
+ * Common scenario for I1 and I2: 20 projects, 10 nodes per project, each watching only its own
+ * project. Sequentially publish, claim, and complete 500 times for project A (p00).
+ * Record each task delta received by each node, counting by task id and type.
  */
 let scenario12 = null;
 function runScenario12() {
@@ -216,10 +222,10 @@ function runScenario12() {
       ids.push(task.id);
       claimer.set(task.id, n.nodeId);
     }
-    // 等投递落定：每个任务 opened 10 条、taken 9 条（认领者自己不收）、closed 10 条
+    // Wait for deliveries to settle: per task, 10 opened, 9 taken (claimer does not receive it), 10 closed
     const expectedTotal = ROUNDS * (PER + (PER - 1) + PER);
     await waitFor(() => aNodes.reduce((s, n) => s + n.deltas.length, 0) >= expectedTotal, 10_000, 'All deltas of project A arrived');
-    await sleep(200);   // 再多等一会儿，多投的也能被看见
+    await sleep(200);   // Wait a bit longer so extra deliveries can also be seen
     return { env, nodes, pub, A, ids, claimer, PER };
   })();
   return scenario12;
@@ -249,7 +255,7 @@ test('I2 same scenario: the actual number of deliveries of each task delta equal
   t.after(closeScenario12);
   const { nodes, A, ids, claimer, PER } = await runScenario12();
   const aNodes = nodes.filter((n) => n.projectId === A);
-  const count = new Map();   // `${type} ${id}` → 次数
+  const count = new Map();   // `${type} ${id}` → count
   const seenBy = new Map();  // `${type} ${id}` → Set(nodeId)
   for (const n of aNodes) {
     for (const [type, id] of n.deltas) {
@@ -277,7 +283,10 @@ test('I2 same scenario: the actual number of deliveries of each task delta equal
 
 // ------------------------------------------------------------------ I3
 
-/** I3 的一整轮：新起一份服务、200 条连接，跑完全部断言（p95 除外），回这一轮的 p95。资源在本轮结束时关掉 */
+/**
+ * Full I3 round: start a fresh service, 200 connections, run all assertions (except p95),
+ * return this round's p95; close resources at round end
+ */
 async function runI3(t) {
   const cleanup = [];
   try {
@@ -289,13 +298,13 @@ async function runI3(t) {
     const PER = 10;
     const PAD = 'x'.repeat(2048);
 
-    const sentAt = new Map();          // 任务 id → 发布时刻
+    const sentAt = new Map();          // Task id → publish timestamp
     const latencies = [];
     let delivered = 0;
     const normals = [];
     for (let p = 0; p < PROJECTS; p++) {
       for (let j = 0; j < PER; j++) {
-        if (p === 0 && j === 0) continue;   // 这一个位置给慢连接
+        if (p === 0 && j === 0) continue;   // This slot is for the slow connection
         const rec = { projectId: pid(p), nodeId: `n-${pid(p)}-${j}` };
         rec.c = lightClient(env.url, {
           onMessage(m) {
@@ -317,7 +326,8 @@ async function runI3(t) {
       await n.c.request({ type: 'queue.watch', projects: [n.projectId] });
     }));
 
-    // 慢连接：p00 的第 0 个节点。为了让它尽快积压，它 watch 'all'（收到全部 20 个项目的增量）
+    // Slow connection: node 0 of p00. To build up a backlog as quickly as possible,
+    // it watches 'all' (receives deltas for all 20 projects)
     const slow = await rawWsClient(env.port, { keep: false });
     cleanup.push(() => slow.destroy());
     const hw = slow.next(byReq('h'));
@@ -336,11 +346,12 @@ async function runI3(t) {
     gc();
     const heap0 = process.memoryUsage();
 
-    // 持续发布：每批 5 个任务（轮流落在 20 个项目上），等回包后下一批；慢连接被关后再多发一段
+    // Continuously publish: 5 tasks per batch (rotated across 20 projects), waiting for response before
+    // next batch; send an extra stretch after the slow connection is closed
     let published = 0;
     let expected = 0;
     let closedAt = -1;
-    const deadline = Date.now() + 10_000;   // 按 8 KiB / 64 KiB 的门槛，本机实测一百来个任务就会关掉慢连接；上限只防实现缺失时拖太久
+    const deadline = Date.now() + 10_000;   // With 8 KiB / 64 KiB thresholds, local testing shows ~100 tasks close the slow connection; upper bound only prevents hanging too long if implementation is missing
     while (Date.now() < deadline && published < 4000) {
       const batch = [];
       for (let k = 0; k < 5; k++) {
@@ -362,7 +373,7 @@ async function runI3(t) {
     await waitFor(() => delivered >= expected, 10_000, `Normal nodes receive all ${expected} deliveries (${delivered} received so far)`);
     const p95ms = p95(latencies);
 
-    // 慢连接：恢复读取后能读到 1013 关闭帧，或者连接已被断开
+    // Slow connection: can read 1013 close frame after resuming reading, or connection is already disconnected
     slow.resume();
     const end = await within(slow.ended, 10_000);
     assert.ok(end, 'The connection should end within 10 s after reading resumes');
@@ -383,14 +394,17 @@ async function runI3(t) {
   assert.ok(grow < 50, `heapUsed grew ${grow.toFixed(1)} MB (arrayBuffers grew ${((heap1.arrayBuffers - heap0.arrayBuffers) / 1048576).toFixed(1)} MB), published ${published} tasks`);
     return { p95ms, n: latencies.length };
   } finally {
-    for (const f of cleanup.reverse()) { try { await f(); } catch { /* 已关 */ } }
+    for (const f of cleanup.reverse()) { try { await f(); } catch { /* Closed */ } }
   }
 }
 
 /*
- * p95 < 50 ms 是真 WebSocket、约两千条投递的墙钟延迟。同一台机器上几份 npm test 并行时，某一轮可能正好撞上
- * CPU 争抢而整体变慢。所以整轮场景（慢连接积压、被 1013 关闭、其余断言全部照旧）最多跑 3 轮，取 p95 最好的一轮判
- * < 50 ms；每一轮都是完整的场景，判据与门槛不变。背压真失效（慢连接拖住正常节点）时每一轮都超，照样拦得住。
+ * p95 < 50 ms is the wall-clock latency for real WebSocket across ~2,000 deliveries. When several
+ * npm test runs run in parallel on the same machine, a round might hit CPU contention and slow down
+ * overall. So the full scenario (slow connection backlog, closed by 1013, all other assertions
+ * unchanged) runs at most 3 rounds, taking the round with the best p95 to assert < 50 ms; each round
+ * is a complete scenario with unchanged criteria and gates. If backpressure genuinely fails (a slow
+ * connection drags down normal nodes), every round will exceed it and still be caught.
  */
 test('I3 one connection stops reading and the other 199 are normal: normal nodes p95 < 50 ms, the slow connection is closed with 1013, heapUsed growth < 50 MB', { timeout: 50_000 }, async (t) => {
   const rounds = [];
@@ -405,7 +419,7 @@ test('I3 one connection stops reading and the other 199 are normal: normal nodes
 
 // ------------------------------------------------------------------ I4
 
-/** 按契约 H.3、H.7 从队列的 describe() 与已知的发布内容算期望的摘要 projects：只列 open 或 claimed 大于 0 的项目 */
+/** Calculate expected summary projects from queue describe() and known published content per contracts H.3 and H.7: only list projects where open or claimed is greater than 0 */
 function expectedSummary(service, meta) {
   const d = service.describe().modules['render-queue'];
   const by = new Map();
@@ -431,7 +445,7 @@ test('I4 standalone host mode: summary: 20 projects keep changing, each tick sen
   const mk = (onMessage) => { const c = lightClient(env.url, { onMessage }); clients.push(c); return c; };
   t.after(() => { for (const c of clients) c.close(); });
 
-  const meta = new Map();   // 任务 id → { priority, fp }
+  const meta = new Map();   // task id → { priority, fp }
   const FPS = ['fpA', 'fpB', undefined];
   const pub = mk();
   await pub.opened;
@@ -447,13 +461,13 @@ test('I4 standalone host mode: summary: 20 projects keep changing, each tick sen
     assert.equal(r.results[0].created, true);
     return task.id;
   }
-  const open = new Map();   // 项目 → [open 任务 id]
+  const open = new Map();   // project → [open task ids]
   for (let p = 0; p < 20; p++) {
     open.set(p, []);
     for (let k = 0; k < 3; k++) open.get(p).push(await publish(p));
   }
 
-  // 认领用的普通节点（全量 watch）
+  // Regular node for claiming (full watch)
   const worker = mk();
   await worker.opened;
   await nodeHello(worker, 'worker', 'pc');
@@ -466,7 +480,7 @@ test('I4 standalone host mode: summary: 20 projects keep changing, each tick sen
     held.push({ id, token: r.token });
   }
 
-  // 独立主机：先全量 watch，再切到摘要
+  // Standalone host: first full watch, then switch to summary
   const got = [];
   const host = mk((m) => got.push(m));
   await host.opened;
@@ -487,7 +501,7 @@ test('I4 standalone host mode: summary: 20 projects keep changing, each tick sen
   const summariesSince = () => got.slice(mark).filter((m) => m.type === 'queue.summary');
 
   for (let round = 0; round < 6; round++) {
-    // 这一轮的变化：4 个项目各新发布一个、3 个项目各被认领一个、完成一个已认领的
+    // Changes this round: 1 newly published for each of 4 projects, 1 claimed for each of 3 projects, 1 claimed completed
     for (let k = 0; k < 4; k++) await publish((round * 4 + k) % 20);
     for (let k = 0; k < 3; k++) await claimOne((round * 3 + k + 5) % 20);
     const done = held.shift();
@@ -502,7 +516,7 @@ test('I4 standalone host mode: summary: 20 projects keep changing, each tick sen
     assert.equal(s[0].epoch, queue.epoch);
     assert.deepEqual(s[0].projects, expectedSummary(service, meta), `The summary of round ${round} matches describe()`);
 
-    // 没有变化的 tick 不推
+    // Do not push ticks with no changes
     mark = got.length;
     service.tick();
     await barrier();
@@ -512,7 +526,7 @@ test('I4 standalone host mode: summary: 20 projects keep changing, each tick sen
   const deltas = got.filter((m) => DELTA_TYPES.has(m.type));
   assert.deepEqual(deltas.map((m) => m.type).slice(0, 5), [], 'A connection subscribed to summaries receives no per-task deltas');
 
-  // 纯浏览器请求摘要：forbidden；没发过 node.hello：not-registered
+  // Pure browser requests summary: forbidden; no node.hello sent: not-registered
   const browser = mk();
   await browser.opened;
   await nodeHello(browser, 'browser-1', 'browser');
@@ -523,11 +537,11 @@ test('I4 standalone host mode: summary: 20 projects keep changing, each tick sen
   const nr = await anon.request({ type: 'queue.watch', projects: 'all', mode: 'summary' });
   assert.deepEqual([nr.type, nr.reason], ['error', 'not-registered']);
 
-  // 摘要切回全量：退订摘要，重新收单任务增量
+  // Switch summary back to full: unsubscribe from summary, receive single-task deltas again
   const got2 = [];
   const host2 = mk((m) => got2.push(m));
   await host2.opened;
-  // M6c X3：host 的全量 'all' 只收摘要，「切回全量收增量」这一段改用 pc 节点验证模块的切换（原为 host）
+  // M6c X3: host's full 'all' only receives summaries; the "switch back to full to receive deltas" section now uses pc node to verify module switching (formerly host)
   await nodeHello(host2, 'host-2', 'pc');
   assert.equal((await host2.request({ type: 'queue.watch', projects: 'all', mode: 'summary' })).type, 'queue.summary');
   const snap = await host2.request({ type: 'queue.watch', projects: 'all', mode: 'full' });
@@ -559,7 +573,7 @@ test('I5 a node closed with 1013 reconnects and resumes: claims continue, queue.
   pub.send({ type: 'task.publish', tasks: keep, reqId: 'pk' });
   assert.equal((await pub.next(byReq('pk'))).type, 'task.published');
 
-  // 慢节点：认领 keep[0]，然后停止读取
+  // Slow node: claims keep[0], then stops reading
   const NODE = 'n-slow';
   const slow = await rawWsClient(env.port);
   t.after(() => slow.destroy());
@@ -575,7 +589,7 @@ test('I5 a node closed with 1013 reconnects and resumes: claims continue, queue.
   assert.equal(claimed.type, 'task.claimed', JSON.stringify(claimed));
   const token = claimed.token;
 
-  // 另一个正常节点认领 keep[1]，服务端状态里有别人的认领
+  // Another normal node claims keep[1]; server state contains claims from others
   const other = wsClient(env.url);
   t.after(() => other.close());
   await other.opened;
@@ -605,11 +619,11 @@ test('I5 a node closed with 1013 reconnects and resumes: claims continue, queue.
   t.diagnostic(`The slow node was closed after flooding ${flooded} tasks; it read ${end.bytesRead} bytes in total, close frame ${JSON.stringify(end.closeFrame)}`);
   await waitFor(() => service.describe().modules['render-queue'].nodes.find((x) => x.nodeId === NODE)?.connected === false, 5000, 'The server records the slow node as disconnected');
 
-  // 灌进来的任务撤掉，免得重连后的 snapshot 本身又把连接撑爆
+  // Clear flooded-in tasks so post-reconnect snapshot itself does not overflow the connection
   pub.send({ type: 'task.unsubscribe', projectId: 'flood', reqId: 'u' });
   await pub.next(byReq('u'));
 
-  // 宽限期内重连并 resume
+  // Reconnect and resume within grace period
   const back = wsClient(env.url);
   t.after(() => back.close());
   await back.opened;

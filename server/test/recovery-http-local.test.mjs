@@ -1,7 +1,10 @@
 /**
- * 本机身份接口 `/api/collaboration/*` 不带闭源扩展时的样子（社区版就是这样）：
- * 局域网项目的开启、刷新、重开要的那些接口都在，主机只在本机绑定、不起后台任务，搬迁接口不存在。
- * 2026-10-31 实测过缺了它的后果：开启局域网协作报错，刷新后永远停在「正在恢复原协作房间」。
+ * What the local identity endpoint `/api/collaboration/*` looks like without closed source
+ * extensions (as in the community edition):
+ * Endpoints needed to open, refresh, and reopen LAN projects are all present; the host only binds
+ * locally without starting background tasks, and move endpoints do not exist.
+ * Tested on 2026-10-31, consequence of missing it: opening LAN collaboration errors out; after
+ * refreshing, it is stuck forever on "Restoring original collaboration room".
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

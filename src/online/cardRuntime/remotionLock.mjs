@@ -1,31 +1,40 @@
 /**
- * 载入用户卡时，给「该锁的卡」的源码末尾接上一句「把顶层锁成只读」的调用（remotion 式的框架，三道只读里的第二道；
- * 运行时那一半在 `../../kernel/remotionStyle/lock.ts`）。
+ * When loading a user card, appends a call to "lock top level as read-only" to the end of the source
+ * code of "cards that should be locked" (remotion-style framework, the second of three read-only
+ * layers; the runtime half is in `../../kernel/remotionStyle/lock.ts`).
  *
- * 两处载入用户卡的地方都用这一份，接法相同：
- *   - 桌面、渲染节点、预渲染进程：开发服务器的转换钩子（`server/vite-plugin-cards.ts` 的 `cardOverridesLoader`）；
- *   - 在线页面：转译那一步（`./transpile.ts` 的 `transpileCardFile`）。
- * 接在源码**末尾**，前面一个字符都不动，所以报错的行号、源码身份都不变。
+ * Both places that load user cards use this logic, with the same appending approach:
+ *   - Desktop, render node, prerender process: dev server transform hook (`cardOverridesLoader` in
+ *     `server/vite-plugin-cards.ts`);
+ *   - Online page: the transpilation step (`transpileCardFile` in `./transpile.ts`).
+ * Appended to the **end** of the source code without touching a single character before it, so error
+ * line numbers and source identity remain unchanged.
  *
- * 哪些卡该锁（`remotionLockPlan` 回非 null）：源码里声明了 `frameMode: "direct"`，**并且**引用了框架
- * （`src/kernel/remotionStyle`）。后一条是为了不碰老卡：框架出现之前建的卡不可能引用它，照旧载入、照旧运行。
+ * Which cards should be locked (`remotionLockPlan` returns non-null): source code declares
+ * `frameMode: "direct"`, **and** references the framework (`src/kernel/remotionStyle`). The latter
+ * condition avoids touching legacy cards: cards created before the framework existed cannot
+ * reference it, so they load and run as before.
  *
- * 只读文本、不执行。词法用 Sucrase 的公开接口 `getFormattedTokens`（同 `./precheck.ts`）：注释、字符串、JSX 文本里
- * 出现的字样不算。任何一步认不出来就回 null（不锁），不让这一步把一张卡弄得载入不了。
+ * Only reads text, does not execute. Tokenization uses Sucrase's public `getFormattedTokens` API
+ * (same as `./precheck.ts`): text appearing in comments, strings, or JSX text does not count.
+ * If any step cannot be recognized, returns null (do not lock), preventing this step from making
+ * a card fail to load.
  */
 import { getFormattedTokens } from "sucrase";
 
-/** 框架的目录（仓库相对路径） */
+/** Framework directory (repository-relative path) */
 export const REMOTION_FRAMEWORK_DIR = "src/kernel/remotionStyle";
-/** 运行时那一半（仓库相对路径，不带扩展名） */
+/** Runtime counterpart (repository-relative path, without extension) */
 export const REMOTION_LOCK_MODULE = `${REMOTION_FRAMEWORK_DIR}/lock`;
 /**
- * 该锁的卡在在线页面的转译缓存里用的键的后缀（`transpile.ts`）。接上去的那一段的写法变了就改它，
- * 旧的转译结果不再命中。只影响该锁的卡，别的卡的缓存键不变。
+ * Key suffix used in the online page transpilation cache for cards that should be locked
+ * (`transpile.ts`). Change it if the syntax of the appended snippet changes so old transpilation
+ * results no longer hit. Only affects cards that should be locked; cache keys for other cards
+ * remain unchanged.
  */
 export const REMOTION_LOCK_CACHE_TAG = "+lock1";
 
-/** 一个导入的说明符指的是不是框架（`../../kernel/remotionStyle`、带 `/index`、带扩展名都算） */
+/** Whether an import specifier refers to the framework (including `../../kernel/remotionStyle`, with `/index`, or with extensions) */
 export function isFrameworkSpecifier(spec) {
   return typeof spec === "string" && /(^|\/)kernel\/remotionStyle(\/index)?(\.ts)?$/.test(spec);
 }
@@ -33,14 +42,15 @@ export function isFrameworkSpecifier(spec) {
 const QUICK_DIRECT = /\bframeMode\b[\s\S]{0,40}?direct/;
 const QUICK_FRAMEWORK = /kernel\/remotionStyle/;
 
-/* Sucrase 的 identifierRole（`sucrase/dist/parser/tokenizer` 的 IdentifierRole，版本钉死在 package.json） */
-const ROLE_ACCESS = new Set(["0", "1", "8"]); // Access、ExportAccess、ObjectShorthand
-const ROLE_TOP_LEVEL = new Set(["2", "5"]); // TopLevelDeclaration、ObjectShorthandTopLevelDeclaration
+/* Sucrase identifierRole (IdentifierRole from `sucrase/dist/parser/tokenizer`, version pinned in package.json) */
+const ROLE_ACCESS = new Set(["0", "1", "8"]); // Access, ExportAccess, ObjectShorthand
+const ROLE_TOP_LEVEL = new Set(["2", "5"]); // TopLevelDeclaration, ObjectShorthandTopLevelDeclaration
 const ROLE_IMPORT = "9"; // ImportDeclaration
 
 /**
- * 词法结果 → 记号表。`getFormattedTokens` 给的是一张对齐的文本表，名字和字符串在表里会被截短，
- * 所以每个记号的原文按它的位置（行:列）回到源码里取。
+ * Tokenization result → token table. `getFormattedTokens` provides an aligned text table where
+ * names and strings are truncated, so each token's original text is retrieved from the source code
+ * by its position (line:column).
  */
 function tokensOf(source) {
   const text = getFormattedTokens(source, { transforms: ["typescript", "jsx"] });
@@ -49,7 +59,8 @@ function tokensOf(source) {
   const at = (name) => head.indexOf(name);
   const cLabel = at("Label"), cRaw = at("Raw"), cDepth = at("scopeDepth"), cType = at("isType"), cRole = at("identifierRole"), cJsx = at("jsxRole");
   if (cLabel < 0 || cRaw < 0 || cDepth < 0 || cType < 0 || cRole < 0 || cJsx < 0) throw new Error("The lexer result header changed");
-  // 行首的偏移：与 Sucrase 用的 lines-and-columns 同一种数法（\n、\r\n、单独的 \r 各算一次换行）
+  // Line-start offset: same counting method as lines-and-columns used by Sucrase (\n, \r\n,
+  // and standalone \r each count as one line break)
   const lineStart = [0];
   for (let i = 0; i < source.length; i++) {
     if (source[i] === "\r" && source[i + 1] === "\n") i++;
@@ -75,15 +86,16 @@ function tokensOf(source) {
 
 const IDENT_OK = new RegExp(`^[\\p{ID_Start}$_][\\p{ID_Continue}$${String.fromCharCode(0x200c, 0x200d)}]*$`, "u");
 const unquote = (raw) => (/^(['"]).*\1$/s.test(raw) ? raw.slice(1, -1) : null);
-/** 能当模块载入的说明符：包名，或不带查询、扩展名是脚本的相对路径（样式、图片、`?raw` 不算） */
+/** Specifiers loadable as modules: package name, or relative script path without query (styles, images, `?raw` do not count) */
 const isModuleSpecifier = (spec) => !/[?#\\]/.test(spec) && (!/\.[A-Za-z0-9]+$/.test(spec.split("/").pop() ?? "") || /\.(tsx?|mjs|js)$/.test(spec));
 
 /**
- * 这份源码该不该锁、要锁哪些名字。
+ * Whether this source code should be locked and which names to lock.
  * @param {string} source
  * @returns {{ names: string[], specifiers: string[] } | null}
- *   names：文件顶层有值的名字（const、function 等；类型不算）；
- *   specifiers：这份源码真的会载入的模块（它们的导出不是这张卡的，锁的时候跳过）。
+ *   names: names with values at the file's top level (const, function, etc.; types do not count);
+ *   specifiers: modules that this source code actually loads (their exports do not belong to this
+ *     card, skip when locking).
  */
 export function remotionLockPlan(source) {
   if (typeof source !== "string" || !QUICK_DIRECT.test(source) || !QUICK_FRAMEWORK.test(source)) return null;
@@ -96,7 +108,7 @@ export function remotionLockPlan(source) {
   }
   if (!direct) return null;
 
-  /** 每条 import：说明符、它带进来的名字 */
+  /** Each import: specifier, names it brings in */
   const imports = [];
   let framework = false;
   for (let i = 0; i < toks.length; i++) {
@@ -118,7 +130,7 @@ export function remotionLockPlan(source) {
   }
   if (!framework) return null;
 
-  /** 当值用到过的名字（类型位置的不算；JSX 标签名也算用到） */
+  /** Names used as values (type positions do not count; JSX tag names also count as used) */
   const used = new Set();
   for (const t of toks) {
     if (t.isType) continue;
@@ -133,14 +145,14 @@ export function remotionLockPlan(source) {
 
   const specifiers = [];
   for (const imp of imports) {
-    // 只带类型的导入转译时整条去掉：它不会被载入，这里也不替它载入
+    // Type-only imports are stripped entirely during transpilation: they will not be loaded, and we do not load them here either
     const loaded = imp.sideEffectOnly || imp.bindings.some((b) => used.has(b));
     if (loaded && isModuleSpecifier(imp.spec) && !specifiers.includes(imp.spec)) specifiers.push(imp.spec);
   }
   return { names, specifiers };
 }
 
-/** `fromKey`（仓库相对路径，`src/` 开头）所在目录到运行时那一半的相对说明符 */
+/** Relative specifier from the directory of `fromKey` (repo-relative path, starting with `src/`) to the runtime half */
 function lockSpecifier(fromKey) {
   const dirs = String(fromKey).replace(/\\/g, "/").split("/").slice(0, -1);
   if (dirs[0] !== "src") return null;
@@ -148,8 +160,9 @@ function lockSpecifier(fromKey) {
 }
 
 /**
- * 要接在这份源码末尾的那一段；不该锁（或认不出来）回空串。
- * @param {string} key    这个文件的仓库相对路径（`src/cards/user/x.tsx`）
+ * The snippet to append to the end of this source code; returns an empty string if it should not
+ * be locked (or cannot be recognized).
+ * @param {string} key    Repo-relative path of this file (`src/cards/user/x.tsx`)
  * @param {string} source
  */
 export function remotionLockSuffix(key, source) {

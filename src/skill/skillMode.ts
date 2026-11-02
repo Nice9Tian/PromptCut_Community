@@ -1,15 +1,19 @@
 /**
- * SKILL 模式在前端这一侧:订阅状态、开关、以及通知桌面壳变形。
+ * SKILL mode on the frontend side: subscribe to state, toggle, and notify the desktop shell to morph.
  *
- * SKILL 是两种工作方式之一(`user-workflow.md`「工作方式」):桌面 APP 里的 Agent 经 MCP 直连这个项目
- * (计划 `docs/plan/agent-workflow-plan.md` A4)。开关只决定桌面 APP 的会话能不能动手(服务端的 SKILL 闸,
- * `server/skill-gate.mjs`),AI 栏的 Agent 两种方式下都能用。
+ * SKILL is one of two working modes (`user-workflow.md` "Working mode"): the Agent in the desktop app
+ * directly connects to this project via MCP (plan `docs/plan/agent-workflow-plan.md` A4). The toggle
+ * only decides whether desktop app sessions can make changes (server-side SKILL gate,
+ * `server/skill-gate.mjs`); the AI panel Agent is usable in both modes.
  *
- * 真相源是服务端那个状态文件,不是这里的变量 —— Rust 壳是另一个进程,只有那个文件是两边都能约定的地方。
- * 这里做的事只有三件:每秒问一次、把结果发给订阅者、状态一变就通知壳。
+ * The source of truth is that state file on the server, not variables here: the Rust shell is
+ * a separate process, and only that file serves as an agreed-upon place for both sides. It only does
+ * three things: query once per second, deliver results to subscribers, and notify the shell whenever
+ * state changes.
  *
- * 为什么是轮询不是 SSE:壳那边本来就在轮询同一个文件(Rust 里没有网页那套事件流),
- * 前端再单独搞一套推送只会让两边看到的时刻对不上。一秒一次的 JSON 请求便宜得很。
+ * Why polling instead of SSE: the shell is already polling the same file (Rust lacks the web's event
+ * stream machinery), and adding a separate push mechanism in the frontend would only cause desynced
+ * timestamps between both sides. A JSON request once per second is dirt cheap.
  */
 import { onlinePage } from "../online/pageFlag";
 import { tr } from "../i18n/index.ts";
@@ -30,7 +34,7 @@ const CLOSED: SkillState = { active: false, since: null, closedAt: null, closedB
 let snapshot: SkillSnapshot = { state: CLOSED };
 const listeners = new Set<(s: SkillSnapshot) => void>();
 let timer: number | null = null;
-/** 上一次通知壳的状态,只在真的翻转时才发事件 */
+/** Last state notified to the shell; only emits events when it actually flips */
 let lastNotified: boolean | null = null;
 
 function emit() {
@@ -38,10 +42,12 @@ function emit() {
 }
 
 /**
- * 告诉桌面壳「进/出 SKILL 模式了」。
+ * Tells the desktop shell "entered/exited SKILL mode".
  *
- * 壳收到之后收起主窗、变成右上角的悬浮图标(反之恢复)。走 window.__TAURI__ 的事件,
- * 和「外观 → 皮肤…」那条是同一个路子;不是桌面版就什么都不做,浏览器里照常用。
+ * Upon receiving it, the shell collapses the main window and turns into a floating icon in the
+ * top-right corner (and restores conversely). Uses window.__TAURI__ events, following the same
+ * path as "Appearance → Skin…"; does nothing if not running in the desktop app, working as usual
+ * in the browser.
  */
 function notifyShell(active: boolean) {
   if (lastNotified === active) return;
@@ -53,7 +59,7 @@ function notifyShell(active: boolean) {
 }
 
 async function poll() {
-  // 在线浏览器模式没有 SKILL 模式(要本机编辑器进程):不问
+  // Online browser mode has no SKILL mode (requires local editor process): do not query
   if (onlinePage()) return;
   try {
     const res = await fetch("/api/skill-mode");
@@ -65,7 +71,7 @@ async function poll() {
       emit();
     }
   } catch {
-    /* dev server 没起来 / 正在重启,下一秒再问,别把界面弄成报错 */
+    /* dev server is down / restarting; ask again next second without turning UI into an error */
   }
 }
 
@@ -90,7 +96,8 @@ export function getSkillSnapshot(): SkillSnapshot {
 }
 
 async function post(path: string, body: unknown, what: string): Promise<void> {
-  // 超时、非 2xx、服务端说没成,都抛出去让按钮复位并把原因显示出来(以前不看响应,按钮会一直停在「…中」)
+  // Timeouts, non-2xx, and server failures are thrown to reset the button and display the reason
+  // (previously without checking responses, the button would stay stuck at "… in progress")
   let res: Response;
   try {
     res = await fetch(path, {
@@ -108,13 +115,16 @@ async function post(path: string, body: unknown, what: string): Promise<void> {
   }
 }
 
-/** 开:用户在顶栏切到 SKILL。之后桌面 APP 的会话可以动手 */
+/** Enable: user switches to SKILL in top bar. Afterward, desktop app sessions can make changes */
 export async function openSkillMode(): Promise<void> {
   await post("/api/skill-mode/open", {}, tr("Open SKILL mode"));
   await poll();
 }
 
-/** 关:用户切回传统式。之后桌面 APP 会话的任何工具调用都会被拒(AI 栏的 Agent 不受影响) */
+/**
+ * Disable: user switches back to Classic mode. Afterward, any tool call from desktop app
+ * sessions is rejected (AI panel Agent is not affected)
+ */
 export async function closeSkillMode(by = "user"): Promise<void> {
   await post("/api/skill-mode/close", { by }, tr("Close SKILL mode"));
   await poll();

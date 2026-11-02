@@ -1,13 +1,19 @@
 /**
- * C10a 预渲染小尺寸（`docs/plan/c10a-contract.md` 第 9 节，第 12 节「预渲染小尺寸：尺寸规则、两档分开就绪、完成条件」）。
- * 跑：node --test server/test/c10a-small-prerender.test.mjs
+ * C10a prerender small size (`docs/plan/c10a-contract.md` Section 9, Section 12 "Prerender small
+ * size: sizing rules, separate readiness across two tiers, completion conditions").
+ * Run: node --test server/test/c10a-small-prerender.test.mjs
  *
- *   尺寸：等比缩进 800×600 以内，不放大，保持项目画幅；16:9 → 800×450，9:16 → 337×600。
- *   入库：小位图（WebP）按内容哈希推到素材服务 `px/<hash>`；清单每段在原尺寸之外带小尺寸那一份的哈希表。
- *   就绪：两档分开记，小尺寸就绪不能当原尺寸就绪。完成：两档都推送成功。
+ *   Size: scale down proportionally within 800×600, do not upscale, preserve project aspect ratio;
+ *   16:9 → 800×450, 9:16 → 337×600.
+ *   Store: small bitmaps (WebP) are pushed to asset service `px/<hash>` by content hash; for each
+ *   segment, the manifest includes the small-size hash table in addition to the original size.
+ *   Readiness: tracked separately across two tiers; small-size readiness cannot count as
+ *   original-size readiness. Completion: both tiers pushed successfully.
  *
- * 假设的接口见 `c10a-kit.mjs` 的 K4（尺寸函数的位置与名字、清单的 `small` 字段、就绪索引的小尺寸 `kind`）。
- * 探测只看尺寸函数：找不到就整组 skip；找到了，其余几条跟着真跑。
+ * For assumed interfaces, see K4 in `c10a-kit.mjs` (location and name of sizing function, `small`
+ * field in manifest, small-size `kind` in ready index).
+ * Probe checks only the sizing function: if not found, skip the entire suite; if found, the
+ * remaining tests actually run.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,7 +33,7 @@ const sha = (b) => createHash('sha256').update(b).digest('hex');
 it('C10A-PS-01 sizing rule: the examples in the contract and common aspect ratios', () => {
   const cases = [
     [[1920, 1080], [800, 450]],
-    [[1080, 1920], [337, 600]], // 契约原文：9:16 为 337×600
+    [[1080, 1920], [337, 600]], // Original contract text: 9:16 is 337×600
     [[3840, 2160], [800, 450]],
     [[1280, 720], [800, 450]],
     [[2048, 1536], [800, 600]],
@@ -60,9 +66,12 @@ it('C10A-PS-03 properties of the sizing rule: integers, inside the box, no upsca
   }
 });
 
-// ------------------------------------------------------------------ 清单、推送、完成条件
+// ------------------------------------------------------------------ Manifest, push, completion conditions
 
-/** 一段快照清单：3 帧原尺寸 HTML + 3 张 WebP 小位图（K4：`small` 与 `frames` 同形） */
+/**
+ * One segment of snapshot manifest: 3 original-size HTML frames + 3 small WebP bitmaps
+ * (K4: `small` and `frames` have the same shape)
+ */
 function snapshotResult() {
   const blobs = new Map();
   const add = (bytes) => { const h = sha(bytes); blobs.set(h, bytes); return [h, bytes.length]; };
@@ -120,12 +129,16 @@ it('C10A-PS-06 dedup checks both tiers: the manifest lists small sizes but the a
   assert.equal(await blocksPresent(fakeClient({ present: (ns, h) => h !== missing }), result), false, 'one small bitmap is missing');
 });
 
-// ------------------------------------------------------------------ 就绪分开记
+// ------------------------------------------------------------------ Track readiness separately
 
 /*
- * 集成对账（K4）改写了这一条：实现把两档分开记在**清单**里（`frames` 只列原尺寸、`small` 另列），预渲染进程的就绪索引
- * （`server/ready-index.mjs`，桌面页面的 SSE）根本不收小尺寸；在线页面按 `small` 表算小尺寸就绪，导出前核对
- * （`src/export/originals.ts`）只认 `frames`。所以「小尺寸就绪不能当原尺寸就绪」在这两处核对，不在就绪索引里加一档。
+ * Integration reconciliation (K4) rewrote this: the implementation tracks the two tiers
+ * separately in the **manifest** (`frames` lists only the original size, `small` is listed
+ * separately); the prerender process's ready index (`server/ready-index.mjs`, SSE for desktop
+ * pages) does not receive small size at all; online pages compute small-size readiness from
+ * the `small` table, and pre-export verification (`src/export/originals.ts`) recognizes only
+ * `frames`. Therefore, "small-size readiness cannot count as original-size readiness" is checked
+ * in these two places, rather than adding a tier to the ready index.
  */
 it('C10A-PS-07 the two tiers become ready separately: the manifest has small sizes covering the whole segment but only half of the original sizes, the pre-export check still counts the original size as missing, and the missing frames cannot get an original size', async () => {
   const ready = await import(repoUrl('server/ready-index.mjs'));
@@ -133,8 +146,8 @@ it('C10A-PS-07 the two tiers become ready separately: the manifest has small siz
   await import(repoUrl('src/testing/registerTs.mjs'));
   const { loadOriginalsIndex } = await import(repoUrl(ORIGINALS_FILE));
   const hex = (c) => c.repeat(64);
-  const frames = Array.from({ length: 30 }, (_, f) => [f, hex('a'), 10]); // 原尺寸只有 0～29
-  const small = Array.from({ length: 60 }, (_, f) => [f, hex('b'), 5]); // 小尺寸 0～59 盖满
+  const frames = Array.from({ length: 30 }, (_, f) => [f, hex('a'), 10]); // Original size only has 0~29
+  const small = Array.from({ length: 60 }, (_, f) => [f, hex('b'), 5]); // Small size fully covers 0~59
   const content = {
     'layers:p1': { v: 1, kind: 'layer-map', projectId: 'p1', fps: 30, span: 60, layers: [{ clipId: 'c1', kind: 'html', key: 'K1', resultKey: 'R1', firstFrame: 100, count: 60 }] },
     'R1:0-59': { v: 1, kind: 'snapshot', resultKey: 'R1', range: { from: 0, to: 59 }, frames, small },

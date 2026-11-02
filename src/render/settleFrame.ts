@@ -1,55 +1,63 @@
 /**
- * 单舞台「停下追当前一帧」(语义 `product/rendering.md`「停下就精确」、`product/platforms.md`「在线浏览器」的「停下」与
- * 「最低一档」;机制 `mechanism/rendering.md`「界限搜索与成本记录」的「停下追一帧」):只有一个舞台(舞台闸门第一级、
- * 最低一档、握手失败退回单舞台)时没有后台舞台可以追到精确再互换,暂停、点击或拖动松开、播放到头时就在可见舞台里
- * 把当前这一帧的所有卡活渲一次,重卡也画。
+ * Single-stage "catch up current frame on stop" (semantics `product/rendering.md` "Precise on stop",
+ * `product/platforms.md` "Online browser" "Stop" and "Lowest tier"; mechanism
+ * `mechanism/rendering.md` "Bounds search and cost record" "Catch up one frame on stop"): when there
+ * is only one stage (stage gate level 1, lowest tier, fallback to single stage on handshake failure),
+ * there is no background stage to catch up to precision before swapping; upon pause, click or scrub
+ * release, or playback reaching the end, all cards for this current frame are live rendered once in
+ * the visible stage, including heavy cards.
  *
- * - 画出来之前各层照兜底顺序显示(有轨道流贴流,没有就是占位符),画好一层替换一层;
- * - **不设时限**(2026-10-07 用户定,最低一档「停下以后……渲好一层替换一层,不设时限」):一直画到全部画好,
- *   或被新的跳转 / 播放 / 换项目打断为止。`timeoutMs` 只留给测试与诊断(给了正数才按它截);
- * - 推帧卡按从入点追到当前帧算;
- * - 本页跑不了的用户卡、素材效果卡不追(`localOnlyClipIds`):有这一帧的预渲染结果就照贴,没有就是沙漏、等渲染节点
- *   (2026-10-21 用户定:没有「本地 PC 辅助渲染」的提示);
- * - 下一次播放回到播放时的样子(最低一档只贴预渲染结果)。
+ * - Before being drawn, layers display in fallback order (stream paste if track stream exists,
+ *   placeholder if none), replacing layer by layer as each is drawn;
+ * - **No time limit** (user decision, 2026-10-07, lowest tier "after stop... replace layer by layer
+ *   once rendered, no time limit"): draws continuously until all are drawn, or until interrupted by a
+ *   new seek / playback / project switch. `timeoutMs` is reserved for testing and diagnostics (clamped
+ *   only when a positive number is provided);
+ * - Frame-push cards are calculated by catching up from in point to current frame;
+ * - User cards and media effect cards that cannot run on this page do not catch up
+ *   (`localOnlyClipIds`): if prerender output exists for this frame, paste as is; if none, show
+ *   hourglass and wait for render nodes (user decision, 2026-10-21: no "Local PC assisted rendering"
+ *   prompt);
+ * - Next playback returns to playback appearance (lowest tier only pastes prerender output).
  *
- * 这里只放纯的部分(排序、驱动、结果形状),舞台一侧的画法在 `StageView` 的 `settleLayers`。
- * 不引 editor,Node 单测直接载入。
+ * Contains only the pure parts here (ordering, driving, result shapes); stage-side drawing logic
+ * lives in `settleLayers` of `StageView`. Does not import editor; loaded directly by Node unit tests.
  */
 
-/** 给了时限时的上界(父页传进来的值夹在这里;不给 = 不设时限) */
+/** Upper bound when a time limit is provided (value passed from parent page is clamped here; omitted = no time limit) */
 export const SETTLE_MAX_MS = 60_000;
-/** 不设时限时父页等回包的上限(活着的窗口原地重载会丢回包,不能永远挂着;舞台那边照画不误) */
+/** Upper limit for parent page to wait for response when no time limit is set (reloading an alive window in place loses responses and cannot hang forever; stage continues drawing regardless) */
 export const SETTLE_RPC_CAP_MS = 10 * 60_000;
 
-/** 一张卡怎么追:直接定位(一次提交就画好)、从入点逐帧推、这台设备渲染不了(不追) */
+/** How a card catches up: direct seek (drawn in a single commit), step frame-by-frame from in point, or cannot render on this device (do not catch up) */
 export type SettleKind = "direct" | "catchup" | "unsupported";
 
 export interface SettleItem {
   clipId: string;
   kind: SettleKind;
-  /** 推帧卡要从入点推多少帧(直接定位的是 0) */
+  /** How many frames a frame-push card must step from in point (0 for direct seek) */
   frames: number;
 }
 
-/** 一次停下追一帧的结果(舞台 RPC `settleLayers` 的回包,父页记进诊断) */
+/** Result of catching up one frame on stop (response from stage RPC `settleLayers`, recorded into diagnostics by parent page) */
 export interface SettleResult {
-  /** false:被新的跳转 / 播放 / 换项目打断了,或者舞台做不了(`reason`) */
+  /** false: interrupted by a new seek / playback / project switch, or stage cannot perform it (`reason`) */
   ok: boolean;
   reason?: "superseded" | "role" | "no-project" | "rpc";
   sec: number;
-  /** 这一次的时限;null = 不设时限 */
+  /** Time limit for this run; null = no time limit */
   timeoutMs: number | null;
-  /** 从开始追到收尾的墙钟 */
+  /** Wall-clock time from start of catch-up to completion */
   ms: number;
-  /** 画好的层,和它画好时离开始多久 */
+  /** Drawn layers and elapsed time from start when drawn */
   drawn: { clipId: string; ms: number }[];
-  /** 给了时限时到时限还没画好、维持兜底的层;被打断时还没画的层也记在这里 */
+  /** Layers not yet drawn when time limit expired that maintain fallback; unrendered layers when interrupted are also recorded here */
   timedOut: string[];
-  /** 不追的层(本页跑不了的用户卡、素材效果卡:贴着预渲染结果,没有就是沙漏) */
+  /** Layers that do not catch up (user cards and media effect cards that cannot run on this page: prerender output pasted, or hourglass if none) */
   skipped: string[];
 }
 
-/** 父页给的时限:不是正数(含不给)就是不设时限(null),超过上界夹到上界 */
+/** Time limit given by parent page: non-positive (including omitted) means no time limit (null); clamped to upper bound if exceeded */
 export function clampSettleTimeout(ms: unknown): number | null {
   if (ms === null || ms === undefined) return null;
   const n = Number(ms);
@@ -58,8 +66,9 @@ export function clampSettleTimeout(ms: unknown): number | null {
 }
 
 /**
- * 这张卡怎么追。`unsupported`(本页跑不了的用户卡、素材效果卡)不追;`direct` 帧模式或者播放头就在入点上的,一次提交就画好;
- * 其余从入点逐帧推到当前帧。
+ * How this card catches up. `unsupported` (user cards and media effect cards that cannot run on
+ * this page) does not catch up; `direct` frame mode or playhead right at in point is drawn in a
+ * single commit; the rest steps frame-by-frame from in point to current frame.
  */
 export function settleKindOf(o: { unsupported: boolean; frameMode: string | undefined; mountFrame: number; targetFrame: number }): SettleItem["kind"] {
   if (o.unsupported) return "unsupported";
@@ -68,8 +77,10 @@ export function settleKindOf(o: { unsupported: boolean; frameMode: string | unde
 }
 
 /**
- * 追的先后:直接定位的先(一次提交就画好),推帧卡按要推的帧数从少到多 —— 先画好的层尽量多、尽早替换上去。
- * 同样的按 clipId 定序。`unsupported` 的不进队列,单列出来。
+ * Catch-up order: direct seek first (drawn in a single commit); frame-push cards ordered by number
+ * of frames to step from least to most: get as many layers drawn early as possible and replaced as
+ * soon as possible. Ties ordered by clipId. `unsupported` cards do not enter the queue and are
+ * listed separately.
  */
 export function orderSettle(items: readonly SettleItem[]): { queue: SettleItem[]; skipped: string[] } {
   const queue = items.filter((it) => it.kind !== "unsupported");
@@ -79,18 +90,21 @@ export function orderSettle(items: readonly SettleItem[]): { queue: SettleItem[]
   return { queue, skipped };
 }
 
-/** 画一层的结果:画好了、到时限了、被打断了 */
+/** Result of drawing a layer: drawn, timed out, interrupted */
 export type DrawOutcome = "drawn" | "timeout" | "aborted";
 
 /**
- * 按 `orderSettle` 的先后一层层画。不设时限时 `deadline` 是 `Infinity`,画到全部画好或被打断;给了时限时
- * (`draw` 自己也看 `deadline`,推帧推到一半到时限就回 `timeout`)到时限还没开始画的层一并记进 `timedOut`。
- * 被打断(`aborted()` 或 `draw` 回 `aborted`)时回 `ok: false`,没画的层同样记进 `timedOut`(舞台一侧它们本来就还盖着)。
+ * Draws layer by layer in `orderSettle` sequence. When no time limit is set, `deadline` is `Infinity`,
+ * drawing until all are drawn or interrupted; when a time limit is given (`draw` also checks `deadline`
+ * itself, returning `timeout` if time limit is reached mid-step), layers that haven't started drawing
+ * when time limit expires are also recorded into `timedOut`. When interrupted (`aborted()` or `draw`
+ * returns `aborted`), returns `ok: false`, and unrendered layers are likewise recorded into `timedOut`
+ * (they remain covered on the stage side anyway).
  */
 export async function runSettle(o: {
   sec: number;
   items: readonly SettleItem[];
-  /** 不给 / null = 不设时限 */
+  /** Omitted / null = no time limit */
   timeoutMs?: number | null;
   now: () => number;
   draw: (item: SettleItem, deadline: number) => Promise<DrawOutcome>;

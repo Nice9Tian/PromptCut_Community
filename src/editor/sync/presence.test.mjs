@@ -1,6 +1,6 @@
 /**
- * 页面一侧的在场状态(src/editor/sync/presence.ts,计划 agent-workflow-plan.md A3 第二阶段)。用例 MA-P6～MA-P8。
- * 跑:node --test src/editor/sync/presence.test.mjs
+ * Page-side presence (src/editor/sync/presence.ts, plan agent-workflow-plan.md A3 Phase 2). Test cases MA-P6~MA-P8.
+ * Run: node --test src/editor/sync/presence.test.mjs
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -85,13 +85,14 @@ test("CAU-MEM-03 Cloud Agent \"round running\" table: recognizes cloud-run entri
   assert.deepEqual([...pres.cloudRunning()].sort(), ["alice@devA", "bob@devB"], "your own row counts too (the \"your own don't count\" filter for agent: entries does not apply)");
   const snap = pres.cloudRunning();
   assert.equal(pres.cloudRunning(), snap, "Same object when nothing changed (required by useSyncExternalStore)");
-  // 同一位成员的第二条(另一个对话的连接):撤掉其中一条,另一条还在,仍算在跑
+  // Second entry for the same member (connection from another chat): revoke one, the other remains,
+  // still counts as running
   pres.receivePresence(runUpdate("alice@devA", { from: cloudFrom("alice@devA", { conversation: "cc-2", session: "s-2" }) }));
   pres.receivePresence(runUpdate("alice@devA", { data: null, expiresAt: 0 }));
   assert.ok(pres.cloudRunning().has("alice@devA"), "The same member still has one entry that was not withdrawn");
   pres.receivePresence(runUpdate("alice@devA", { from: cloudFrom("alice@devA", { conversation: "cc-2", session: "s-2" }), data: null, expiresAt: 0 }));
   assert.ok(!pres.cloudRunning().has("alice@devA"), "Does not count after withdrawal (data: null)");
-  // 不算的
+  // Does not count
   pres.receivePresence(runUpdate("carol@devC", { from: { userId: "carol@devC", deviceId: "devC", role: "page", session: "s-9" } }));
   assert.ok(!pres.cloudRunning().has("carol@devC"), "Not sent by a service connection (no service: 'agent'), so it cannot be forged");
   pres.receivePresence(runUpdate("carol@devC", { data: { v: 1, kind: "cloud-run", runs: 0 } }));
@@ -101,10 +102,10 @@ test("CAU-MEM-03 Cloud Agent \"round running\" table: recognizes cloud-run entri
   pres.receivePresence(runUpdate("carol@devC", { projectId: "p2" }));
   assert.ok(!pres.cloudRunning().has("carol@devC"), "Entries from other projects do not count");
   assert.deepEqual(pres.remoteAgents(), [], "cloud-run does not go into the \"other members' Agents\" list");
-  // presence.state(重连后取现有的)里的也认
+  // Entries in presence.state (fetched existing after reconnect) are also recognized
   pres.receivePresence({ type: "presence.state", projectId: "p1", entries: [{ key: "cloud-run", from: cloudFrom("dan@devD"), data: { v: 1, kind: "cloud-run", runs: 2 }, expiresAt: Date.now() + 90_000 }] });
   assert.ok(pres.cloudRunning().has("dan@devD"));
-  // 换项目 / 断开:清空并通知
+  // Switch project / disconnect: clear and notify
   const before = notified;
   pres.setPresenceLink(link, "p9", "bob@devB");
   assert.equal(pres.cloudRunning().size, 0, "Cleared when switching projects");
@@ -130,10 +131,10 @@ test("CAU-MEM-04 An entry for a round in progress automatically stops counting a
   await wait(260);
   assert.ok(!pres.cloudRunning().has("alice@devA"), "Does not count after expiry");
   assert.ok(notified > n1, "Subscribers were notified at expiry (no need to wait for another message to redraw)");
-  // 已经过期的条目送来也不算
+  // Already expired items do not count even if delivered
   pres.receivePresence(runUpdate("alice@devA", { expiresAt: Date.now() - 1 }));
   assert.ok(!pres.cloudRunning().has("alice@devA"));
-  // 续期:过期前又来一条,时间往后推
+  // Renew: another item arrives before expiration, extends time
   pres.receivePresence(runUpdate("dan@devD", { expiresAt: Date.now() + 120 }));
   await wait(60);
   pres.receivePresence(runUpdate("dan@devD", { expiresAt: Date.now() + 400 }));

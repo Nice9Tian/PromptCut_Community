@@ -1,11 +1,12 @@
 /**
- * kernel/envelope.ts 的单测。跑:node --test src/kernel/envelope.test.mjs
+ * Unit tests for kernel/envelope.ts. Run: node --test src/kernel/envelope.test.mjs
  *
- * 封装是 Agent 和代码页看一张卡的唯一入口,读和写必须自洽:
- *   - 读出来的 parts 只带各自的参数,params 是全量,两边是同一份数据;
- *   - 写回只碰有差异的段,顺序固定;
- *   - 不合法的输入一处都不写(不留半截状态),错误信息说人话;
- *   - 只读段(world / motion / lifecycle)写了也不生效。
+ * The envelope is the only entry point for Agents and code pages to inspect a card; reading and
+ * writing must be self-consistent:
+ *   - Extracted parts carry only their respective params, params is full, both are the same data;
+ *   - Writing back touches only segments with differences, in a fixed order;
+ *   - Invalid inputs write nothing (leaving no partial state), error messages are human-readable;
+ *   - Read-only segments (world / motion / lifecycle) have no effect even if written.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -59,7 +60,7 @@ function recorder() {
   };
 }
 
-// validateCardParams 走的是全局注册表,测试里把这张卡注册进去
+// validateCardParams uses the global registry; register this card in the test
 const { registerCards } = await import("./registry.ts");
 registerCards([card]);
 
@@ -198,7 +199,7 @@ test("Timing is recomputed with params: more items settle later; the static valu
   assert.equal(env1.card.lifecycle.settleMs, 300 + 5 * 500 + 400);
   assert.equal(env1.parts.find((p) => p.id === "items").settleMs, 300 + 5 * 500 + 400);
   assert.equal(env1.parts.find((p) => p.id === "title").settleMs, 600, "Parts not mentioned in timing keep the static value");
-  // timing 算炸了不能把封装拖垮
+  // Timing calculation failures must not crash the envelope
   const broken = { ...timed, id: "broken-card", timing: () => { throw new Error("boom"); } };
   registerCards([card, broken]);
   const b = clipOf({ cardId: "broken-card" });
@@ -225,11 +226,11 @@ test("Composite card: parts is an instance tree with partId / on-screen position
   assert.deepEqual(env.parts[0].frame.world, { left: 100, top: 100, width: 800, height: 160 }, "The composite card canvas is at (0,0), scale 1");
   assert.deepEqual(env.parts[0].params, { text: "Hi", size: 48 });
 
-  // 原样写回:没改动
+  // Write back as-is: no changes
   const r0 = recorder(); r0.writer.setClipParts = (id, parts) => r0.calls.push(["parts", id, parts]);
   assert.deepEqual(applyEnvelope(project(clip), "c1", env, compositeCard, STAGE, r0.writer, (id) => (id === "composite" ? compositeCard : card), lookup).changed, []);
 
-  // 改一个部件的参数和框、加一个部件
+  // Modify parameters and box of one part, add one part
   const edited = JSON.parse(JSON.stringify(env));
   edited.parts[0].params.text = "Hello";
   edited.parts[0].frame.local = { x: 50, y: 60, w: 700, h: 120 };
@@ -244,7 +245,7 @@ test("Composite card: parts is an instance tree with partId / on-screen position
   assert.equal(tree[0].label, undefined, "The part name is for display and is not stored");
   assert.deepEqual(tree[1], { id: "b", partId: "text-title", params: { text: "Sub", size: 48 }, enterMs: 500 }, "New instance params are filled in with defaults");
 
-  // 坏树整份拒
+  // Malformed trees are rejected entirely
   const bad = JSON.parse(JSON.stringify(env));
   bad.parts.push({ id: "a", partId: "text-title", params: {} });
   assert.throws(() => applyEnvelope(project(clip), "c1", bad, compositeCard, STAGE, recorder().writer, () => compositeCard, lookup), /Duplicate/);
@@ -264,22 +265,25 @@ test("Composite card: writing a nested part tree back unchanged does not count a
   assert.equal(g.enterMs, 500); assert.equal(g.enterAtMs, 500);
   assert.equal(t.enterMs, 300, "What is written out is still the value relative to the parent"); assert.equal(t.enterAtMs, 800, "The absolute time is given separately");
   assert.equal(t.settleMs, 1400);
-  // 组合卡缩到一半绕中心:画布视觉框是 (480,270,960,540);g 的框 (100,100,800,400) 缩一半后落在 (530,320,400,200)
+  // Composite card scaled to half around center: canvas visual box is (480,270,960,540);
+  // g's box (100,100,800,400) scaled to half lands at (530,320,400,200)
   assert.deepEqual(g.frame.world, { left: 530, top: 320, width: 400, height: 200 });
   assert.deepEqual(t.frame.world, g.frame.world, "A child part without a frame fills the parent frame");
   const r = recorder(); r.writer.setClipParts = (id, parts) => r.calls.push(["parts", id, parts]);
   assert.deepEqual(applyEnvelope(project(clip), "c1", env, compositeCard, STAGE, r.writer, () => compositeCard, lookup).changed, [], "A round trip must not write anything");
-  // 连续两次往返,子实例的 enterMs 不漂
+  // Over two consecutive round-trips, sub-instance enterMs does not drift
   const again = envelopeOf(project(clip), clip, compositeCard, STAGE, lookup);
   assert.equal(again.parts[0].children[0].enterMs, 300);
 });
 
 /*
- * 三维回归。ClipFrame 加了 rotateX / rotateY / translateZ,而这里的 FRAME_KEYS 白名单
- * 当初没同步 —— 后果不是「三维改不了」,是**这张卡的 set_clip 整个用不了**:
- * envelopeOf 把 frame 原样放进 frame.local,applyEnvelope 在 diff 之前就无条件校验它,
- * 于是哪怕只想改 params,只要封装里带着 frame 段就抛错。而错误信息会告诉 Agent
- * 「rotateY 不是合法的 frame 键」,它照做删掉,那张卡就被摆回平面了。
+ * 3D regression. ClipFrame added rotateX / rotateY / translateZ, but the FRAME_KEYS allowlist here
+ * was not synced at the time: the consequence was not "cannot change 3D", but **set_clip for this
+ * card was completely unusable**:
+ * envelopeOf places frame into frame.local as-is, and applyEnvelope validates it unconditionally
+ * before diffing; thus even if one only wanted to change params, throwing an error whenever the
+ * envelope contained a frame segment. The error message would tell the Agent "rotateY is not a
+ * valid frame key", and following instructions to delete it would reset the card back to the plane.
  */
 test("3D: a card placed into space should not error when its envelope is passed back unchanged", () => {
   for (const frame of [
@@ -292,7 +296,7 @@ test("3D: a card placed into space should not error when its envelope is passed 
     const env = envelopeOf(project(clip), clip, card, STAGE);
     assert.deepEqual(env.frame.local, frame, "The local that is read out must carry the 3D fields as they are");
     const r = recorder();
-    // 原样传回 = 什么都没改,changed 应该是空的,更不能抛
+    // Returned as-is = nothing changed, changed should be empty, and must not throw
     assert.deepEqual(
       applyEnvelope(project(clip), "c1", env, card, STAGE, r.writer, () => card).changed,
       [],
@@ -325,11 +329,12 @@ test("3D: the 3D fields in frame.local must be numbers", () => {
 });
 
 /*
- * 素材段的三维:set_clip 这条路也要拦住。
+ * 3D for media clips: the set_clip path must also be blocked.
  *
- * set_position 那边先加了拦截,但 set_clip 是另一条路 —— get_clip 拿到封装、
- * 往 frame.local 里塞一个 rotateY 再写回来,照样能写进去(审查时实测能写进去)。
- * 凡是能改 frame 的路都会经过 applyEnvelope,规则放在那儿才是真守住。
+ * An intercept was first added on the set_position side, but set_clip is another path: getting
+ * the envelope via get_clip, stuffing rotateY into frame.local, and writing it back could still
+ * succeed (confirmed in review testing). Every path that can modify frame goes through
+ * applyEnvelope; placing the rule there truly guards it.
  */
 test("Media clip: set_clip also cannot put 3D into frame", () => {
   const mediaClip = { id: "m1", mediaId: "v1", start: 0, end: 3, frame: { x: 960, y: 540, w: 1920, h: 1080 } };
@@ -341,7 +346,7 @@ test("Media clip: set_clip also cannot put 3D into frame", () => {
     () => applyEnvelope(proj, "m1", edited, undefined, STAGE, r.writer, () => undefined),
     /only works on cards/,
   );
-  // 拦下来就一个字都不该写
+  // When intercepted, not a single byte should be written
   assert.equal(r.calls.length, 0);
 });
 

@@ -6,8 +6,10 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 
-// 执行实际安装脚本的检查路径：清单和既有版本都使用无 BOM 的 UTF-8 中文。
-// 旧 Get-Content 在中文 Windows PowerShell 5.1 上会吃掉 JSON 引号；不改变系统代码页。
+// Check path executing the actual installer script: both manifest and existing version use
+// UTF-8 Chinese without BOM.
+// Legacy Get-Content swallows JSON quotes on Chinese Windows PowerShell 5.1; do not modify
+// system code page.
 const quote = (s) => "'" + s.replaceAll("'", "''") + "'";
 for (const kind of ['patch', 'extension']) {
   test(`${kind} real script reads the UTF-8 Chinese manifest and existing version in PS 5.1, without writing to the install directory`, { skip: process.platform !== 'win32' }, () => {
@@ -41,12 +43,14 @@ for (const kind of ['patch', 'extension']) {
         }), 'utf8');
       }
       const command = `$ErrorActionPreference='Stop'; [Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false); & ${quote(script)} -InstallDir ${quote(installed)} -WhatIf; exit $LASTEXITCODE`;
-      // 与随包启动器一样只对本次 PowerShell 指定策略；不改用户或系统执行策略。
+      // Like the bundled launcher, sets policy only for this PowerShell instance; does not change
+      // user or system execution policies.
       const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')], {
         encoding: 'utf8', windowsHide: true, timeout: 15_000,
         env: {
           ...process.env,
-          // 从 PowerShell 7 起 Node 时会继承它的模块目录；真安装器经 Explorer 使用的是 PS 5.1 模块。
+          // Starting Node from PowerShell 7 inherits its module directory; the actual installer launched
+          // via Explorer uses PS 5.1 modules.
           PSModulePath: path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'Modules'),
           APPDATA: path.join(dir, 'appdata'), LOCALAPPDATA: path.join(dir, 'localappdata'),
           PROMPTCUT_PATCH_NONINTERACTIVE: '1', PROMPTCUT_EXT_NONINTERACTIVE: '1',

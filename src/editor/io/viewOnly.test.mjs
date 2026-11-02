@@ -1,7 +1,8 @@
 /**
- * 只读开关（`viewOnly.ts`）：`?observe` 之外，项目只给了只读权限（游客进别人的项目）也算只读。
+ * Read-only switch (`viewOnly.ts`): besides `?observe`, having only read-only permissions in a
+ * project (guest entering someone else's project) also counts as read-only.
  *
- * 跑：npm test -- src/editor/io/viewOnly.test.mjs
+ * Run: npm test -- src/editor/io/viewOnly.test.mjs
  */
 import '../../testing/registerTs.mjs';
 import test from 'node:test';
@@ -24,7 +25,8 @@ test('A project with read-only permission counts as read-only, a read-write one 
   assert.equal(isViewOnly(), false);
   assert.equal(viewOnlyReason(), null);
 
-  // 乱传的当没进项目,不要悄悄留在上一个项目的只读状态里
+  // Invalid inputs are treated as not entering project; do not quietly stay in read-only state of
+  // previous project
   setProjectAccess('nonsense');
   assert.equal(projectAccessNow(), null);
   assert.equal(isViewOnly(), false);

@@ -22,10 +22,13 @@ export interface PixelMapDef {
 export interface ClipPixelMap {
   id: string;
   params?: Record<string, number>;
-  /** 停用:挂载和逐段参数都留着,这一段上不生效。闸门在 `pixelMapOfClip` */
+  /**
+   * Disabled: attachment and per-clip params are retained, but inactive on this clip. Gate is in
+   * `pixelMapOfClip`.
+   */
   off?: boolean;
 }
-/** 片段挂着的像素映射定义;没挂、定义被删了、或者这一段上停用了都给 null */
+/** Pixel map definition attached to clip; returns null if not attached, deleted, or disabled on this clip */
 export function pixelMapOfClip(
   project: { pixelMaps?: PixelMapDef[] },
   clip: { pixelMap?: ClipPixelMap } | null | undefined,
@@ -37,12 +40,12 @@ export function parseColor(value: string): [number, number, number, number] | nu
 export function normalizePixelMapDef(input: unknown): Omit<PixelMapDef, "id" | "createdBy" | "createdAt">;
 export function compilePixelMap(def: PixelMapDef): unknown;
 /**
- * 参考实现:不再进任何渲染路径(逐像素 CPU 循环已删,见 render/pixelMapGl.ts),
- * 只留给单测和 GPU / CPU 逐像素对照。
+ * Reference implementation: no longer enters any render path (per-pixel CPU loop deleted, see
+ * render/pixelMapGl.ts), kept only for unit tests and GPU / CPU per-pixel comparison.
  */
 export function mapRgba(def: PixelMapDef, rgba: number[], env?: { x?: number; y?: number; t?: number }, targetRgba?: number[] | null): number[];
 
-/** 三条去向:A 整帧调色(改用 create_filter)、B 逐像素(WebGL)、C 翻译不了 */
+/** Three destinations: A whole-frame color grading (use create_filter instead), B per-pixel (WebGL), C untranslatable */
 export type PixelMapClass =
   | { kind: "A"; reason: string; ops: FilterOp[]; filter: { name: string; description?: string; ops: FilterOp[] }; diff: number; alphaNote?: string }
   | { kind: "B"; backend: "webgl"; reason: string; usesTarget: boolean }
@@ -53,11 +56,11 @@ export function pixelMapOpsDiff(def: PixelMapDef | Omit<PixelMapDef, "id">, ops:
 export interface PixelMapGlsl {
   fragment: string;
   vertex: string;
-  /** to 是另一段素材:要第二张纹理 */
+  /** to is another media clip: requires a second texture */
   usesTarget: boolean;
-  /** 表达式里用到 t:每帧要重设 uT */
+  /** Expression uses t: uT must be reset every frame */
   usesTime: boolean;
-  /** 片元源码的内容哈希,program 按它缓存 */
+  /** Content hash of fragment source; program is cached by it */
   key: string;
 }
 export function compilePixelMapGlsl(def: PixelMapDef | Omit<PixelMapDef, "id">): PixelMapGlsl;

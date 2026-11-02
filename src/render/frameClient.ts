@@ -6,13 +6,14 @@ import { reachableCutContents } from "../kernel/cutIdentity.mjs";
 export type FrameTarget = "user" | "prerender";
 export type FrameLane = "user" | "inter_face" | "agent" | "background" | "archive" | "playback";
 export interface FrameRequestOptions {
-  /** 人类预览同源；长任务和后台预渲染可显式走预渲染进程。 */
+  /** Human preview uses same-origin; long tasks and background prerendering can explicitly go through the prerender process. */
   target?: FrameTarget;
   lane?: FrameLane;
 }
 
 const signatureFields = (project: Project) => JSON.stringify([project.width, project.height, project.fps, project.duration, project.themeId, project.camera3dFov, project.tracks, project.media, project.filters, project.pixelMaps, project.audioFx, project.cardNodes, project.style]);
-// 剪辑段引用的剪辑有才加(kernel/cutIdentity.mjs),没有剪辑段的项目签名一个字节不变
+// Added only when cuts referenced by cut segments exist (kernel/cutIdentity.mjs); project
+// signatures without cut segments remain unchanged by a single byte
 const signature = (project: Project) => {
   const cutRefs = reachableCutContents(project);
   return signatureFields(project) + (cutRefs.length ? JSON.stringify(cutRefs) : "");
@@ -35,11 +36,14 @@ function frameFetchError(error: any) {
   });
 }
 /**
- * 一次帧请求。**body 里不带项目**,只带 `{session, localRev, lane, ...extra}`(A7):
- * 服务端按这个键从本进程的镜像插件取项目(server/vite-plugin-mirror.ts)。发之前先对齐 ——
- * 号和已推上去的对不上就 flush 一次,不然服务端拿到的是上一版,拖一格看到的还是上一格。
+ * A single frame request. **Body does not carry the project**, only
+ * `{session, localRev, lane, ...extra}` (A7): the server retrieves the project by this key from
+ * this process's mirror plugin (server/vite-plugin-mirror.ts). Aligns before sending: if the
+ * revision number does not match what was pushed, flush once first, otherwise the server receives
+ * the previous version and scrubbing one step still displays the previous step.
  *
- * 不做镜像的页面(只读观看页 / 舞台页 / 导出页)拿不到键,退回迁移期那条路:body 里带项目。
+ * Pages that do not mirror (read-only viewing page / stage page / export page) cannot obtain a key
+ * and fall back to the migration-period path: carrying the project in the body.
  */
 export async function frameRequest(operation: string, project: Project, extra: Record<string, unknown> = {}, signal?: AbortSignal, options: FrameRequestOptions = {}, resynced = false): Promise<any> {
   let url = options.target === "prerender" ? await prerenderUrl(`/api/frames/${operation}`) : `/api/frames/${operation}`;
@@ -65,8 +69,10 @@ export async function frameRequest(operation: string, project: Project, extra: R
   let result: any;
   try { result = await res.json(); }
   catch (error) { throw frameFetchError(error); }
-  // 那一端的镜像里没有这个键(多半是预渲染刚重启、转发正好丢在那一下):整份重推一次再来过。
-  // 只补一次 —— 补完还取不到就是别的毛病,接着重试只会把 409 刷成一串。
+  // The mirror on the other end lacks this key (mostly because prerender just restarted and forwarding
+  // happened to drop at that exact moment): repush the full copy once and try again. Replenish only
+  // once: if still unobtainable after replenishing, something else is wrong, and continuing to retry
+  // will just flood a series of 409s.
   if (res.status === 409 && result?.code === "MIRROR_MISSING" && key && !resynced && !signal?.aborted) {
     await resyncDataMirror();
     return frameRequest(operation, project, extra, signal, options, true);
@@ -94,10 +100,11 @@ export async function see_frames(project: Project, times: number[], signal?: Abo
   // project can actually hit its saved B/C cache instead of starting A again.
   await restorePending;
   /*
-   * D5:缺省打**预渲染的源**(R7 之前是 `"user"`,也就是编辑器自己的源)。
-   * 编辑器进程现在是 `interactive: false`,`user` / `playback` 两条 lane 立即回
-   * `USE_PRERENDER` —— 缺省留在同源等于每一次都先撞一堵墙。`?preview=legacy`
-   * 的整帧 `<img>` 也走这里,所以它的 `see` 同样打预渲染源(D5 回滚开关那条)。
+   * D5: Defaults to hitting the **prerender origin** (before R7 it was `"user"`, namely the editor's
+   * own origin). The editor process is now `interactive: false`, and both `user` / `playback` lanes
+   * immediately return `USE_PRERENDER`: defaulting to staying same-origin means hitting a brick wall
+   * every time. Full-frame `<img>` in `?preview=legacy` also goes through here, so its `see` likewise
+   * hits the prerender origin (the D5 rollback switch path).
    */
   return frameRequest("see", project, { times }, signal, { target: options.target ?? "prerender", lane: options.lane ?? "user" });
 }

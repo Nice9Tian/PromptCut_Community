@@ -1,15 +1,16 @@
 /**
- * STT 烟测。
+ * STT smoke test.
  *
- * 分两段:
- *   A. 直接打 HTTP 接口(/api/stt/status、install、upload+transcribe、DELETE job),校验 SSE 事件流。
- *   B. 用 puppeteer 打开编辑台连上 MCP 桥,发 transcribe_media / get_transcript 工具调用,
- *      核对拿到的 segments 和 A 段一致。
+ * In two parts:
+ *   A. Directly hit HTTP endpoints (/api/stt/status, install, upload+transcribe, DELETE job),
+ *      verify SSE event stream.
+ *   B. Open editor with puppeteer and connect to MCP bridge, issue transcribe_media /
+ *      get_transcript tool calls, verify returned segments match part A.
  *
- * 用法:
- *   先起 dev server(内置 Python 未就绪时可以用假解释器):
+ * Usage:
+ *   Start dev server first (fake interpreter can be used when built-in Python is not ready):
  *     PROMPTCUT_PYTHON=server/test/fake-python.cmd npx vite --port 5202 --strictPort --host 127.0.0.1
- *   再跑:
+ *   Then run:
  *     node server/test/stt-smoke.mjs [--port 5202]
  */
 import puppeteer from "puppeteer";
@@ -32,7 +33,7 @@ function fail(msg) {
   throw new Error(msg);
 }
 
-/** 读一条 SSE 流,返回解析后的事件数组 */
+/** Read an SSE stream and return parsed array of events */
 async function readSse(res) {
   if (!res.body) fail("Response has no body");
   const events = [];
@@ -47,16 +48,17 @@ async function readSse(res) {
       if (!line) continue;
       const json = line.slice(5).trim();
       if (!json) continue;
-      try { events.push(JSON.parse(json)); } catch { /* 忽略 */ }
+      try { events.push(JSON.parse(json)); } catch { /* Ignore */ }
     }
   }
   return events;
 }
 
 /**
- * 测试用的素材字节。
- * 有 out/tts.mp4(真解释器的端到端素材)就用它;没有就退回几个占位字节 ——
- * 假解释器不看输入内容,占位字节足够跑通链路。
+ * Asset bytes for testing.
+ * Use out/tts.mp4 (end-to-end asset for real interpreter) if present; otherwise fall back to
+ * placeholder bytes: fake interpreter ignores input content, placeholder bytes are sufficient to
+ * exercise the pipeline.
  */
 async function sampleMediaBytes() {
   const real = path.join(ROOT, "out", "tts.mp4");
@@ -75,7 +77,7 @@ async function waitForServer() {
     try {
       const res = await fetch(`${BASE}/api/stt/status`);
       if (res.status !== 404) return res;
-    } catch { /* 还没起来 */ }
+    } catch { /* Not up yet */ }
     await wait(1000);
   }
   fail(`dev server is not up (${BASE}); start it first as described at the top of the file`);
@@ -95,7 +97,7 @@ async function partA() {
   console.log("status:", JSON.stringify(status));
   if (!status.engines) fail("status is missing the engines field");
 
-  // 2. install(SSE)—— 已经装好就跳过,免得真解释器下跑一次真 pip 安装
+  // 2. install(SSE): skip if already installed to avoid running real pip install under real interpreter
   if (status.engines["faster-whisper"]?.installed) {
     console.log("install: skipped (faster-whisper already installed)");
   } else {
@@ -161,7 +163,7 @@ async function callMcp(tool, args) {
 async function partB(expectedSegments) {
   console.log("\n===== B. MCP tools =====");
 
-  // 放一份素材到 public/,让页面能 fetch 到再包成 File
+  // Put a copy of asset into public/ so the page can fetch it and wrap into a File
   const publicDir = path.join(ROOT, "public");
   await fs.mkdir(publicDir, { recursive: true });
   const mediaName = "_stt-smoke.mp4";
@@ -173,19 +175,19 @@ async function partB(expectedSegments) {
     page.on("console", (m) => { if (m.type() === "error") console.log("  [page error]", m.text()); });
     await page.goto(`${BASE}/`, { waitUntil: "networkidle2" });
 
-    // 等编辑台连上 MCP 桥
+    // Wait for editor to connect to MCP bridge
     let connected = false;
     for (let i = 0; i < 20; i++) {
       try {
         const res = await fetch(`${BASE}/api/mcp/status`);
         if (res.ok && (await res.json()).editorConnected) { connected = true; break; }
-      } catch { /* 重试 */ }
+      } catch { /* Retry */ }
       await wait(1000);
     }
     if (!connected) fail("The editor is not connected to the MCP bridge");
     console.log("The editor is connected to the MCP bridge");
 
-    // 导入素材,拿 mediaId
+    // Import media, get mediaId
     const mediaId = await page.evaluate(async (name) => {
       const blob = await fetch("/" + name).then((r) => r.blob());
       const file = new File([blob], name, { type: "video/mp4" });
@@ -199,7 +201,7 @@ async function partB(expectedSegments) {
     const st = await callMcp("stt_status", {});
     console.log("stt_status:", JSON.stringify(st));
 
-    // transcribe_media —— 立即返回 jobId,结果靠 get_transcript 轮询
+    // transcribe_media: returns jobId immediately, result polled via get_transcript
     const started = await callMcp("transcribe_media", { mediaId, engine: "faster-whisper", model: "small", language: "zh" });
     console.log("transcribe_media:", JSON.stringify(started));
     if (!started.jobId) fail("transcribe_media did not return a jobId");
@@ -215,7 +217,7 @@ async function partB(expectedSegments) {
     console.log(`get_transcript: engine=${transcript.engine} model=${transcript.model} language=${transcript.language} total=${transcript.total}`);
     for (const s of transcript.segments) console.log(`  [${s.start}-${s.end}] ${s.text}`);
 
-    // 和 A 段结果比对
+    // Compare with part A results
     if (transcript.segments.length !== expectedSegments.length) {
       fail(`Segment count mismatch: HTTP got ${expectedSegments.length}, MCP got ${transcript.segments.length}`);
     }
@@ -226,7 +228,7 @@ async function partB(expectedSegments) {
     }
     console.log("A / B results match");
 
-    // store 里也确认一遍
+    // Confirm once in store as well
     const inStore = await page.evaluate((id) => {
       const el = document.querySelector("[data-pc-media]");
       return { hasMediaEl: !!el, mediaId: id };
@@ -234,7 +236,7 @@ async function partB(expectedSegments) {
     console.log("Page asset entry exists:", inStore.hasMediaEl);
   } finally {
     await browser.close();
-    // 清掉临时素材,别留在 public/ 里
+    // Clean up temporary asset, do not leave in public/
     await fs.rm(path.join(publicDir, mediaName), { force: true });
   }
 }

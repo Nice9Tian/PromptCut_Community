@@ -1,7 +1,9 @@
 /**
- * C6.6 第 4 节:页面这一侧的轮询(每 2 秒问当前素材服务的 `chunks`)、共享项目的素材服务、导出前的拦截。
- * 跑:node --test src/editor/media/assetTiers.test.mjs
- * `fetch` 换成假的:按地址回 `chunks`,记下问了哪些、带没带票据。
+ * C6.6 section 4: polling on the page side (queries current asset service `chunks` every 2 seconds),
+ * asset service for shared projects, interception before export.
+ * Run: node --test src/editor/media/assetTiers.test.mjs
+ * `fetch` is replaced with a fake: returns `chunks` by address, records which were queried and
+ * whether tickets were attached.
  */
 import "../../testing/registerTs.mjs";
 import test from "node:test";
@@ -53,7 +55,7 @@ test("T5-poll-3: when connected to a remote asset service, ask the remote one an
   assert.deepEqual(T.tierHashes(), [TIERS_KNOWN_LOCAL]);
   T.setRemoteAssets({ base: "http://nas:5460/api/asset/", ticket: async () => "tkt-r" });
   assert.deepEqual(T.tierHashes(), [], "Asset service changed: back to \"not asked yet\"");
-  await new Promise((r) => setTimeout(r, 10)); // 推给编辑器进程的那一下
+  await new Promise((r) => setTimeout(r, 10)); // The moment it is pushed to the editor process
   const pushed = calls.find((c) => c.url === "/api/media/remote" && c.method === "POST");
   assert.ok(pushed, "Tells the local editor process (on-demand fetch and prefetch)");
   assert.deepEqual(JSON.parse(pushed.body), { base: "http://nas:5460/api/asset", ticket: "tkt-r" });
@@ -61,7 +63,7 @@ test("T5-poll-3: when connected to a remote asset service, ask the remote one an
   await T.pollOnce(project);
   assert.ok(calls.length && calls.every((c) => c.url.startsWith("http://nas:5460/api/asset/media/") && c.auth === "Bearer tkt-r"));
   assert.deepEqual(T.tierHashes(), [TIERS_KNOWN_REMOTE, h("1"), h("2")]);
-  // 到齐的不再问
+  // Those that have fully arrived are no longer queried
   calls.length = 0;
   await T.pollOnce(project);
   assert.deepEqual(calls.map((c) => c.url.split("/media/")[1]), [`${h("3")}/chunks`]);

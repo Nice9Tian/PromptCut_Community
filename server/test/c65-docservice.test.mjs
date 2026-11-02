@@ -1,8 +1,11 @@
 /**
- * C6.5 文档服务的项目真身（设计稿 `docs/plan/c65-design.md` 第 3 节；验收 V3、V4 的服务端部分）。
- * 跑：node --test server/test/c65-docservice.test.mjs
+ * C6.5 document service real project implementation (design doc `docs/plan/c65-design.md`
+ * Section 3; server-side portion of acceptance checks V3, V4).
+ * Run: node --test server/test/c65-docservice.test.mjs
  *
- * 只照设计稿写，不看实现。服务用 `createDocService` 独立模式 + 项目模块（假设 A3），消息字段见假设 A4～A6。
+ * Written strictly to the design doc, without looking at the implementation. The service uses
+ * `createDocService` standalone mode + project module (Assumption A3); for message fields,
+ * see Assumptions A4~A6.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,7 +20,10 @@ const PID = 'c65-proj';
 const quietOps = (c, ms = 150) => c.quiet(byType('project.ops'), ms);
 const quietOverwritten = (c, ms = 150) => c.quiet(byType('project.overwritten'), ms);
 
-/** 种子（根替换）在一小时前写入，免得种子的写入身份在 10 分钟窗口里、干扰覆盖通知的断言 */
+/**
+ * Seed (root replacement) written one hour ago, so that the seed's write identity is not within
+ * the 10-minute window and does not interfere with overwrite notification assertions
+ */
 async function withSeed(t, opts = {}) {
   const env = await startProjectService(opts);
   t.after(env.cleanup);
@@ -28,7 +34,7 @@ async function withSeed(t, opts = {}) {
   return { env, rev };
 }
 
-// ------------------------------------------------------------------ 打开与提交
+// ------------------------------------------------------------------ Open and submit
 
 test('C65-V3-01 project.open returns project.state { projectId, rev, project, writers }; after a root replacement seed, rev is 1 and project is identical item by item', async (t) => {
   const env = await startProjectService();
@@ -69,7 +75,7 @@ test('C65-V3-03 broadcast project.ops { rev, opId, ops, actor, undoOf }: sent to
   const a = await env.connect({ user: 'alice', dev: 'd-a' });
   const b = await env.connect({ user: 'bob', dev: 'd-b' });
   const c = await env.connect({ user: 'carol', dev: 'd-c' });
-  const idle = await env.connect({ user: 'dave', dev: 'd-d' }); // 没打开项目
+  const idle = await env.connect({ user: 'dave', dev: 'd-d' }); // Project not opened
   for (const x of [a, b, c]) await openProject(x, PID);
 
   const ops = [{ op: 'set', path: '/tracks/@t1/clips/@c2/frame/x', value: 7 }, { op: 'remove', path: '/tracks/@t1/clips/@c4' }];
@@ -90,7 +96,7 @@ test('C65-V3-03 broadcast project.ops { rev, opId, ops, actor, undoOf }: sent to
   assert.deepEqual(await quietOps(a), [], 'the committer knows it landed from ok and no longer receives project.ops');
   assert.deepEqual(await quietOps(idle, 0), [], 'a connection that has not opened the project receives nothing');
 
-  // undoOf 原样广播
+  // undoOf broadcast as is
   const r2 = await submit(b, { projectId: PID, ops: [{ op: 'set', path: '/tracks/@t1/clips/@c2/frame/x', value: 20 }], session: 's-b', undoOf: opId });
   assert.ok(isOk(r2));
   const m2 = await a.next(byType('project.ops'));
@@ -116,7 +122,7 @@ test('C65-V3-05 an Agent carries expectRev: a mismatch returns stale, and since 
   const page = await env.connect({ user: 'bob', dev: 'd-b', role: 'page' });
   const watch = await env.connect({ user: 'carol', dev: 'd-c' });
   for (const x of [agent, page, watch]) await openProject(x, PID);
-  const read = rev; // Agent 读到的版本
+  const read = rev; // Version read by Agent
 
   const p1 = [{ op: 'set', path: '/tracks/@t1/clips/@c1/frame/x', value: 11 }, { op: 'set', path: '/fps', value: 25 }];
   const p2 = [{ op: 'remove', path: '/tracks/@t1/clips/@c3' }];
@@ -138,13 +144,13 @@ test('C65-V3-05 an Agent carries expectRev: a mismatch returns stale, and since 
   const after = await serverState(env, PID);
   assert.deepEqual(after, before, 'state and version are unchanged after a rejection');
 
-  // 重读后再写
+  // Re-read then write
   const ok = await submit(agent, { projectId: PID, ops: [{ op: 'set', path: '/tracks/@t1/clips/@c1/frame/x', value: 999 }], expectRev: rej.currentRev, session: 'conv-1' });
   assert.ok(isOk(ok), JSON.stringify(ok));
   assert.equal(ok.rev, rev + 3);
   assert.equal(clipOf((await serverState(env, PID)).project, 'c1').frame.x, 999);
 
-  // expectRev 恰好等于当前版本：接受；只差一版的 since 只有一条
+  // expectRev equals current version exactly: accepted; since differing by only one version has only one entry
   assert.ok(isOk(await submit(page, { projectId: PID, ops: [{ op: 'set', path: '/name', value: 'n' }], session: 'page-b' })));
   const rej2 = await submit(agent, { projectId: PID, ops: [{ op: 'set', path: '/name', value: 'm' }], expectRev: rev + 3, session: 'conv-1' });
   assert.equal(rej2.reason, 'stale');
@@ -172,7 +178,7 @@ test('C65-V1-30 the server applies a whole batch atomically: one bad-path reject
   assert.equal(r.currentRev, rev);
   assert.deepEqual(await quietOps(w), []);
   assert.deepEqual(await serverState(env, PID), before);
-  // 之后的提交照常从 rev + 1 起
+  // Subsequent submissions start from rev + 1 as usual
   const ok = await submit(a, { projectId: PID, ops: [{ op: 'set', path: '/name', value: 'x' }], session: 's-a' });
   assert.equal(ok.rev, rev + 1);
 });
@@ -191,7 +197,7 @@ test('C65-V3-06 too-large: a single commit over 256 KiB is rejected and rev is u
   assert.equal(ok.rev, rev + 1);
 });
 
-// ------------------------------------------------------------------ 覆盖通知
+// ------------------------------------------------------------------ Overwrite notifications
 
 const C1 = '/tracks/@t1/clips/@c1';
 const setX = (clip, x) => [{ op: 'set', path: `/tracks/@t1/clips/@${clip}/frame/x`, value: x }];
@@ -242,7 +248,7 @@ test('C65-V4-03 writer identity: the same identity gets no notification; the sam
   const again = await submit(a, { projectId: PID, ops: setX('c1', 2), session: 's-a' });
   assert.ok(!again.overwrote || again.overwrote.length === 0, 'overwriting yourself sends no notification');
 
-  const a2 = await env.connect({ user: 'alice', dev: 'd-a' }); // 同用户同设备，另一个页面
+  const a2 = await env.connect({ user: 'alice', dev: 'd-a' }); // Same user and same device, another page
   await openProject(a2, PID);
   const other = await submit(a2, { projectId: PID, ops: setX('c1', 3), session: 's-a2' });
   assert.equal(other.overwrote?.length, 1, `another page session counts as another writer identity: ${JSON.stringify(other)}`);
@@ -250,8 +256,10 @@ test('C65-V4-03 writer identity: the same identity gets no notification; the sam
   assert.ok(byIs(n.by, { user: 'alice', session: 's-a2' }));
 });
 
-// 集成对账（B 类，2026-09-26 裁定改了实体粒度）：原断言「width / fps 同归 /meta」改为「顶层字段各算一个实体
-// /meta/<键>」——别人改了 fps 不该让我撤不回自己改的 name。见 c65-design.md 第 13 节。
+// Integration reconciliation (Category B, 2026-09-26 ruling changed entity granularity): original
+// assertion "width / fps both belong to /meta" changed to "top-level fields each count as an
+// entity /meta/<key>": someone else modifying fps shouldn't prevent me from undoing my own change
+// to name. See c65-design.md Section 13.
 test('C65-V4-04 top-level entities: different clips are independent; width / fps each count as one entity (/meta/width, /meta/fps)', async (t) => {
   const { a, b } = await twoWriters(t);
   assert.ok(isOk(await submit(a, { projectId: PID, ops: setX('c1', 1), session: 's-a' })));
@@ -282,7 +290,7 @@ test('C65-V4-05 a root replacement is also an ordinary write: it still records a
   assert.equal(n.rev, okB.rev);
 });
 
-// ------------------------------------------------------------------ 重启回放
+// ------------------------------------------------------------------ Restart replay
 
 test('C65-V3-07 file storage: after 230 commits and a restart, it reads the snapshot and then replays the log, rev and content match; the log is truncated at the snapshot', async (t) => {
   const dir = tempDir(t);

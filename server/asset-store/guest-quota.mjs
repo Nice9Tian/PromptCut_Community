@@ -1,43 +1,67 @@
 /**
- * 游客素材限额在素材服务上的接线（2026-10-23 用户定；缺省限额与判断函数内置于本模块，可通过 `registerGuestQuotaPolicy` 覆盖）。
+ * Wiring of guest asset quota on asset service (user decision, 2026-10-23; default limits and
+ * predicate are built into this module, overridable via `registerGuestQuotaPolicy`).
  *
- * 用户的口径：「每一条源文件不能大于100M。总视频素材不能大于三条。」所以分两条管游客往 `media` 写的东西：
- * - **尺寸**：传上来的每一个文件（视频、图片、音频、小档）都不超过 `GUEST_LIMITS.assetBytes`；
- * - **条数**：一个项目里最多 `GUEST_LIMITS.videos` 条**不同的视频源**。图片、音频不计数。
- * 账号、本机回环来源、托管方服务一律不经这里。`snap`、`px` 是预渲染产物，不是用户传的素材，也不经这里。
+ * The user's specification: "No source file may exceed 100M. Total video assets cannot exceed three."
+ * Thus guest writes to `media` are governed on two dimensions:
+ * - **Size**: every uploaded file (video, image, audio, small tier) must not exceed
+ *   `GUEST_LIMITS.assetBytes`;
+ * - **Count**: at most `GUEST_LIMITS.videos` **distinct video sources** per project. Images and audio
+ *   do not count.
+ * Accounts, local loopback sources, and host services never go through here. `snap` and `px` are
+ * prerender outputs, not user-uploaded assets, so they do not go through here either.
  *
- * **不信页面说的**（2026-10-23 claude/guest-fix〔裁〕，审查 REVIEW-guest-identity 的 A1、A2：原先按页面报的扩展名和
- * 档位数，游客把视频报成 `jpg`、或者把每一片都标成 `X-Media-Tier: small`，5 条 mp4 全收）：
- * - **是不是视频，按文件头字节认**（`media-sniff.mjs`）。页面报的扩展名是视频的照样算；报的不是视频的，看文件头：
- *   认出是视频、或者认不出（又不是文本）的，都算一条视频。已入库的每个文件都这样认（按哈希记住结论，内容不会变）。
- * - **几条视频源，按「原尺寸档几个、小档几个，取多的那个」数**。在线编辑器传一个视频会传两个文件（小档预览和
- *   原尺寸，`src/online/mediaUploadQueue.ts`），一条视频源对应一个原件、至多一个小档，所以正常用法下这个数就是视频条数。
- *   档位仍是页面说的，但怎么报都绕不过去：全报小档，小档就有那么多个，照样数到；只有「3 个报原件、3 个报小档」
- *   能多放进 3 个文件——最坏 6 个、每个不超过 100 MB，有上限（原先是没有上限）。
+ * **Never trust what the page reports** (claude/guest-fix [ruling 2026-10-23], review A1 and A2 of
+ * REVIEW-guest-identity: originally counted by extension and tier reported by page; a guest could
+ * report videos as `jpg` or mark every chunk as `X-Media-Tier: small`, accepting all 5 mp4 files):
+ * - **Whether it is a video is identified by header bytes** (`media-sniff.mjs`). If the extension
+ *   reported by the page is a video, it is counted as such; if reported as non-video, inspect header:
+ *   if identified as video, or unrecognized (and not text), it counts as a video. Every stored file is
+ *   identified this way (conclusions cached by hash, as content does not change).
+ * - **Number of video sources is counted as the greater of original-size tier count and small-tier
+ *   count**. The online editor uploads two files per video (small-tier preview and original size,
+ *   `src/online/mediaUploadQueue.ts`); one video source corresponds to one original and at most one
+ *   small tier, so under normal usage this count equals the number of videos. Tiers are still reported
+ *   by the page, but cannot be bypassed: if all reported as small tier, small tier has that many items
+ *   and is counted anyway; only "3 reported as original, 3 reported as small tier" can fit 3 extra
+ *   files: at most 6 files, each under 100 MB, with a hard cap (previously uncapped).
  *
- * **几处闸门**：
- * - 开一个**新的**暂存（这个哈希既没入库、也没在收）、页面报的扩展名是视频时：数「已入库的（按文件头）+ 正在收的
- *   （按登记的扩展名和档位）+ 这一条」，超了当场拒，暂存不开。这是给老实的页面早点说「不行」；
- * - **收尾**是真正的闸门：先按登记的扩展名和档位数一遍（够了就不收尾，暂存留着，删掉一条之后再收尾就能进去）；
- *   放行后数据层入库，再按这一条**自己的文件头**连同已入库的重数一遍，超了就把刚入库的这一条删掉、回 403；
- * - **整件上传**（`POST /api/media/upload/<名>`）：调用方先从请求体里读出开头那几十个字节交来（`head`），按它认；
- * - 游客不能用 `POST /api/media/adopt`（给素材收集补算内容键，游客用不到；它能把还没收尾的暂存挂进库，审查 S3），
- *   在 `asset-service.ts` 的 `gateWholeMediaWrite` 里拒。
+ * **Gates**:
+ * - Opening a **new** staging directory (this hash is neither stored nor being received) when the
+ *   extension reported by the page is a video: count "already stored (by file header) + currently
+ *   receiving (by registered extension and tier) + this item"; if exceeded, reject immediately without
+ *   opening staging. This tells well-behaved pages "no" early;
+ * - **Finalization** is the real gate: first count once by registered extension and tier (if full, do
+ *   not finalize; staging is kept, and finalizing after deleting one will succeed); after admission,
+ *   the data layer stores it, then recounts by **this item's own file header** along with stored files;
+ *   if exceeded, delete the newly stored item and return 403;
+ * - **Whole-file upload** (`POST /api/media/upload/<name>`): caller first reads the first few dozen
+ *   bytes from request body and passes them (`head`) for identification;
+ * - Guests cannot use `POST /api/media/adopt` (calculates content keys for media collection, not needed
+ *   by guests; it can attach unfinalized staging into storage, review S3); rejected in
+ *   `gateWholeMediaWrite` of `asset-service.ts`.
  *
- * **「已经存了几条」怎么数**：问数据层的 `inventory()`（`BlobStore` 接口，fs、memory 两种实现都有），当场数，不另记账。
- * 档位由数据层跟着哈希一起存（`blob-store.mjs`「档位」），删掉一条，下一次数自然跟着变。三天清理把项目整个
- * 从素材服务上删掉（`project-stores.mjs` 的 `removeProject`，由 `server/hosted/asset-runtime.mjs` 收到删除事件时调），
- * 清掉的项目号不再发给别人（`server/account/authority.mjs` 的 `createProject`），所以不会有人接着用上一个人的名额或字节。
- * 不用 `service-usage.mjs` 那本账：它只记托管方渲染服务的产物，而且是另一份要和数据层对齐的状态。
+ * **How "how many are already stored" is counted**: query the data layer's `inventory()` (`BlobStore`
+ * interface, implemented in both fs and memory) and count on the spot without separate bookkeeping.
+ * Tiers are stored by data layer alongside hashes ("Tiers" in `blob-store.mjs`); deleting one naturally
+ * updates subsequent counts. Three-day cleanup deletes the entire project from asset service
+ * (`removeProject` in `project-stores.mjs`, called by `server/hosted/asset-runtime.mjs` upon receiving
+ * deletion events); cleared project ids are never reissued to others (`createProject` in
+ * `server/account/authority.mjs`), so no one inherits a previous user's quota or bytes. Does not use
+ * `service-usage.mjs` bookkeeping: that only tracks host render service outputs and represents another
+ * state to reconcile with the data layer.
  *
- * 云端托管下每个项目一个独立的数据层（`project-stores.mjs`），游客自己只能建一个项目、进别人的项目只读、
- * 写不进去，所以「这个项目的 `media` 有几条视频」就是「这个游客传了几条」。
+ * Under cloud hosting, each project has an independent data layer (`project-stores.mjs`); guests can
+ * only create one project of their own, enter others' projects as read-only, and cannot write, so "how
+ * many videos in this project's `media`" equals "how many this guest uploaded".
  *
- * **并发**：数和写之间有空档，两路同时开新暂存、或者同时收尾，都可能各自看到「还差一条」而一起放进去。
- * 所以游客的「数 + 开新暂存的第一片」「数 + 收尾」「数 + 整件上传」在同一个项目里排队做（`serialize`），
- * 账号的写入不排这个队。
+ * **Concurrency**: there is a gap between counting and writing; two concurrent paths opening new staging
+ * or finalizing simultaneously might both see "one remaining slot" and let both through. Therefore, a
+ * guest's "count + first chunk of new staging", "count + finalize", and "count + whole-file upload" are
+ * queued per project (`serialize`); account writes do not queue here.
  *
- * 只引 Node 内置模块与同目录的小模块，不引 `server/account/` 或 `cloud/`。
+ * Only imports Node built-in modules and small modules in the same directory; does not import
+ * `server/account/` or `cloud/`.
  */
 
 import { normalizeTier } from './blob-store.mjs';
@@ -82,15 +106,15 @@ export function checkGuestAsset(args) {
   return customGuestQuotaPolicy ? customGuestQuotaPolicy(args) : defaultCheckGuestAsset(args);
 }
 
-/** 这次写入要不要按游客限额管：只管游客往 `media` 写 */
+/** Whether this write is subject to guest quota: only governs guest writes to `media` */
 export const guestQuotaApplies = (accountId, ns) => ns === 'media' && isGuestId(accountId);
 
 const DENY = code => ({ ok: false, status: 403, error: code });
 
-/** 按哈希记住的「这个文件按文件头算不算视频」最多记多少条；满了整张清掉重来（内容寻址，重认一遍结果一样） */
+/** Maximum entries cached by hash for "whether this file counts as video by header"; clears entirely when full (content-addressed, re-evaluating gives identical results) */
 const SNIFF_CACHE_MAX = 20_000;
 
-/** 读一个已入库文件的开头。读不出（没入库、实现不给读）回 null */
+/** Reads the start of a stored file. Returns null if unreadable (not stored, implementation refuses read) */
 async function headOf(store, hash) {
   let stream;
   try { stream = await store.read(hash, { start: 0, end: SNIFF_BYTES - 1 }); } catch { return null; }
@@ -104,12 +128,12 @@ async function headOf(store, hash) {
       if (got >= SNIFF_BYTES) break;
     }
   } catch { return parts.length ? Buffer.concat(parts) : null; }
-  finally { try { stream.destroy?.(); } catch { /* 不影响 */ } }
+  finally { try { stream.destroy?.(); } catch { /* No effect */ } }
   return Buffer.concat(parts).subarray(0, SNIFF_BYTES);
 }
 
 /**
- * 一组文件里有几条视频源：原件几个、小档几个，取多的那个。
+ * Number of video sources in a group of files: count originals and small tiers, take the greater.
  * @param {Array<{ video: boolean, tier: string }>} entries
  */
 export function videoSourcesOf(entries) {
@@ -122,25 +146,27 @@ export function videoSourcesOf(entries) {
 }
 
 /**
- * 一个素材服务中间件一份：里面有按项目排队用的锁，和按哈希记住的文件头结论。
- * `key` 是「同一个数据层」的标识：托管下是项目编号，本机是那个数据层对象本身。
+ * One instance per asset service middleware: contains per-project queuing locks and header
+ * conclusions cached by hash. `key` identifies "the same data layer": project id in hosted mode,
+ * or the data layer object itself locally.
  *
  * @param {{ isVideoExt: (ext: string) => boolean }} options
- *   `isVideoExt`：这个扩展名（不含点、小写）是不是视频。必须给：缺了就等于「页面报的一样都不算视频」
+ *   `isVideoExt`: whether this extension (lowercase, without leading dot) is a video. Must be
+ *   provided: omitting it equates to "none of what the page reports counts as video"
  */
 export function createGuestAssetQuota({ isVideoExt } = /** @type {any} */ ({})) {
   if (typeof isVideoExt !== 'function') throw new TypeError('createGuestAssetQuota: isVideoExt is required');
   const claimedVideo = ext => !!isVideoExt(String(ext || '').toLowerCase().replace(/^\./, ''));
 
-  /** @type {Map<string, boolean>} 哈希 → 按文件头算不算视频（不含「页面报的扩展名」那一半） */
+  /** @type {Map<string, boolean>} Hash → whether it counts as video by header (excluding the "extension reported by page" half) */
   const sniffed = new Map();
-  /** 已入库的这一个文件算不算视频：报的扩展名是视频就算，否则按文件头 */
+  /** Whether this stored file counts as video: counts if reported extension is video, otherwise by header */
   async function storedIsVideo(store, entry) {
     if (claimedVideo(entry.ext)) return true;
     const hash = String(entry.hash).toLowerCase();
     if (sniffed.has(hash)) return sniffed.get(hash);
     const head = await headOf(store, hash);
-    // 读不出开头：按算数办（失败闭合），也不记住，下次再读
+    // Cannot read start: count it (fail-closed), do not cache, read again next time
     if (head === null) return true;
     const verdict = countsAsVideoFile(head, false);
     if (sniffed.size >= SNIFF_CACHE_MAX) sniffed.clear();
@@ -158,7 +184,7 @@ export function createGuestAssetQuota({ isVideoExt } = /** @type {any} */ ({})) 
     void tail.then(() => { if (tails.get(key) === tail) tails.delete(key); });
     return run;
   }
-  /** 占住这个数据层的游客队，回放锁函数。占到的时候，之前排队的都做完了 */
+  /** Acquires the guest queue for this data layer, returns unlock function. When acquired, all previously queued tasks have completed */
   function acquire(key) {
     return new Promise(resolveAcquired => {
       void serialize(key, () => new Promise(release => resolveAcquired(release)));
@@ -166,8 +192,10 @@ export function createGuestAssetQuota({ isVideoExt } = /** @type {any} */ ({})) 
   }
 
   /**
-   * 数据层里现有的文件，各标上算不算视频。已入库的按文件头（`except` 那个哈希除外：它是正在判的这一条）；
-   * `withStaging` 时连正在收的一起，正在收的还没有完整的字节，按登记的扩展名。
+   * Labels existing files in data layer with whether each counts as video. Stored files are checked
+   * by header (except for the `except` hash: that is the item currently being evaluated); when
+   * `withStaging` is true, includes currently receiving files: without full bytes yet, they are
+   * evaluated by registered extension.
    */
   async function entriesOf(store, { withStaging, except = null }) {
     const inv = await store.inventory();
@@ -182,7 +210,7 @@ export function createGuestAssetQuota({ isVideoExt } = /** @type {any} */ ({})) 
     }
     return out;
   }
-  /** 再加上 `tier` 档的这一条视频之后有几条视频源；`checkGuestAsset` 要的是「加上之前有几条」，所以减一交过去 */
+  /** Number of video sources after adding this video of tier `tier`; `checkGuestAsset` expects "number of sources before adding", so subtract one before passing */
   const verdictFor = ({ accountId, bytes, entries, tier }) => {
     const after = videoSourcesOf([...entries, { video: true, tier }]);
     return checkGuestAsset({ accountId, bytes, countsAsVideo: true, storedVideos: after - 1 });
@@ -192,13 +220,16 @@ export function createGuestAssetQuota({ isVideoExt } = /** @type {any} */ ({})) 
     acquire,
 
     /**
-     * `PUT media/<hash>/<n>`：先看尺寸（`X-Media-Size`，每一片都带，不管什么类型），再看是不是要开一个
-     * 新的、报成视频的暂存。已入库（去重，数据层回 complete）或这个哈希已经在收（续传、乱序的后几片）都不算
-     * 新的一条；报成图片、音频的这里不数（收尾时按文件头再认）。要数时在队里数完再写这一片，写完才放队。
+     * `PUT media/<hash>/<n>`: first check size (`X-Media-Size`, carried by every chunk regardless of
+     * type), then check whether to open a new staged upload reported as video. Neither already stored
+     * (deduplicated, data layer returns complete) nor this hash already being received (resumed upload,
+     * subsequent out-of-order chunks) counts as a new item; those reported as image or audio are not
+     * counted here (re-identified by file header during finalize). When counting is needed, count in
+     * the queue before writing this chunk, and only release the queue after writing is done.
      *
      * @param {{ accountId?: string, ns: string, size: number, hash: string, ext?: string, tier?: string, store: any, key: unknown }} who
-     *   `ext`、`tier` 是这一片的 `X-Media-Ext`、`X-Media-Tier`
-     * @param {() => Promise<void>} put 真正写这一片（回包也在里面）
+     *   `ext` and `tier` are `X-Media-Ext` and `X-Media-Tier` of this chunk
+     * @param {() => Promise<void>} put Actually writes this chunk (response is also inside)
      * @param {(denied: { status: number, error: string }) => void} deny
      */
     async putChunk({ accountId, ns, size, hash, ext, tier, store, key }, put, deny) {
@@ -220,12 +251,17 @@ export function createGuestAssetQuota({ isVideoExt } = /** @type {any} */ ({})) 
     },
 
     /**
-     * `POST media/<hash>/complete`。两道：
-     * 1. 收尾前按数据层登记的扩展名和档位数（不按收尾请求说的，收尾请求不带这两样）：报成视频的、加上已入库的
-     *    超了就不收尾，暂存留着。暂存里找不到这一条的登记（刚好被别处删了之类）按视频办；
-     * 2. 入库后按这一条**自己的文件头**再认一遍（`gate`，由调用方在数据层收尾成功、回包之前调）：是视频、连同已入库的
-     *    超了，回 `{ ok: false }`，调用方把刚入库的这一条删掉、回 403。
-     * 已入库的再收尾一次照旧放行。
+     * `POST media/<hash>/complete`. Two stages:
+     * 1. Before finalize, count by extension and tier registered in the data layer (not what the
+     *    finalize request says, as the finalize request does not include these two): if those reported
+     *    as video plus already stored ones exceed the limit, do not finalize and keep the staged
+     *    upload. If no registration for this item is found in staging (e.g. just deleted elsewhere),
+     *    treat it as video;
+     * 2. After storing, re-identify once more by **its own file header** (`gate`, called by the caller
+     *    after data-layer finalize succeeds and before the response): if it is a video and together
+     *    with already stored ones exceeds the limit, return `{ ok: false }`, and the caller deletes
+     *    this newly stored item and returns 403.
+     * Finalizing an already stored item again is permitted as usual.
      *
      * @param {{ accountId?: string, ns: string, hash: string, store: any, key: unknown }} who
      * @param {(gate: (() => Promise<{ ok: true } | { ok: false, status: number, error: string }>) | null) => Promise<void>} complete
@@ -259,12 +295,17 @@ export function createGuestAssetQuota({ isVideoExt } = /** @type {any} */ ({})) 
     },
 
     /**
-     * 整件上传（`POST /api/media/upload/<名>`，托管下也挂着）：扩展名从文件名拿，档位没有（整件上传只有原件），
-     * 报的扩展名是视频的就算；不是的，调 `peek` 从请求体里读出开头那几十个字节，按文件头认（`peek` 在尺寸过了之后才调，
- * 报超了尺寸的请求一个字节都不读就拒）。内容哈希要读完才知道，
-     * 算数的只能按「再多一条」算，已存满就拒（哪怕传的是一份已有的）；不算数的只查尺寸。
-     * 尺寸看 `Content-Length`（Node 不会多收），整件上传没带它的游客请求回 411。
-     * 放行时回放锁函数，调用方占到回完包再放；拒了回 `{ status, error }`。
+     * Whole file upload (`POST /api/media/upload/<name>`, also mounted under hosted): extension is
+     * taken from file name, no tier (whole file upload only has originals); if the reported extension
+     * is video, it counts; if not, call `peek` to read the first few dozen bytes from the request
+     * body and identify by file header (`peek` is called only after size passes; requests reporting
+     * oversized dimensions are rejected without reading a single byte). Content hash is only known
+     * after reading is complete, so those that count can only be counted as "one more item", rejecting
+     * if already full (even if uploading an existing copy); those that do not count only check size.
+     * Size is determined by `Content-Length` (Node will not accept more); guest whole file upload
+     * requests without it return 411.
+     * When permitted, returns a release-lock function, which the caller holds until after the response;
+     * when rejected, returns `{ status, error }`.
      *
      * @param {{ accountId?: string, bytes: number | null, ext?: string, peek?: () => Promise<Buffer>, store: any, key: unknown, needsLength: boolean }} who
      * @returns {Promise<{ ok: true, release: () => void } | { ok: false, status: number, error: string }>}

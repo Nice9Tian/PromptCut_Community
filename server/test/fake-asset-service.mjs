@@ -1,24 +1,31 @@
 /**
- * 仅供测试，生产代码不得引用。
+ * For testing only, must not be referenced by production code.
  *
- * 起一台真 HTTP 的素材服务（端口 0），三个命名空间 `media` / `snap` / `px` 都注入 memory 实现
- * （契约 `docs/plan/artifact-transfer-contract.md` 第 1 节）。C6.2 的三个测试文件共用：
- * `asset-namespaces.test.mjs`、`asset-client.test.mjs`、`artifact-transfer.test.mjs`。
+ * Starts a real HTTP asset service (port 0), injecting memory implementations for all three
+ * namespaces `media` / `snap` / `px` (Section 1 of contract `docs/plan/artifact-transfer-contract.md`).
+ * Shared by three C6.2 test files: `asset-namespaces.test.mjs`, `asset-client.test.mjs`, and
+ * `artifact-transfer.test.mjs`.
  *
- * `server/asset-service.ts` 照 `asset-store-http.test.mjs` 的办法用 typescript 转译到临时目录再 import：
- * 源码里相对路径的 import（静态与动态）全部改成绝对地址，`.ts` 递归转译，`.mjs` / `.js` 直接指向仓库里的文件。
+ * `server/asset-service.ts` is transpiled to a temporary directory with typescript and then
+ * imported following the approach in `asset-store-http.test.mjs`: relative imports in source code
+ * (static and dynamic) are all converted to absolute URLs, `.ts` is transpiled recursively, and
+ * `.mjs` / `.js` point directly to files in the repository.
  *
- *   const harness = createAssetHarness();          // 各测试文件自己 after(() => harness.cleanup())
- *   const asset = await harness.asset();            // 转译后的 asset-service 模块
+ *   const harness = createAssetHarness();          // each test handles after(() => harness.cleanup())
+ *   const asset = await harness.asset();            // transpiled asset-service module
  *   const srv = await harness.serve({ chunkSize, tickets, isTrusted, stores, legacyStore });
  *   // srv = { origin, base, root, stores: { media, snap, px }, close() }
  *
- * `serve` 的选项：
- *   - `chunkSize`：三个 memory 实现的分片大小，缺省 8 MiB；
- *   - `stores`：自己给的三个数据层（给了就不新建）；`'default'` = 一个都不传，走中间件的缺省（fs 实现）；
- *   - `tickets` / `isTrusted`：原样传给 `assetServiceMiddleware`（不给就不传，走中间件的缺省）。M6a 起素材服务凭票据读写，
- *     集群令牌退役：`token` 仍原样传过去（中间件不认它），只为测「给了也没用」；
- *   - `legacyStore: true`：只按旧写法传 `opts.store`（= media），不传 `opts.stores`（S3 用）。
+ * Options for `serve`:
+ *   - `chunkSize`: chunk size for the three memory implementations, default 8 MiB;
+ *   - `stores`: custom provided three data layers (not recreated if provided);
+ *     `'default'` = pass nothing, falling back to middleware default (fs implementation);
+ *   - `tickets` / `isTrusted`: passed as is to `assetServiceMiddleware` (not passed if not provided,
+ *     falling back to middleware default). Starting in M6a, asset service reads and writes with
+ *     tickets, and cluster tokens are retired: `token` is still passed as is (middleware ignores
+ *     it), solely to test that "providing it has no effect";
+ *   - `legacyStore: true`: pass only `opts.store` (= media) using legacy syntax, without
+ *     passing `opts.stores` (used by S3).
  */
 import fs from 'node:fs';
 import os from 'node:os';

@@ -1,34 +1,36 @@
 /**
- * 卡片源码里一个导入接到哪里(`docs/plan/online-card-exec-contract.md` 第 2 节)。纯函数,不读文件。
+ * Where an import in card source code resolves (`docs/plan/online-card-exec-contract.md` Section 2).
+ * Pure function, does not read files.
  *
- * | 写法 | 接到 |
+ * | Syntax | Resolves to |
  * |---|---|
- * | 白名单里的包名 | 页面自带的那一份 |
- * | 相对导入,落在用户卡目录下、内容库里有 | 同步来的源码(`.css` 是样式,不执行) |
- * | 相对导入,落在页面自带的内置模块上 | 页面那一份 |
- * | 其余 | 不支持:`{ ok: false }`,调用方报「引用了在线页面里没有的模块」 |
+ * | Package name on allowlist | The copy bundled with the page |
+ * | Relative import under user card directory and present in content store | Synced source code (`.css` is stylesheet, not executed) |
+ * | Relative import targeting a built-in module bundled with the page | The page's copy |
+ * | Everything else | Unsupported: `{ ok: false }`, caller reports "referenced module not present in online page" |
  *
- * 内置模块的范围:`src/cards/`(用户卡目录除外)、`src/parts/`、`src/kernel/`,以及 `src/render/cards/graphValues.ts`。
- * 范围之外的(例如 `src/editor/`、`src/store/`)即使页面里有也不给引。
+ * Built-in module scope: `src/cards/` (excluding user card directory), `src/parts/`, `src/kernel/`,
+ * and `src/render/cards/graphValues.ts`. Outside this scope (e.g. `src/editor/`, `src/store/`),
+ * imports are not allowed even if present on the page.
  */
 import { CARD_PACKAGES, type ResolvedImport } from "./protocol.ts";
 
 export const USER_CARD_DIR = "src/cards/user/";
 const BUILTIN_PREFIXES = ["src/cards/", "src/parts/", "src/kernel/"];
 const BUILTIN_FILES = new Set(["src/render/cards/graphValues.ts"]);
-/** 相对导入补的扩展名(先后同 Vite) */
+/** Extensions added for relative imports (order matches Vite) */
 const MODULE_EXTS = [".ts", ".tsx", ".mjs", ".js"];
 
 export interface ResolveEnv {
-  /** 内容库的列表里有没有这个键 */
+  /** Whether this key exists in the content store list */
   hasSynced: (key: string) => boolean;
-  /** 页面自带的内置模块表里有没有这个路径 */
+  /** Whether this path exists in the table of built-in modules bundled with the page */
   hasBuiltin: (path: string) => boolean;
 }
 
 export type ResolveOutcome = { ok: true; to: ResolvedImport } | { ok: false; reason: string };
 
-/** 这个路径在不在卡片可以引的内置模块范围里 */
+/** Whether this path is within the scope of built-in modules that cards are allowed to import */
 export function isBuiltinModulePath(path: string): boolean {
   if (path.startsWith(USER_CARD_DIR)) return false;
   if (/\.test\.(ts|tsx|mjs|js)$/.test(path)) return false;
@@ -36,7 +38,7 @@ export function isBuiltinModulePath(path: string): boolean {
   return BUILTIN_PREFIXES.some((p) => path.startsWith(p)) && /\.(tsx?|mjs|js)$/.test(path);
 }
 
-/** `fromKey` 所在目录下的相对说明符 → 仓库相对路径(不补扩展名);爬出仓库根回 null */
+/** Relative specifier under `fromKey` directory → repo-relative path (no extension added); returns null if escaping repo root */
 function join(fromKey: string, spec: string): string | null {
   const parts = fromKey.split("/").slice(0, -1);
   for (const p of spec.split("/")) {
@@ -68,7 +70,7 @@ export function resolveCardImport(fromKey: string, spec: string, env: ResolveEnv
     if (base.startsWith(USER_CARD_DIR) && env.hasSynced(base)) return { ok: true, to: { kind: "style", key: base } };
     return { ok: false, reason: spec };
   }
-  // 资源导入(.json、.png、.svg……)没有对应的候选文件,落到最后的「不支持」
+  // Asset imports (.json, .png, .svg…) have no corresponding candidate files, falling through to the final "unsupported"
   for (const c of candidates(base)) {
     if (c.startsWith(USER_CARD_DIR)) {
       if (env.hasSynced(c)) return { ok: true, to: { kind: "synced", key: c } };

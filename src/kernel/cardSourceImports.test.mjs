@@ -1,17 +1,29 @@
 /**
- * 卡片源码解析跟着 import 找(`cardSourceParse.mjs`,C10 契约第 9 节「识别」〔裁〕2026-09-30)与 `select` / `asset` 缺字段的推断。跑:
+ * Card source parsing following imports (`cardSourceParse.mjs`, C10 contract Section 9
+ * "Recognition" [ruling 2026-09-30]) and inference for missing fields in `select` / `asset`. Run:
  *   node --test src/kernel/cardSourceImports.test.mjs
  *
- *   CSI-01 同目录相对 import 的对象与数组:控件表、默认值展开进来,和写在同一文件里一样
- *   CSI-02 re-export:`export { a } from`、`export { a as b } from`、`export * from`、`export default`、先 import 再 export
- *   CSI-03 别名:`import { a as b }`、默认导入、`import * as ns` 的 `ns.x`、多级目录与 `index.ts`
- *   CSI-04 循环引用不死循环:互相引的两个文件、自己引自己;认得出的照常用,环上那一个说明是环
- *   CSI-05 引不到的文件照旧提示:内容库里没有、包名、内置模块不认得;`skippedControls` 写明是哪一条
- *   CSI-06 内置模块:用页面自己带着的值(纯数据);登记过的纯函数以字面量为参数调用时求值;函数、非纯数据不认
- *   CSI-07 select 缺字段:缺 options 跳过并说明;options 写成字符串数组、缺 label、`{ 值: 标签 }` 对象时补上;写法认不出跳过
- *   CSI-08 asset 缺字段:缺 kind 时按选项 / 默认值的素材目录地址推断;推断不了跳过并说明;kind 不认识跳过;缺 options 按空表
- *   CSI-09 仓库里的语料:给了文件读取器之后,内置卡里从 `./hud` 引进来的控件认得出了,结果与模块里的逐个相同
- *   CSI-10 在线页面要取哪几份:`resolveSpecifier` / `cardSourceImports` 的候选路径
+ *   CSI-01 Objects and arrays from same-directory relative imports: control tables and default
+ *   values spread in, just like writing in the same file
+ *   CSI-02 re-export: `export { a } from`, `export { a as b } from`, `export * from`,
+ *   `export default`, import then export
+ *   CSI-03 Aliases: `import { a as b }`, default import, `ns.x` of `import * as ns`,
+ *   multi-level directories and `index.ts`
+ *   CSI-04 Circular references do not infinite loop: two mutually importing files, self-import;
+ *   recognized ones used as usual, cycle member states it is a cycle
+ *   CSI-05 Unresolvable files prompt as before: missing from content store, package names,
+ *   unrecognized built-in modules; `skippedControls` specifies which one
+ *   CSI-06 Built-in modules: use values carried by page itself (pure data); registered pure
+ *   functions evaluated when called with literals; functions and non-pure data ignored
+ *   CSI-07 select missing fields: skip and explain if options missing; fill when options is
+ *   string array, missing label, or `{ value: label }` object; skip unrecognized syntax
+ *   CSI-08 asset missing fields: when kind missing, infer from options / default value asset
+ *   catalog path; skip and explain if unable to infer; skip unrecognized kind; missing options
+ *   treated as empty table
+ *   CSI-09 Corpus in repository: with file reader provided, controls imported from `./hud` in
+ *   built-in cards are recognized, results match module one by one
+ *   CSI-10 Which files online page needs to fetch: candidate paths for `resolveSpecifier` /
+ *   `cardSourceImports`
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -23,7 +35,7 @@ import { parseCardSource, pureCall, resolveSpecifier, cardSourceImports, control
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const U = "src/cards/user/";
-/** 假的内容库:键 → 源码 */
+/** Fake content store: key → source code */
 const lib = (files) => (k) => files[k] ?? null;
 const parse = (files, entry = `${U}card.tsx`, builtins) => parseCardSource(files[entry], { key: entry, files: lib(files), ...(builtins ? { builtins } : {}) });
 const card = (body, imports = "") => `${imports}
@@ -57,7 +69,7 @@ export const BASE = { text: "hi", side: "l", size: 48 } as const;
   ]);
   assert.equal(c.controlsIncomplete, false);
   assert.deepEqual(c.skippedControls, []);
-  // 没给 files:和以前一样认不出,并说明是哪一条
+  // files not provided: unrecognized as before, and explains which one
   const [bare] = parseCardSource(files[`${U}card.tsx`]);
   assert.equal(bare.controlsIncomplete, true);
   assert.deepEqual(bare.controls.map((x) => x.key), ["size"]);
@@ -93,7 +105,7 @@ export default F0;
   assert.equal(c.controls[4].step, 2);
   assert.deepEqual(c.defaults, { a: "A", b: "#fff", c: "C" });
   assert.equal(c.controlsIncomplete, false);
-  // export default <标识符>
+  // export default <identifier>
   const files2 = { ...files, [`${U}card.tsx`]: card(`defaults: {}, controls: [X]`, `import X from "./f";`) };
   assert.deepEqual(parse(files2)[0].controls.map((x) => x.key), ["f"]);
 });
@@ -114,7 +126,7 @@ export const ONE = { key: "one", label: "One", type: "color" };
   assert.deepEqual(c.controls.map((x) => x.key), ["a", "one", "d"]);
   assert.deepEqual(c.defaults, { a: "x" });
   assert.equal(c.controlsIncomplete, false);
-  // 引进来的字符串常量也能当 id / name / description
+  // Imported string constants can also serve as id / name / description
   const files2 = { [`${U}card.tsx`]: `import { ID, NAME, DESC } from "./meta";\nexport const c = { id: ID, name: NAME, description: DESC, defaults: {}, controls: [], Component: () => null };\n`,
     [`${U}meta.ts`]: `export const ID = "meta-card";
 export const NAME = "Meta";
@@ -137,7 +149,7 @@ test("CSI-04 Circular references do not loop forever", () => {
   assert.ok(c.controls.some((x) => x.key === "p"), "Recognized ones are used as usual");
   assert.equal(c.controlsIncomplete, true);
   assert.ok(c.skippedControls.some((s) => /circular reference/.test(s.reason)), JSON.stringify(c.skippedControls));
-  // 互相 export * 的两个文件找不存在的名字:不死循环
+  // Looking up non-existent name across two mutually export * files: no infinite loop
   const files2 = { [`${U}card.tsx`]: card(`defaults: {}, controls: [...Z]`, `import { Z } from "./m1";`),
     [`${U}m1.ts`]: `export * from "./m2";\n`, [`${U}m2.ts`]: `export * from "./m1";\n` };
   const [z] = parse(files2);
@@ -160,12 +172,12 @@ test("CSI-05 Files that cannot be reached still produce a notice that says which
   assert.match(reasons[1], /spread PKG could not be resolved: imported from some-package/);
   assert.match(reasons[2], /spread HUD could not be resolved: \.\.\/native\/nowhere is not a built-in module the online page recognizes/);
   assert.match(reasons[3], /OPT could not be resolved: not a literal/);
-  // 整个控件表是引进来的、又取不到
+  // Entire control table is imported and cannot be fetched
   const files2 = { [`${U}card.tsx`]: card(`defaults: {}, controls: CTRL`, `import { CTRL } from "./gone";`) };
   const [w] = parse(files2);
   assert.deepEqual(w.controls, []);
   assert.match(w.skippedControls[0].reason, /the whole controls table CTRL could not be resolved: the content store has no file \.\/gone/);
-  // 简写 `controls,` 也一样
+  // Shorthand `controls,` is also the same
   const files3 = { [`${U}card.tsx`]: `import { controls } from "./gone";
 export const c = { id: "s", name: "Shorthand", defaults: {}, controls, Component: () => null };
 ` };
@@ -197,10 +209,10 @@ test("CSI-06 Built-in modules: values the page itself carries; pure functions ca
   const reasons = c.skippedControls.map((s) => s.reason);
   assert.match(reasons[0], /notData of built-in module \.\.\/native\/hud is not plain data/);
   assert.match(reasons[1], /fn of built-in module \.\.\/native\/hud is not plain data/);
-  // 页面里的值被改也不影响内置模块那一份(交出去的是拷贝)
+  // Modifying values in page does not affect built-in module copy (handed out as copy)
   c.controls[0].options.push({ value: "x", label: "x" });
   assert.equal(builtins("src/cards/native/hud.ts").hudControls[0].options.length, 1);
-  // 纯函数的参数不是字面量:不调
+  // Pure function arguments are not literals: do not call
   const files2 = { [`${U}card.tsx`]: card(`defaults: {}, controls: [{ key: "src", label: "Media", type: "asset", kind: "lottie", options: assetOptions(KIND) }]`,
     `import { assetOptions } from "../catalogAssets";\nimport { KIND } from "./nope";`) };
   const [c2] = parse(files2, undefined, builtins);
@@ -257,7 +269,7 @@ test("CSI-08 Several ways an asset can be missing fields", () => {
     ["k", "media control: kind (kind) is not a literal; also cannot infer whether it is lottie or particles"],
     ["z", "unknown media kind (kind) (video)"],
   ]);
-  // controlFix 单独用:默认值给推断
+  // controlFix used standalone: default value provides inference
   assert.equal(controlFix({ key: "s", label: "s", type: "asset" }, { defaultValue: "/catalog/lottie/q.json" }).control.kind, "lottie");
 });
 

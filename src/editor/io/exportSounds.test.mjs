@@ -19,7 +19,7 @@ const silentDef = { id: 'plain-export', name: 'Silent card', source: 'native', d
 registerCards([def, silentDef]);
 configureCardAudio({ getCard: id => id === def.id ? def : id === silentDef.id ? silentDef : undefined, sourceVersionOf: () => sourceVersion });
 
-/** 素材服务的线上约定是唯一的假件:页面的上传客户端、store、生成流程都是真的 */
+/** Asset service online contract is the only mock: page upload client, store, and generation flow are real */
 function service({ holdComplete } = {}) {
   const real = globalThis.fetch, stored = new Set(), calls = [];
   globalThis.fetch = async (url, init = {}) => {
@@ -36,7 +36,7 @@ async function until(fn) { for (let i = 0; i < 500; i++) { if (fn()) return; awa
 const clips = () => getState().project.tracks.flatMap(t => t.clips);
 const signal = () => new AbortController().signal;
 
-/** 一个要先生成声音的项目:两张没生成过声音的有声卡、一段音效(生成过,之后按需把字节弄丢)、一张无声卡 */
+/** A project generating audio first: two ungenerated audio cards, one sound effect (generated, then bytes dropped on demand), one silent card */
 async function project() {
   sourceVersion = 'v1'; failAudio = null;
   actions.newProject('Auto-generate sounds on export');
@@ -163,8 +163,8 @@ test('A7 Cancel during generation: export and generation both stop, the segment 
     const abort = new AbortController(), progress = [];
     const run = prepareExportSounds({ signal: abort.signal, onProgress: (d, t) => progress.push([d, t]) });
     const settled = run.then(() => ({ ok: true }), (error) => ({ error }));
-    await until(() => release); release(); release = undefined;      // 第一段入库、提交
-    await until(() => release);                                       // 第二段卡在入库
+    await until(() => release); release(); release = undefined;      // First segment stored, committed
+    await until(() => release);                                       // Second segment stuck storing
     const evaluated = evaluations;
     abort.abort(); release();
     const { error } = await settled;
@@ -252,26 +252,30 @@ test('A11 Online page: sounds classified as light are generated in the browser; 
 });
 
 /*
- * A12(在线某一档一律不合成)删了:声音不按身份、不按档区分(2026-10-07 用户定,`product/platforms.md`「卡片声音的平台边界」),
- * 在线页面只按 A11 的轻重判定合成或交给渲染节点。
+ * A12 (never synthesize for a certain tier online) is removed: audio is not distinguished by
+ * identity or tier (user decision, 2026-10-07, `product/platforms.md` "Platform boundaries of card
+ * audio"), and the online page only synthesizes or hands off to render nodes based on A11
+ * light/heavy classification.
  */
 
 /*
- * 剪辑段(`product/rendering.md`「导出时自动生成声音」递归进剪辑段):被引用剪辑里的有声卡,导出前在它自己那条剪辑里生成,
- * 结果写回那条停放的剪辑;混音按剪辑段的音量、淡入淡出、静音处理。
+ * Cut segment (`product/rendering.md` "Automatically generate audio on export" recursing into cut
+ * segments): audio cards in referenced cuts are generated in their own cut before export, and the
+ * result is written back to that parked cut; mixing is handled per cut segment volume, fade, and
+ * mute.
  */
 async function nestedProject({ muted = false } = {}) {
   sourceVersion = 'v1'; failAudio = null;
   actions.newProject('Audio cards inside a cut segment');
   const child = actions.addCut('Cut 2', { switchTo: true });
   const inner = actions.addCardClip(def.id, 0.5, { duration: .4, params: { value: .25 } });
-  const outside = actions.addCardClip(def.id, 5, { duration: .4, params: { value: .5 } }); // 落在剪辑段窗口外
+  const outside = actions.addCardClip(def.id, 5, { duration: .4, params: { value: .5 } }); // Falls outside the cut segment window
   const root = getState().project.cuts[0].id;
   actions.switchCut(root);
   const seg = actions.addCutSegment(child.id, 1, { duration: 2 });
   actions.setClipVolume(seg.id, .5);
   if (muted) actions.setClipMuted(seg.id, true);
-  const seg2 = actions.addCutSegment(child.id, 4, { duration: 1 }); // 同一条剪辑引用两次:里面的片段只列一次
+  const seg2 = actions.addCutSegment(child.id, 4, { duration: 1 }); // Same cut referenced twice: clips inside are listed only once
   if (muted) actions.setClipMuted(seg2.id, true);
   return { child, inner, outside, seg, seg2, root };
 }

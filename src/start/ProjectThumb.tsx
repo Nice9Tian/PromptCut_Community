@@ -1,11 +1,14 @@
 /**
- * 缩略图那一排里的一格:一个项目,或者第一格的「Create A New」。
+ * One cell in the row of thumbnails: a project, or the first cell, "Create A New".
  *
- * 缩略图外框固定 16:9,项目自己的画幅按比例套在框里居中 —— 这样一排的高度齐平,又一眼看得出
- * 哪个是竖屏、哪个是方屏。
+ * The thumbnail frame is fixed at 16:9, and the project's own aspect ratio is fitted into the frame,
+ * centered: this keeps the row at an even height while still showing at a glance which one is
+ * vertical and which one is square.
  *
- * 画面:这台浏览器打开过这个项目时记下的首帧(`thumbCache.ts`);没打开过、取不到时是按 id 哈希出来的色块(`hue.ts`),
- * 不空白、不破图。画幅、时长同样是打开过才知道,不知道的不写。
+ * Picture: the first frame recorded when this browser opened the project (`thumbCache.ts`); if it was
+ * never opened or the frame cannot be fetched, a color block hashed from the id (`hue.ts`), so there
+ * is no blank and no broken image. The aspect ratio and duration are likewise known only after the
+ * project was opened, and are not shown when unknown.
  */
 import type { JSX } from "react";
 import { hueOf } from "./hue";
@@ -51,10 +54,12 @@ export function ProjectThumb({ project, onOpen }: { project: VibeProject; onOpen
 }
 
 /**
- * 第一格恒定是它(翻到第几页都在),点了走和侧栏「新建项目」同一条路。
+ * This is always the first cell (it stays on every page you flip to), and clicking it takes the same
+ * path as "New project" in the sidebar.
  *
- * 格子里那行「Create A New」已经说清这一格是干什么的,底下不再重复一句「空白画布」
- * (issue #10:游客首屏上这句话是冗余的)。项目名那一行留着,一排里的名字才对得齐。
+ * The "Create A New" line in the cell already says what this cell is for, so a second line "Blank
+ * canvas" is not repeated below it (issue #10: on the guest first screen that sentence was redundant).
+ * The project name line is kept so that the names in the row line up.
  */
 export function CreateTile({ onCreate, disabled, title }: { onCreate: () => void; disabled?: boolean; title?: string }): JSX.Element {
   return (

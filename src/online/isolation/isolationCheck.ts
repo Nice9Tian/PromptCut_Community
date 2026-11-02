@@ -1,15 +1,21 @@
-/** 舞台启动自检：验证真实跨源和响应头CSP的文档边界(base-uri)。
- * 不用外部fetch、重定向或WebRTC/Trusted Types出口拦截判断是否能执行。
- * 同源、只有meta或没有策略仍不通过；父页点头及无票据闸门另核。
+/**
+ * Stage startup self-check: verifies document boundary (base-uri) with real cross-origin and
+ * response-header CSP.
+ * Does not judge execution capability by external fetch, redirects, or WebRTC/Trusted Types
+ * egress interception.
+ * Still fails if same-origin, meta-only, or policy missing; parent page approval and ticketless
+ * gate are checked separately.
  */
 import { STAGE_CSP_HEADER_ONLY_DIRECTIVE } from "../stagePolicy.mjs";
 import type { HardenReport } from "./harden.ts";
 import { SCOPE_GUARD_CRITICAL } from "./scopeGuard.ts";
 
 /*
- * 自检的时限用**真实时间**的定时器:舞台把 `setTimeout` 换成跟着舞台时间走的那一份(`render/stageClock.ts`,不播放时不走),
- * 自检要是用了它,只有 `<meta>` 生效那种情况会永远等不到结论。模块载入时(舞台时钟装上之前)先把原装的取下来;
- * 舞台时钟装上之后它自己留的口子 `__pcRealSetTimeout` 优先。
+ * Self-check timeout uses a **real-time** timer: stage replaces `setTimeout` with one that follows
+ * stage time (`render/stageClock.ts`, does not run when not playing).
+ * If self-check used it, cases where only `<meta>` took effect would wait indefinitely for a result.
+ * Capture the original at module load time (before stage clock is installed);
+ * once stage clock is installed, its exposed escape hatch `__pcRealSetTimeout` takes precedence.
  */
 const nativeSetTimeout: typeof setTimeout | null = typeof setTimeout === "function" ? setTimeout.bind(globalThis) : null;
 const nativeClearTimeout: typeof clearTimeout | null = typeof clearTimeout === "function" ? clearTimeout.bind(globalThis) : null;
@@ -21,27 +27,33 @@ function realClear(t: ReturnType<typeof setTimeout> | null | undefined): void {
   if (t !== null && t !== undefined) (nativeClearTimeout ?? clearTimeout)(t);
 }
 
-/** 用base-uri文档边界检查策略，不以外部fetch被拦证明隔离。 */
+/** Checks policy with base-uri document boundary, not proving isolation by blocked external fetch. */
 export const ISOLATION_CHECK_BASE_PATH = "/__pc-policy-probe__/";
-/** 舞台源上给自检用的两个地址(相对在线构建的 base):前者回 204,后者重定向到前者 */
+/**
+ * Two URLs on stage origin for self-check (relative to online build base): first returns 204,
+ * second redirects to first
+ */
 export const ISOLATION_OK_PATH = "_iso/ok";
 export const ISOLATION_REDIRECT_PATH = "_iso/redirect";
-/** 每一项等多久 */
+/** How long to wait for each item */
 export const ISOLATION_CHECK_TIMEOUT_MS = 2500;
 
 export type IsolationFailure =
-  | "same-origin"        // 舞台与父页同源
-  | "no-policy"          // 内容安全策略没生效
-  | "meta-only"          // 只有 <meta> 兜底生效,响应头没到
-  | "not-hardened"       // 加固没装上
-  | "check-error";       // 自检自己出错
+  | "same-origin"        // Stage and parent page are same-origin
+  | "no-policy"          // Content Security Policy did not take effect
+  | "meta-only"          // Only <meta> fallback took effect; response header did not arrive
+  | "not-hardened"       // Hardening was not installed
+  | "check-error";       // Self-check itself errored
 
 export interface IsolationReport {
   ok: boolean;
   crossOrigin: boolean;
-  /** 策略出自哪里 */
+  /** Where the policy comes from */
   csp: "header" | "meta" | "none";
-  /** 旧报告枚举保持可读；当前策略恒为 `none`，不以出口护栏作为执行条件 */
+  /**
+   * Keep legacy report enum readable; current policy is always `none`, and does not use egress
+   * guards as an execution condition.
+   */
   egress: "allowlist" | "script" | "none";
   hardened: boolean;
   trustedTypes: HardenReport["trustedTypes"];
@@ -50,18 +62,23 @@ export interface IsolationReport {
 
 export interface IsolationCheckDeps {
   win?: Window & typeof globalThis;
-  /** 在线构建的 base(`/editor/`) */
+  /** Online build base (`/editor/`) */
   base: string;
   harden: HardenReport | null;
   timeoutMs?: number;
 }
 
-/** 舞台文档里能活过本文档的存储:这几样没收住,加固就算没装上(`harden.ts` 6b 步记的 `storage:<名字>:…`) */
+/**
+ * Storage in stage documents that can survive this document: if these are not contained,
+ * hardening is considered not installed (recorded as `storage:<name>:…` in step 6b of `harden.ts`).
+ */
 const CRITICAL_STORAGE = ["localStorage", "sessionStorage", "indexedDB", "caches"] as const;
 
 /**
- * 加固报告里的关键项错误:存储(6b 步 `storage:`)与跨文档通道守卫(6c 步 `scope:`,含守卫核对不过的 `integrity`)。
- * 有一条,就是「开着门失败」(卡片拿到真实存储或原生线程),自检判「加固没装上」(2026-10-23 审查 P3)。纯函数
+ * Critical item errors in the hardening report: storage (step 6b `storage:`) and cross-document
+ * channel guards (step 6c `scope:`, including `integrity` where guard verification fails).
+ * If even one is present, it is a "fail-open" (cards obtain real storage or native threads), and
+ * self-check determines "hardening not installed" (review P3, 2026-10-23). Pure function.
  */
 export function criticalHardenErrors(errors: readonly string[] | null | undefined): string[] {
   const out: string[] = [];
@@ -73,10 +90,11 @@ export function criticalHardenErrors(errors: readonly string[] | null | undefine
   return out;
 }
 
-/** 由各项事实下结论。纯函数,单测逐条核 */
+/** Draw conclusions from facts. Pure function, unit tests verify item by item */
 export function judgeIsolation(f: { crossOrigin: boolean; csp: IsolationReport["csp"]; allowlist?: boolean; harden: HardenReport | null }): IsolationReport {
   const reasons: IsolationFailure[] = [];
-  // 装了,而且关键项都装上了(只看「装了没有」时,某项锁不上照样报通过,卡片拿到的是真实存储)
+  // Installed, and critical items are all installed (when only checking "whether installed",
+  // even if an item cannot be locked it still reports pass, and cards get real storage)
   const hardened = !!f.harden?.installed && criticalHardenErrors(f.harden.errors).length === 0;
   const trustedTypes = f.harden?.trustedTypes ?? "unsupported";
   const egress: IsolationReport["egress"] = "none";
@@ -89,7 +107,7 @@ export function judgeIsolation(f: { crossOrigin: boolean; csp: IsolationReport["
 
 function isCrossOrigin(w: Window): boolean {
   try {
-    if (w.parent === w) return false; // 不在 iframe 里
+    if (w.parent === w) return false; // Not in an iframe
     void w.parent.location.href;
     return false;
   } catch {
@@ -97,7 +115,7 @@ function isCrossOrigin(w: Window): boolean {
   }
 }
 
-/** 策略在不在强制、出自哪里 */
+/** Whether policy is enforced and where it originates */
 function checkPolicy(w: Window & typeof globalThis, timeoutMs: number): Promise<IsolationReport["csp"]> {
   return new Promise((resolve) => {
     let best: IsolationReport["csp"] = "none";
@@ -112,20 +130,22 @@ function checkPolicy(w: Window & typeof globalThis, timeoutMs: number): Promise<
       if (e.disposition !== "enforce" || e.effectiveDirective !== "base-uri" || !String(e.blockedURI).includes(ISOLATION_CHECK_BASE_PATH)) return;
       if (String(e.originalPolicy).includes(STAGE_CSP_HEADER_ONLY_DIRECTIVE)) { best = "header"; finish(); return; }
       if (best === "none") best = "meta";
-      // 响应头与 <meta> 两份各报一次,先后不定:再等一小会儿看响应头那一份来不来
+      // Response headers and <meta> each report once in arbitrary order: wait briefly to see if
+      // the response header one arrives
       settle ??= realTimeout(finish, 150);
     };
     const deadline = realTimeout(finish, timeoutMs);
     w.document.addEventListener("securitypolicyviolation", onViolation);
     const probe = w.document.createElement("base");
     probe.href = `${w.location.origin}${ISOLATION_CHECK_BASE_PATH}`;
-    // 立即移除，不在没有策略的文档中改变后续相对URL。违规事件仍由浏览器异步送达。
+    // Remove immediately so as not to change subsequent relative URLs in documents without a policy.
+    // Violation events are still delivered asynchronously by the browser.
     w.document.head.appendChild(probe);
     probe.remove();
   });
 }
 
-/** 跑一遍自检。不抛:出错回 `ok: false`、原因 `check-error` */
+/** Run a self-check. Does not throw: returns `ok: false` with reason `check-error` on error */
 export async function runIsolationCheck(deps: IsolationCheckDeps): Promise<IsolationReport> {
   const w = deps.win ?? window;
   const timeoutMs = deps.timeoutMs ?? ISOLATION_CHECK_TIMEOUT_MS;

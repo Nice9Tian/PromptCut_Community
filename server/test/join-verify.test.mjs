@@ -1,7 +1,8 @@
 /**
- * `POST shared/verify`〔裁〕（`claude/join-error`）：拿一份进入证明问服务端认不认，页面借它分清
- * 「用户名或密码不对」与「连不上服务器」（浏览器里握手被 401 拒与没连上都是 1006）。
- * 跑：node --test server/test/join-verify.test.mjs
+ * `POST shared/verify` [ruling] (`claude/join-error`): asks the server whether it accepts an entry
+ * proof, which the page uses to distinguish "incorrect username or password" from "cannot connect to
+ * server" (in browsers, handshake rejected with 401 and connection failure are both 1006).
+ * Run: node --test server/test/join-verify.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -25,7 +26,7 @@ for (const attached of [false, true]) {
     const r2 = await env.http('shared/verify', { method: 'POST', body: { protocols: bad.protocols }, remote: PUBLIC });
     assert.equal(r2.status, 401, r2.text);
     assert.deepEqual(r2.json, { ok: false, error: 'unauthorized' });
-    // 同一份错证明拿去握手，也是 401
+    // Taking the same invalid proof to handshake also yields 401
     const bad2 = await proofFor(env, proj, { username: 'zoe', password: 'wrong-pw', remote: PUBLIC });
     assert.equal((await env.handshake(bad2.protocols, PUBLIC)).status, 401);
   });

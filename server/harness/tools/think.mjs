@@ -1,4 +1,4 @@
-// 对应 claude-quickstarts/agents/tools/think.py
+// Corresponds to claude-quickstarts/agents/tools/think.py
 
 export const thinkTool = {
   name: "think",

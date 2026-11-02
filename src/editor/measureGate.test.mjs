@@ -1,17 +1,27 @@
 /**
- * 测量的开工门(`measureGate.ts`;在线页面的测量等卡片源码第一次同步完再开始)。跑:
+ * Measurement start gate (`measureGate.ts`; measurement on online page starts only after card
+ * sources finish syncing for the first time). Run:
  *   node --experimental-test-module-mocks --test src/editor/measureGate.test.mjs
  *
- *   MG-01 桌面(不是在线页面):一开始就开着,等门马上回
- *   MG-02 在线页面:关着;卡片源码第一次同步成功就开,原因 synced;开了不再关
- *   MG-03 在线页面:第一次同步回了失败也开,原因 failed
- *   MG-04 在线页面:一直没回音,满 `MEASURE_GATE_MAX_MS` 自己开,原因 timeout
- *   MG-05 `OnlineCardSources.onFirstSettled`:没连上共享项目的那几轮不算;列完取完叫一次 true;列表取不到叫一次 false;只叫一次
- *   MG-07 按连接算:换了连接(换项目、重连、离开再进)门重新关上,新连接第一次同步有结果才开;过时的结果不算;
- *         最多等同样的上限、失败了照常开;没连着不关;桌面从不关
- *   MG-08 `OnlineCardSources`:连接换了,新连接的第一轮再叫一次 `onFirstSettled`,带上新连接
- *   MG-06 接线:常驻探针在后台舞台就绪之后等这道门;单舞台的界限搜索门没开不开工;在线页面开始同步卡片源码时关门、有结果开门
- *         (`probeRunner.ts` 读 `import.meta.env`,Node 里载不进来,这里按源码核)
+ *   MG-01 Desktop (not online page): open from the start, waiting for gate returns immediately
+ *   MG-02 Online page: closed; opens once card sources sync successfully for the first time,
+ *         reason synced; once open, never closes
+ *   MG-03 Online page: opens even if first sync returns failure, reason failed
+ *   MG-04 Online page: no response, opens on its own upon reaching `MEASURE_GATE_MAX_MS`,
+ *         reason timeout
+ *   MG-05 `OnlineCardSources.onFirstSettled`: rounds not connected to shared project do not count;
+ *         calls true once after listing and fetching complete; calls false once if list cannot
+ *         be fetched; calls only once
+ *   MG-07 Per connection: on connection change (switching project, reconnecting, leaving and
+ *         re-entering) gate closes again, opens only when new connection's first sync produces
+ *         results; outdated results do not count; waits up to same limit at most, opens as usual
+ *         on failure; does not close when disconnected; desktop never closes
+ *   MG-08 `OnlineCardSources`: connection changed, calls `onFirstSettled` again on first round
+ *         of new connection, passing new connection
+ *   MG-06 Wiring: resident probe waits for this gate after background stage is ready; single-stage
+ *         bounds search does not start if gate is not open; gate closes when online page starts
+ *         syncing card sources, opens upon results (`probeRunner.ts` reads `import.meta.env`,
+ *         cannot be loaded in Node, verified against source here)
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import test from "node:test";
@@ -24,7 +34,7 @@ const F = await import(srcUrl("online/pageFlag.ts"));
 const S = await import(srcUrl("editor/sync/onlineCardSources.ts"));
 const R = await import(srcUrl("kernel/registry.ts"));
 
-/** 手动的计时器:`fire()` 把到点的都跑掉 */
+/** Manual timer: `fire()` runs all due timers */
 function fakeClock() {
   let now = 0;
   const timers = new Map();
@@ -48,7 +58,7 @@ test("MG-01 desktop: open from the start", async () => {
   assert.equal(G.measureGateOpen(), true);
   await G.whenMeasureGateOpen();
   assert.equal(G.measureGateDiag().reason, "desktop");
-  // 桌面也叫了 hold(不会发生,但叫了也不关回去)
+  // Desktop also called hold (will not happen, but even if called, does not close back)
   G.holdMeasureForCardSources();
   assert.equal(G.measureGateOpen(), true);
 });
@@ -104,7 +114,7 @@ test("MG-04 online page: no reply at all, opens on its own once the cap is reach
   G.resetMeasureGate(clock);
   try {
     assert.equal(G.MEASURE_GATE_MAX_MS, 10_000);
-    // 没人叫 hold(`Preview` 还没挂上):第一次问门时自己关上、开始计时
+    // Nobody called hold (`Preview` not yet mounted): closes itself and starts timing on first gate query
     assert.equal(G.measureGateOpen(), false);
     clock.advance(G.MEASURE_GATE_MAX_MS - 1);
     assert.equal(G.measureGateOpen(), false);
@@ -125,7 +135,8 @@ test("MG-05 OnlineCardSources.onFirstSettled", async () => {
     if (msg.type === "content.list") return { type: "content.listing", items: [{ key: "src/cards/user/s.tsx", hash: "h1" }] };
     return { type: "content.item", key: msg.key, body: src, hash: "h1" };
   };
-  // 没连上共享项目的那几轮不算;连上后列完取完叫一次 true;之后不再叫
+  // Rounds not connected to shared project do not count; calls true once after listing and fetching
+  // complete; does not call again afterwards
   {
     let link = null;
     const calls = [];
@@ -142,7 +153,7 @@ test("MG-05 OnlineCardSources.onFirstSettled", async () => {
     fail = false;
     s.stop();
   }
-  // 第一次就取不到:叫一次 false
+  // Cannot fetch on the very first try: calls false once
   {
     const link = { id: 2 };
     const calls = [];
@@ -155,7 +166,7 @@ test("MG-05 OnlineCardSources.onFirstSettled", async () => {
     assert.deepEqual(calls, [false], "Not called again even after a later success");
     s.stop();
   }
-  // 回包不对也算失败
+  // Malformed response also counts as failure
   {
     const link = { id: 3 };
     const calls = [];
@@ -176,7 +187,8 @@ test("MG-06 wiring (checked against the source)", () => {
   const firstCosts = loop.indexOf("await getCosts()");
   assert.ok(ready >= 0 && gate > ready && gate < firstCosts, "Resident probe: waits for the gate after the background stage is ready and before the first cost record fetch");
   const preview = read("editor/Preview.tsx");
-  // 界限搜索有两处:两个舞台有记录时(先出现)、只有一个舞台时(后出现);两处都要等门
+  // Two places for bounds search: when both stages have records (first), and with only one stage
+  // (later); both must wait for the gate
   const dualAt = preview.indexOf("setSearchCostStore(l2SearchCostStore())");
   const singleAt = preview.lastIndexOf("setSearchCostStore(l2SearchCostStore())");
   assert.ok(dualAt >= 0 && singleAt > dualAt, "Both bounds searches are present");
@@ -207,7 +219,7 @@ test("MG-07 per connection: after a connection change the gate closes again and 
     G.releaseMeasureGate(true, L1);
     assert.equal(G.measureGateOpen(), true);
     assert.equal(G.measureGateDiag().holds, 1);
-    // 换项目:连接换成 L2 → 问门时重新关上
+    // Switch project: connection changes to L2 → closes again when gate is queried
     link = L2;
     let opened = false;
     const wait = G.whenMeasureGateOpen().then(() => { opened = true; });
@@ -222,10 +234,11 @@ test("MG-07 per connection: after a connection change the gate closes again and 
     await wait;
     assert.equal(G.measureGateOpen(), true, "New connection finished syncing: open");
     assert.equal(G.measureGateDiag().reason, "synced");
-    // 同一条连接不再关
+    // Does not close again for the same connection
     assert.equal(G.measureGateOpen(), true);
     assert.equal(G.measureGateDiag().holds, 2);
-    // 离开项目(没连着):不关;再进(新连接 L3):关,一直没回音满上限自己开
+    // Leave project (disconnected): does not close; re-enter (new connection L3): closes, opens on its
+    // own upon timeout if no response
     link = null;
     assert.equal(G.measureGateOpen(), true, "Not connected: does not close");
     link = L3;
@@ -234,14 +247,15 @@ test("MG-07 per connection: after a connection change the gate closes again and 
     assert.equal(G.measureGateOpen(), true);
     assert.equal(G.measureGateDiag().reason, "timeout");
     assert.equal(G.measureGateOpen(), true, "A gate opened by timeout also counts as opened for L3, and never closes again");
-    // 新连接第一次同步回了失败:照常开
+    // New connection's first sync returned failure: opens as usual
     const L4 = { id: 4 };
     link = L4;
     assert.equal(G.measureGateOpen(), false);
     G.releaseMeasureGate(false, L4);
     assert.equal(G.measureGateOpen(), true);
     assert.equal(G.measureGateDiag().reason, "failed");
-    // 门开着时新连接的结果先到(还没人问门):记下为它开的,之后不再关
+    // New connection result arrives while gate is open (nobody queried gate yet): record it opened for
+    // this, do not close afterwards
     const L5 = { id: 5 };
     link = L5;
     const linksBefore = G.measureGateDiag().links;
@@ -252,7 +266,7 @@ test("MG-07 per connection: after a connection change the gate closes again and 
     delete globalThis.__pcOnlinePage;
     G.resetMeasureGate();
   }
-  // 桌面:给了连接也从不关
+  // Desktop: never closes even if given a connection
   G.resetMeasureGate();
   let dl = { id: "a" };
   G.setMeasureGateLink(() => dl);

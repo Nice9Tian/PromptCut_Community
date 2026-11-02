@@ -1,9 +1,12 @@
 /**
- * 推送队列遇到被淘汰的键(存储占用计划 `docs/plan/storage-plan.md`;`server/artifact-push.mjs`):
- * 段的键目录被帧库淘汰或「清理缓存」删掉(或推到一半文件读不到)时,丢掉这一段、记 `push.evicted`,
- * 不无限重试、不挡队列里别的段。键目录还在时的失败照旧退避重试。
+ * Push queue encounters evicted key (storage plan `docs/plan/storage-plan.md`; `server/artifact-push.mjs`):
+ * when a segment's key directory is evicted by frame store or deleted by "clear cache" (or file
+ * cannot be read midway through pushing), drop this segment and record `push.evicted`,
+ * do not retry indefinitely, and do not block other segments in the queue. Failures when key
+ * directory still exists back off and retry as usual.
  *
- * 管线是假的(只有帧库根、`snapshots()` 与空的 `entries`),素材服务是内存里的假客户端,不起服务。
+ * Pipeline is mock (only frame store root, `snapshots()`, and empty `entries`), asset service is
+ * an in-memory mock client, does not start a service.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,7 +27,7 @@ async function rig(t) {
   return { root, pipeline };
 }
 
-/** 在共享档写 `count` 帧快照,回这一段的 unit */
+/** Write `count` frame snapshots to shared tier, returns unit for this segment */
 async function seedShared(pipeline, seed, count = 3) {
   const key = hex(seed);
   const dir = pipeline.snapshots().dir({ tier: 'shared', key });
@@ -75,7 +78,8 @@ test('key directory evicted after being queued: this segment is dropped and logg
   const { queue, logs } = queueOf(t, pipeline, client);
   await queue.enqueue(gone.unit);
   await queue.enqueue(kept.unit);
-  // 淘汰:整个键目录没了(帧库淘汰是先改名进垃圾目录、再删,对这里来说就是目录不在了)
+  // Eviction: entire key directory is gone (frame store eviction first renames into trash directory,
+  // then deletes; to this caller, the directory is simply gone)
   await fs.rm(gone.dir, { recursive: true, force: true });
   queue.start();
   await withTimeout(queue.drain(), 10_000, 'queue not drained');
@@ -105,7 +109,7 @@ test('key directory of a stream evicted (no stream.json): dropped, not retried f
 test('key directory evicted midway through a push (chunks cannot be read): this segment is dropped, no retry', async t => {
   const { pipeline } = await rig(t);
   const seg = await seedShared(pipeline, 'mid', 12);
-  // 推第一块时把键目录删掉:之后的块读不到
+  // Delete key directory when pushing first chunk: subsequent chunks cannot be read
   const client = fakeClient({ onPut: async index => { if (index === 0) await fs.rm(seg.dir, { recursive: true, force: true }); } });
   const { queue, logs } = queueOf(t, pipeline, client, { backoff: [60_000] });
   await queue.enqueue(seg.unit);

@@ -1,21 +1,23 @@
 /**
  * node --test server/test/history-consecutive-user.test.mjs
  *
- * 历史里**不许出现两条连着的 user 消息**。
+ * In history, **two consecutive user messages are not allowed**.
  *
- * Anthropic 不收这种形状,而 anthropic / openai / gemini 三家转换里都没有合并
- * 同角色消息的逻辑 —— 也就是说这个形状一旦拼出来,就是一个直到发出去才炸的 400。
+ * Anthropic does not accept this shape, and none of the conversions for anthropic / openai / gemini
+ * have logic to merge messages of the same role: meaning once this shape is formed, it is a 400
+ * that will not blow up until sent.
  *
- * 它不是理论问题,有两条真实路径会拼出来:
- *   1. 中断落盘会在末尾补一条 user(装 is_error 的 tool_result),下次接着说时
- *      run() 又要放一条用户的话;
- *   2. 撞到轮次上限时,刚放完 tool_result(user)紧接着就放收尾指令(也是 user)。
+ * This is not a theoretical issue; two real paths can produce it:
+ *   1. Persistence on interrupt appends a user message at the end (containing tool_result with
+ *      is_error); when continuing next time, run() puts another user message;
+ *   2. When hitting the round limit, right after placing tool_result (user), it immediately
+ *      places the wrap-up instruction (also user).
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MessageHistory } from "../harness/history.mjs";
 
-/** 有没有两条挨着的同角色消息 */
+/** Whether there are two adjacent messages of the same role */
 function consecutiveSameRole(msgs) {
   for (let i = 1; i < msgs.length; i++) if (msgs[i].role === msgs[i - 1].role) return i;
   return -1;
@@ -61,9 +63,10 @@ test("even after merging twice in a row there is only one user entry", () => {
 
 test("when the last user entry is an old-format string, it must also be merged into rather than starting a new one", () => {
   /*
-   * 盘上那个文件只经过 JSON.parse,不校验形状(api.mjs),所以 content 是字符串的
-   * 老格式历史真的读得回来。原来这里退回「新起一条」—— 可末尾本来就是 user,
-   * 新起一条正好拼出这个方法要消灭的形状。
+   * The file on disk only goes through JSON.parse without validating shape (api.mjs), so old-format
+   * history where content is a string can indeed be read back. Previously this fell back to "start
+   * a new one": but the end was already user, so starting a new one happened to construct the exact
+   * shape this method is meant to eliminate.
    */
   const h = new MessageHistory();
   h.append({ role: "user", content: "Old format, plain string" });
@@ -89,7 +92,8 @@ test("it modifies the entry in the history, not the copy returned by get()", () 
   h.append({ role: "user", content: [{ type: "text", text: "First" }] });
   const snapshotBefore = h.get();
   h.appendUserText("Then");
-  // get() 是浅拷贝,同一批对象;这里要钉的是「历史自己真的变了」
+  // get() is a shallow copy with the same objects; what needs to be verified here is that
+  // "history itself actually changed"
   assert.equal(h.get()[0].content.length, 2);
   assert.equal(snapshotBefore.length, 1, "the length of the array that was copied out must not change");
 });

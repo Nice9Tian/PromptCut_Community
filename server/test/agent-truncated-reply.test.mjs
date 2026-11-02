@@ -1,6 +1,8 @@
 /**
- * 回复写到单次输出上限被截断、一个工具都没调(2026-10-17 生产实跑:4096 个 token 花完,0 次操作就「完成」了):
- * 不能当成说完了收工;要让模型接着做,连续截断就明说没做成。
+ * Reply truncated upon hitting single-output limit without calling any tool (production run,
+ * 2026-10-17: exhausted 4096 tokens and "completed" with 0 operations):
+ * Cannot be treated as finished and done; must have the model continue, and explicitly state
+ * failure if consecutively truncated.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

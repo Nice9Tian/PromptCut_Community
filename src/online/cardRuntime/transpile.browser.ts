@@ -1,7 +1,9 @@
 /**
- * 编辑页面里转译同步卡的入口(`docs/plan/online-card-exec-contract.md` 第 1 节)。**按需载入**:
- * `Preview.tsx` 只在本页能执行同步来的卡(`gate.ts`)、且项目里有这样的卡时才 `import()` 它 ——
- * Sucrase 与 Tailwind 编译器都在这一块里,不进主块。只在浏览器里用(`?raw`、IndexedDB)。
+ * Entry point for transpiling synced cards in the editor page
+ * (`docs/plan/online-card-exec-contract.md` Section 1). **Loaded on demand**: `Preview.tsx` calls
+ * `import()` on it only when this page can execute synced cards (`gate.ts`) and such cards
+ * exist in the project: Sucrase and the Tailwind compiler are both in this chunk, excluded from
+ * the main chunk. Used only in browsers (`?raw`, IndexedDB).
  */
 import theme from "tailwindcss/theme.css?raw";
 import utilities from "tailwindcss/utilities.css?raw";
@@ -15,20 +17,20 @@ import { cardCodeIdentityOf } from "./codeIdentity.ts";
 import type { BundleResult } from "./protocol.ts";
 
 export interface BundleJob {
-  /** 入口文件的键 */
+  /** Key of entry file */
   entries: readonly string[];
-  /** 内容库里这个键的正文与哈希 */
+  /** Content and hash for this key in the content store */
   read: (key: string) => { body: string; hash: string } | null;
 }
 
 const cache = createTranspileCache(CARD_RUNTIME_VERSION);
 let warmed: Promise<void> | null = null;
 const css = createCardCssCompiler({ theme, utilities });
-/** 页面自带的内置模块:源码表的键是 `/src/...`,有原文就是页面里有这个模块 */
+/** Built-in modules bundled with page: source table keys are `/src/...`; having source text means the module exists in the page */
 const hasBuiltin = (path: string) => isBuiltinModulePath(path) && Object.hasOwn(builtinCardSourceFiles, `/${path}`);
 const builtinHashes = new Map<string, string>();
 
-/** 每个入口一张卡:转译成包,或给出运行状态。顺序同 `entries`。 */
+/** One card per entry: transpile into a bundle, or provide runtime state. Same order as `entries`. */
 export async function bundleCards(job: BundleJob): Promise<BundleResult[]> {
   await (warmed ??= cache.warm());
   const out: BundleResult[] = [];
@@ -36,7 +38,7 @@ export async function bundleCards(job: BundleJob): Promise<BundleResult[]> {
   return out;
 }
 
-/** 每个入口的代码身份(纯浏览器节点报 `cardSourceVersions`、发清单计划时用);算不出的不在结果里 */
+/** Code identity for each entry (used when browser-only nodes report `cardSourceVersions` or send manifest plans); omitted if cannot be computed */
 export async function codeIdentities(job: BundleJob): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
   const files = { synced: job.read, builtin: (path: string) => (Object.hasOwn(builtinCardSourceFiles, `/${path}`) ? String(builtinCardSourceFiles[`/${path}`]) : null) };

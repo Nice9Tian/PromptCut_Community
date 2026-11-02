@@ -113,7 +113,8 @@ export const terminal3d: CardDef<Params> = {
   useWhen: "When demonstrating command lines, code or technical operations, use the 3D terminal to type commands out character by character. **The leading symbol decides the color**: `$` white, `#` gray, `❯` cyan, `✓` green; the layout depends on it largely. Playback duration equals total characters divided by cps, so a clip that is too short won't finish typing. For a plain-text typewriter use mu-typing.",
   tags: ["terminal","command line","code","Typewriter"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,

@@ -66,7 +66,8 @@ export const pinBoard: CardDef<Params> = {
   useWhen: "A small board with a title and subtitle (Chinese and English) that lists 3 to 5 parallel key points, pinning them to the board one by one. Good for summarizing a section of content, not for a scattered list. Setting position to left places it at the bottom left.",
   tags: ["Key points","pin board","list"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,

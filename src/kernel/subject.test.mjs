@@ -1,12 +1,13 @@
 /**
- * subjectForRange / positionForSafeSide / subjectSampleTimes 的单测。跑：node --test src/kernel/subject.test.mjs
+ * Unit tests for subjectForRange / positionForSafeSide / subjectSampleTimes. Run: node --test src/kernel/subject.test.mjs
  *
- * 这两个函数是「主体检测」到「卡片位置」之间唯一的那道换算，list_shots 每个镜头的
- * suggestedPosition 都从这里出来。它算错不会报错，只会让 AI 把卡片放到人脸上，
- * 而画面里看起来「就是位置没选好」，没人会想到是这段折叠逻辑的问题。所以钉死：
- *   - 区间里一个采样都没有时必须退回最近的一个，并且**说出来**（approximate）；
- *   - safeSide 取众数、并列时的顺序是确定的（不然同一段素材两次调用给两种建议）；
- *   - safeSide 为 top 时不能原样传给卡片 —— 卡片没有 top 档，会掉进 center。
+ * These two functions are the only conversion between "subject detection" and "card position",
+ * from which suggestedPosition for each shot in list_shots originates. If they compute incorrectly,
+ * no error is thrown; it merely causes AI to place cards over people's faces, and in the visuals
+ * it looks like "just poorly positioned", with no one suspecting this folding logic. So pin it down:
+ *   - When there are no samples in the interval, must fall back to the nearest one and **report it** (approximate);
+ *   - safeSide uses mode, with deterministic ordering on ties (otherwise two calls on the same asset give two suggestions);
+ *   - When safeSide is top, cannot pass to card as is: cards have no top tier, falling back into center.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -15,7 +16,7 @@ import {
   subjectForRange, positionForSafeSide, subjectSampleTimes, suggestPosition, MAX_SUBJECT_TIMES,
 } from "./project.ts";
 
-/** 造一个采样：t 时刻、safeSide、四侧占用率 */
+/** Create a sample: timestamp t, safeSide, four-side occupancy */
 function sample(t, safeSide, occ, boxes = []) {
   return { t, safeSide, occupancy: occ, boxes };
 }
@@ -45,7 +46,7 @@ test("All samples inside the interval take part in the merge: boxes accumulate, 
 });
 
 test("safeSide takes the mode, not the first and not the last", () => {
-  // right 出现两次、left 一次 —— 只看首尾都会得到错的那一边
+  // right appears twice, left once: inspecting only ends yields the wrong side
   assert.equal(subjectForRange(threeSamples, 0, 10).safeSide, "right");
 });
 
@@ -61,7 +62,7 @@ test("When modes tie, take them in a fixed order, so two calls on the same data 
 });
 
 test("No sample in the interval: fall back to the nearest one and mark it approximate", () => {
-  // 镜头 [5, 6] 上没有采样，最近的是 t=3
+  // Shot [5, 6] has no samples, the closest is t=3
   const r = subjectForRange(threeSamples, 5, 6);
   assert.equal(r.approximate, true, "Without the mark, the caller would take the conclusion of a neighboring shot as this shot's");
   assert.deepEqual(r.times, [3]);
@@ -88,7 +89,7 @@ test("Passing start / end in reverse does not crash either", () => {
   assert.deepEqual(subjectForRange(threeSamples, 3, 1).times, [1, 2, 3]);
 });
 
-// ── safeSide → 卡片 position ────────────────────────────────────────
+// ── safeSide → card position ────────────────────────────────────────
 test("The three tiers left, right and bottom map unchanged", () => {
   assert.equal(positionForSafeSide("left"), "left");
   assert.equal(positionForSafeSide("right"), "right");
@@ -105,8 +106,9 @@ test("A valid value must also be given when it is top and there is no occupancy"
   assert.ok(["left", "right", "bottom"].includes(positionForSafeSide("top")));
 });
 
-// ── 采样时刻 ────────────────────────────────────────────────────────
-// 采样点选错不会报错，只会让检测在人物没出现的那几帧上做出结论。
+// ── Sample timestamps ───────────────────────────────────────────────
+// Picking wrong sample points does not error; it just makes detection draw conclusions from frames
+// where no subject appears.
 
 const makeShot = (start, end) => ({ start, end, inTransition: null, outTransition: null });
 
@@ -153,13 +155,16 @@ test("When adjacent shots yield the same time, deduplicate, so the same frame is
   assert.deepEqual(times, [1, 2.5, 4]);
 });
 
-// ── 采样上限 ────────────────────────────────────────────────────────
-// 服务端 /api/subject/detect 硬拒超过 MAX_SUBJECT_TIMES 的请求，而「不传 times 就
-// 自动算」是工具描述里承诺的默认路径。这两件事以前是矛盾的：校验员把 subjectSampleTimes
-// 原样搬到 node 里复算，三个真实场景全部超限（7 分钟无镜头 210 点、5 分钟 80 镜头
-// 240 点、3 分钟 90 个 2 秒镜头 270 点），标准流程 detect_shots → detect_subjects
-// 会直接被 400 拒掉；服务端给的补救话术「请分批」在客户端还做不成——setMediaSubjects
-// 是整体替换，第二批会把第一批冲掉。所以上限必须在这一层就夹住。
+// ── Sample limit ─────────────────────────────────────────────────────
+// The server /api/subject/detect hard-rejects requests exceeding MAX_SUBJECT_TIMES, while
+// "automatically compute when times is omitted" is the default path promised in tool descriptions.
+// These two previously conflicted: validators copied subjectSampleTimes directly into node to
+// recalculate, and three real-world scenarios all exceeded the limit (7 min without shots: 210
+// points; 5 min with 80 shots: 240 points; 3 min with 90 2-second shots: 270 points); standard
+// workflow detect_shots → detect_subjects was directly rejected with 400; the server's suggested
+// workaround "please batch" cannot even be done on the client: setMediaSubjects is a full
+// replacement, so the second batch clobbers the first. Therefore, the limit must be clamped at
+// this layer.
 
 const makeShotSeries = (n, len) =>
   Array.from({ length: n }, (_, i) => makeShot(i * len, (i + 1) * len));
@@ -180,8 +185,9 @@ test("5 minutes, 80 shots: originally 240 points, thinned by shot group to exact
   assert.equal(subjectSampleTimes(media, Number.MAX_SAFE_INTEGER).length, 240);
   const times = subjectSampleTimes(media);
   assert.ok(times.length <= MAX_SUBJECT_TIMES, `Over the limit: ${times.length}`);
-  // 只超一点点就整体塌成每镜头一个中点（80 点）是降过了头：明明能留 200 个。
-  // 正确做法是每个镜头保底留中点，剩下 120 个名额在 20%/80% 点里等距分。
+  // Collapsing entirely to one midpoint per shot (80 points) for a slight overflow is excessive
+  // downgrade: clearly 200 can be kept. The correct approach is guaranteeing a midpoint per shot,
+  // and distributing the remaining 120 slots evenly among the 20%/80% points.
   assert.equal(times.length, MAX_SUBJECT_TIMES, "Thinning should reach exactly the limit; do not throw points away for nothing");
   for (const s of shots.shots) {
     const mid = Math.round((s.start + (s.end - s.start) / 2) * 100) / 100;
@@ -195,7 +201,8 @@ test("3 minutes, 90 shots of 2 seconds (the \"shots are extremely fragmented\" s
   assert.equal(subjectSampleTimes(media, Number.MAX_SAFE_INTEGER).length, 270);
   const times = subjectSampleTimes(media);
   assert.ok(times.length <= MAX_SUBJECT_TIMES, `Over the limit: ${times.length}`);
-  // 90 个中点保底 + 110 个名额分给 20%/80% 点 = 正好 200；镜头一个不少
+  // 90 guaranteed midpoints + 110 slots distributed to 20%/80% points = exactly 200;
+  // not a single shot missing
   assert.equal(times.length, MAX_SUBJECT_TIMES, "Thinning should reach exactly the limit");
   for (const s of shots.shots) {
     const mid = Math.round((s.start + (s.end - s.start) / 2) * 100) / 100;
@@ -204,11 +211,12 @@ test("3 minutes, 90 shots of 2 seconds (the \"shots are extremely fragmented\" s
 });
 
 test("When there are so many shots that even the midpoints do not fit: thin evenly to the limit instead of keeping the first 200", () => {
-  // 300 个 1.5 秒镜头 → 三点 900、中点 300，两步都超，只能抽稀
+  // 300 1.5-second shots → 900 3-point samples, 300 midpoints; both steps exceed limit, must decimate
   const shots = { engine: "transnetv2", createdAt: "", transitions: [], shots: makeShotSeries(300, 1.5) };
   const times = subjectSampleTimes({ duration: 450, shots });
   assert.equal(times.length, MAX_SUBJECT_TIMES);
-  // 等距的关键证据：最后一个采样要落在素材尾部附近，不能只覆盖前 2/3
+  // Key evidence of equidistant spacing: the last sample must fall near the tail of the asset,
+  // not just cover the first 2/3
   assert.ok(times[times.length - 1] > 440, `Tail lost: ${times[times.length - 1]}`);
   assert.ok(times[0] < 5, `Head lost: ${times[0]}`);
 });
@@ -219,10 +227,11 @@ test("max can be passed explicitly, and 1 is also a valid value (takes the middl
   assert.ok(one[0] > 100 && one[0] < 320, `Did not take the middle one: ${one[0]}`);
 });
 
-// ── 抽帧失败的采样 ───────────────────────────────────────────────────
-// 失败的采样在 JSON 里和「这一帧真的没有人」逐字段相同（boxes 空、occupancy 四个 0、
-// safeSide 是个占位值）。不过滤的话，一次部分失败的检测会给出「这段没人、卡片随便放、
-// right 侧安全」的伪结论——恰好是这个功能最该避免的那种错。
+// ── Samples from failed frame extraction ─────────────────────────────
+// Failed samples are field-by-field identical in JSON to "there really is no person in this frame"
+// (empty boxes, four 0s in occupancy, safeSide is a placeholder value). Without filtering, a
+// partially failed detection yields the false conclusion "no one in this section, place cards
+// anywhere, right side is safe": precisely the kind of error this feature must avoid.
 
 const failedSample = (t) => ({
   t, failed: true, reason: "Frame extraction failed: no data decoded (time beyond the duration?)",
@@ -251,11 +260,12 @@ test("When the interval contains only failed samples, fall back to the nearest s
   assert.deepEqual(r.times, [1]);
 });
 
-// ── 被占住时不给建议 ─────────────────────────────────────────────────
-// positionForSafeSide 是在剩下三个合法档里挑「最不坏」的，不等于「保证不遮」。
-// 实测 out/media/talker.mp4（720x1280 正面说话人）t=2.75：
-// occupancy {left:0.895, right:0.895, top:0.692, bottom:0.993}、safeSide="top"，
-// 挑出来的 right 有 89.5% 是人——卡片照着填就正压在脸上。
+// ── Do not suggest when occupied ─────────────────────────────────────
+// positionForSafeSide picks the "least bad" option among the remaining three valid tiers, which
+// does not equate to "guaranteed not to occlude". Actual test on out/media/talker.mp4 (720x1280
+// frontal speaker) at t=2.75: occupancy {left:0.895, right:0.895, top:0.692, bottom:0.993},
+// safeSide="top"; the selected right side is 89.5% human: placing the card accordingly puts it
+// right over the face.
 
 test("When a side is truly empty, give the suggestion as usual and report the occupancy of that side", () => {
   const s = suggestPosition("top", OCC(0.7, 0.15, 0.05, 0.6));

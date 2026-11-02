@@ -1,9 +1,11 @@
 /**
- * M6a 共享项目：WebSocket 握手、挑战、限速、连接票据（契约 `docs/plan/auth-contract.md` 第 4、5、6、8、9、11 节，
- * 用例 AU2、AU3、AU8、AU14，以及 `client.mjs` 的对拍）。
- * 跑：node --test server/test/auth-handshake.test.mjs
+ * M6a shared project: WebSocket handshake, challenges, rate limiting, connection tickets (contract
+ * `docs/plan/auth-contract.md` sections 4, 5, 6, 8, 9, 11, cases AU2, AU3, AU8, AU14, and
+ * cross-checks against `client.mjs`).
+ * Run: node --test server/test/auth-handshake.test.mjs
  *
- * 只照契约写，不看实现。起服务的接口是测试方的假设，集中在 `auth-kit.mjs` 文件头。
+ * Written strictly against the contract, without looking at the implementation. The interfaces
+ * to start the service are the test side's assumptions, centralized in the `auth-kit.mjs` header.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +18,7 @@ import {
 const PUBLIC = '203.0.113.20';
 const other = (i) => `198.51.100.${i}`;
 
-/** 取刚连上的那条连接的 principal（按 userId 找最后一条） */
+/** Retrieve the principal of the newly connected connection (find the last one by userId) */
 async function principalOf(env, userId) {
   return waitFor(() => env.principals().filter((p) => p?.userId === userId).at(-1), 2000, `principal ${userId}`);
 }
@@ -57,7 +59,7 @@ test('AU2 open entry: the creator gets in with the creator passphrase → creato
   assert.equal(pr.creator, true);
   assert.equal(pr.scope, 'member');
   assert.equal(await joinStatus(env, proj, { username: 'alice', as: 'creator', password: proj.password, device: newDevice(), remote: other(1) }), 401);
-  // 创建者也能按普通成员进（项目口令），此时 creator 为 false
+  // The creator can also enter as a regular member (project passphrase); here creator is false
   const dev2 = newDevice();
   await join(env, proj, { username: 'alice', as: 'member', device: dev2, remote: PUBLIC });
   assert.equal((await principalOf(env, `alice@${dev2.deviceId}`)).creator, false);
@@ -121,12 +123,12 @@ test('AU2 four-tuple bound to the nonce (projectId, username, deviceId, as) does
     const remote = other(i++);
     const p = await proofFor(env, proj, { username: 'zoe', device: dev, remote });
     const tu = tuple(p.fields);
-    // 按改过的四元组重新算 m（口令对），只有 nonce 的绑定不符
+    // Recompute m with modified 4-tuple (correct passphrase); only the nonce binding mismatches
     const key = tu.projectId === proj.projectId ? p.key : derive(proj2.password, (await challenge(env, { projectId: proj2.projectId, username: tu.username, deviceId: tu.deviceId, remote })).json.salt);
     const f = proofFields({ projectId: tu.projectId, username: tu.username, deviceId: tu.deviceId, deviceName: dev.deviceName, as: tu.as, nonce: p.nonce, key });
     assert.equal((await env.handshake([PROTOCOL, authItem(f)], remote)).status, 401, what);
   }
-  // as 不同：挑战按 member 取，证明写 creator（用创建者口令算）
+  // Different as: challenge fetched as member, proof specifies creator (computed with creator passphrase)
   const remote = other(i++);
   const p = await proofFor(env, proj, { username: 'alice', device: dev, remote });
   const ck = derive(proj.creator.password, (await challenge(env, { projectId: proj.projectId, username: 'alice', deviceId: dev.deviceId, as: 'creator', remote })).json.salt);
@@ -157,7 +159,7 @@ test('AU2 proof format: unknown r, agent missing c, c not a positive integer, o 
   assert.equal(await joinStatus(env, proj, {
     username: 'zoe', remote: other(i++), mutate: (f) => ({ ...f, v: 2 }),
   }), 401, 'v is not 1');
-  // 合法的几种都能进
+  // All valid variants can enter
   const ok = [
     ['agent c=3', { role: 'agent', c: 3 }],
     ['render owned by a human', { role: 'render', o: { kind: 'user' } }],
@@ -230,9 +232,9 @@ test('AU3 restricted entry: the challenge for a username not on the list has the
   assert.equal(out1.json.salt, out2.json.salt, 'the same username gets the same salt both times (even with a different device or source)');
   assert.notEqual(out1.json.salt, out3.json.salt, 'different usernames get different fake salts');
   assert.notEqual(out1.json.nonce, out2.json.nonce);
-  // 握手：按伪盐派生任何口令都 401
+  // Handshake: any passphrase derived with dummy salt returns 401
   assert.equal(await joinStatus(env, proj, { username: 'mallory', password: 'guess', remote: other(45) }), 401);
-  // as: creator 而用户名不是创建者：同样回伪盐、稳定
+  // as: creator when username is not the creator: likewise returns dummy salt, stable
   const c1 = await challenge(env, { projectId: proj.projectId, username: 'bob', deviceId: dev.deviceId, as: 'creator', remote: PUBLIC });
   const c2 = await challenge(env, { projectId: proj.projectId, username: 'bob', deviceId: dev.deviceId, as: 'creator', remote: PUBLIC });
   assert.equal(c1.status, 200);
@@ -242,7 +244,8 @@ test('AU3 restricted entry: the challenge for a username not on the list has the
 });
 
 test('AU3 fake salt does not change over time (fetched again 10 minutes later on the same service)', async (t) => {
-  // 同一数据目录起两次：伪盐一样。数据目录由 startHost 自建，这里只比同一台服务上两次（重启另见报告）
+  // Started twice with the same data directory: dummy salt is identical. The data directory is created
+  // by startHost; here we only compare twice on the same service (for restarts see report)
   const env = await hostFor(t);
   const proj = await createProject(env, { mode: 'restricted' });
   const a = await challenge(env, { projectId: proj.projectId, username: 'ghost', deviceId: newDevice().deviceId });
@@ -258,7 +261,7 @@ test('AU8 rate limiting: 5 failures from the same source within 1 minute → cha
   const proj = await createProject(env, { mode: 'free' });
   const bad = '198.51.100.200';
   const good = '198.51.100.201';
-  // 先备好一个口令对的证明（冷却前取的 nonce）
+  // Prepare a proof with correct passphrase in advance (nonce fetched before cooldown)
   const held = await proofFor(env, proj, { username: 'zoe', remote: bad });
   for (let i = 0; i < 5; i++) {
     assert.equal(await joinStatus(env, proj, { username: 'zoe', password: `wrong-${i}`, remote: bad }), 401, `failure #${i + 1}`);
@@ -268,12 +271,12 @@ test('AU8 rate limiting: 5 failures from the same source within 1 minute → cha
   assert.equal(ch.status, 429, `challenge during cooldown: ${ch.text}`);
   assert.deepEqual(ch.json, { ok: false, error: 'rate-limited' });
   assert.equal((await env.handshake(held.protocols, bad)).status, 401, 'rejected during cooldown even with the correct passphrase');
-  // 别的来源不受影响
+  // Other origins are unaffected
   assert.equal(await joinStatus(env, proj, { username: 'zoe', remote: good }), 101, 'other sources work as usual');
-  // 冷却快结束（第 5 次失败后 58 s）仍拒
+  // Still rejected near the end of cooldown (58 s after the 5th failure)
   env.clock.advance(57_000);
   assert.equal((await challenge(env, { projectId: proj.projectId, username: 'zoe', deviceId: newDevice().deviceId, remote: bad })).status, 429, 'still in cooldown at 58 s');
-  // 61 s 后恢复
+  // Recovers after 61 s
   env.clock.advance(3000);
   assert.equal(await joinStatus(env, proj, { username: 'zoe', remote: bad }), 101, 'recovers after 61 s');
 });
@@ -359,7 +362,7 @@ test('AU14 connection ticket: the page requests a render ticket, another connect
   assert.equal(rendPr.role, 'render');
   assert.deepEqual(rendPr.owner, { kind: 'user' });
 
-  // 过期：2 分钟 + 30 s 偏差之后
+  // Expired: after 2 minutes + 30 s skew
   env.clock.advance(2 * 60_000 + 31_000);
   assert.equal((await env.handshake([PROTOCOL, `promptcut.ticket.${tk.ticket}`], other(62))).status, 401, '401 after expiry');
 });
@@ -385,7 +388,7 @@ test('AU14 connection ticket: agent role carries a chat number; wrong signature 
   assert.equal(r.type, 'error', `local identity cannot get a ticket: ${JSON.stringify(r)}`);
 });
 
-// ------------------------------------------------------------------ client.mjs 对拍（第 2、11 节）
+// ------------------------------------------------------------------ client.mjs cross-check (sections 2 and 11)
 
 test('AU2 client.mjs: deriveKey cross-checked against node:crypto PBKDF2; subprotocols assembled by buildAuthProtocols get in; ticketExpiry reads out exp', async (t) => {
   const client = await loadClient();
@@ -396,7 +399,7 @@ test('AU2 client.mjs: deriveKey cross-checked against node:crypto PBKDF2; subpro
   assert.equal(got, want, 'deriveKey = PBKDF2-HMAC-SHA256(passphrase as UTF-8, the 16 bytes of the salt, iter, 32)');
 
   const env = await hostFor(t);
-  // 用 client.mjs 的 deriveKey 建项目，再用 buildAuthProtocols 进
+  // Create project using deriveKey from client.mjs, then enter using buildAuthProtocols
   const csalt = b64u(randomBytes(16));
   const psalt = b64u(randomBytes(16));
   const toB64 = (x) => (typeof x === 'string' ? x : b64u(x));
@@ -419,19 +422,20 @@ test('AU2 client.mjs: deriveKey cross-checked against node:crypto PBKDF2; subpro
   const c = await env.open(protocols);
   const tk = await ticketOf(c, { kind: 'asset', access: 'r' });
   assert.equal(client.ticketExpiry(tk.ticket), tk.exp);
-  // 同一组参数再拼一次（每次都要新 nonce）也能进
+  // Assembling again with the same parameters (new nonce needed each time) can also enter
   const again = await client.buildAuthProtocols({
     base: env.httpBase, projectId: r.json.projectId, username: 'alice', deviceId: dev.deviceId, deviceName: dev.deviceName,
     as: 'creator', password: 'c-pw', role: 'render', owner: { kind: 'user' },
   });
   assert.equal((await env.handshake(again)).status, 101);
-  // 用 key 代替 password
+  // Use key instead of password
   const again2 = await client.buildAuthProtocols({
     base: env.httpBase, projectId: r.json.projectId, username: 'zoe', deviceId: dev.deviceId, deviceName: dev.deviceName,
     as: 'member', key: toB64(await client.deriveKey('p-pw', psalt, KDF)), role: 'agent', conversation: 2,
   });
   assert.equal((await env.handshake(again2)).status, 101);
-  // 同一份凭证在测试工具里派生出的 K 与 client 一致（说明测试工具与客户端对盐的理解相同）
+  // K derived from the same credential in test tools matches client (showing both understand salt
+  // identically)
   assert.equal(derive('p-pw', psalt), toB64(await client.deriveKey('p-pw', psalt, KDF)));
   void credential;
 });

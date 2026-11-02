@@ -1,9 +1,12 @@
 /**
- * 探针共用:给刚用 `createSharedProject` 建好的共享项目写进一份空项目内容(替创建者的桌面版)。
+ * Shared by probes: write empty project content into a shared project freshly created with
+ * `createSharedProject` (on behalf of the creator's desktop app).
  *
- * 在线页面只加入、不新建(`dce4b22b`,2026-10-04:加入用 `initialize: false`,服务端没有项目内容就拒绝,
- * 不拿本地这份去盖),所以探针里「建项目 → 页面加入」之间要先有内容,否则页面显示「连不上服务器」、等不到成员按钮。
- * 尺寸、时长同「新建项目」的缺省。
+ * Online pages only join, never create (`dce4b22b`, 2026-10-04: join uses `initialize: false`; if
+ * server has no project content, it rejects instead of overwriting with the local copy), so in
+ * probes content must exist between "create project → page join"; otherwise the page displays
+ * "Cannot connect to server" and never waits for the member button. Dimensions and duration match
+ * defaults of "New project".
  */
 import { randomBytes } from 'node:crypto';
 import { buildAuthProtocols } from '../../server/auth/client.mjs';

@@ -3,42 +3,53 @@ import { filterClaimable } from './filter.mjs';
 import { pickCandidate } from './pick.mjs';
 
 /**
- * 渲染节点的会话状态机(任务书 M2「节点会话状态机」,契约 B.5)。
+ * Session state machine for render nodes (task brief M2 "Node Session State Machine", contract B.5).
  *
- * 只管协议这一层:本地视图(看得见哪些 `open` 任务)、认领、续约、让路、放回、丢认领。
- * 传输(`send`)、时钟(`now`)、闲时判据(`isIdle`)、随机源都由调用方注入;这里不开计时器,
- * 由调用方按节拍调 `tick()`。真正干活由调用方在 `onTask` 里开始、在 `onLost` 里停手。
+ * Only handles the protocol layer: local view (which `open` tasks are visible), claiming, lease
+ * renewal, yielding, releasing, and lost claims. Transport (`send`), clock (`now`), idle criterion
+ * (`isIdle`), and random source are all injected by the caller; no timers are started here, and
+ * the caller invokes `tick()` periodically. Actual work is started by the caller in `onTask` and
+ * stopped in `onLost`.
  *
- * # 认领节流
+ * # Claim throttling
  *
- * 同一时刻至多一条认领在飞,一次 `tick` 至多发一条认领;持有数 + 在飞数到 `maxConcurrent`
- * 就不再认领。在飞的认领在收到 `task.claimed` / `task.claim-rejected`(或 `error`、重新
- * `start`)时清掉。队列回 `claim-rejected { reason: 'throttled' }`(契约 I.6)后,
- * 一个 `SWEEP_INTERVAL_MS` 内不发起新认领,续约照常。回 `preferred`(M6c X4:`plan` 还在发布方的独占窗口里)
- * 时这个候选留在视图里、搁到回包的 `retryInMs` 之后再考虑。
+ * At most one claim is in flight at any time, and at most one claim is sent per `tick`; no more
+ * claims once held count + in-flight count reaches `maxConcurrent`. In-flight claims are cleared
+ * upon receiving `task.claimed` / `task.claim-rejected` (or `error`, or re-`start`). After the queue
+ * returns `claim-rejected { reason: 'throttled' }` (contract I.6), no new claims are initiated
+ * within one `SWEEP_INTERVAL_MS`; lease renewal continues as normal. When returning `preferred`
+ * (M6c X4: `plan` is still within the publisher's exclusive window), this candidate remains in the
+ * view and is deferred until after the response's `retryInMs`.
  *
- * # 重入
+ * # Reentrancy
  *
- * 调用方可以把 `send` 直接接到进程内队列的 `handle` 上、把队列的回包同步地送回 `receive`
- * (进程内联调就是这么接的)。所以这里**先改本地状态、再 `send`**:例如认领时先记在飞再发,
- * 否则同步回来的 `task.claimed` 会先清在飞、随后又被记上,节点从此再也不认领。
+ * The caller can connect `send` directly to the in-process queue's `handle` and synchronously pass
+ * queue responses back to `receive` (this is how in-process debugging is wired). Therefore, here we
+ * **update local state first, then `send`**: for example, mark in-flight before sending a claim;
+ * otherwise, a synchronously returned `task.claimed` clears in-flight first and then gets marked
+ * again, causing the node to never claim again.
  *
- * # 工作计数 step(契约 A.12〔裁〕)
+ * # Work counter step (contract A.12 [ruling])
  *
- * 持有的每个任务另记一个工作计数 `step`(起初没有):执行编排每推进一步(换阶段、出一批、推完一块)调 `advance(id)` 加一,
- * 不单独发消息;下一次 `progress` 或按节拍的续约把它带上(`task.progress { done, step }`)。队列看到 step 变了也重起停滞计时,
- * 所以推产物、换阶段这些帧数不变的阶段不会被当成卡死;执行器真卡死时 step 也不动,照旧按停滞收回。续约本身不加 step。
+ * Each held task tracks an additional work counter `step` (initially absent): every time execution
+ * arrangement advances a step (stage switch, batch emit, finishing a chunk), call `advance(id)` to
+ * increment by one, without sending a separate message; the next `progress` or tick-based lease
+ * renewal includes it (`task.progress { done, step }`). The queue also resets the stall timer when
+ * seeing step change, so stages where frame counts remain unchanged (pushing artifacts, switching
+ * stages) are not treated as frozen; if the executor genuinely freezes, step stops advancing and
+ * is reclaimed due to stalling as usual. Lease renewal itself does not increment step.
  *
- * # 丢认领只通知一次
+ * # Lost claim notified only once
  *
- * `node.welcome.lost` 之后队列还会为同一个 id 补一条 `task.lease-lost`;持有已经移除,
- * 那一条就忽略。`task.lease-lost` 带的令牌和本地持有的对不上(旧认领的迟到消息,
- * 这个 id 已经重新认领过)同样忽略。
+ * After `node.welcome.lost`, the queue will still send an extra `task.lease-lost` for the same id;
+ * since the held task has already been removed, that message is ignored. A `task.lease-lost` whose
+ * token does not match the locally held token (a late message from an old claim, where this id has
+ * already been re-claimed) is likewise ignored.
  */
 
 const byId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
-/** 设备等级：桌面版 (3) > 托管方渲染服务且支持流 (2) > 浏览器 / 其它 (1) */
+/** Device rank: desktop app (3) > host render service supporting streams (2) > browser / other (1) */
 export function deviceRank(node) {
   if (!node) return 0;
   if (node.profile === 'pc') return 3;
@@ -49,15 +60,18 @@ export function deviceRank(node) {
   return 1;
 }
 
-/** 在途流任务的持有方等级:队列给了就用;只给了 profile 的按 profile 换算;都没有回 null(不当作可抢) */
+/** Holder rank of in-flight stream task: use if provided by queue; convert from profile if only profile is given; return null if neither (not treated as preemptible) */
 function holderRankOf(item) {
   if (Number.isInteger(item?.holderRank)) return item.holderRank;
   return item?.holderProfile === 'pc' ? 3 : item?.holderProfile === 'host' ? 2 : item?.holderProfile === 'browser' ? 1 : null;
 }
 
 /**
- * 判断抢占用的任务视图:id 以 `stream:` 起头的一律是流任务,补上 `kind: 'stream'`;项目 id 归到 `source.projectId`
- * (诊断形状的任务只有顶层 `projectId`)。这样 `canClaim`(托管节点按项目的「生成轨道流」开关)认得出它是流任务、属于哪个项目。没有回 null
+ * Task view for preemption evaluation: all ids starting with `stream:` are stream tasks,
+ * supplemented with `kind: 'stream'`; project id is normalized to `source.projectId` (diagnostic-shape
+ * tasks only have top-level `projectId`). This allows `canClaim` (the hosted node's per-project
+ * "generate track streams" toggle) to recognize it as a stream task and know which project it belongs
+ * to. Returns null if absent
  */
 function streamTaskView(task, id) {
   if (!task || typeof task !== 'object') return null;
@@ -77,37 +91,43 @@ export function createNodeSession({
   projects = 'all',
   onTask = () => {},
   onLost = () => {},
-  // 这个任务此刻能不能开工(契约 A.12〔裁〕:独立渲染主机只在预渲染间空着时认领快照,见 host.mjs);缺省都能。
-  // 第二个参数 `{ held }` 是此刻的持有数:认领闸(下一项)多给的那一格只接特定的任务时用它区分
+  // Whether this task can start right now (contract A.12 [ruling]: standalone render host only claims
+  // snapshots when prerender is idle, see host.mjs); defaults to always yes.
+  // The second parameter `{ held }` is the current held count: used to distinguish when the extra
+  // slot granted by the claim gate (next item) only accepts specific tasks
   canClaim = () => true,
-  // 此刻最多持有几项(认领闸,`mechanism/rendering.md`「Agent 优先只是插队」):缺省恒为 `maxConcurrent`。
-  // 本机节点在 Agent 专用实例开着且空闲时给 `maxConcurrent + 1`,多认领一项交给它做(`vite-plugin-frames.ts`)。
-  // `node.hello` 报的仍是 `maxConcurrent`
+  // Maximum number of items held at this moment (claim gate, `mechanism/rendering.md` "Agent priority
+  // is only queue jumping"): defaults to `maxConcurrent`.
+  // Local node grants `maxConcurrent + 1` when Agent dedicated instance is running and idle,
+  // claiming an extra item for it (`vite-plugin-frames.ts`).
+  // `node.hello` still reports `maxConcurrent`
   claimLimit = null,
 }) {
   const settings = { ...QUEUE_DEFAULTS, ...constants };
-  /** 本地看到的 open 任务:id → TaskView */
+  /** Open tasks seen locally: id → TaskView */
   let open = new Map();
-  /** 在飞的流任务(被别的节点认领中):id → { id, version, holderProfile, holderRank, density, task }(`task` 是判断能不能抢的任务视图,见 `streamTaskView`) */
+  /** In-flight stream tasks (claimed by others): id → { id, version, holderProfile, holderRank, density, task } (`task` checks preemption, see `streamTaskView`) */
   let inFlightStreams = new Map();
-  /** 持有的认领:id → { id, token, lastSentAt, done, step, projectId } */
+  /** Held claims: id → { id, token, lastSentAt, done, step, projectId } */
   const holds = new Map();
-  /** 在飞的认领:{ id, projectId } | null */
+  /** In-flight claim: { id, projectId } | null */
   let inflight = null;
-  /** `yieldAll` 时还在飞的认领:回来的若是 `task.claimed`,立即放回而不开工 */
+  /** Claim still in flight during `yieldAll`: if returned as `task.claimed`, release immediately without starting work */
   let yielding = null;
   let lastProjectId = null;
   let epoch = null;
-  /** 被队列限流(`claim-rejected { reason: 'throttled' }`,契约 I.6)后,这个时刻之前不发起新认领;续约照常 */
+  /** After throttled by queue (`claim-rejected { reason: 'throttled' }`, contract I.6), no new claims initiated before this time; renewals continue */
   let throttledUntil = -Infinity;
   /**
-   * 搁置到某一刻的候选:id → 本地时刻(M6c X4)。`plan` 在发布方的独占窗口里被回 `preferred` 时,
-   * 候选留在视图里、搁到窗口过后再考虑(队列回的 `retryInMs` 按本地时钟换算,跨机器也不怕时钟差)。
+   * Candidates deferred until a certain timestamp: id → local time (M6c X4). When `plan` is answered
+   * with `preferred` inside the publisher's exclusive window, the candidate stays in the view and is
+   * deferred until after the window expires (queue's `retryInMs` is converted using local clock,
+   * immune to cross-machine clock skew).
    */
   const deferred = new Map();
-  /** 节点侧过滤用的节点描述:补上 `nodeId`(本地档能力闸 `requires.localMedia` 要比它,M6c X2) */
+  /** Node description for node-side filtering: adds `nodeId` (compared against local tier capability gate `requires.localMedia`, M6c X2) */
   const filterNode = () => (node?.nodeId != null ? node : { ...node, nodeId });
-  /** 按摘要 watch 着的项目(M6c X3,只有 host 用 `'all'` 时才有);null = 还没 watch 过具体项目 */
+  /** Projects watched by summary (M6c X3, only present when host uses `'all'`); null = no specific projects watched yet */
   let watching = null;
 
   const dropHold = (id, reason) => {
@@ -120,7 +140,7 @@ export function createNodeSession({
       .filter(entry => entry && entry.id != null)
       .map(({ id, token }) => ({ id, token }));
     const resuming = new Set(entries.map(entry => entry.id));
-    // 没带上的持有,队列会按 not-resumed 直接放弃,这边先停手
+    // For held items not included, queue abandons them directly as not-resumed; stop work here first
     for (const id of [...holds.keys()]) if (!resuming.has(id)) dropHold(id, 'not-resumed');
     const at = now();
     for (const { id, token } of entries) {
@@ -128,12 +148,12 @@ export function createNodeSession({
       if (hold) hold.token = token;
       else holds.set(id, { id, token, lastSentAt: at, done: null, step: null, projectId: null });
     }
-    // 旧连接上在飞的认领和本地视图都作废:回包不会再来,视图等新的 queue.snapshot
+    // In-flight claims and local view on old connection invalidated: no responses will arrive, wait for queue.snapshot
     open = new Map();
     inFlightStreams.clear();
     inflight = null;
     yielding = null;
-    // 限流挂在队列的连接上,新连接不带着旧连接的退避(契约 I.10 第 6 条)
+    // Throttling is tied to queue's connection; new connection does not inherit old connection backoff (contract I.10, Item 6)
     throttledUntil = -Infinity;
     deferred.clear();
     watching = null;
@@ -164,8 +184,12 @@ export function createNodeSession({
     const projectId = task?.source?.projectId ?? null;
     holds.set(id, { id, token, lastSentAt: now(), done: null, step: null, projectId });
     if (projectId != null) lastProjectId = projectId;
-    // M7 D1：plan 的认领回包带同用户在线纯浏览器节点的指纹，原样交给编排（切分方据此给浏览器可做的卡另出一份）
-    // 块 N:另带的 `browserCardEnvFingerprints`(同一批节点执行用户卡、素材效果卡的指纹)同样原样交出,只在有时才带(旧形状不变)
+    // M7 D1: plan's claim response carries fingerprints of online browser-only nodes belonging to the
+    // same user, passed as-is to arrangement (splitter uses this to produce a separate copy for cards
+    // runnable by browsers)
+    // Chunk N: extra `browserCardEnvFingerprints` (fingerprints of the same batch of nodes executing
+    // user cards and media effect cards) is likewise passed as-is, included only when present (old
+    // shape remains unchanged)
     const ctx = { token };
     if (Array.isArray(message.browserFingerprints)) ctx.browserFingerprints = [...message.browserFingerprints];
     if (Array.isArray(message.browserCardEnvFingerprints)) ctx.browserCardEnvFingerprints = [...message.browserCardEnvFingerprints];
@@ -177,8 +201,10 @@ export function createNodeSession({
     if (inflight?.id === id) inflight = null;
     if (yielding?.id === id) yielding = null;
     if (reason === 'throttled') {
-      // 契约 I.6:本连接这个扫描周期撞锁太多,队列在下一次扫描前一律回 throttled。退避一个扫描周期;
-      // 候选不从本地视图删,任务本身没变,过后照常可以认领
+      // Contract I.6: Too many lock contentions on this connection during this sweep interval; queue
+      // returns throttled for all requests until next sweep. Back off for one sweep interval;
+      // Candidate is not deleted from local view, the task itself is unchanged and can be claimed as
+      // usual afterwards
       throttledUntil = now() + settings.SWEEP_INTERVAL_MS;
       return;
     }
@@ -190,27 +216,35 @@ export function createNodeSession({
       return;
     }
     if (reason === 'preferred' || reason === 'retry-backoff') {
-      // M6c X4:plan 还在发布方的独占窗口里。候选不删,搁到窗口过后;窗口过后任何指纹符合的 pc 都能认领
+      // M6c X4: plan is still in publisher exclusive window. Candidate kept, deferred past window; any matching pc can claim after
       const wait = Number(message.retryInMs);
       deferred.set(id, now() + (Number.isFinite(wait) && wait >= 0 ? wait : settings.SWEEP_INTERVAL_MS));
       const task = open.get(id);
       if (task && Number.isInteger(message.version)) open.set(id, { ...task, version: message.version });
       return;
     }
-    // taken / gone / forbidden / card-locked / fingerprint-mismatch(契约 I.10 第 4 条)/ local-media(M6c X2)/
-    // plan-profile(M6c X4;C10 契约第 18 节第 9 条起只对不带片段清单的 plan 与纯浏览器回)(以及认不出的原因):这一轮不再考虑它。
-    // card-locked(契约 F.2):这张卡的锁在别的指纹上,本节点的指纹做不了,按 taken 丢掉候选、
-    // 不重试;任务在队列里仍是 open,只有队列再发 task.opened / queue.snapshot 时才会回到视图
+    // taken / gone / forbidden / card-locked / fingerprint-mismatch (contract I.10, Item 4) /
+    // local-media (M6c X2) / plan-profile (M6c X4; starting from C10 contract Section 18, Item 9 only
+    // returned for plans without clip manifest and browser-only) (and unrecognized reasons): no longer
+    // considered in this round.
+    // card-locked (contract F.2): this card's lock belongs to another fingerprint, this node's
+    // fingerprint cannot process it; discard candidate as taken, without retrying; task remains open
+    // in queue and only returns to view when queue sends task.opened / queue.snapshot again
     open.delete(id);
     inFlightStreams.delete(id);
   }
 
   /**
-   * M6c X3:队列对 host 的 `watch: 'all'` 只回项目摘要 `queue.summary`,不发单任务增量。host 会话照旧报到后
-   * watch `'all'`,接到摘要就改 watch 摘要里有 open 任务的那些项目(并上已 watch、摘要里还列着的):
-   * 队列回这些项目的 `queue.snapshot`(整体替换本地视图),此后收它们的增量;非空项目列表不停摘要,
-   * 所以新项目有活时下一条摘要又会带出来。只在出现新项目时改 watch,项目做完不收窄,免得来回重发快照。
-   * 别的 profile、或调用方给了具体项目列表时,摘要一律不理(pc 的 `'all'` 本来就收全量)。
+   * M6c X3: The queue responds to host's `watch: 'all'` only with project summary `queue.summary`,
+   * without sending single-task deltas. Host session checks in as usual and then watches `'all'`;
+   * upon receiving the summary, it switches to watching those projects that have open tasks in the
+   * summary (merged with already-watched projects still listed in the summary): the queue responds
+   * with `queue.snapshot` for these projects (replacing the local view entirely), after which it
+   * receives their deltas; non-empty project lists do not stop summaries, so when a new project has
+   * work, the next summary will bring it up. Only switch watch when a new project appears; do not
+   * narrow when a project finishes, avoiding repeated resending of snapshots.
+   * For other profiles, or when caller supplies a specific project list, summaries are completely
+   * ignored (`'all'` for pc already receives full data).
    */
   function followSummary(message) {
     if (projects !== 'all' || node?.profile !== 'host') return;
@@ -237,7 +271,7 @@ export function createNodeSession({
       case 'node.welcome': {
         epoch = message.epoch ?? epoch;
         for (const id of message.lost ?? []) dropHold(id, 'lost');
-        // 接续的认领马上续一次约:断线期间发出去的续约可能都丢了,租约未必还剩多少
+        // Resumed claims renew lease immediately: renewals during disconnection may be lost, little lease time may remain
         const due = now() - settings.RENEW_INTERVAL_MS;
         for (const id of message.resumed ?? []) {
           const hold = holds.get(id);
@@ -259,7 +293,7 @@ export function createNodeSession({
               holderProfile: s.holderProfile ?? null,
               holderRank: holderRankOf(s),
               density: s.density ?? (s.id.endsWith(':sparse') ? 'sparse' : null),
-              // 本地见过的完整任务(被认领之前在 open 里的那一份、上一张快照记下的)优先,队列只给判断抢占要的最小视图
+              // Locally seen full task (in open before claim, recorded in last snapshot) takes precedence; queue only gives minimal view for preemption
               task: streamTaskView(before.get(s.id) ?? open.get(s.id) ?? beforeStreams.get(s.id)?.task ?? s.task, s.id),
             });
           }
@@ -288,7 +322,8 @@ export function createNodeSession({
         break;
       }
       case 'task.closed':
-        // 包括 `state: 'hidden'`(契约 I.6):队列的指纹前置过滤不再让本节点看见它,和别的 closed 一样移除
+        // Includes `state: 'hidden'` (contract I.6): the queue's fingerprint pre-filter no longer lets
+        // this node see it, removed like other closed ones
         open.delete(message.id);
         inFlightStreams.delete(message.id);
         break;
@@ -306,8 +341,10 @@ export function createNodeSession({
         break;
       }
       case 'error':
-        // 认领不带 reqId,回包对不上是哪条请求;在飞的认领若就是它,不清的话节点从此再也不认领。
-        // 带 reqId 的是同一条连接上别的请求(内容库、发布等)的回包,不是认领的,不清(契约 I.10 第 5 条)
+        // Claims do not carry reqId, so responses cannot be matched to which request they belong; if the
+        // in-flight claim is this one, if not cleared the node will never claim again.
+        // Those with reqId are responses to other requests (content store, publish, etc.) on the same
+        // connection, not claims, so do not clear (contract I.10 item 5)
         if (message.reqId === undefined) inflight = null;
         break;
       default:
@@ -342,7 +379,8 @@ export function createNodeSession({
       }
       return;
     }
-    // 没有 open 候选任务时：能力更强的设备可抢占能力更弱设备执行中的 stream 任务（桌面版 > 托管服务 > 浏览器）
+    // When there are no open candidate tasks: more capable devices can preempt stream tasks running on
+    // weaker devices (desktop app > hosted service > browser)
     const fn = filterNode();
     const canDoStreams = fn?.capabilities?.streams === true || (fn?.capabilities?.streams === undefined && fn?.capabilities?.transcode === true);
     const myRank = canDoStreams ? deviceRank(fn) : 0;
@@ -351,7 +389,7 @@ export function createNodeSession({
       for (const item of inFlightStreams.values()) {
         if (holds.has(item.id) || deferred.has(item.id)) continue;
         if (!Number.isInteger(item.holderRank) || item.holderRank >= myRank) continue;
-        // 必须具备完整任务视图，且通过 filterClaimable 与 canClaim 检查
+        // Must have a complete task view, and pass filterClaimable and canClaim checks
         if (!item.task) continue;
         if (!filterClaimable([item.task], fn).length) continue;
         try {
@@ -360,7 +398,8 @@ export function createNodeSession({
         candidates.push(item);
       }
       if (candidates.length > 0) {
-        // 若有多个可抢占任务，优先抢占稀疏流任务（sparse 先于满密度）
+        // If there are multiple preemptible tasks, prioritize preempting sparse stream tasks (sparse
+        // before full density)
         candidates.sort((a, b) => {
           const aSparse = a.density === 'sparse' ? 1 : 0;
           const bSparse = b.density === 'sparse' ? 1 : 0;
@@ -379,7 +418,7 @@ export function createNodeSession({
     }
   }
 
-  /** 续约 / 报进度的消息:step 有了才带(没带的消息与原来一字不差) */
+  /** Message for lease renewal / progress report: only included when step is present (messages without it are verbatim identical to before) */
   function progressMessage(hold) {
     const msg = { type: 'task.progress', id: hold.id, token: hold.token, done: hold.done ?? null };
     if (hold.step !== null && hold.step !== undefined) msg.step = hold.step;
@@ -395,7 +434,7 @@ export function createNodeSession({
     return true;
   }
 
-  /** 工作推进了一步(见文件头「工作计数 step」):只记,不发 */
+  /** Work advanced by one step (see file header "work count step"): recorded only, not sent */
   function advance(id) {
     const hold = holds.get(id);
     if (!hold) return false;
@@ -443,7 +482,7 @@ export function createNodeSession({
     held: () => [...holds.values()].sort(byId).map(({ id, token, lastSentAt }) => ({ id, token, lastSentAt })),
     known: () => known0().map(task => ({ ...task })),
     inFlightStreams: () => [...inFlightStreams.values()],
-    /** host 按摘要 watch 着的项目(M6c X3),升序;没有就是空数组 */
+    /** Projects watched by host by digest (M6c X3), ascending; empty array if none */
     watching: () => (watching ? [...watching] : []),
     get epoch() { return epoch; },
   };

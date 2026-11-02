@@ -1,13 +1,18 @@
 /**
- * 「把这个引用到 AI 的输入框」的全局入口。
+ * Global entry point for "quote this into the AI input box".
  *
- * 喊的人不止一处:预览里右键一张卡、时间轴上右键一个片段或带里的一张叠加卡；
- * 听的人也不止一处:桌面的本机 AI 栏、云端 AI 栏、手机版的 Agent 分页(它放进标记条而不是输入框)。
- * 两边隔着好几层组件、又不共享界面状态,所以用一个 window 事件搭桥 —— 和 `left/captionsBus.ts` 同一个路子。
+ * There is more than one caller: right-clicking a card in the preview, or right-clicking a clip or
+ * an overlay card inside a band on the timeline.
+ * There is also more than one listener: the desktop local AI panel, the Cloud AI panel, and the
+ * Agent tab of the mobile app (which puts it in the marker bar rather than the input box).
+ * The two sides are separated by several component layers and share no UI state, so a window
+ * event bridges them, the same approach as `left/captionsBus.ts`.
  *
- * 事件名和 detail 的字段沿用原来那一套(`clipId` / `label` / `cardId`),老的调用方一个字不用改。
- * 引用块的写法只有 `quoteToken` 一处:以前本机 AI 栏和云端 AI 栏各自拼 `@卡片 …(…)`,
- * 加「叠加卡」这一级时两处都要改,漏一处就是另一个面板里引用写错级别。
+ * The event name and the detail fields stay as before (`clipId` / `label` / `cardId`), so old
+ * callers need no changes at all.
+ * The quote block is written in exactly one place, `quoteToken`: previously the local AI panel and
+ * the Cloud AI panel each built their own `@card …(…)`, so adding the "overlay card" level meant
+ * changing both, and missing one would make the other panel quote the wrong level.
  */
 import { quoteToken } from "../mobile/agentView";
 import { tr } from "../i18n/index.ts";
@@ -15,13 +20,13 @@ import { tr } from "../i18n/index.ts";
 const EVENT = "pc-quote-clip";
 
 export interface QuoteDetail {
-  /** 被引用的东西的 id:片段就是片段 id;叠加卡是「片段id#种类:定义id」 */
+  /** The id of the quoted thing: for a clip it is the clip id; for an overlay card it is "clipId#kind:definitionId" */
   clipId: string;
-  /** 给人看的名字 */
+  /** The human-readable name */
   label?: string;
-  /** 引的是哪一级:不写 = 整段(`@卡片`);单张叠加卡写「叠加卡」 */
+  /** Which level is quoted: omitted = the whole clip (`@card`); a single overlay card is written as "overlay card" */
   kind?: string;
-  /** 老调用方(预览右键)还带这个,只当兜底名字用 */
+  /** Old callers (preview right-click) still pass this; it is only used as a fallback name */
   cardId?: string;
 }
 
@@ -29,7 +34,7 @@ export interface QuoteRead {
   id: string;
   label: string;
   kind?: string;
-  /** 插进输入框的那一串 */
+  /** The string inserted into the input box */
   token: string;
 }
 
@@ -37,7 +42,7 @@ export function requestQuote(q: QuoteDetail): void {
   window.dispatchEvent(new CustomEvent(EVENT, { detail: q }));
 }
 
-/** 读一条事件:名字按 label → cardId → 「未命名」兜底,引用块统一由 quoteToken 写 */
+/** Read an event: the name falls back in the order label → cardId → "Untitled"; the quote block is always written by quoteToken */
 export function readQuote(ev: Event): QuoteRead | null {
   const d = ((ev as CustomEvent).detail || {}) as Partial<QuoteDetail>;
   const id = typeof d.clipId === "string" ? d.clipId : "";

@@ -1,9 +1,9 @@
 /**
- * 手机版编辑界面(语义 `workflow/editing.md`「手机版界面」;交互以 `prototypes/mobile-ui-demo/` 为准)。
+ * Mobile app editor (semantics `workflow/editing.md` "Mobile app UI"; for interaction, `prototypes/mobile-ui-demo/` is authoritative).
  *
- * 底部导航栏三个分页:缩略预览(默认)、时间轴、Agent。返回层级:分页 → 缩略预览 → 项目列表,浏览器后退同一规则
- * (进分页推一层历史记录,分页之间切换只替换当前这层)。
- * 编辑器的基础设施(文档服务同步、舞台与预览、测量遮罩、同步浮层)和桌面 `Editor.tsx` 挂的是同一套,只换了摆法。
+ * The bottom navigation bar has three tabs: thumbnail preview (default), timeline, Agent. Back hierarchy: tab → thumbnail preview → project list, and browser back follows the same rule
+ * (entering a tab pushes one history entry; switching between tabs only replaces the current one).
+ * The editor's infrastructure (document service sync, stage and preview, measurement mask, sync overlay) is the same set that the desktop `Editor.tsx` mounts, only arranged differently.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import "../cards";
@@ -42,7 +42,7 @@ import { tr as trText } from "../i18n/index.ts";
 import { OVERLAY_QUOTE_KIND } from "./agentView";
 import { shownName, shownNameOf } from "../i18n/names.ts";
 
-// 探针与测试读写 store 的口子(桌面的时间轴模块装同一个;手机版不挂时间轴模块,这里自己装)
+// Hook for probes and tests to read and write the store (the desktop timeline module installs the same one; the mobile app does not mount the timeline module, so it installs it here)
 (window as unknown as { __pcStore?: unknown }).__pcStore = { getState, actions };
 
 type Page = "preview" | "timeline" | "agent";
@@ -60,7 +60,7 @@ type SheetState =
 const TRANSITION_NAME: Record<Transition["kind"], string> = { crossfade: trText("Crossfade"), fadeIn: trText("Fade in"), fadeOut: trText("Fade out") };
 const cardName = (id: string) => shownNameOf(getCard(id)?.name);
 
-/** 历史记录里本界面的那一层:1 缩略预览,2 时间轴 / Agent 分页 */
+/** This UI's level in the history: 1 thumbnail preview, 2 timeline / Agent tab */
 interface NavState { pcm: 1; lvl: 1 | 2; page?: Page }
 const navState = (): NavState | null => {
   const s = history.state as NavState | null;
@@ -73,10 +73,10 @@ export function MobileEditor() {
   const playing = useStore((s) => s.playing);
   const selection = useStore((s) => s.selection);
   const toast = useToast();
-  // 在线上传被限额拒掉的(游客第 4 条视频之类):弹一句说清楚(`uploadRejectedNotice.ts`)
+  // Online uploads rejected by the quota (e.g. a guest's 4th video): show a short message that explains it clearly (`uploadRejectedNotice.ts`)
   useUploadRejectedNotice(toast);
-  // 这个项目只给了只读权限(游客):改项目的操作(换顺序、分割、复制、删除、静音、拖动、对齐、撤销重做、加素材 / 卡片、参数)
-  // 一律不给,子导航栏整排置灰、悬停是 viewOnlyText();播放、预览、点选看缩略时间轴、读 Agent 对话、导出照常
+  // This project is read-only for this user (guest): operations that change the project (reorder, split, copy, delete, mute, drag, align, undo/redo, add media / cards, parameters)
+  // are never offered; the whole sub-navigation bar is grayed out and hovering shows viewOnlyText(); playback, preview, selecting in the thumbnail timeline, reading the Agent chat and export work as usual
   const ro = useReadOnly();
   const confirm = useConfirm();
   const [page, setPage] = useState<Page>("preview");
@@ -87,8 +87,8 @@ export function MobileEditor() {
   const conflicts = useConflicts();
   const offlineOpen = useSync((v) => v.offlineOpen && v.status === "paused");
   /**
-   * 离线时攒下的改动只在这个页面里(浏览器存不下,见 `onlineStatus.ts` 的 `unsentAtRisk`):离开编辑界面之前问一句。
-   * 判据和顶栏、浏览器原生离开确认是同一个。手机版拦的是**应用内返回**:系统后退、顶栏的主页键都走这里。
+   * Changes accumulated offline exist only in this page (the browser cannot store them, see `unsentAtRisk` in `onlineStatus.ts`): ask before leaving the editor.
+   * The criterion is the same as the top bar's and the browser's native leave confirmation. The mobile app intercepts **in-app back**: system back and the top bar's home button both go through here.
    */
   const unsentRisk = useSync((v) => unsentAtRisk(v.status, v.unconfirmed, v.offlineStore));
   const running = useCloudRunning();
@@ -100,19 +100,19 @@ export function MobileEditor() {
   const tr = selTr ? transitionsOf(project).find((x) => x.id === selTr) ?? null : null;
   const cutName = useMemo(() => listCuts(project).find((c) => c.active)?.name ?? trText("Cut"), [project]);
 
-  /* ---------- 编辑器基础设施:同 Editor.tsx(不塞演示卡:手机版不放假数据) ---------- */
+  /* ---------- Editor infrastructure: same as Editor.tsx (no demo cards: the mobile app does not put in fake data) ---------- */
   useEffect(() => { void startSync().then(() => resumeShared()); }, []);
-  // 重连时发现断网期间项目被改过:打开冲突合并面板(同桌面的离线对话框)
+  // On reconnect, found that the project was changed while offline: open the conflict merge panel (same as the desktop offline dialog)
   useEffect(() => { if (offlineOpen) setSheet({ kind: "conflict" }); }, [offlineOpen]);
 
-  /* ---------- 返回层级与浏览器后退 ---------- */
+  /* ---------- Back hierarchy and browser back ---------- */
   const pushedBase = useRef(false);
-  /** popstate 是在后退**发生之后**才到的,拿不到最新的 props,所以这一刻该不该拦记在 ref 里 */
+  /** popstate arrives only **after** the back has happened and cannot see the latest props, so whether to intercept at this moment is kept in a ref */
   const riskRef = useRef(false);
   useEffect(() => { riskRef.current = unsentRisk; }, [unsentRisk]);
-  /** 已经问过、用户选了「离开」:接下来那一次 popstate 不再拦 */
+  /** Already asked, and the user chose "Leave": the next popstate is not intercepted */
   const leaving = useRef(false);
-  /** 自己发起的后退(分页 → 缩略预览):页面已经当场切好,对应的 popstate 到了就跳过,免得把这之后刚打开的面板关掉 */
+  /** A back we initiated ourselves (tab → thumbnail preview): the page has already been switched on the spot, so skip the matching popstate when it arrives, to avoid closing a panel opened after that */
   const ownBack = useRef(0);
   useEffect(() => {
     const s = navState();
@@ -122,8 +122,8 @@ export function MobileEditor() {
       if (ownBack.current > 0) { ownBack.current--; return; }
       const st = navState();
       if (!st) {
-        // 要离开编辑界面了。离线攒的改动只在这个页面里就先问一句 —— 后退已经发生,拦不住,
-        // 所以把刚被弹掉的那一层压回去(人就留在原地),再用手机版自己的确认框问;选「离开」才真走
+        // About to leave the editor. If changes accumulated offline exist only in this page, ask first. The back has already happened and cannot be stopped,
+        // so push the level that was just popped back (the user stays in place), then ask with the mobile app's own confirm box; only "Leave" really leaves
         if (riskRef.current && !leaving.current) {
           history.pushState({ pcm: 1, lvl: 1 } satisfies NavState, "");
           askLeave.current();
@@ -151,13 +151,13 @@ export function MobileEditor() {
     if (page === "preview") history.pushState(st, ""); else history.replaceState(st, "");
     setPage(next);
   };
-  /** 真的走:从这里之后不再问第二遍(`history.back()` 还会再来一次 popstate) */
+  /** Really leave: from here on, do not ask a second time (`history.back()` triggers another popstate) */
   const leaveNow = () => {
     leaving.current = true;
     if (navState()?.lvl === 1 && pushedBase.current) history.back();
     else { leaving.current = false; window.dispatchEvent(new Event("pc-go-home")); }
   };
-  /** 问那一句。popstate 里也要用,所以放进 ref:那个处理器只挂一次,捏不到新的闭包 */
+  /** Ask that question. It is also needed inside popstate, so it goes into a ref: that handler is attached only once and cannot capture the new closure */
   const askLeave = useRef<() => void>(() => {});
   askLeave.current = () => confirm({ text: UNSENT_LEAVE_BODY, ok: trText("Leave"), danger: true, run: leaveNow });
   const goHome = () => {
@@ -165,7 +165,7 @@ export function MobileEditor() {
     leaveNow();
   };
 
-  /* ---------- 时间轴分页的「✕ 放弃本次编辑」:记下进来之后本页面落地了几次修改 ---------- */
+  /* ---------- "✕ Discard this edit" on the timeline tab: record how many changes this page has landed since entering ---------- */
   const editCount = useRef(0);
   useEffect(() => {
     if (page !== "timeline") return;
@@ -179,10 +179,10 @@ export function MobileEditor() {
     if (n) toast(trText("This edit was discarded"));
   };
 
-  /* ---------- 选中 ---------- */
+  /* ---------- Selection ---------- */
   const selectClip = (id: string | null) => { setSelTr(null); actions.select(id ? [id] : []); };
   const selectTransition = (x: Transition | null) => { actions.select([]); setSelTr(x?.id ?? null); };
-  // 缩略预览里点缩略时间轴以外的任何地方:取消选中
+  // In the thumbnail preview, clicking anywhere outside the thumbnail timeline: clear the selection
   useEffect(() => {
     if (page !== "preview") return;
     const off = (e: PointerEvent) => {
@@ -194,12 +194,12 @@ export function MobileEditor() {
     return () => document.removeEventListener("pointerdown", off);
   });
 
-  /* ---------- 引用:切到 Agent,把这一项带进输入框 ---------- */
+  /* ---------- Quote: switch to the Agent and bring this item into the input box ---------- */
   const refClip = (c: TrackClip) => {
     setQuote({ clipId: c.id, cardId: c.cardId || undefined, label: clipName(project, c, cardName) });
     goPage("agent");
   };
-  /** 单张叠加卡:引用块比整段细一级(`@叠加卡 名字(片段id#种类:定义id)`,见 editor/quoteBus.ts) */
+  /** A single overlay card: the quote block is one level finer than the whole clip (`@overlay-card name(clip id#kind:definition id)`, see editor/quoteBus.ts) */
   const refOverlay = (c: TrackClip, item: OverlayItem) => {
     setQuote({ clipId: overlayQuoteId(c, item), label: item.name, kind: OVERLAY_QUOTE_KIND });
     goPage("agent");
@@ -219,7 +219,7 @@ export function MobileEditor() {
     return () => window.clearTimeout(timer);
   }, [page, quote, toast]);
 
-  /* ---------- 操作 ---------- */
+  /* ---------- Operations ---------- */
   const seek = (x: number) => { if (getState().playing) actions.pause(); actions.seek(Math.max(0, x)); };
   const reorder = (order: string[]) => {
     if (ro.locked) { toast(ro.why); return; }
@@ -230,7 +230,7 @@ export function MobileEditor() {
     const track = mainTrackOf(p)!;
     const far = Math.max(...track.clips.map((c) => c.end)) + 1000;
     withMerge({ key: `pcm-reorder-${Date.now()}`, windowMs: Infinity }, () => {
-      // 先全部挪到远处腾位置,再按新起点从前往后放,中途不会互相顶住
+      // First move everything far away to make room, then place them one by one from the front at the new start points, so they never block each other midway
       plan.moves.forEach((m, i) => {
         const c = findClip(getState().project, m.id)!.clip;
         const s = far + i * 1000;
@@ -310,14 +310,14 @@ export function MobileEditor() {
     const muteItem: SubItem = { icon: "mute", label: c.audioMuted ? trText("Restore audio") : trText("Muted"), pcm: "sub-mute", run: () => mute(c) };
     if (kind === "card") items.push({ icon: "style", label: trText("Style"), pcm: "sub-style", run: params }, { icon: "opacity", label: trText("Opacity"), pcm: "sub-opacity", run: params });
     else if (kind === "audio") items.push(muteItem, { icon: "volume", label: trText("Volume"), pcm: "sub-volume", run: params });
-    // 视频段:静音、速度、调整(演示稿 toolsFor 的顺序);「速度」打开速度面板(store 的 setClipSpeed,〔裁〕变速段不出原声)
+    // Video clip: mute, speed, adjust (order from the demo's toolsFor); "Speed" opens the speed panel (the store's setClipSpeed, [ruling] a speed-changed clip has no original sound)
     else items.push(...(kind === "video" ? [muteItem, { icon: "speed", label: trText("Speed"), pcm: "sub-speed", run: () => setSheet({ kind: "speed", clipId: c.id }) } as SubItem] : []), { icon: "adjust", label: trText("Adjust"), pcm: "sub-adjust", run: params });
-    // 叠加层:最窄的片段上角标不吃点击,这里是唯一的入口(`mobile/overlayBadge.ts`)
+    // Overlay: the badge on the narrowest clips does not take clicks, so this is the only entry (`mobile/overlayBadge.ts`)
     items.push({ icon: "layers", label: trText("Overlays"), pcm: "sub-overlays", run: params });
     items.push({ icon: "trash", label: trText("Delete"), pcm: "sub-del", run: () => del(c) });
     return items;
   };
-  // 只读时整排子导航栏置灰(都是加素材 / 改片段 / 要给 Agent 发话的入口),悬停写明原因
+  // When read-only, the whole sub-navigation bar is grayed out (all of them are entries for adding media / changing clips / sending messages to the Agent), and hovering states the reason
   const lockItems = (items: SubItem[]): SubItem[] => (ro.locked ? items.map((it) => ({ ...it, disabled: true, title: ro.why })) : items);
   const previewItems: SubItem[] = lockItems(tr ? transitionItems(tr) : selClipObj ? [refItem(() => refClip(selClipObj)), ...STD] : STD);
   const timelineItems: SubItem[] = lockItems(selClipObj ? clipTools(selClipObj) : STD);
@@ -353,7 +353,7 @@ export function MobileEditor() {
         </div>
       )}
 
-      {/* 只读项目(游客):手机上看不到悬停说明,置灰的按钮得有一句话讲清为什么(播放、预览、导出、读 Agent 对话照常) */}
+      {/* Read-only project (guest): hover text is not visible on a phone, so a grayed-out button needs one sentence explaining why (playback, preview, export, reading the Agent chat work as usual) */}
       {ro.locked && <div className="robar" data-pcm="ro-bar">{ro.why}</div>}
 
       {conflicts.pending && (
@@ -365,8 +365,9 @@ export function MobileEditor() {
       )}
 
       {/*
-        Agent 分页时预览只藏不卸:舞台 iframe 不能 display:none(里面的 <video> 与 rAF 会停、布局归零,同 Preview.tsx 后台舞台的注释),
-        所以挪出排版、透明、不收指针
+        In the Agent tab, the preview is hidden but not unmounted: stage iframe cannot be display:none
+        (<video> and rAF inside would stop, layout resets to zero, as noted for background stage in
+        Preview.tsx), so it is moved out of flow, made transparent, and ignores pointer events.
       */}
       <div className="preview-area" data-pcm="preview-area" inert={page === "agent"}
         style={page === "agent" ? { position: "absolute", left: 0, right: 0, top: 0, opacity: 0, pointerEvents: "none" } : undefined}>
@@ -375,11 +376,11 @@ export function MobileEditor() {
             <Preview variant="mobile" />
             <ProbeGate />
             <div className="stage-btns">
-              {/* 没有账号就没有成员,整个入口不画(`product/platforms.md`「局域网里的第二块屏」:手机上不显示成员) */}
+              {/* Without an account there are no members, so the whole entry is not drawn (`product/platforms.md` "The second screen on the LAN": the phone does not show members) */}
               {!members.unavailable && (
                 <StageButton className="sbtn" pcm="members-btn" title={trText("Members")} onTap={() => setSheet({ kind: "members" })}>
                   {page === "timeline" ? <><Icon name="members" />{`${members.people}·${members.agents}`}</> : memberLabel}
-                  {/* 有新的申请加入时出数字角标(只有创建者看得到申请;2026-10-22 用户定) */}
+                  {/* A numeric badge appears when there are new join requests (only the creator can see requests; user decision, 2026-10-22) */}
                   {members.requests.length > 0 && <span className="badge-n" data-pcm="members-request-badge">{members.requests.length}</span>}
                 </StageButton>
               )}

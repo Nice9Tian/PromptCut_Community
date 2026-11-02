@@ -32,7 +32,7 @@ function atomic(file, text) {
     }
   } finally { try { fs.unlinkSync(tmp); } catch { /* already renamed */ } }
 }
-/** 系统保护存储(Windows 的 DPAPI 经 PowerShell)一次输出的上限 */
+/** Output limit per call for system protected storage (Windows DPAPI via PowerShell) */
 export const PROTECT_MAX_BUFFER = 256 * 1024 * 1024;
 export function systemProtector(dir) {
   if (process.platform === 'win32') {
@@ -40,13 +40,16 @@ export function systemProtector(dir) {
       const script = "$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Security; $j=[Console]::In.ReadToEnd()|ConvertFrom-Json; $b=[Convert]::FromBase64String($j.value); $e=[Text.Encoding]::UTF8.GetBytes('PromptCut-collaboration-v1'); if($j.mode -eq 'seal'){$r=[Security.Cryptography.ProtectedData]::Protect($b,$e,[Security.Cryptography.DataProtectionScope]::CurrentUser)}else{$r=[Security.Cryptography.ProtectedData]::Unprotect($b,$e,[Security.Cryptography.DataProtectionScope]::CurrentUser)}; [Console]::Write([Convert]::ToBase64String($r))";
       const p = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
         input: JSON.stringify({ mode, value: Buffer.from(value).toString('base64') }), windowsHide: true, encoding: 'utf8', timeout: 15000,
-        // 保护存储里有各房间的离线修改记录(整份项目内容):缺省的 1 MiB 输出上限下,项目正文过了约 780 KB 就写不进去(ENOBUFS),
-        // 房间里的保存、取消多用户协作、搬到云端都跟着失败。上限放到与恢复接口请求体相同的量级
+        // Protected storage contains offline edit records for each room (entire project content): under
+        // the default 1 MiB output limit, project bodies exceeding ~780 KB fail to write (ENOBUFS),
+        // causing saves, canceling multi-user collaboration, and moving to the cloud in rooms to fail as well.
+        // The limit is raised to the same order of magnitude as the recovery endpoint request body.
         maxBuffer: PROTECT_MAX_BUFFER,
       });
       if (p.status !== 0) throw Object.assign(new Error(tr("System protected storage unavailable")), { storageCode: p.error?.code ?? 'DPAPI_FAILED' });
       const output = p.stdout.trim();
-      // 判的仍是「一段合法的 base64」;写成长度加一条不嵌套的正则:原来那条带分组重复的正则在几 MB 的输出上会把调用栈撑爆
+      // Still checks for "a valid base64 segment"; written as length plus an unnested regex:
+      // the original regex with grouped repetition blew the call stack on several MB of output
       if (!output || output.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(output)) throw Object.assign(new Error(tr("System protected storage response invalid")), { storageCode: 'DPAPI_FAILED' });
       return Buffer.from(output, 'base64');
     };
@@ -93,7 +96,8 @@ export function openRecoveryVault({ dir, protector, write = atomic }) {
       storagePhase = 'state-parse';
       const v = JSON.parse(bytes);
       if (v.version !== 1 || !v.identities || !v.bindings || !v.revoked || !v.hosts) throw new Error();
-      // 旧托管主机名（键与值里都有）换成新的，见 hosted-default.mjs 的 RETIRED_HOSTED_HOSTS；下次写入时落盘
+      // Replace old hosted hostnames (in both keys and values) with new ones, see RETIRED_HOSTED_HOSTS
+      // in hosted-default.mjs; persisted on next write
       const m = migrateHostedDeep(v);
       state = { ...m, journals: m.journals ?? {}, settings: m.settings ?? {}, unregister: m.unregister ?? {}, moves: m.moves ?? {} };
     } catch (e) { throw Object.assign(new Error(tr("Collaboration recovery data corrupted; the original data is kept, restore from backup or re-authenticate")), { storagePhase, storageCode: e.storageCode ?? e.code ?? 'INVALID' }); }
@@ -139,7 +143,9 @@ export function openRecoveryVault({ dir, protector, write = atomic }) {
     list: descriptor => { read(); return Object.values(state.identities).filter(r => roomKey(r) === roomKey(descriptor)).map(r => structuredClone(r)); },
     select(descriptor, contentId) {
       read();
-      // 已注销的房间不再给身份；这台设备上没发出去的离线修改仍然给（过期的云端项目转成本地项目时要并进去，见 `src/editor/sync/cloudGone.ts`）
+      // Deregistered rooms no longer provide identity; offline edits not yet sent from this device are
+      // still provided (needed when merging an expired cloud project into a local project,
+      // see `src/editor/sync/cloudGone.ts`)
       if (state.revoked[roomKey(descriptor)]) return { revoked: true, identities: [], journal: structuredClone(state.journals[JSON.stringify([roomKey(descriptor), contentId])] ?? null) };
       const identities = Object.values(state.identities).filter(r => roomKey(r) === roomKey(descriptor)).map(r => structuredClone(r));
       const bound = state.bindings[JSON.stringify([roomKey(descriptor), contentId])];

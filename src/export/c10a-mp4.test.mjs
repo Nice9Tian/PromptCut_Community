@@ -1,12 +1,16 @@
 /**
- * C10a 在线页面逐帧导出的 MP4 封装器（`docs/plan/c10a-contract.md` 第 11 节〔裁〕「自写最小封装器」、第 12 节「MP4 封装」）。
- * 跑：node --test src/export/c10a-mp4.test.mjs
+ * C10a MP4 muxer for online page frame-by-frame export (`docs/plan/c10a-contract.md` Section 11
+ * [ruling] "custom minimal muxer", Section 12 "MP4 muxing").
+ * Run: node --test src/export/c10a-mp4.test.mjs
  *
- * 编码不在测试范围里（浏览器的 VideoEncoder / AudioEncoder）：样本由 ffmpeg 现场编成 H.264 Annex B 与 AAC ADTS，
- * 测试自己拆成 WebCodecs 交给封装器的形状（AVCC 长度前缀的访问单元 + avcC；去掉 ADTS 头的 AAC 帧 + AudioSpecificConfig），
- * 喂给封装器，产物用 ffprobe / ffmpeg 核对：读得出、帧数、时长、编码、关键帧，解出来的画面与源码流逐帧相同。
+ * Encoding is out of test scope (browser VideoEncoder / AudioEncoder): samples are encoded on the fly
+ * by ffmpeg into H.264 Annex B and AAC ADTS; the test unpacks them into the shape WebCodecs hands
+ * to the muxer (AVCC length-prefixed access units + avcC; AAC frames stripped of ADTS headers +
+ * AudioSpecificConfig), feeds them to the muxer, and verifies output with ffprobe / ffmpeg: readable,
+ * frame count, duration, codec, keyframes, and decoded frames match the source stream frame by frame.
  *
- * 封装器的名字与调用约定见 `server/test/c10a-kit.mjs` 的 K5；`src/export/` 下找不到时整组 skip。
+ * For muxer name and calling conventions, see K5 in `server/test/c10a-kit.mjs`; skip the entire
+ * suite when not found under `src/export/`.
  */
 import "../testing/registerTs.mjs";
 import { test, after } from "node:test";
@@ -29,7 +33,7 @@ const it = (name, fn) => test(name, { skip }, fn);
 const DIR = tempDir("pc-c10a-mp4-");
 after(() => fs.rmSync(DIR, { recursive: true, force: true }));
 
-/** ffmpeg 出 H.264 Annex B：没有 B 帧、一帧一个 slice、固定 GOP */
+/** ffmpeg produces H.264 Annex B: no B-frames, one slice per frame, fixed GOP */
 async function h264({ w, h, fps, seconds, gop, name }) {
   const out = path.join(DIR, `${name}.h264`);
   await run(ffmpeg, ["-y", "-hide_banner", "-v", "error", "-f", "lavfi", "-i", `testsrc2=size=${w}x${h}:rate=${fps}`, "-t", String(seconds),
@@ -45,7 +49,7 @@ async function aac({ seconds, rate = 48000, channels = 2, name }) {
   return adtsToRaw(fs.readFileSync(out));
 }
 
-/** 按 WebCodecs 的方式喂封装器，回产物文件路径 */
+/** Feed the muxer in WebCodecs style, returning output file path */
 async function mux({ video, audio, w, h, fps, name }) {
   const m = muxer.make({
     video: { codec: "avc", width: w, height: h, frameRate: fps },
@@ -54,7 +58,7 @@ async function mux({ video, audio, w, h, fps, name }) {
   });
   const frameUs = 1e6 / fps;
   const aFrameUs = audio ? (1024 * 1e6) / audio.sampleRate : 0;
-  // 交错喂：按时间戳先后，模拟边编边封
+  // Interleaved feeding: in timestamp order, simulating muxing while encoding
   const events = [];
   video.samples.forEach((s, i) => events.push({ kind: "v", i, ts: Math.round(i * frameUs) }));
   audio?.frames.forEach((f, i) => events.push({ kind: "a", i, ts: Math.round(i * aFrameUs) }));
@@ -83,19 +87,19 @@ async function probe(file) {
   return { video: j.streams.find((s) => s.codec_type === "video"), audio: j.streams.find((s) => s.codec_type === "audio"), streams: j.streams, format: j.format };
 }
 
-/** 解码出来的每帧 md5（`-f framemd5`），只留哈希列 */
+/** Decoded per-frame md5 (`-f framemd5`), keeping only the hash column */
 async function frameMd5(file, fmt = []) {
   const { out } = await run(ffmpeg, ["-v", "error", ...fmt, "-i", file, "-map", "0:v:0", "-f", "framemd5", "-"]);
   return out.split(/\r?\n/).filter((l) => l && !l.startsWith("#")).map((l) => l.split(",").at(-1).trim());
 }
 
-/** 解码全片，stderr 里不许有错误 */
+/** Decode the entire video; no errors allowed in stderr */
 async function decodesClean(file) {
   const { err } = await run(ffmpeg, ["-v", "error", "-i", file, "-f", "null", "-"]);
   assert.equal(err.trim(), "", `Decode errors: ${err.slice(0, 600)}`);
 }
 
-/** 顶层 box 类型（测试自己的解析） */
+/** Top-level box types (test's own parsing) */
 function topBoxes(file) {
   const buf = fs.readFileSync(file);
   const types = [];

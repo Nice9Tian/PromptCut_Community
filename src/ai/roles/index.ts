@@ -1,54 +1,59 @@
 /**
- * 角色提示词。一个角色一个 .md 文件,放进本目录即可,不用改这里。
+ * Role prompts. One .md file per role; just drop it into this directory, no change is needed here.
  *
- * 「一键配特效」就是按 ORDER 里的顺序把这些角色依次跑一遍:
- * 先让剪辑导演把素材排成一条片子,再让特效助理配字幕和动效。
- * 拆成角色而不是一整段长提示词,是因为这两步要的东西不一样 ——
- * 排片得先看全部素材,配特效得先有文字稿 —— 混在一轮里模型容易顾此失彼。
+ * "One-click effects" runs these roles one after another in the order given in ORDER:
+ * first the editing director arranges the media into a video, then the effects assistant adds
+ * captions and motion graphics.
+ * They are split into roles rather than one long prompt because the two steps need different
+ * things: arranging the video requires seeing all the media first, and adding effects requires
+ * having a transcript first, and mixing them in one round makes the model prone to neglecting one
+ * for the other.
  *
- * 多 Agent 的 `spawn_agent`(计划 agent-workflow-plan.md A3)也从这个目录取预设角色的提示词,
- * 服务端按同样的规则读(`server/agent/agent-roles.mjs`)。
+ * The multi-Agent `spawn_agent` (plan agent-workflow-plan.md A3) also takes the preset role prompts
+ * from this directory, and the server reads them by the same rules (`server/agent/agent-roles.mjs`).
  *
- * 文件名用 ASCII,中文名写在文件里的一级标题上:这些名字会进构建产物和
- * 打包脚本,ASCII 路径在 Windows 的各种命令行环境里最不容易出岔子。
+ * File names use ASCII, and the Chinese name goes in the top-level heading inside the file: these
+ * names end up in build outputs and packaging scripts, and ASCII paths are least likely to go wrong
+ * in the various command-line environments on Windows.
  */
 
 export interface Role {
-  /** 文件名去掉扩展名,例如 director */
+  /** The file name without its extension, e.g. director */
   id: string;
-  /** 文件里的一级标题,例如「剪辑导演」 */
+  /** The top-level heading in the file, e.g. "Editing director" */
   name: string;
-  /** 标题以下的全部正文,发给 AI 的就是它 */
+  /** All the body text below the heading; this is what is sent to the AI */
   prompt: string;
   /**
-   * 这个角色需要什么样的模型能力。写在 .md 顶部的 frontmatter 里。
+   * What kind of model capability this role needs. Written in the frontmatter at the top of the .md.
    *
-   * 现在还没有真的按它路由——所有角色都跑用户选的那个 provider。留这个字段
-   * 是为了以后能把「规划」交给强模型、「执行」交给快模型:那时候只要改
-   * resolveModelFor,不用回来动每个角色。
+   * Nothing is actually routed by it yet: all roles run on the provider the user selected. The field is
+   * kept so that "planning" can later go to a strong model and "execution" to a fast model: then only
+   * resolveModelFor needs to change, without coming back to touch every role.
    */
   capability: Capability;
 }
 
-/** 角色对模型的要求。新增档位时同步 resolveModelFor 的注释。 */
+/** The role's requirement on the model. When a tier is added, update the comment in resolveModelFor too. */
 export type Capability = "planning" | "execution";
 
 /**
- * 跑的顺序。没列进来的文件仍然会被读出来(可以单独调用),但不进「一键配特效」。
- * 将来加角色:建好 .md,把 id 放进这个数组。
+ * The run order. Files not listed are still read (and can be called individually), but are not part
+ * of "one-click effects".
+ * To add a role in the future: create the .md and put its id in this array.
  */
 export const WORKFLOW_ORDER = ["director", "fx-assistant"] as const;
 
 const files = import.meta.glob<string>("./*.md", { eager: true, query: "?raw", import: "default" });
 
-/** 剥掉开头的 --- frontmatter ---,返回里面的键值对和剩下的正文 */
+/** Strips the leading --- frontmatter ---, returning the key-value pairs inside and the remaining body */
 function splitFrontmatter(raw: string): { meta: Record<string, string>; body: string } {
   const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
   if (!m) return { meta: {}, body: raw };
   const meta: Record<string, string> = {};
   for (const line of m[1].split(/\r?\n/)) {
     const kv = line.match(/^\s*([A-Za-z_][\w-]*)\s*:\s*(.*)$/);
-    // 值后面允许跟 # 注释,截掉
+    // A # comment is allowed after the value; cut it off
     if (kv) meta[kv[1]] = kv[2].replace(/\s+#.*$/, "").trim();
   }
   return { meta, body: raw.slice(m[0].length) };
@@ -57,7 +62,8 @@ function splitFrontmatter(raw: string): { meta: Record<string, string>; body: st
 function parse(path: string, rawFile: string): Role {
   const id = path.replace(/^\.\//, "").replace(/\.md$/, "");
   const { meta, body: raw } = splitFrontmatter(rawFile);
-  // 没写就按「执行」算:大多数角色是干活的,规划角色是少数,让少数去显式声明
+  // If not written, count it as "execution": most roles do the work and planning roles are the
+  // minority, so let the minority declare it explicitly
   const capability: Capability = meta.capability === "planning" ? "planning" : "execution";
   const lines = raw.split(/\r?\n/);
   const headingAt = lines.findIndex((l) => l.startsWith("# "));
@@ -66,30 +72,32 @@ function parse(path: string, rawFile: string): Role {
   return { id, name, prompt, capability };
 }
 
-/** 目录里的全部角色,按文件名排序 */
+/** All the roles in the directory, sorted by file name */
 export const ALL_ROLES: Role[] = Object.entries(files)
   .map(([path, raw]) => parse(path, raw))
   .filter((r) => r.prompt !== "")
   .sort((a, b) => a.id.localeCompare(b.id));
 
 /**
- * 按角色的能力档位挑模型。**现在是占位实现：一律返回 null，表示「用用户选的那个」。**
+ * Picks a model by the role's capability tier. **Currently a placeholder implementation: it always
+ * returns null, meaning "use the one the user selected".**
  *
- * 留这个函数是为了把「谁来干」和「用哪个模型」这两件事分开。以后要让
- * 规划类角色走强模型、执行类走快模型，只改这里一处；以后按角色选模型的调用方
- * 都问它，不用回头改每个角色。
+ * The function is kept to separate the two questions "who does it" and "which model to use". Later,
+ * to send planning roles to a strong model and execution roles to a fast model, only this one place
+ * needs to change; callers that choose a model by role in the future all ask it, and there is no need
+ * to go back and change every role.
  *
- * 返回 provider id（'claude' | 'codex' | 'agy' | 'api'），null 表示不指定。
+ * Returns a provider id ('claude' | 'codex' | 'agy' | 'api'); null means unspecified.
  */
 export function resolveModelFor(capability: Capability): string | null {
-  // 将来大概会是这样：
-  //   planning  → 强模型（拆解和取舍错了，后面全白跑）
-  //   execution → 快模型（步骤直白，胜在便宜和快）
+  // It will probably look like this in the future:
+  //   planning  → strong model (if the breakdown and trade-offs are wrong, everything after is wasted)
+  //   execution → fast model (the steps are straightforward, and it wins on being cheap and fast)
   void capability;
   return null;
 }
 
-/** 「一键配特效」按顺序要跑的那几个角色 */
+/** The roles that "one-click effects" runs in order */
 export const WORKFLOW_ROLES: Role[] = WORKFLOW_ORDER
   .map((id) => ALL_ROLES.find((r) => r.id === id))
   .filter((r): r is Role => !!r);

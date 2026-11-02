@@ -1,62 +1,75 @@
 /**
- * remotion 式的卡的建卡检查（`docs/plan/render-standard.md`「remotion 式的规矩」；框架在 `src/kernel/remotionStyle/`）。
+ * Card creation checks for remotion-style cards (`docs/plan/render-standard.md` "Remotion-style rules";
+ * framework in `src/kernel/remotionStyle/`).
  *
- * 一张卡声明成 remotion 式（`frameMode: "direct"`），就是在说：这一帧的画面只由时间 t、参数和输入素材决定。
- * 这里只看源码、不执行，把不合这句话的写法逐条指出来，每条带行号。建卡、改卡时由
- * `server/vite-plugin-cards.ts` 的 `checkCardSource` / `checkSourceEdit` 调；桌面建卡与云端 Agent 建卡走的是同一个函数。
- * 装卡（打开项目、内容库同步）不调它：已经在库里的卡照旧载入。
+ * Declaring a card as remotion-style (`frameMode: "direct"`) means: this frame's visual is
+ * determined solely by time t, parameters, and input assets. Here we only inspect source code without
+ * execution, flagging patterns that violate this statement point by point, each with line numbers.
+ * Called by `checkCardSource` / `checkSourceEdit` in `server/vite-plugin-cards.ts` when creating or
+ * modifying cards; desktop card creation and Cloud Agent card creation use the same function.
+ * Installing cards (opening a project, content store sync) does not call it: cards already in the
+ * library are loaded as before.
  *
- * 规则（`rule` 一栏是代号，测试夹具按它一条一张违规样例）：
+ * Rules (the `rule` column is an identifier; test fixtures provide one violation sample per rule):
  *
- * | rule | 规矩 | 认什么 |
+ * | rule | Rule | What it detects |
  * |---|---|---|
- * | `import` | 只许引用框架和基础库 | 名单之外的导入；动态 `import()`、`require()` |
- * | `real-time` | 不读真实时间 | `Date.now()`、不带参数的 `new Date()` / `Date()`、`performance` |
- * | `timer` | 不用定时器 | `setTimeout`、`setInterval`、`setImmediate`、`requestIdleCallback` |
- * | `frame-callback` | 不用浏览器的逐帧回调 | `requestAnimationFrame`、`cancelAnimationFrame`、`setAnimationLoop`、`requestVideoFrameCallback` |
- * | `motion` | 不用 Motion 的动画与弹簧 | 引用 `motion` / `motion/react`；`<motion.x>`；`whileHover` 这类属性 |
- * | `presence` | 不用进出场组件 | `<AnimatePresence>` |
- * | `css-animation` | 不用 CSS 动画与过渡 | 样式里的 `animation*` / `transition*`；样式文本里的 `@keyframes`、`animation:`、`transition:`；类名 `animate-*`、`transition*`；元素的 `.animate()`；SVG 的 `<animate>` |
- * | `random` | 不用不带种子的随机 | `Math.random`、`crypto` |
- * | `state` | 不把东西带到下一帧 | `useState` 等记状态的 hook；`useRef(初值)`、往 `.current` 里写；往文件顶层的名字或导入的东西里写；`window`、`globalThis`、本地存储；`eval`、`Function()` |
- * | `top-level` | 文件顶层只许写常量 | 顶层的 `let` / `var` / `class` / `enum`、直接执行的语句；顶层初始化式里的 `new`、`await`、赋值 |
- * | `viewport` | 卡片挂载即播放 | `IntersectionObserver`（所有卡原来就不许，这里只是带上行号） |
- * | `frame-mode` | 写法以声明为准 | `frameMode` 写成了读不出字面量的东西 |
- * | `framework` | 必须引用框架 | 声明成 remotion 式，却没有一句会留到运行时的框架导入（只带类型的导入不算）。用不到工具的卡（只用 `t` 做算术、只用 GLSL 的素材效果卡、只有声音的卡）写一行裸导入 `import "../../kernel/remotionStyle";` |
+ * | `import` | Only framework and base libraries allowed | Imports outside the list; dynamic `import()`, `require()` |
+ * | `real-time` | No reading real time | `Date.now()`, `new Date()` / `Date()` without arguments, `performance` |
+ * | `timer` | No timers | `setTimeout`, `setInterval`, `setImmediate`, `requestIdleCallback` |
+ * | `frame-callback` | No browser per-frame callbacks | `requestAnimationFrame`, `cancelAnimationFrame`, `setAnimationLoop`, `requestVideoFrameCallback` |
+ * | `motion` | No Motion animations or springs | Importing `motion` / `motion/react`; `<motion.x>`; attributes like `whileHover` |
+ * | `presence` | No entrance/exit components | `<AnimatePresence>` |
+ * | `css-animation` | No CSS animations or transitions | `animation*` / `transition*` in styles; `@keyframes`, `animation:`, `transition:` in style text; class names `animate-*`, `transition*`; `.animate()` on elements; SVG `<animate>` |
+ * | `random` | No unseeded randomness | `Math.random`, `crypto` |
+ * | `state` | Do not carry state into next frame | State hooks like `useState`; `useRef(initialValue)`, writing to `.current`; writing to file top-level names or imported items; `window`, `globalThis`, local storage; `eval`, `Function()` |
+ * | `top-level` | Only constants at file top level | Top-level `let` / `var` / `class` / `enum`, directly executed statements; `new`, `await`, assignments in top-level initializers |
+ * | `viewport` | Cards play upon mount | `IntersectionObserver` (already prohibited for all cards, line numbers added here) |
+ * | `frame-mode` | Syntax must match declaration | `frameMode` written as something where a literal cannot be read |
+ * | `framework` | Must import framework | Declared as remotion-style, but without any framework import surviving into runtime (type-only imports do not count). Cards needing no utilities (only using `t` for arithmetic, media effect cards using only GLSL, audio-only cards) write a bare import `import "../../kernel/remotionStyle";` |
  *
- * 看源码查不出来的那一类（依赖「谁先加载好」：字体、图片先画一版再变）不在这里，见报告与 `server/bakery/frame-ready.mjs`。
+ * The category that cannot be detected from source code (dependencies on "what loads first": fonts or
+ * images rendering one version first and then changing) is not here; see the report and
+ * `server/bakery/frame-ready.mjs`.
  *
- * 为什么必须引用框架：载入时只给「声明成 remotion 式、并且引用了框架」的卡把文件顶层锁成只读
- * （`src/online/cardRuntime/remotionLock.mjs`）。不引用框架的卡不上锁，绕一道变量往自己顶层的对象里写就查不出来。
- * 让「该不该锁」和「合不合法」用同一个判据，不另加记号（`docs/plan/html-snapshot-removal-dryrun.md` 第 8.2 节）。
+ * Why framework import is required: upon loading, only cards "declared as remotion-style and
+ * importing the framework" have their file top level locked to read-only
+ * (`src/online/cardRuntime/remotionLock.mjs`). Cards not importing the framework are not locked, so
+ * writing to top-level objects via an intermediate variable cannot be detected. Uses the same
+ * criterion for "whether to lock" and "whether valid", without extra markers
+ * (`docs/plan/html-snapshot-removal-dryrun.md` Section 8.2).
  *
- * 新建卡（没有改之前的版本）与引用了框架的卡：每一条都拒绝。改一张框架出现之前建的、没引用框架的卡：只拒绝这次编辑
- * **新增**的违规（按规则数个数），原来就有的不追究——和 `compositing: 'independent'` 的差量口径一样；
- * `Date.now()`、`setTimeout` / `setInterval`、`IntersectionObserver` 三样原来对所有卡就是出现即拒，照旧。
+ * Newly created cards (without a version prior to editing) and cards importing the framework:
+ * rejected on every rule. Modifying a card created before the framework existed that does not import
+ * the framework: reject only violations **newly introduced** in this edit (counting by rule),
+ * without penalizing preexisting ones: matching the delta criteria of `compositing: 'independent'`;
+ * the three items `Date.now()`, `setTimeout` / `setInterval`, and `IntersectionObserver` were
+ * originally rejected on sight for all cards, and remain as before.
  */
 import ts from 'typescript';
 
-/** 框架的仓库相对路径（不带扩展名） */
+/** Repository-relative path to the framework (without extension) */
 export const REMOTION_FRAMEWORK = 'src/kernel/remotionStyle';
 
 /**
- * remotion 式的卡可以引用的模块。包名原样；内置模块是仓库相对路径（不带扩展名）。
- * 只带类型的导入（`import type …`）不在此限：它转译后不留痕迹。
+ * Modules that remotion-style cards can import. Package names as-is; built-in modules are
+ * repository-relative paths (without extension). Type-only imports (`import type …`) are exempt:
+ * they leave no trace after transpilation.
  */
 export const REMOTION_IMPORT_ALLOW = Object.freeze([
-  'react',                              // 组件与不记状态的 hook
+  'react',                              // Components and stateless hooks
   'react/jsx-runtime',
-  REMOTION_FRAMEWORK,                   // 框架
-  'src/kernel/types',                   // CardDef、CardProps
-  'src/kernel/frameReady',              // 异步准备好之前挡住截图（beginFrameWork）
-  'src/kernel/soundEffects',            // 声音配方（纯计算）
-  'src/render/cards/graphValues',       // 素材效果卡的出口：glsl、draw、bitmap
-  'src/cards/native/hud',               // 位置与主色的约定
+  REMOTION_FRAMEWORK,                   // Framework
+  'src/kernel/types',                   // CardDef, CardProps
+  'src/kernel/frameReady',              // Block snapshots before async preparation is ready (beginFrameWork)
+  'src/kernel/soundEffects',            // Sound recipes (pure computation)
+  'src/render/cards/graphValues',       // Exports for media effect cards: glsl, draw, bitmap
+  'src/cards/native/hud',               // Conventions for position and primary color
   'src/cards/native/sound-effects',     // cardSoundBlock
-  'src/cards/magicui/vendor/cn',        // 拼类名
+  'src/cards/magicui/vendor/cn',        // Concatenate class names
 ]);
 
-/** 报错里用的框架导入写法（用户卡在 `src/cards/user/` 下） */
+/** Framework import syntax used in errors (user cards under `src/cards/user/`) */
 const FRAMEWORK_IMPORT = '"../../kernel/remotionStyle"';
 
 const STATE_HOOKS = new Set(['useState', 'useReducer', 'useSyncExternalStore', 'useTransition', 'useDeferredValue', 'useOptimistic', 'useActionState']);
@@ -77,7 +90,7 @@ const CLASS_ANIMATE = /(?:^|[\s:])animate-[a-z0-9[]/;
 const CLASS_TRANSITION = /(?:^|[\s:])transition(?:-[a-z]+)?(?=$|\s)/;
 const STYLE_OFF = new Set(['none', 'unset', 'initial', '']);
 
-/** `spec` 相对 `fileName` 所在目录算出的仓库相对路径（不带扩展名、不带 `/index`）；包名原样；爬出仓库根回 null */
+/** Repository-relative path of `spec` computed relative to `fileName` directory (no extension, no `/index`); package names as-is; returns null if climbing out of repo root */
 function normalizeSpecifier(fileName, spec) {
   if (!(spec.startsWith('./') || spec.startsWith('../'))) return spec;
   const parts = String(fileName).replace(/\\/g, '/').split('/').slice(0, -1);
@@ -103,14 +116,14 @@ const isAssignment = (n) => ts.isBinaryExpression(n) && n.operatorToken.kind >= 
 const isUpdate = (n) => (ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n))
   && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken);
 
-/** 绑定模式里声明的名字 */
+/** Names declared in binding patterns */
 function bindingNames(name, out) {
   if (!name) return;
   if (ts.isIdentifier(name)) { out.add(name.text); return; }
   for (const el of name.elements) if (!ts.isOmittedExpression(el)) bindingNames(el.name, out);
 }
 
-/** 一个函数里声明的名字（参数、函数体里各层的变量与函数；不进更里面的函数体，只收它的名字） */
+/** Names declared inside a function (parameters, variables and functions across levels in function body; does not enter nested function bodies, only collecting their names) */
 function localNames(fn) {
   const out = new Set();
   for (const p of fn.parameters ?? []) bindingNames(p.name, out);
@@ -127,15 +140,17 @@ function localNames(fn) {
 }
 
 /**
- * 逐条查一份源码。
+ * Inspect source code rule by rule.
  * @param {string} source
- * @param {{ fileName?: string }} [o] fileName：这个文件的仓库相对路径（解析相对导入用），缺省当它是 `src/cards/user/` 下的一张卡
+ * @param {{ fileName?: string }} [o] fileName: repository-relative path of this file (used to
+ *   resolve relative imports); defaults to assuming it is a card under `src/cards/user/`
  * @returns {{
- *   declared: 'direct' | 'other' | 'none',   // 声明的写法：remotion 式 / 别的 / 没写
- *   usesFramework: boolean,                  // 引用了框架
+ *   declared: 'direct' | 'other' | 'none',   // Declared style: remotion-style / other / none
+ *   usesFramework: boolean,                  // References framework
  *   violations: { rule: string, line: number, message: string, legacy?: boolean }[],
  * }}
- * 没声明成 remotion 式的卡，`violations` 里最多只有 `frame-mode` 一条（`frameMode` 读不出字面量）。
+ * For cards not declared as remotion-style, `violations` contains at most the single `frame-mode`
+ * violation (`frameMode` literal cannot be read).
  */
 export function inspectRemotionStyle(source, o = {}) {
   const fileName = o.fileName ?? 'src/cards/user/card.tsx';
@@ -151,10 +166,10 @@ export function inspectRemotionStyle(source, o = {}) {
     violations.push({ rule, line, message, ...extra });
   };
 
-  /* ---------- 顶层的名字 ---------- */
-  /** 名字 → 种类（import / const / let / var / function / class / enum） */
+  /* ---------- Top-level names ---------- */
+  /** Name → kind (import / const / let / var / function / class / enum) */
   const top = new Map();
-  /** 导入进来的名字 → 说明符 */
+  /** Imported name → specifier */
   const importedFrom = new Map();
   for (const st of sf.statements) {
     if (ts.isImportDeclaration(st)) {
@@ -175,7 +190,7 @@ export function inspectRemotionStyle(source, o = {}) {
     else if (ts.isEnumDeclaration(st)) top.set(st.name.text, 'enum');
   }
 
-  /* ---------- 声明的写法 ---------- */
+  /* ---------- Declared style ---------- */
   const topConstString = (name) => {
     for (const st of sf.statements) {
       if (!ts.isVariableStatement(st) || !(st.declarationList.flags & ts.NodeFlags.Const)) continue;
@@ -184,7 +199,7 @@ export function inspectRemotionStyle(source, o = {}) {
     return null;
   };
   let declared = 'none';
-  /** 写着 `frameMode: "direct"` 的那一处（`framework` 这条规则的报错指到它） */
+  /** Location with `frameMode: "direct"` (errors for the `framework` rule point to it) */
   let directNode = null;
   const unreadable = [];
   const noteMode = (node, init) => {
@@ -205,7 +220,7 @@ export function inspectRemotionStyle(source, o = {}) {
     hit(node, 'frame-mode', 'frameMode must be written directly as a literal: "direct" (remotion style) or "stateful" (motion style). If it is written as a variable or a computed value, card creation cannot tell which style this card uses');
   }
 
-  /** usesFramework：有一句指向框架的导入（含只带类型的）；loadsFramework：其中有会留到运行时的（裸导入、带值的导入） */
+  /** usesFramework: has an import pointing to framework (including type-only); loadsFramework: contains imports kept at runtime (bare/value imports) */
   let usesFramework = false, loadsFramework = false;
   for (const st of sf.statements) {
     if (!ts.isImportDeclaration(st) || normalizeSpecifier(fileName, stringOf(st.moduleSpecifier) ?? '') !== REMOTION_FRAMEWORK) continue;
@@ -217,12 +232,12 @@ export function inspectRemotionStyle(source, o = {}) {
   }
   if (declared !== 'direct') return { declared, usesFramework, violations };
 
-  /* ---------- 必须引用框架 ---------- */
+  /* ---------- Must reference framework ---------- */
   if (!loadsFramework) {
     hit(directNode ?? sf, 'framework', `This card declares remotion style but does not import the framework. Add a line \`import ${FRAMEWORK_IMPORT};\` at the top of the file; to use the tools, write \`import { tween } from ${FRAMEWORK_IMPORT};\`. Once imported, top-level objects in the file are locked read-only when the card loads`);
   }
 
-  /* ---------- 导入 ---------- */
+  /* ---------- Imports ---------- */
   const checkSpecifier = (node, spec, typeOnly) => {
     if (typeOnly) return;
     if (spec === 'motion' || spec.startsWith('motion/')) {
@@ -248,11 +263,11 @@ export function inspectRemotionStyle(source, o = {}) {
     }
   }
 
-  /* ---------- 文件顶层只许写常量 ---------- */
+  /* ---------- Only constants allowed at file top level ---------- */
   const TOP_ONLY = 'Only import, types, functions and const constants are allowed at the top level of a card file';
   const checkInitializer = (init) => {
     const walk = (node) => {
-      if (isFunctionLike(node)) return; // 函数体是调用时才跑的，由下面的逐条规则管
+      if (isFunctionLike(node)) return; // Function bodies run only when called; governed by the individual rules below
       if (ts.isNewExpression(node)) hit(node, 'top-level', 'Top level uses new: things created with new (Map, Set, class instances, fixed-length arrays) cannot be locked read-only and would become a place to store data across frames. For lookup tables, write an object or array literal; if you really need one, create it inside a function');
       else if (ts.isAwaitExpression(node)) hit(node, 'top-level', 'Top level uses await: a card cannot wait for async work when it loads. Put async preparation inside the component and use beginFrameWork to hold back the screenshot');
       else if (isAssignment(node) || isUpdate(node) || ts.isDeleteExpression(node)) hit(node, 'top-level', `Top-level initializer contains an assignment: ${TOP_ONLY}`);
@@ -276,15 +291,15 @@ export function inspectRemotionStyle(source, o = {}) {
     if (ts.isExportAssignment(st)) { checkInitializer(st.expression); continue; }
     if (ts.isClassDeclaration(st)) { hit(st, 'top-level', `Top level contains a class: static fields and instances of a class are mutable. ${TOP_ONLY}; write components as functions`); continue; }
     if (ts.isEnumDeclaration(st)) { hit(st, 'top-level', `Top level contains an enum: ${TOP_ONLY}; use a union type or a const object`); continue; }
-    if (ts.isExpressionStatement(st) && stringOf(st.expression) !== null) continue; // "use strict" 这类指令
+    if (ts.isExpressionStatement(st) && stringOf(st.expression) !== null) continue; // Directives like "use strict"
     hit(st, 'top-level', `Top level contains a directly executed statement: ${TOP_ONLY}. Nothing may be done at load time (registering, changing globals, precomputing and storing)`);
   }
 
-  /* ---------- 逐个节点 ---------- */
-  /** 外层函数里声明过的名字（遮住同名的全局或顶层名字） */
+  /* ---------- Node by node ---------- */
+  /** Names declared in outer functions (shadowing same-named global or top-level names) */
   const scopes = [];
   const shadowed = (name) => scopes.some((s) => s.has(name));
-  /** 这个标识符是不是在当值用（不是属性名、声明的名字、标签名） */
+  /** Whether this identifier is used as a value (not property name, declared name, or tag name) */
   const isValueUse = (id) => {
     const p = id.parent;
     if (!p) return false;
@@ -301,13 +316,13 @@ export function inspectRemotionStyle(source, o = {}) {
     return true;
   };
   const isGlobal = (id) => isValueUse(id) && !shadowed(id.text) && !top.has(id.text);
-  /** 赋值目标一路剥到最里面的那个名字；不是名字打头的回 null */
+  /** Assignment target unwrapped to innermost name; returns null if not starting with a name */
   const rootOf = (expr) => {
     let n = unwrap(expr);
     while (n && (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n))) n = unwrap(n.expression);
     return n && ts.isIdentifier(n) ? n : null;
   };
-  /** 这个名字是不是文件顶层的（没被函数里的同名变量遮住） */
+  /** Whether this name is at file top level (not shadowed by same-named variable in a function) */
   const topKind = (id) => (id && !shadowed(id.text) ? top.get(id.text) ?? null : null);
   const describeTop = (id) => (top.get(id.text) === 'import' ? `imported ${id.text}` : `top-level ${id.text} of the file`);
   const NO_CARRY = 'The picture of this frame may only be computed from t, parameters and input assets, and must not read anything left over from the previous frame';
@@ -322,7 +337,7 @@ export function inspectRemotionStyle(source, o = {}) {
     if (root && topKind(root)) hit(node, 'state', `Writing to ${describeTop(root)}: it outlives a single frame, so what the previous frame wrote is readable in the next frame. ${NO_CARRY}`);
   };
 
-  /** 字符串在不在「类名」的位置上（className 属性里、cn() 这类函数的参数里） */
+  /** Whether the string is in a "class name" position (in className attribute, arguments to cn(), etc.) */
   const inClassContext = (node) => {
     for (let p = node.parent; p; p = p.parent) {
       if (ts.isJsxAttribute(p)) return ['className', 'class'].includes(p.name.getText(sf));
@@ -332,7 +347,7 @@ export function inspectRemotionStyle(source, o = {}) {
     }
     return false;
   };
-  /** 对象字面量是不是一份样式（style 属性里、名字或类型带 style 的变量、Object.assign(x.style, …) 的参数） */
+  /** Whether object literal is a style (in style property, variable with style in name/type, argument to Object.assign(x.style, …)) */
   const inStyleContext = (obj) => {
     for (let p = obj.parent; p; p = p.parent) {
       if (ts.isJsxAttribute(p)) return p.name.getText(sf) === 'style';
@@ -373,7 +388,7 @@ export function inspectRemotionStyle(source, o = {}) {
       }
     }
 
-    // Math.random、Date.now、x.setAnimationLoop、x.animate(…)
+    // Math.random, Date.now, x.setAnimationLoop, x.animate(…)
     if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
       const obj = unwrap(node.expression);
       const member = ts.isPropertyAccessExpression(node) ? node.name.text : stringOf(node.argumentExpression);
@@ -392,7 +407,7 @@ export function inspectRemotionStyle(source, o = {}) {
       const callee = unwrap(node.expression);
       if (node.expression.kind === ts.SyntaxKind.ImportKeyword) hit(node, 'import', 'Used dynamic import(): imports in a remotion-style card must only be written as import … from "…" at the start of the file');
       if (callee && ts.isIdentifier(callee) && callee.text === 'require' && isGlobal(callee)) hit(node, 'import', 'Used require(): imports in a remotion-style card must only be written as import … from "…" at the start of the file');
-      // 记状态的 hook
+      // Hooks that track state
       const hook = callee && ts.isIdentifier(callee) ? callee.text : callee && ts.isPropertyAccessExpression(callee) ? callee.name.text : null;
       const fromReact = callee && (ts.isIdentifier(callee) ? (!shadowed(callee.text) && (importedFrom.get(callee.text) === 'react' || !top.has(callee.text))) : true);
       if (hook && fromReact && STATE_HOOKS.has(hook)) {
@@ -403,11 +418,11 @@ export function inspectRemotionStyle(source, o = {}) {
         const empty = init.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(init) && init.text === 'undefined');
         if (!empty) hit(node, 'state', `useRef was given an initial value: a value stored in a ref outlives a single frame and is a place to keep things across frames. In a remotion-style card a ref is only used to get a DOM node, so write useRef(null). ${NO_CARRY}`);
       }
-      // 元素的 animate()
+      // Element animate()
       if (callee && ts.isPropertyAccessExpression(callee) && callee.name.text === 'animate') {
         hit(node, 'css-animation', `Called .animate(…): the element animation API follows real time. ${CSS_HINT}`);
       }
-      // 往顶层的东西里写：X.push(…)、Object.assign(X, …)
+      // Writing into top-level targets: X.push(…), Object.assign(X, …)
       if (callee && ts.isPropertyAccessExpression(callee) && MUTATORS.has(callee.name.text)) {
         const root = rootOf(callee.expression);
         if (root && topKind(root)) hit(node, 'state', `Writing to ${describeTop(root)} (${callee.name.text}): it outlives a single frame, so what the previous frame wrote is readable in the next frame. ${NO_CARRY}`);
@@ -421,7 +436,7 @@ export function inspectRemotionStyle(source, o = {}) {
       }
     }
 
-    // 赋值、自增自减、delete
+    // Assignment, increment/decrement, delete
     if (isAssignment(node)) checkWriteTarget(node, node.left);
     else if (isUpdate(node)) checkWriteTarget(node, node.operand);
     else if (ts.isDeleteExpression(node)) checkWriteTarget(node, node.expression);
@@ -434,18 +449,18 @@ export function inspectRemotionStyle(source, o = {}) {
       }
     }
 
-    // 样式对象里的 animation* / transition*
+    // animation* / transition* in style objects
     if (ts.isObjectLiteralExpression(node) && inStyleContext(node)) {
       for (const prop of node.properties) {
         if (!ts.isPropertyAssignment(prop) && !ts.isShorthandPropertyAssignment(prop)) continue;
         const key = nameOf(prop.name);
         if (!key || !STYLE_KEY.test(key)) continue;
-        if (ts.isPropertyAssignment(prop) && STYLE_OFF.has(stringOf(unwrap(prop.initializer)) ?? '?')) continue; // 明写「没有」的不算
+        if (ts.isPropertyAssignment(prop) && STYLE_OFF.has(stringOf(unwrap(prop.initializer)) ?? '?')) continue; // Explicitly writing "none" does not count
         hit(prop, 'css-animation', `Wrote ${key} in the style: ${CSS_HINT}`);
       }
     }
 
-    // 字符串：样式文本、类名
+    // Strings: style text, class names
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
       const p = node.parent;
       const isSpecifier = p && (ts.isImportDeclaration(p) || ts.isExportDeclaration(p));
@@ -457,7 +472,7 @@ export function inspectRemotionStyle(source, o = {}) {
       if (CSS_TEXT.test(node.text)) hit(node, 'css-animation', `The style text contains a CSS animation or transition (@keyframes / animation / transition): ${CSS_HINT}`);
     }
 
-    // JSX：<motion.x>、<AnimatePresence>、<animate>、whileHover
+    // JSX: <motion.x>, <AnimatePresence>, <animate>, whileHover
     if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
       const tag = node.tagName.getText(sf);
       if (/^(motion|m)\.[A-Za-z]/.test(tag) && !shadowed(tag.split('.')[0]) && (!top.has(tag.split('.')[0]) || /^motion(\/|$)/.test(importedFrom.get(tag.split('.')[0]) ?? ''))) {
@@ -498,14 +513,15 @@ const countByRule = (violations) => {
 };
 
 /**
- * 建卡、改卡时该拒绝的那几条，写成报错文案（每条带行号）。
- * @param {string} source 改完（或新建）的源码
+ * Rules to reject when creating or editing cards, written as error messages (each with line number).
+ * @param {string} source Modified (or newly created) source code
  * @param {{ before?: string, fileName?: string, legacyAbsolute?: boolean }} [o]
- *   before：改之前的源码；新建卡给空串或不给。
- *   legacyAbsolute：`Date.now()`、`setTimeout` / `setInterval`、`IntersectionObserver` 是否出现即拒（用户卡是，原来就是这样）；
- *   内置与共用文件的编辑原来对这几样也是差量口径，传 false。
+ *   before: Source code before edits; pass empty string or omit for newly created cards.
+ *   legacyAbsolute: Whether to reject immediately if `Date.now()`, `setTimeout` / `setInterval`, or
+ *   `IntersectionObserver` appears (true for user cards, as originally designed);
+ *   editing built-in and shared files was originally on a delta basis for these as well, pass false.
  * @returns {{ remotionStyle: boolean, errors: string[], violations: { rule: string, line: number, message: string }[] }}
- *   remotionStyle：这份源码声明成了 remotion 式。errors 为空就是这一道过了。
+ *   remotionStyle: This source is declared as remotion-style. Empty errors means this check passed.
  */
 export function remotionStyleErrors(source, o = {}) {
   const after = inspectRemotionStyle(source, o);
@@ -513,14 +529,16 @@ export function remotionStyleErrors(source, o = {}) {
   const legacyAbsolute = o.legacyAbsolute !== false;
   let rejected;
   if (!before || (after.declared === 'direct' && after.usesFramework)) {
-    // 新建的卡、用框架写的卡：每一条都不许
+    // Newly created cards, cards using the framework: none are allowed
     rejected = after.violations;
   } else {
-    // 改一张没引用框架的老卡：只拒绝这次新增的（按规则数个数）；改之前不是 remotion 式的，当它一条都没有
+    // Modifying an old card without framework reference: only reject items newly added this time
+    // (by rule count); if not remotion-style before modification, treat it as having none
     const old = before.declared === 'direct' ? before.violations : before.violations.filter((v) => v.rule === 'frame-mode');
     const had = countByRule(old);
     const now = countByRule(after.violations);
-    // 个数多出来的那条规则里，原样留着的旧行不重复报：按「规则 + 那一行的原文」一对一销掉
+    // For rules with increased count, unchanged existing lines are not re-reported: cancel one-to-one
+    // by "rule + original line text"
     const lineText = (text, n) => (String(text).split(/\r?\n/)[n - 1] ?? '').trim();
     const keyOf = (text, v) => `${v.rule}|${lineText(text, v.line)}`;
     const kept = new Map();

@@ -19,23 +19,30 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * 预渲染进程的 Vite(docs/archive/topics/decoupling-plan.md 第 3 节「预渲染」)。
+ * Vite for the prerender process (docs/archive/topics/decoupling-plan.md Section 3 "Prerender").
  *
- * 由编辑器那一端的 dev server(server/vite-plugin-prerender.ts)用 PROMPTCUT_ROLE=prerender 拉起,
- * 独立进程、独立端口、低于正常的进程优先级。它做三件事:
+ * Spawned by the dev server on the editor side (server/vite-plugin-prerender.ts) with
+ * PROMPTCUT_ROLE=prerender, running in a separate process on a separate port with lower-than-normal
+ * process priority. It handles three things:
  *
- *   1. 渲染池、导出、Agent 的看图请求 —— 渲染请求挂在**这个**源上,不占编辑器那个源的 6 条连接;
- *   2. 渲染用的 Chrome 从**这里**加载导出页和卡片模块,不和编辑器抢它那个 Vite;
- *   3. PNG 的像素活在渲染 worker 里做(server/png-post.mjs),这个进程的事件循环只收发。
+ *   1. Render pool, export, and Agent image viewing requests: render requests attach to **this**
+ *      origin, without occupying the 6 connections on the editor origin;
+ *   2. Chrome used for rendering loads export pages and card modules from **here**, avoiding competing
+ *      with the editor for its Vite instance;
+ *   3. PNG pixel work is done in the render worker (server/png-post.mjs); this process's event loop
+ *      only handles sending and receiving.
  *
- * 只挂导出页需要的插件:没有 vite-plugin-ai(它会改写全局 port.json,把 MCP 指到这里来),
- * 没有听写 / 镜头 / 追踪 / 素材收集这些会起子进程的插件。
+ * Attaches only plugins needed by export pages: no vite-plugin-ai (which rewrites the global
+ * port.json and redirects MCP here), and no speech-to-text / shot / tracking / media collection
+ * plugins that spawn subprocesses.
  */
 
 /**
- * 只放行编辑器那一端的源(环境变量里给的几个写法:127.0.0.1 / localhost / [::1])。
- * 浏览器发 JSON POST 会先发预检,这里答了预检,后面的同源守卫(apiGuardPlugin → originOk)
- * 也按同一张名单放行 —— 两处用同一个环境变量,不会一个放一个拦。
+ * Allow only origins from the editor side (several formats given in environment variables:
+ * 127.0.0.1 / localhost / [::1]).
+ * When a browser sends a JSON POST, it sends a preflight first; this answers the preflight, and the
+ * same-origin guard downstream (apiGuardPlugin → originOk) also allows requests matching the same
+ * list: both places use the same environment variable, avoiding one allowing while the other blocks.
  */
 function corsForEditor(): Plugin {
   const allowed = new Set(String(process.env.PROMPTCUT_CORS_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean));
@@ -62,10 +69,12 @@ function corsForEditor(): Plugin {
 }
 
 /**
- * 素材路由(`/@media/*`、`/api/asset/*`、`/api/media/*`):预渲染进程只经素材服务的 HTTP API 读素材
- * (`docs/semantics/product/asset-service.md`「职责」),所以由编辑器那一端拉起时(给了
- * `PROMPTCUT_EDITOR_URL`,本地素材服务就在那个进程里)整条转发过去,自己不再读本地内容库。
- * 没给这个变量(脚本直接用这份配置起一台)时没有别处可转,仍挂本地的媒体插件。
+ * Media routing (`/@media/*`, `/api/asset/*`, `/api/media/*`): the prerender process reads assets
+ * only via the asset service HTTP API (`docs/semantics/product/asset-service.md` "Responsibilities"),
+ * so when spawned by the editor side (when `PROMPTCUT_EDITOR_URL` is provided, the local asset
+ * service lives in that process), forward the entire route there instead of reading the local content
+ * store directly. When this variable is not provided (e.g. when a script starts an instance directly
+ * with this configuration), there is nowhere else to forward, so still attach the local media plugin.
  */
 function mediaRoutes(): Plugin {
   const editor = String(process.env.PROMPTCUT_EDITOR_URL || "").trim();
@@ -75,22 +84,28 @@ function mediaRoutes(): Plugin {
 const fsDeny = [".env", ".env.*", "*.{crt,pem}", "**/.git/**", "**/out/cookies/**"];
 
 export default defineConfig({
-  // 依赖预构建缓存和编辑器那一份分开,两个进程同时写 node_modules/.vite 会互相踩
-  // PROMPTCUT_VITE_CACHE_DIR：检出目录只读时把缓存指到可写的地方（见 vite.config.ts 同名处）；不设时与原来相同
+  // Dependency pre-bundling cache is separated from the editor's copy; two processes writing to
+  // node_modules/.vite simultaneously will step on each other
+  // PROMPTCUT_VITE_CACHE_DIR: points cache to a writable location when the checkout directory is read-only
+  // (see the same name in vite.config.ts); unchanged when unset
   cacheDir: process.env.PROMPTCUT_VITE_CACHE_DIR
     ? `${process.env.PROMPTCUT_VITE_CACHE_DIR}/${process.env.PROMPTCUT_HEADLESS === "1" ? "prerender-headless" : "prerender"}`
     : process.env.PROMPTCUT_HEADLESS === "1" ? "node_modules/.vite-prerender-headless" : "node_modules/.vite-prerender",
   clearScreen: false,
-  // 依赖扫描入口只找真正的页面,不把 out/frame-library 下的快照 .html 当入口(`server/vite-scan-ignore.mjs`)
+  // Dependency scanning entry points look only for real pages, not treating snapshot .html
+  // under out/frame-library as entry points (`server/vite-scan-ignore.mjs`)
   optimizeDeps: { entries: DEP_SCAN_ENTRIES },
-  // 跨源守卫要排在所有接口前面(中间件按 configureServer 的调用顺序注册)
-  // hostedGatePlugin 只在托管方渲染服务的工作进程里生效(页面请求闸、出口代理,`server/hosted-render/vite-gate.mjs`),别处是空的
+  // Cross-origin guard must precede all endpoints (middleware is registered in configureServer call order)
+  // hostedGatePlugin is only active in host render service worker processes (page request gate,
+  // egress proxy, `server/hosted-render/vite-gate.mjs`); empty elsewhere
   plugins: [cloudSeamsPlugin(), prerenderGatePlugin(), hostedGatePlugin(), corsForEditor(), apiGuardPlugin(), react(), tailwindcss(), exportPlugin(), mirrorPlugin(), costsPlugin(), framesPlugin(), mediaRoutes(), vitePluginCards(), rawEolPlugin(), visionPlugin()],
   server: {
-    // 渲染页每一趟都是全新的页面,用不着热更新;源码改了照样重新变换(watcher 还开着)
+    // Every pass of a render page is a fresh page, so HMR is unnecessary; source changes are still
+    // transformed anew (watcher remains enabled)
     hmr: false,
     fs: { deny: fsDeny },
-    // 按相对项目根的路径段判断,不用 glob 字符串(worktree 路径里的 `.worktrees` 会让 glob 全部失效),名单见 `server/vite-scan-ignore.mjs`
+    // Check by path segments relative to project root instead of glob strings (`.worktrees` in
+    // worktree paths invalidates all globs); see `server/vite-scan-ignore.mjs` for the list
     watch: { ignored: [watchIgnored(path.dirname(fileURLToPath(import.meta.url)))] },
   },
 });

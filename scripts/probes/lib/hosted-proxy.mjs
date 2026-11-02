@@ -1,35 +1,44 @@
 /**
- * 本机仿 nginx 的代理:把在线构建与本机的文档、素材服务摆成线上那样的三个源(编辑器页 + 两个舞台),探针用。
- * **策略头、`/media-s/` 的判定都取自 `src/online/stagePolicy.mjs`**
- * (nginx 的两个片段由同一个文件生成),不在这里另抄一份。
+ * Local nginx-mocking proxy for probes: arranges the online build and local document and asset
+ * services into three production-like origins (editor page + two stages).
+ * **Policy headers and `/media-s/` decisions are both taken from `src/online/stagePolicy.mjs`**
+ * (the two nginx fragments are generated from the same file), not duplicated here.
  *
  *   import { startHostedProxy } from './hosted-proxy.mjs';
  *   const proxy = await startHostedProxy({ dist, basePort: 5750, docPort, assetPort });
  *   proxy.editorOrigin / proxy.stageOrigins / proxy.grants / proxy.requests / await proxy.close()
  *
- * 源(都只绑 127.0.0.1;Chrome 把 `*.localhost` 解析到回环,所以不用改 hosts):
- *   编辑器页 `http://pc.localhost:<base>`,舞台 `http://s1.pc.localhost:<base+1>`、`http://s2.pc.localhost:<base+2>`。
- *   三者同站(`pc.localhost`)跨源,cookie 按主机名分开 —— 不能像旧探针那样三个源都用 `127.0.0.1` 换端口(cookie 不分端口,
- *   那样编辑器页的 cookie 舞台也看得见,测不出隔离)。
+ * Origins (all bound only to 127.0.0.1; Chrome resolves `*.localhost` to loopback, so no hosts
+ * file changes needed):
+ *   Editor page `http://pc.localhost:<base>`, stages `http://s1.pc.localhost:<base+1>`,
+ *   `http://s2.pc.localhost:<base+2>`.
+ *   All three are same-site (`pc.localhost`) cross-origin, cookies separated by hostname: cannot
+ *   use `127.0.0.1` with different ports for all three origins like the old probe (cookies do not
+ *   isolate by port, which would let stages see editor page cookies and fail to test isolation).
  *
- * 路由(舞台源只给下面带 * 的):
- *   /hosted…            → 文档服务(含 WebSocket 升级,去掉前缀)
- *   /media…           * → 素材服务(去掉前缀;旧办法 `?t=` 走这里)
- *   /media-s/<sid>/…  * → `mediaSRoute`:`_grant` 把票据换成 HttpOnly cookie;`media/<哈希>` 把 cookie 换成 Authorization 头转给素材服务
- *   /editor/_iso/ok、/editor/_iso/redirect * → 舞台自检用(204、302 到前者)
- *   /editor/stage.html * → 在线构建的舞台入口
- *   /editor、/editor/…  * → 在线构建(`assets/` 长缓存,其余落到 index.html)
+ * Routes (stage origins only serve routes marked with * below):
+ *   /hosted…            → document service (including WebSocket upgrade, prefix stripped)
+ *   /media…           * → asset service (prefix stripped; legacy `?t=` approach goes here)
+ *   /media-s/<sid>/…  * → `mediaSRoute`: `_grant` exchanges ticket for HttpOnly cookie; `media/<hash>` exchanges cookie for Authorization header forwarded to asset service
+ *   /editor/_iso/ok, /editor/_iso/redirect * → for stage self-check (204, 302 to the former)
+ *   /editor/stage.html * → stage entry point for online build
+ *   /editor, /editor/…  * → online build (long cache for `assets/`, rest falls back to index.html)
  *   /editor/runtime-config.json → `{ v: 1, stageOrigins, onlineCardExec? }`
- *   /catalog/…        * → 在线构建里的动效素材目录
+ *   /catalog/…        * → motion graphics asset catalog in online build
  *
- * 选项 `policy`:
- *   - `"full"`(缺省):新 nginx —— 舞台源每个响应带 `stageSecurityHeaders`,编辑器页带 `frame-src`;
- *   - `"legacy"`:旧 nginx —— 没有策略头、没有 `/media-s/` 与 `_iso/`(落到 index.html),只有 `Origin-Agent-Cluster` 等原有三条。
- *     用来核对「新页面在旧 nginx 下自检不过、自动不执行」;
- *   - `"none"`:对照组 —— 路由同 `full`,但舞台源不带内容安全策略,舞台入口也回不带 `<meta>` 的 index.html(验证缺少策略时自检拒绝)。
- *   - `"csp-only"`:兼容旧选项名，当前与 full 相同；无出口白名单也执行。
+ * Option `policy`:
+ *   - `"full"` (default): new nginx: each stage origin response carries `stageSecurityHeaders`,
+ *     editor page carries `frame-src`;
+ *   - `"legacy"`: legacy nginx: no policy headers, no `/media-s/` or `_iso/` (falls back to
+ *     index.html), only the original three headers including `Origin-Agent-Cluster`. Used to
+ *     verify "new page fails self-check and automatically does not execute under legacy nginx";
+ *   - `"none"`: control group: same routes as `full`, but stage origins carry no Content Security
+ *     Policy, and stage entry point returns index.html without `<meta>` (verifies self-check
+ *     rejection when policy is missing).
+ *   - `"csp-only"`: legacy option name compatibility, currently identical to `full`; executes
+ *     even without egress allowlist.
  *
- * 直接运行(本机服务 + 代理,不连任何远端):
+ * Run directly (local services + proxy, without connecting to any remote host):
  *   node scripts/probes/lib/hosted-proxy.mjs --dist dist-online [--base-port 5750] [--doc-port 8780] [--asset-port 8781] [--policy full]
  */
 import fs from 'node:fs';
@@ -42,41 +51,41 @@ import { editorSecurityHeaders, mediaSRoute, stageSecurityHeaders } from '../../
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.wasm': 'application/wasm' };
 const LEGACY_HEADERS = Object.freeze({ 'origin-agent-cluster': '?1', 'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff' });
 
-/** 三个源的地址。`host` 是编辑器页的主机名(舞台是它的 s1. / s2. 子域) */
+/** Addresses of the three origins. `host` is the editor page hostname (stages are its s1. / s2. subdomains). */
 export function proxyOrigins(basePort, host = 'pc.localhost') {
   return { editor: `http://${host}:${basePort}`, stages: [`http://s1.${host}:${basePort + 1}`, `http://s2.${host}:${basePort + 2}`] };
 }
 
 /**
  * @param {object} o
- * @param {string} o.dist            在线构建目录(`npx vite build --mode online` 的产物)
- * @param {number} o.basePort        编辑器页的端口;两个舞台是 +1、+2
- * @param {number} o.docPort         文档服务端口(127.0.0.1)
- * @param {number} o.assetPort       素材服务端口(127.0.0.1)
+ * @param {string} o.dist            Online build directory (artifact of `npx vite build --mode online`)
+ * @param {number} o.basePort        Editor page port; the two stages are +1, +2
+ * @param {number} o.docPort         Document service port (127.0.0.1)
+ * @param {number} o.assetPort       Asset service port (127.0.0.1)
  * @param {"full"|"legacy"|"none"|"csp-only"} [o.policy]
- * @param {boolean} [o.onlineCardExec]  运行配置里的总开关;只有明给 false 才写进配置
- * @param {boolean} [o.runtimeConfig]   给 false 就不提供运行配置(404):页面读不到舞台源,退回同源单舞台(仿没有舞台子域的部署)
+ * @param {boolean} [o.onlineCardExec]  Master switch in runtime config; only written to config when explicitly false
+ * @param {boolean} [o.runtimeConfig]   When false, does not serve runtime config (404): page cannot read stage origins, falls back to same-origin single stage (simulating deployments without stage subdomains)
  * @param {(info: { role: "editor"|"stageA"|"stageB", req: http.IncomingMessage, url: URL }) => (void | { status: number, body?: string | Buffer, headers?: Record<string, string | number> } | { delayMs: number })} [o.intercept]
- *        探针的钩子:回 `{ status, body?, headers? }` 直接应答(`body` 可以是字节,`headers` 盖过缺省的 text/plain 与策略头),回 `{ delayMs }` 压住这个请求再照常处理
+ *        Probe hook: return `{ status, body?, headers? }` to respond directly (`body` can be bytes, `headers` overrides default text/plain and policy headers); return `{ delayMs }` to hold this request before processing normally
  * @param {(info: { role: "editor"|"stageA"|"stageB", req: http.IncomingMessage, url: URL }) => (void | Record<string, string>)} [o.responseHeaders]
- *        探针的钩子:给转发出去的响应(文档服务、素材服务)补 / 盖响应头(例如给素材字节加 `cache-control: no-store`)
+ *        Probe hook: append to / override response headers for forwarded responses (document service, asset service) (e.g. adding `cache-control: no-store` to asset bytes)
  */
 export async function startHostedProxy({ dist, basePort, docPort, assetPort, policy = 'full', host = 'pc.localhost', onlineCardExec, runtimeConfig: withRuntimeConfig = true, intercept, responseHeaders }) {
   const DIST = path.resolve(dist);
   if (!fs.existsSync(path.join(DIST, 'index.html'))) throw new Error(`No index.html in the online build directory: ${DIST}`);
   const origins = proxyOrigins(basePort, host);
   const runtimeConfig = JSON.stringify({ v: 1, stageOrigins: origins.stages, ...(onlineCardExec === false ? { onlineCardExec: false } : {}) });
-  /** 交接过来的票据(只留在内存里给探针比对,不打印) */
+  /** Handed-over tickets (kept only in memory for probe comparison, not printed). */
   const grants = [];
-  /** 每个请求一条:{ role, method, path, status } */
+  /** One entry per request: { role, method, path, status }. */
   const requests = [];
-  /** 每个请求的原样地址(含查询串;HTTP 与 WebSocket 升级都记):探针核「票据没有出现在任何地址里」用。别在日志里直接打印 */
+  /** Raw URL of each request (including query string; records both HTTP and WebSocket upgrades): used by probes to verify "tickets do not appear in any URL". Do not print directly in logs. */
   const urls = [];
   const noteUrl = (u) => { urls.push(u); if (urls.length > 50_000) urls.shift(); };
   const servers = [];
-  /** 现有的 WebSocket 对(`cutWs` 掐断用) */
+  /** Active WebSocket pairs (used by `cutWs` to sever). */
   const wsPairs = new Set();
-  /** 探针可以直接改的开关:`blockWs` 拒新的 WebSocket 升级;`blockMedia` 让 `/media/…` 连不上(旧办法那条路,不含 `/media-s/`) */
+  /** Switches that probes can modify directly: `blockWs` rejects new WebSocket upgrades; `blockMedia` makes `/media/…` unreachable (the legacy path, excluding `/media-s/`). */
   const api = { blockWs: false, blockMedia: false };
 
   const headersFor = (role) => {
@@ -193,7 +202,7 @@ export async function startHostedProxy({ dist, basePort, docPort, assetPort, pol
     grants,
     requests,
     urls,
-    /** 断这一套代理上的 WebSocket:现有的掐掉、新的拒掉(`blockWs = false` 再放行)。只掐这一套,别的代理照常 */
+    /** Disconnect WebSockets on this proxy instance: sever existing ones, reject new ones (allow again once `blockWs = false`). Only severs this proxy; other proxies operate normally. */
     cutWs() { api.blockWs = true; for (const p of wsPairs) { p.socket.destroy(); p.up?.destroy(); } wsPairs.clear(); },
     async close() {
       for (const p of wsPairs) { p.socket.destroy(); p.up?.destroy(); }
@@ -202,7 +211,7 @@ export async function startHostedProxy({ dist, basePort, docPort, assetPort, pol
   });
 }
 
-/* ------------------------------------------------------------------ 直接运行:本机服务 + 代理 */
+/* ------------------------------------------------------------------ Run directly: local services + proxy */
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const argv = process.argv.slice(2);
   const arg = (name, dflt) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : dflt; };
@@ -213,7 +222,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const { startProbeServices } = await import('./probe-services.mjs');
   const dataDir = arg('--data-dir', fs.mkdtempSync(path.join(os.tmpdir(), 'pc-hosted-proxy-')));
   const o = proxyOrigins(basePort);
-  // 与托管端一样不信回环:经代理进来的请求一律核票据
+  // Same as the hosted side, do not trust loopback: all requests incoming through the proxy verify tickets
   await startProbeServices({ dataDir, docPort, assetPort, host: '127.0.0.1', trustLoopback: false, clusterToken: randomBytes(32).toString('base64url'),
     docPublicUrl: `ws://pc.localhost:${basePort}/hosted/`, assetPublicUrl: `${o.editor}/media/api/asset`, log: () => {} });
   const proxy = await startHostedProxy({ dist: arg('--dist', path.join(ROOT, 'dist-online')), basePort, docPort, assetPort, policy: arg('--policy', 'full') });

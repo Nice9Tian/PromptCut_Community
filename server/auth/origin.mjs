@@ -1,22 +1,26 @@
 /**
- * 「本机」按真正的发起方判断（语义 `docs/semantics/product/document-service.md`「本机按真正的发起方判断」；
- * 契约 `docs/plan/http-transport-contract.md` 第 10 节〔裁：2026-09-27 主会话，HT-a〕）。
+ * "Local" determined by actual initiator (semantics `docs/semantics/product/document-service.md`
+ * "Determine local by actual initiator"; contract `docs/plan/http-transport-contract.md` section 10
+ * [ruling: 2026-09-27 lead session, HT-a]).
  *
- * 套接字对端是回环，而且请求（HTTP 与 WebSocket 升级）里转发头记下的每一跳（`Forwarded` 的 `for=`、
- * `X-Forwarded-For` 的每一跳、`X-Real-IP`）都是回环，才算本机；任何一跳不是回环就不算。只收紧、不放宽：
- * 对端不是回环的，转发头怎么写都不算本机；本机信任开关为 0 时由调用方照旧一律不算本机。
+ * Counted as local only when socket peer is loopback and every hop recorded in forwarding headers
+ * (`for=` in `Forwarded`, every hop of `X-Forwarded-For`, `X-Real-IP`) of request (HTTP and
+ * WebSocket upgrade) is loopback; not local if any single hop is not loopback. Strict only, never
+ * relaxed: if peer is not loopback, no forwarding header can make it local; when local trust flag is 0,
+ * caller treats it as non-local across the board as before.
  *
- * 放在 `server/auth/`：文档服务单独部署（`cloud/scripts/remote/docservice.mjs deploy`）只带 docservice、auth、render-queue
- * 三个目录。只引 Node 内置模块（这里一个都不引），浏览器侧不用它。
+ * Placed in `server/auth/`: standalone deployment of document service
+ * (`cloud/scripts/remote/docservice.mjs deploy`) includes only docservice, auth, and render-queue
+ * directories. Imports only Node built-in modules (none imported here), not used browser-side.
  */
 
-/** 回环地址:127.0.0.0/8、::1、IPv4 映射的 ::ffff:127.x */
+/** Loopback addresses: 127.0.0.0/8, ::1, IPv4-mapped ::ffff:127.x */
 export function isLoopbackAddress(address) {
   const a = String(address || "").toLowerCase();
   return a === "::1" || /^127./.test(a) || /^::ffff:127./.test(a);
 }
 
-/** 转发头里的一跳 → 地址:去引号、去 IPv6 的方括号与端口、去 IPv4 的端口;空的回 null */
+/** Hop in forwarding header → address: strip quotes, strip IPv6 brackets and port, strip IPv4 port; returns null if empty */
 export function hopAddress(raw) {
   let v = String(raw ?? "").trim();
   if (v.startsWith('"') && v.endsWith('"') && v.length >= 2) v = v.slice(1, -1).trim();
@@ -31,8 +35,9 @@ export function hopAddress(raw) {
 const headerText = (value) => (Array.isArray(value) ? value.join(",") : typeof value === "string" ? value : "");
 
 /**
- * 请求里转发头记下的每一跳(`Forwarded` 的 `for=`、`X-Forwarded-For` 的每一跳、`X-Real-IP`),没有转发头回 []。
- * 不认识的写法(`for=unknown`、混淆名 `_abc`、主机名)原样留着,判本机时它们都不是回环。
+ * Every hop recorded in request forwarding headers (`for=` in `Forwarded`, every hop in `X-Forwarded-For`,
+ * `X-Real-IP`), returns [] if no forwarding headers. Unrecognized formats (`for=unknown`, obfuscated name
+ * `_abc`, hostnames) are kept as-is; none of them count as loopback when determining local.
  */
 export function forwardedHops(req) {
   const headers = req?.headers ?? {};
@@ -55,11 +60,14 @@ export function forwardedHops(req) {
 }
 
 /**
- * 真正的发起方是不是本机(语义 `product/document-service.md`「本机按真正的发起方判断」;契约
- * `docs/plan/http-transport-contract.md` 第 10 节):对端地址是回环,**而且**转发头里每一跳都是回环。
- * 经同机反向代理转进来的请求,对端虽是回环,转发头里记着外面的地址,不算本机;链上全是回环(本机组件转本机)仍算本机。
- * 只收紧、不放宽:对端不是回环的,转发头怎么写都不算本机。`address` 缺省是套接字对端,调用方可以换成已认过的真实对端
- * (舞台端口代理写进的 `STAGE_CLIENT_HEADER`,见 `clientAddressOf`)。
+ * Whether actual initiator is local (semantics `product/document-service.md`
+ * "Determine local by actual initiator"; contract `docs/plan/http-transport-contract.md` section 10):
+ * peer address is loopback, **and** every hop in forwarding headers is loopback. Requests forwarded
+ * through same-machine reverse proxy do not count as local if forwarding headers record external
+ * addresses even though peer is loopback; chains entirely on loopback (local component forwarding
+ * to local) still count as local. Strict only, never relaxed: if peer is not loopback, no forwarding
+ * header can make it local. `address` defaults to socket peer, but caller may substitute verified
+ * real peer (`STAGE_CLIENT_HEADER` written by stage port proxy, see `clientAddressOf`).
  */
 export function isLocalOrigin(req, address = req?.socket?.remoteAddress) {
   if (!isLoopbackAddress(address)) return false;
@@ -67,8 +75,10 @@ export function isLocalOrigin(req, address = req?.socket?.remoteAddress) {
 }
 
 /**
- * 日志与限速用的来源:对端是回环而转发头说它不是本机转来的,记成 `proxied:<对端>`(不再像回环地址,
- * 只凭来源地址判本机的地方 —— 如创建者操作的限速豁免 —— 也就不会把它当本机);其余照原样。
+ * Origin used for logging and rate limiting: when peer is loopback but forwarding headers indicate it
+ * was not forwarded from local, record as `proxied:<peer>` (no longer looks like a loopback address,
+ * so places judging local solely by origin address: such as rate limit exemption for creator
+ * operations: will not treat it as local); others kept as-is.
  */
 export function remoteTagOf(req, address = req?.socket?.remoteAddress ?? null) {
   if (address === null || address === undefined) return null;

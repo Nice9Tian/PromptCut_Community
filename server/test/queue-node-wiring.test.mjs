@@ -1,22 +1,28 @@
 /**
- * 本机节点的接线（契约 `docs/plan/render-queue-contract.md` J.3，J.7 用例 J5～J7）。
- * 跑：node --experimental-test-module-mocks --test server/test/queue-node-wiring.test.mjs
+ * Wiring for local node (contract `docs/plan/render-queue-contract.md` J.3, J.7 test cases J5 to J7).
+ * Run: node --experimental-test-module-mocks --test server/test/queue-node-wiring.test.mjs
  *
- * 只照契约写，不看实现。
+ * Written strictly to contract, without looking at implementation.
  *
- *   J5  `local-node.mjs`：细任务的 sink `ref` 带 `input` 与 `requires`；走 `put` 完成时 `task.complete` 的
- *       `result` 是 `{ ranges, ...put 回的 result }`，走去重时是 `{ ranges, dedup: true, ...(await sink.resultFor?.(ref)) }`；
- *       sink 没有 `resultFor` 时照旧只有 `{ ranges, dedup: true }`（与 D.2 兼容）。
- *       拓扑照 M3 的进程内集成（`render-queue-inproc.test.mjs`）：真队列 + 环回传输 + 一个本机节点 + 一个页面发布方，
- *       页面直接发布细任务，收它的 `task.done`。先用记账的假 sink 测接口，再用 C6.2 的真 sink
- *       （`createAssetSink`，真帧库 + memory 素材服务 + 内容库）各走一遍 put 与去重。
- *   J6  `split.mjs`：快照任务 `input.canvasHeavy = control.capabilities?.canvasHeavy === true`；
- *       `planTaskOf` 接受 `{ codeVersion, envFingerprint }` 写进 `requires`。
- *   J7  `endpoint.mjs` 的 `resolveDocservice`：顺序是 环境变量地址 → 编辑器里挂的文档服务 → 回环 8787 → 离线；
- *       编辑器那一项从 `PROMPTCUT_EDITOR_URL` 推出 `ws://<编辑器源>/docservice`，探活 `GET <编辑器源>/api/docservice/healthz`，
- *       回 `mode: 'editor'`。用注入的 `fetch`，不起真服务器。
+ *   J5  `local-node.mjs`: fine-grained task sink `ref` carries `input` and `requires`; on completion
+ *       via `put`, `task.complete`'s `result` is `{ ranges, ...result returned by put }`; on
+ *       deduplication, `{ ranges, dedup: true, ...(await sink.resultFor?.(ref)) }`; when sink has no
+ *       `resultFor`, only `{ ranges, dedup: true }` as before (compatible with D.2). Topology
+ *       follows M3 in-process integration (`render-queue-inproc.test.mjs`): real queue + loopback
+ *       transport + one local node + one page publisher, page directly publishes fine-grained
+ *       tasks and receives its `task.done`. First test interfaces with an accounting fake sink,
+ *       then run put and deduplication once each with C6.2 real sink (`createAssetSink`, real frame
+ *       store + memory asset service + content store).
+ *   J6  `split.mjs`: snapshot task `input.canvasHeavy = control.capabilities?.canvasHeavy === true`;
+ *       `planTaskOf` accepts `{ codeVersion, envFingerprint }` written into `requires`.
+ *   J7  `endpoint.mjs`'s `resolveDocservice`: order is environment variable address → document
+ *       service attached to editor → loopback 8787 → offline; editor item derives
+ *       `ws://<editor origin>/docservice` from `PROMPTCUT_EDITOR_URL`, probes health via
+ *       `GET <editor origin>/api/docservice/healthz`, returning `mode: 'editor'`. Uses injected
+ *       `fetch`, does not start real server.
  *
- * 真 sink 那两条要 `FramePipeline`：`server/bakery/index.mjs` 整个换成假的（`mock.module`），单测不开 Chrome。
+ * The two real sink paths require `FramePipeline`: `server/bakery/index.mjs` is completely mocked
+ * (`mock.module`), unit test does not launch Chrome.
  */
 import { test, mock, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -41,7 +47,7 @@ const sha256 = (text) => createHash('sha256').update(text, 'utf8').digest('hex')
 const wire = (v) => JSON.parse(JSON.stringify(v));
 const STEP_MS = 250;
 
-/* ================================================================== 进程内的小拓扑 */
+/* ================================================================== Small in-process topology */
 
 function pcNode(fp, cv) {
   return {
@@ -50,7 +56,7 @@ function pcNode(fp, cv) {
   };
 }
 
-/** TaskView → TaskInput（去掉队列加的字段） */
+/** TaskView → TaskInput (strips fields added by the queue) */
 function inputOf(task) {
   const { state, version, attempts, ...rest } = task;
   void state; void version; void attempts;
@@ -59,8 +65,8 @@ function inputOf(task) {
 }
 
 /**
- * 一个队列、一个页面、一个本机节点。`executor`、`sink` 由调用方给。
- * 节点的指纹、代码版本要和任务的 `requires` 对得上。
+ * One queue, one page, one local node. `executor` and `sink` are provided by the caller.
+ * The node's fingerprint and code version must match the task's `requires`.
  */
 function createRig({ executor, sink, fp, cv }) {
   const clock = createTimerClock();
@@ -101,12 +107,15 @@ async function settle(rig) {
 }
 
 /**
- * 驱动到条件成立：flush → 节点 tick → queue.tick → 推进假时钟。
+ * Drive until condition is met: flush → node tick → queue.tick → advance fake clock.
  *
- * 纯内存（`realMs` 为 0）：每步把假时钟推 STEP_MS，最多 `maxSteps` 步。
- * 带真 I/O（真 sink，`realMs` > 0）：每步先等 `realMs` 真时间，假时钟按这一步实际经过的真时间推进（至少 1 ms），
- * 不按步数判失败，而是到 `realDeadlineMs` 这段真时间用完才判。这样机器忙时 I/O 慢，只是多走几步；
- * 假时钟与真时间同步，租约（30 s）、停滞（120 s）这些按假时钟算的时限不会因为「步数多了」被提前触发。
+ * Pure in-memory (`realMs` is 0): advance fake clock by STEP_MS each step, up to `maxSteps` steps.
+ * With real I/O (real sink, `realMs` > 0): wait `realMs` real time first on each step, fake clock
+ * advances by actual real time elapsed in this step (at least 1 ms); failure is not judged by step
+ * count, but judged only after `realDeadlineMs` real time is exhausted. This way when machine is
+ * busy and I/O is slow, it simply takes more steps; fake clock syncs with real time, so time
+ * limits calculated from fake clock like lease (30 s) and stall (120 s) won't be triggered early
+ * due to "too many steps".
  */
 async function drive(rig, until, { maxSteps = 400, realMs = 0, realDeadlineMs = 20_000 } = {}) {
   const t0 = Date.now();
@@ -138,7 +147,7 @@ function hygiene(rig) {
   assert.deepEqual(errors, [], 'the queue replied with an error');
 }
 
-/* ------------------------------------------------------------------ 夹具任务 */
+/* ------------------------------------------------------------------ Fixture task */
 
 const FP = '0123456789abcdef';
 const CV = 'c0de-j5';
@@ -162,7 +171,7 @@ function fineTask({ kind = 'snapshot', tier = 'shared', label, from, to, entryKe
   return task;
 }
 
-/** 一段的假清单（C6.2 SnapshotResult 的形状，内容不重要） */
+/** Fake manifest for one segment (shape of C6.2 SnapshotResult, content does not matter) */
 function manifestOf(task, tag = 'm') {
   const n = task.range.to - task.range.from + 1;
   return {
@@ -172,7 +181,7 @@ function manifestOf(task, tag = 'm') {
   };
 }
 
-/** 记账的假 sink：`hasAnswer(ref)`、`putAnswer(ref)`、`resultFor`（可不给） */
+/** Bookkeeping fake sink: `hasAnswer(ref)`, `putAnswer(ref)`, `resultFor` (optional) */
 function recordingSink({ hasAnswer = () => false, putAnswer, resultFor } = {}) {
   const calls = { has: [], put: [], resultFor: [] };
   const sink = {
@@ -193,7 +202,7 @@ function recordingExecutor() {
   };
 }
 
-/** ref 带任务的 input 与 requires（J.3），以及 D.1 原有的四个字段 */
+/** ref input with task and requires (J.3), and the four original fields from D.1 */
 function assertRef(ref, task, what) {
   assert.equal(ref.resultKey, task.resultKey, `${what}: resultKey`);
   assert.equal(ref.kind, task.kind, `${what}: kind`);
@@ -203,7 +212,7 @@ function assertRef(ref, task, what) {
   assert.deepEqual(ref.requires, task.requires, `${what}: ref.requires is the requires of the task`);
 }
 
-/* ================================================================== J5（假 sink） */
+/* ================================================================== J5 (fake sink) */
 
 test('J5 put path: result of task.done = { ranges, ...manifest returned by put } (with fields such as frames); the ref of has / put carries input and requires', async () => {
   const shared = fineTask({ label: 'j5-put', from: 0, to: 59 });
@@ -298,7 +307,7 @@ test('J5 dedup path: when resultFor returns null, only { ranges, dedup: true } i
   hygiene(rigB);
 });
 
-/* ================================================================== J5（C6.2 的真 sink） */
+/* ================================================================== J5 (real sink from C6.2) */
 
 const harness = createAssetHarness();
 after(() => harness.cleanup());
@@ -323,7 +332,8 @@ test('J5 real sink (createAssetSink): A renders locally and goes through put, wi
   const task = inputOf(view);
   const A = roots.make(await roots.root());
 
-  // A：帧库起初是空的（has 为假）；执行器「渲染」时把这一段写进帧库，sink.put 读出清单、推上去
+  // A: Frame store is initially empty (has is false); when the executor "renders", it writes this
+  // segment into the frame store, and sink.put reads the manifest and pushes it up
   const execA = {
     renders: [], async plan() { throw new Error('no plan'); },
     async render(tk) { execA.renders.push(tk.id); await fx.seedSnapshots(A, view, fx.range(0, 59)); return null; },
@@ -340,12 +350,14 @@ test('J5 real sink (createAssetSink): A renders locally and goes through put, wi
   hygiene(rigA);
   for (const [, hash] of doneA.result.frames) assert.ok(await svc.client.has('snap', hash), 'chunks have been pushed to the asset service');
 
-  // B：另一台机器，帧库为空；内容库里有 A 写的清单、块都在素材服务上 → 去重
+  // B: Another machine, frame store is empty; content store contains the manifest written by A,
+  // and chunks are all on the asset service -> deduplicated
   const B = roots.make(await roots.root());
   const contentB = await svc.another('node-b');
   const execB = { renders: [], async plan() { throw new Error('no plan'); }, async render(tk) { execB.renders.push(tk.id); return null; } };
   const sinkB = T.createAssetSink({ pipeline: B, client: svc.client, content: contentB });
-  // 内容库的清单在 A 的 put 回包之后才写完也允许：等它出现（按条件等，15 s 真时间封顶；机器忙时也够）
+  // It is also allowed if the content store manifest finishes writing after A's put response:
+  // wait for it to appear (wait on condition, capped at 15 s real time; enough when machine is busy)
   const t0 = Date.now();
   while (!(await contentB.get('snapshot-manifest', fx.manifestKey(view))) && Date.now() - t0 < 15_000) await new Promise((r) => setTimeout(r, 20));
   const rigB = createRig({ executor: execB, sink: sinkB, fp: fx.TASK_FP, cv: 'c' });
@@ -395,7 +407,7 @@ test('J6 split: snapshot tasks carry input.canvasHeavy (true only when capabilit
     }
   }
   assert.equal(tasks.filter((x) => x.input.clipId === 'c-canvas').length, 2, '90 frames split into two segments, each segment carries it');
-  // 其它 input 字段照旧
+  // Other input fields remain as before
   const one = tasks.find((x) => x.input.clipId === 'c-local');
   assert.equal(one.input.entryKey, sha256('entry-j6'));
   assert.equal(one.input.contentKey, `${sha256('entry-j6')}/${sha256('content:local')}`);
@@ -416,13 +428,15 @@ test('J6 split: planTaskOf accepts { codeVersion, envFingerprint } and writes th
   const onlyCode = planTaskOf({ projectId: 'proj-j6', projectRev: 8, codeVersion: 'code-abc' });
   assert.equal(onlyCode.requires.codeVersion, 'code-abc');
   assert.ok(onlyCode.requires.envFingerprint === undefined || onlyCode.requires.envFingerprint === null, 'items not given are not written');
-  // 能过 JSON（要上线）
+  // Passes JSON (goes on the wire)
   assert.deepEqual(wire(withReq), withReq);
 });
 
 test('J6 split: a plan task with requires can be published through a real queue; a node with a different code version cannot claim it, a node with the same one claims and completes it', async () => {
-  // 注意：plan 的 requires.envFingerprint 不参与认领过滤（B 节 filter.mjs 规则 1、I.2 都把 plan 排除在外，
-  // 「谁认领谁的指纹就是这一版的指纹」）。所以这里只断言代码版本这一条，不断言别的指纹认领不到。
+  // Note: plan's requires.envFingerprint does not participate in claim filtering (Section B
+  // filter.mjs Rule 1 and I.2 both exclude plan: "whoever claims it, their fingerprint is this
+  // version's fingerprint"). So only assert the code version here, not that other fingerprints
+  // cannot be claimed.
   const { planTaskOf } = await loadSplit();
   const plan = planTaskOf({ projectId: 'proj-j6q', projectRev: 1, codeVersion: CV, envFingerprint: FP });
   const plans = [];
@@ -450,7 +464,7 @@ test('J6 split: a plan task with requires can be published through a real queue;
 let endpointMod = null;
 const loadEndpoint = async () => (endpointMod ||= await import('../render-node/endpoint.mjs'));
 
-/** 注入的 fetch：`routes` 是 目标 URL → 健康检查的 JSON（null = 连不上）。记下每次请求的目标 */
+/** Injected fetch: `routes` is target URL -> health check JSON (null = cannot connect). Record each target */
 function fakeFetch(routes) {
   const calls = [];
   const fetch = async (target) => {
@@ -479,13 +493,13 @@ test('J7 resolveDocservice: with PROMPTCUT_EDITOR_URL set and the editor\'s heal
   assert.equal(r.tried.length, 1);
   assert.equal(r.tried[0].ok, true);
 
-  // 编辑器地址带路径、结尾斜杠：只取源
+  // Editor URL with path and trailing slash: take origin only
   const f2 = fakeFetch({ 'http://localhost:5190/api/docservice/healthz': HEALTHY });
   const r2 = await resolveDocservice({ env: { PROMPTCUT_EDITOR_URL: 'http://localhost:5190/some/page/?x=1' }, fetch: f2.fetch, timeoutMs: 1000 });
   assert.deepEqual([r2.mode, r2.url], ['editor', 'ws://localhost:5190/docservice']);
   assert.deepEqual(f2.calls, ['http://localhost:5190/api/docservice/healthz']);
 
-  // https 的编辑器 → wss
+  // https editor -> wss
   const f3 = fakeFetch({ 'https://editor.example.invalid:8443/api/docservice/healthz': HEALTHY });
   const r3 = await resolveDocservice({ env: { PROMPTCUT_EDITOR_URL: 'https://editor.example.invalid:8443' }, fetch: f3.fetch, timeoutMs: 1000 });
   assert.deepEqual([r3.mode, r3.url], ['editor', 'wss://editor.example.invalid:8443/docservice']);
@@ -500,37 +514,37 @@ test('J7 resolveDocservice order: environment variable address → editor → lo
   const env = { PROMPTCUT_DOCSERVICE_URL: REMOTE, PROMPTCUT_EDITOR_URL: 'http://127.0.0.1:5173' };
   const run = (routes) => { const f = fakeFetch(routes); return resolveDocservice({ env, fetch: f.fetch, timeoutMs: 1000 }).then((r) => ({ r, calls: f.calls })); };
 
-  // 1. 环境变量地址可用：remote，别的不试
+  // 1. Environment variable URL is available: remote, do not try others
   let { r, calls } = await run({ [REMOTE_H]: HEALTHY, [EDITOR_H]: HEALTHY, [LOCAL_H]: HEALTHY });
   assert.deepEqual([r.mode, r.url], ['remote', REMOTE]);
   assert.deepEqual(calls, [REMOTE_H]);
 
-  // 2. 环境变量地址不通、编辑器通：editor
+  // 2. Environment variable URL unreachable, editor reachable: editor
   ({ r, calls } = await run({ [EDITOR_H]: HEALTHY, [LOCAL_H]: HEALTHY }));
   assert.deepEqual([r.mode, r.url], ['editor', 'ws://127.0.0.1:5173/docservice']);
   assert.deepEqual(calls, [REMOTE_H, EDITOR_H]);
   assert.deepEqual(r.tried.map((x) => x.ok), [false, true]);
 
-  // 3. 编辑器也不通：回环
+  // 3. Editor is also unreachable: loopback
   ({ r, calls } = await run({ [LOCAL_H]: HEALTHY }));
   assert.deepEqual([r.mode, r.url], ['local', 'ws://127.0.0.1:8787']);
   assert.deepEqual(calls, [REMOTE_H, EDITOR_H, LOCAL_H]);
   assert.deepEqual(r.tried.map((x) => x.ok), [false, false, true]);
 
-  // 4. 全不通：离线，三项都试过
+  // 4. None reachable: offline, all three tried
   ({ r, calls } = await run({}));
   assert.equal(r.mode, 'offline');
   assert.equal(r.url, undefined);
   assert.deepEqual(calls, [REMOTE_H, EDITOR_H, LOCAL_H]);
   assert.equal(r.tried.length, 3);
 
-  // 5. 编辑器回的健康检查不合格（ok 不是 true、protocol 不对）：跳过
+  // 5. Health check returned by editor fails (ok is not true, wrong protocol): skip
   ({ r } = await run({ [EDITOR_H]: { ok: false, protocol: 'promptcut.v1' }, [LOCAL_H]: HEALTHY }));
   assert.equal(r.mode, 'local');
   ({ r } = await run({ [EDITOR_H]: { ok: true, protocol: 'promptcut.v0' }, [LOCAL_H]: HEALTHY }));
   assert.equal(r.mode, 'local');
 
-  // 6. 没设 PROMPTCUT_EDITOR_URL（含空串）：不试编辑器，行为与 M5a 相同
+  // 6. PROMPTCUT_EDITOR_URL not set (including empty string): do not try editor, same behavior as M5a
   for (const e of [{ PROMPTCUT_DOCSERVICE_URL: REMOTE }, { PROMPTCUT_DOCSERVICE_URL: REMOTE, PROMPTCUT_EDITOR_URL: '' }]) {
     const f = fakeFetch({ [EDITOR_H]: HEALTHY, [LOCAL_H]: HEALTHY });
     const rr = await resolveDocservice({ env: e, fetch: f.fetch, timeoutMs: 1000 });
@@ -538,7 +552,7 @@ test('J7 resolveDocservice order: environment variable address → editor → lo
     assert.deepEqual(f.calls, [REMOTE_H, LOCAL_H]);
   }
 
-  // 7. 回环端口照旧可配
+  // 7. Loopback port remains configurable as before
   const f7 = fakeFetch({ 'http://127.0.0.1:8799/healthz': HEALTHY });
   const r7 = await resolveDocservice({ env: { PROMPTCUT_EDITOR_URL: 'http://127.0.0.1:5173', PROMPTCUT_DOCSERVICE_PORT: '8799' }, fetch: f7.fetch, timeoutMs: 1000 });
   assert.deepEqual([r7.mode, r7.url], ['local', 'ws://127.0.0.1:8799']);

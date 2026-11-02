@@ -1,11 +1,15 @@
 /**
- * 换档判据(`mediaTier.ts` 的 playbackUrl)与本机可播性缓存(`playability.ts`)的单测。
- * 跑:node --test src/render/mediaTier.test.mjs
+ * Unit tests for tier switch criteria (playbackUrl in `mediaTier.ts`) and local playability cache
+ * (`playability.ts`). Run: node --test src/render/mediaTier.test.mjs
  *
- * 钉的是 T1a 审查的三条:
- *   #3 素材小尺寸还没传完、素材原尺寸传完了 → 给素材原尺寸;判据只看「素材服务报 complete 的哈希集合」;
- *   #4 可播性是**这台设备**的结论,存在本机缓存里,不看项目文档(MediaAsset 上写了什么都不算);
- *   集合为空(还没问过素材服务)→ 有素材小尺寸给素材小尺寸(C6.6 起;以前是一律 `media.url`)。
+ * Locks down three rules from the T1a review:
+ *   #3 Small-size asset has not finished uploading, original-size asset finished uploading →
+ *      provide original-size asset; criteria only check "hash set reported complete by asset
+ *      service";
+ *   #4 Playability is a conclusion of **this device**, stored in the local cache, ignoring the
+ *      project document (whatever is written on MediaAsset does not count);
+ *   Empty set (asset service not queried yet) → provide small-size asset if available (since C6.6;
+ *   previously always `media.url`).
  */
 import "../testing/registerTs.mjs";
 import test from "node:test";
@@ -23,15 +27,15 @@ test("Set is empty (asset service not queried yet): give the small asset variant
   assert.equal(playbackUrl(media, [], { playable: never }), `/@media/${SMALL}`);
   assert.equal(playbackUrl(media, new Set(), { playable: never }), `/@media/${SMALL}`);
   assert.equal(playbackUrl({ ...media, tiers: { original: ORIG } }, [], { playable: never }), `/@media/${ORIG}`);
-  // 迁移期没有哈希的老素材:原样
+  // Legacy media without hashes during transition period: as is
   assert.equal(playbackUrl({ url: "/api/media/file?path=C%3A%2Fa.mp4" }, [ORIG]), "/api/media/file?path=C%3A%2Fa.mp4");
-  // 只有哈希、没有 url 的:拼哈希地址
+  // Only has hash, no url: construct hash URL
   assert.equal(playbackUrl({ url: "", hash: ORIG }, []), `/@media/${ORIG}`);
 });
 
 test("#3: small asset variant not fully uploaded, original asset fully uploaded → original asset", () => {
   assert.equal(playbackUrl(media, [ORIG], { playable: () => true }), `/@media/${ORIG}`);
-  // 没有素材小尺寸这一档的素材(浏览器里导入的只有素材原尺寸)
+  // Media without the small-size asset tier (browser imports only have original-size assets)
   const onlyOriginal = { ...media, tiers: { original: ORIG } };
   assert.equal(playbackUrl(onlyOriginal, [ORIG], { playable: never }), `/@media/${ORIG}`);
 });
@@ -58,7 +62,7 @@ test("#4: playability not known yet → give the small asset variant first; with
 test("#4: playability is stored in the local cache, keyed by content hash; whatever the project document says does not count", () => {
   forgetPlayable();
   assert.equal(playableOnThisHost(ORIG), undefined);
-  // 项目文档里就算有人写了 playable: true,也不看它
+  // Even if someone wrote playable: true in the project document, ignore it
   const claimed = { ...media, playable: true };
   assert.equal(playbackUrl(claimed, [SMALL, ORIG], { probe: false }), `/@media/${SMALL}`);
   rememberPlayable(ORIG.toUpperCase(), true);
@@ -81,7 +85,8 @@ test("cloudBase: hash URLs are replaced with absolute URLs of the remote asset s
 });
 
 test("mimeForExt / hashFromUrl", () => {
-  // C6.6:MOV 按 Chrome 实际用的 ISO BMFF 解复用器问(canPlayType("video/quicktime") 在 Chrome 恒回空串)
+  // C6.6: Query MOV using the ISO BMFF demuxer actually used by Chrome (canPlayType("video/quicktime")
+  // always returns empty string in Chrome)
   assert.equal(mimeForExt("MOV"), "video/mp4");
   assert.equal(mimeForExt("xyz"), null);
   assert.equal(hashFromUrl(`/@media/${ORIG}.mp4?x=1`), ORIG);

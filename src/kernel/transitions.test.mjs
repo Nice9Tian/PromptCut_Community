@@ -6,7 +6,7 @@ const {
   transitionsOfClip, groupOf, timingLock, checkCrossfade, checkFade, planTransitionDrop, fadeOwner, clampDur,
 } = await import("./transitions.ts");
 
-/** 一条序列、几段首尾相接的素材 */
+/** One track, several end-to-end assets */
 function proj(clips, transitions = []) {
   return {
     version: 1, name: "t", width: 1920, height: 1080, fps: 30, duration: 30, themeId: "midnight",
@@ -44,7 +44,7 @@ test("timingLock: a locked clip gets instructions that can be followed directly,
 
 test("checkCrossfade: reversed arguments are sorted automatically; non-adjacent, too long, or already having a transition are all rejected with a clear explanation", () => {
   const p = proj([clip("a", 0, 3), clip("b", 3, 6)]);
-  const ok = checkCrossfade(p, "b", "a", 0.5); // 故意写反
+  const ok = checkCrossfade(p, "b", "a", 0.5); // Intentionally inverted
   assert.equal(ok.ok, true);
   assert.equal(ok.a.id, "a");
   assert.equal(ok.b.id, "b");
@@ -67,12 +67,12 @@ test("checkFade: adding twice, longer than the clip, and an end occupied by a cr
 
   const withFade = proj([clip("a", 0, 3)], [{ id: "t1", kind: "fadeIn", aId: "a", dur: 0.5 }]);
   assert.match(checkFade(withFade, "a", "fadeIn", 0.5).error, /already has a fade in/);
-  // 同一段的淡出没被占,还能加
+  // Fade-out of the same clip is not occupied, can still be added
   assert.equal(checkFade(withFade, "a", "fadeOut", 0.5).ok, true);
 
   const xf = proj([clip("a", 0, 3), clip("b", 3, 6)], [{ id: "t1", kind: "crossfade", aId: "a", bId: "b", dur: 0.5 }]);
   assert.match(checkFade(xf, "b", "fadeIn", 0.5).error, /already taken by a crossfade/);
-  // 交叉溶解占的是 b 的开头,b 的结尾还能淡出
+  // Crossfade occupies the start of b, the end of b can still fade out
   assert.equal(checkFade(xf, "b", "fadeOut", 0.5).ok, true);
 });
 
@@ -92,7 +92,8 @@ test("planTransitionDrop: a crossfade on the seam, fade-in and fade-out at the t
   assert.equal(planTransitionDrop(p, "tr1", 1.5), null);
   assert.equal(planTransitionDrop(p, "No such entry", 1), null);
 
-  // 中间空着的两段:接缝不算接缝,落在 a 尾部就是淡出
+  // Two clips with a gap in between: the seam is not counted as a seam, falling at the tail of a is
+  // simply a fade-out
   const far = proj([clip("a", 0, 3), clip("b", 5, 8)]);
   assert.deepEqual(planTransitionDrop(far, "tr1", 3.0), { kind: "fadeOut", aId: "a" });
 });

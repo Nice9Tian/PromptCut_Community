@@ -1,15 +1,21 @@
 /**
- * 配音复刻的源文件经素材服务取字节(AGENT-maint-3 第 3 项)。
+ * Source file for voiceover cloning fetches bytes via asset service (item 3 of AGENT-maint-3).
  *
- * 原来 `/api/voice/clone` 收上传回包里的 `path`(本地内容库的绝对路径)、`isInside` 后直接读;现在页面只递素材标识
- * `media: { hash, url, name }`,服务端用素材服务的解析器换成地址交 ffmpeg,请求体里的 `path` 一概不看。
+ * Originally `/api/voice/clone` received `path` (absolute path in local content store) and
+ * `isInside` in upload response and read directly; now page only passes media identifier
+ * `media: { hash, url, name }`, server resolves to address using asset service resolver and passes
+ * to ffmpeg, ignoring `path` in request body completely.
  *
- *   MNT3-V-1  resolveCloneSource:只给 path 的老请求体 → 400 类 VoiceError,且不去读那个路径;
- *             素材服务上没有 → VoiceError;素材服务不可达 → AssetSourceError(路由里回 502 kind: asset-service);
- *             有标识 → 回解析器给的地址与素材名;
- *   MNT3-V-2  真的素材服务(本进程里,单进程形态)+ 真 ffmpeg:入库一段 12 秒的音频,经标识解析、prepareCloneAudio
- *             转出单声道 32 kHz wav,秒数对得上;ffmpeg 异步起,事件循环在转码期间照常转(同步起会卡死自己的素材服务);
- *   MNT3-V-3  页面 `cloneVoiceFromFile`:上传后递 media(hash / url / name),不再递 path。
+ *   MNT3-V-1  resolveCloneSource: legacy request body with only path → 400-class VoiceError,
+ *             without reading that path; missing on asset service → VoiceError; asset service
+ *             unreachable → AssetSourceError (route returns 502 kind: asset-service); with
+ *             identifier → returns address given by resolver and asset name;
+ *   MNT3-V-2  Real asset service (in this process, single-process mode) + real ffmpeg: stores a
+ *             12 s audio clip, via identifier resolution and prepareCloneAudio transcodes mono
+ *             32 kHz wav, duration matches; ffmpeg launched asynchronously, event loop runs as
+ *             usual during transcoding (synchronous launch freezes its own asset service);
+ *   MNT3-V-3  Page `cloneVoiceFromFile`: passes media (hash / url / name) after upload, no longer
+ *             passes path.
  */
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
@@ -40,7 +46,7 @@ test('MNT3-V-1 the clone source file is recognized only by asset identifier: an 
   fs.writeFileSync(real, 'x');
   await assert.rejects(voice.resolveCloneSource({ path: real, consent: true }, resolve), (e) => e instanceof VoiceError && /media id/.test(e.message));
   assert.deepEqual(seen, [], 'Without an identifier the resolver is not even asked');
-  // media 里夹带 path 也不看
+  // Even if path is included in media, it is ignored
   const ok = await voice.resolveCloneSource({ media: { hash: 'ab'.repeat(32), name: '我的声音.m4a', path: real } }, resolve);
   assert.deepEqual(ok, { src: `http://asset.test/@media/${'ab'.repeat(32)}`, label: '我的声音.m4a' });
   assert.equal(seen[0].path, undefined, 'The identifier the resolver receives has no path');
@@ -87,9 +93,10 @@ test('MNT3-V-2 a real asset service (in this process) + real ffmpeg: bytes are f
       assert.ok(ticks >= 1, `The event loop kept running during transcoding (ticks=${ticks})`);
     } finally { fs.rmSync(prepared.file, { force: true }); }
 
-    // 素材服务上没有的哈希:resolveCloneSource 就拦下,不交给 ffmpeg
+    // Hash missing from asset service: resolveCloneSource intercepts it and does not pass to ffmpeg
     await assert.rejects(voice.resolveCloneSource({ media: { hash: 'ee'.repeat(32), name: '没入库.wav' } }, resolve), (e) => e instanceof VoiceError);
-    // 地址读不到时 prepareCloneAudio 报「源文件转音频失败」,不留临时文件
+    // When address is unreadable, prepareCloneAudio reports "Failed to convert source file to audio",
+    // leaving no temp files
     const before = fs.readdirSync(os.tmpdir()).filter(n => n.startsWith(`pc-voice-clone-${process.pid}-`)).length;
     await assert.rejects(voice.prepareCloneAudio(`${svc.origin}/@media/${'ee'.repeat(32)}`, { ffmpeg: FFMPEG }), (e) => e instanceof VoiceError && /Failed to convert source file to audio/.test(e.message));
     await new Promise(r2 => setTimeout(r2, 50));

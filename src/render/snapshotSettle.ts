@@ -1,12 +1,14 @@
 /**
- * 让挂着的宏任务跑完,直到 DOM 不再变。
+ * Run pending macrotasks to completion until the DOM stops mutating.
  *
- * React 经 Scheduler 的 MessageChannel 排的提交、`v.on("change", setState)` 那条异步渲染都在这里落地;
- * 不排空的话它们会落到哪一帧取决于运气。控件、字体、图片就绪由 waitFrameReady 等待,超时明确失败。
+ * Commits scheduled by React via Scheduler's MessageChannel and the `v.on("change", setState)`
+ * async render both settle here; if not drained, which frame they land on is a matter of luck.
+ * Control, font, and image readiness are awaited by waitFrameReady, explicitly failing on timeout.
  *
- * 原来写在 `scripts/export-frames.mjs`(引擎现为 `server/bakery/chrome.mjs`)的 `PAGE_PRELUDE` 里(由 `evaluateOnNewDocument` 注入),
- * 现在是页面 bundle 的一部分 —— 它读的 `__pcMutationCount` 本来就在 bundle 里
- * (`src/kernel/exportClock.ts`)。挂上 `window.__bfSettle` 的地方见 `ExportView.tsx`。
+ * Originally written in `PAGE_PRELUDE` of `scripts/export-frames.mjs` (engine is now
+ * `server/bakery/chrome.mjs`), injected via `evaluateOnNewDocument`. It is now part of the page
+ * bundle: the `__pcMutationCount` it reads was already in the bundle (`src/kernel/exportClock.ts`).
+ * See `ExportView.tsx` for where `window.__bfSettle` is attached.
  */
 export async function settleDom(): Promise<void> {
   for (let k = 0; k < 4; k++) {

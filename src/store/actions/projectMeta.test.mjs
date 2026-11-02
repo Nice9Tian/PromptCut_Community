@@ -1,5 +1,5 @@
 /**
- * 项目设置与 Agent 共用的总时长动作。跑:
+ * Total duration action shared between project settings and Agent. Run:
  * node --experimental-test-module-mocks --test src/store/actions/projectMeta.test.mjs
  */
 import { srcUrl } from "../../testing/registerTs.mjs";

@@ -1,24 +1,34 @@
 /**
- * 帧库上限与淘汰的端到端探针(存储占用计划 B 部分,`server/frame-library-storage.mjs`、`/api/storage*`)。
+ * End-to-end probe for frame store cap and eviction (storage footprint plan Part B,
+ * `server/frame-library-storage.mjs`, `/api/storage*`).
  *
- * 起编辑器进程 + 预渲染进程,帧库落在新建的临时目录(`PROMPTCUT_EXPORT_DIR`),先在里面造一批「项目」的键目录
- * (最近使用时刻各不同),然后经编辑器进程的 `/api/storage*`(它转给预渲染进程)逐条核:
+ * Starts editor process + prerender process, with the frame store located in a newly created
+ * temporary directory (`PROMPTCUT_EXPORT_DIR`). First creates a batch of "project" key directories
+ * inside it (each with a different last-used timestamp), then verifies each item via editor
+ * process's `/api/storage*` (which forwards to prerender process):
  *
- *   1. 启动扫完后 `GET /api/storage` 的总字节 = 造的字节,缺省上限按磁盘总容量算(50 GB 或 10%);
- *   2. 打开一个真项目(推镜像、连 SSE、preload):它用到的键被记为使用、标为正在打开;
- *   3. `POST /api/storage/cap` 把上限设小:从最旧的删起,被打开的文件所在的单元跳过,删到上限的 90% 就停,
- *      30 分钟内用过的和正在打开的项目不删;越界的上限一律 400;
- *   4. `POST /api/storage/clear-cache`:只留 10 分钟内用过的(和正在打开的项目),数字变小;
- *   5. 链接(junction)和认不出的目录不动,链接指向的文件完好。
- *   3a.(三支合并后)跑着时放进去的死进程遗留(`full-<pid>.tmp.mov`、`html-cache/live-<pid>-*`)由下一次检查一并清掉,
- *      `leftovers.bytes` 归零。
+ *   1. After startup scan completes, `GET /api/storage` total bytes = created bytes; default cap is
+ *      calculated from total disk capacity (50 GB or 10%);
+ *   2. Open a real project (push image, connect SSE, preload): keys it uses are recorded as used
+ *      and marked as currently opening;
+ *   3. `POST /api/storage/cap` sets a smaller cap: deletes starting from oldest, skips units
+ *      containing opened files, stops upon deleting down to 90% of cap, and does not delete
+ *      projects used within 30 minutes or currently opening; out-of-bounds caps always return 400;
+ *   4. `POST /api/storage/clear-cache`: keeps only those used within 10 minutes (and currently
+ *      opening projects); the number decreases;
+ *   5. Links (junctions) and unrecognized directories are left untouched; files pointed to by
+ *      links remain intact.
+ *   3a. (After 3-branch merge) Dead process leftovers (`full-<pid>.tmp.mov`,
+ *      `html-cache/live-<pid>-*`) placed while running are cleared together during next check,
+ *      resetting `leftovers.bytes` to zero.
  *
  *   node scripts/probes/storage-cap-probe.mjs [--port 5710] [--keep]
  *
- * 最后一行打印一行 JSON(`ok`、`fails` 与各步数字)。`PROMPTCUT_TEST_STORAGE_MIN_CAP` 把用户可设的下限调到 1 MB,
- * 只在这个探针起的 dev server 里生效。
+ * The last line prints a single JSON line (`ok`, `fails`, and numbers from each step).
+ * `PROMPTCUT_TEST_STORAGE_MIN_CAP` adjusts user-configurable lower limit to 1 MB, taking effect
+ * only in the dev server started by this probe.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -66,7 +76,7 @@ async function until(label, fn, timeoutMs = 120000, everyMs = 300) {
   }
 }
 
-/* ---------------- 造帧库 ---------------- */
+/* ---------------- Populate frame store ---------------- */
 
 async function makeKey(dir, bytes, mtime, file) {
   const full = path.join(dir, file);
@@ -82,7 +92,7 @@ async function makeKey(dir, bytes, mtime, file) {
 }
 
 const now0 = Date.now();
-/** 每个假项目:整场景目录 + 本地档(同一单元)+ 一个共享档(另一单元),最近使用时刻各不同 */
+/** Each fake project: whole scene directory + local tier (same unit) + one shared tier (another unit), each with a different last-used timestamp */
 const E = 15_000_000, C = 5_000_000, L = 1_000_000;
 const fakes = [
   { name: 'busy', age: 8 * HOUR, entry: E, card: 0 },
@@ -104,16 +114,16 @@ async function buildLibrary() {
     await makeKey(path.join(LIBRARY, 'controls-local', p.entryKey), L, p.at, `${p.cardKey}/0.html`);
     if (p.card) await makeKey(path.join(LIBRARY, 'controls-html', p.cardKey), p.card, p.at, '0.html');
   }
-  // 链接:共享档族里一个键形状的 junction,指向帧库外面
+  // Link: a key-shaped junction in the shared tier family, pointing outside the frame store
   await fs.mkdir(OUTSIDE, { recursive: true });
   await fs.writeFile(path.join(OUTSIDE, 'precious.txt'), 'keep me');
   await fs.symlink(OUTSIDE, path.join(LIBRARY, 'controls-html', key('link')), 'junction');
-  // 认不出的
+  // Unrecognized
   await fs.mkdir(path.join(LIBRARY, 'controls-html', 'not-a-key'), { recursive: true });
   await fs.writeFile(path.join(LIBRARY, 'controls-html', 'not-a-key', 'x'), 'x');
   await fs.mkdir(path.join(LIBRARY, 'something-else', key('x')), { recursive: true });
   await fs.writeFile(path.join(LIBRARY, 'something-else', key('x'), 'y'), 'y');
-  // 一个导出目录(`exports` 汇总)
+  // An export directory (`exports` summary)
   const exp = path.join(EXPORT_DIR, 'export-20260929-120000');
   await fs.mkdir(path.join(exp, 'frames'), { recursive: true });
   await fs.writeFile(path.join(exp, 'preview.mp4'), Buffer.alloc(1000));
@@ -181,7 +191,7 @@ try {
   await buildLibrary();
   const created = fakes.reduce((sum, p) => sum + fakeBytes(p), 0);
   out.createdBytes = created;
-  // 被别的进程打开着:busy 的整场景目录里一个文件一直开着
+  // Opened by another process: a file in busy's whole scene directory remains open
   handle = await fs.open(path.join(LIBRARY, fakes[0].entryKey, 'mov', 'frames', '000000.png'), 'r');
 
   await startEditor();
@@ -189,13 +199,13 @@ try {
   if (!base) throw new Error('The prerender process did not start');
   out.prerender = base;
 
-  /* ---- 1. 启动扫完 ---- */
+  /* ---- 1. Startup scan complete ---- */
   const first = await until('startup scan finished', async () => { const s = await storage(); return s?.ok && s.frameLibrary.scannedAt && !s.frameLibrary.scanning ? s : null; }, 60000, 500);
   const lib0 = first?.frameLibrary ?? {};
   out.start = { bytes: lib0.bytes, capBytes: lib0.capBytes, capSource: lib0.capSource, diskBytes: lib0.diskBytes, owner: lib0.owner, exports: first?.exports, leftovers: first?.leftovers };
   check(lib0.bytes === created, '① total bytes after the startup scan = bytes created (links and unrecognized entries not counted)', { bytes: lib0.bytes, created });
   const disk = lib0.diskBytes;
-  const GIB = 1024 ** 3; // GB 按 1024³
+  const GIB = 1024 ** 3; // GB calculated as 1024³
   const expectedDefault = disk && disk < 500 * GIB ? Math.floor(disk * 0.1) : 50 * GIB;
   check(lib0.capSource === 'default' && lib0.capBytes === expectedDefault, '① default cap: 50 GB if the disk is ≥ 500 GB, otherwise 10%', { capBytes: lib0.capBytes, disk });
   check(lib0.owner === true, '① the prerender process is the frame store\'s owner process');
@@ -204,7 +214,7 @@ try {
   check(fakeUnit && Math.abs(fakeUnit.at - fakes[1].at) < 3000, '① without an index, the last-used time is the modification time of the newest file', fakeUnit);
   check(await exists(path.join(LIBRARY, 'usage.json')), '① usage.json was written under the frame store root');
 
-  /* ---- 2. 打开一个真项目 ---- */
+  /* ---- 2. Open a real project ---- */
   const SESSION = `storage-${Date.now().toString(36)}`;
   const PROJECT = {
     id: `storage-probe-${SESSION}`, name: 'Storage probe', width: 1280, height: 720, fps: 30, duration: 1,
@@ -233,10 +243,13 @@ try {
   check(projectUnits.length >= 2 && projectUnits.every(u => u.pinned), '② the other keys used by this version (track prefixes, shared files...) are also recorded as in use and marked as currently open', out.projectUnits);
   check(projectUnits.some(u => u.unit.startsWith('controls-html/') || u.unit.startsWith('tracks/')), '② the recorded keys include card or track keys', out.projectUnits);
 
-  /* ---- 3. 上限设小:淘汰 ---- */
-  // 先设一个大上限(合法、不淘汰)让它立即检查一次:打开的项目刚写的键在检查时才量(增量维护),
-  // 量完的总字节才是下面算目标用的
-  // (三支合并后)跑着的时候在一个留着的键目录里放死进程的遗留:下面这次检查要一并清掉(启动清理早就做过了,清它的只能是检查)
+  /* ---- 3. Reduce cap: eviction ---- */
+  // First set a large cap (valid, no eviction) to trigger an immediate check: keys just written by open
+  // projects are measured only during checks (delta maintenance), and total bytes measured are what
+  // gets used below to compute targets.
+  // (After 3-branch merge) Place dead process leftovers into a retained key directory while running:
+  // the check below must clean them up together (startup cleanup ran long ago, so only a check can
+  // clear them).
   const deadPid = spawnSync(process.execPath, ['-e', '0'], { windowsHide: true }).pid;
   const leftDir = path.join(LIBRARY, fakes[4].entryKey);
   const leftFiles = [path.join(leftDir, 'mov', `full-${deadPid}.tmp.mov`), path.join(leftDir, 'html-cache', `live-${deadPid}-probe`, 'blob')];
@@ -261,7 +274,7 @@ try {
   const T = (await storage()).frameLibrary.bytes;
   out.projectBytes = T - created;
   const P = p => fakeBytes(p);
-  // 目标:busy 跳过(打开着),删掉 p1、p2、p3 就够(p3 的共享档删完才到,留一半共享档的余量给项目自己还在长的字节)
+  // Target: skip busy (currently open); deleting p1, p2, and p3 is sufficient (reached only after deleting p3's shared tier, leaving half the shared tier margin for the project's own growing bytes)
   const target = T - P(fakes[1]) - P(fakes[2]) - P(fakes[3]) + Math.floor(fakes[3].card / 2);
   const cap = Math.round(target / 0.9);
   out.evict = { total: T, cap, target: Math.floor(cap * 0.9), measured: !!measured };
@@ -295,7 +308,7 @@ try {
   check(await exists(path.join(LIBRARY, fakes[0].entryKey, 'mov', 'frames', '000000.png')), '③ the skipped unit had no files deleted');
   check(await exists(path.join(LIBRARY, entryKey)), '③ the open project is not deleted');
 
-  /* ---- 4. 清理缓存 ---- */
+  /* ---- 4. Clear cache ---- */
   await handle.close(); handle = null;
   const before = (await storage()).frameLibrary.bytes;
   const cleared = await postJson(`${EDITOR}/api/storage/clear-cache`);
@@ -309,7 +322,7 @@ try {
   check(projectUnits.every(u => left.includes(u.unit)), '④ all keys used by the open project are kept', { left: left.map(u => u.slice(0, 26)) });
   check(after.frameLibrary.bytes === projectUnits.reduce((sum, u) => sum + (unitOf(after.frameLibrary.units, u.unit)?.bytes ?? 0), 0), '④ only the open project remains');
 
-  /* ---- 5. 链接与认不出的 ---- */
+  /* ---- 5. Links and unrecognized items ---- */
   check(await fs.readFile(path.join(OUTSIDE, 'precious.txt'), 'utf8').catch(() => null) === 'keep me', '⑤ the file the junction points to is intact');
   check(await exists(path.join(LIBRARY, 'controls-html', key('link'))), '⑤ the junction itself is untouched');
   check(await exists(path.join(LIBRARY, 'controls-html', 'not-a-key', 'x')), '⑤ unrecognized names are untouched');

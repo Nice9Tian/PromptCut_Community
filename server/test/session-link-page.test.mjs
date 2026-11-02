@@ -1,12 +1,16 @@
 /**
- * 页面的 `SyncLink`（`src/editor/sync/link.ts`）讲会话（HT-a，契约 `docs/plan/http-transport-contract.md` 第 9 节）：
- * 对着真的共享文档服务，中间挡会话网关（`session-gateway-kit.mjs`，服务端会话层合入前的测试桩）与可断的 TCP 代理。
- * 跑：node --test server/test/session-link-page.test.mjs
+ * Page `SyncLink` (`src/editor/sync/link.ts`) speaks session (HT-a, contract
+ * `docs/plan/http-transport-contract.md` Section 9): runs against real shared document service,
+ * intercepted by session gateway (`session-gateway-kit.mjs`, test stub before server session layer
+ * merge) and an interruptible TCP proxy.
+ * Run: node --test server/test/session-link-page.test.mjs
  *
- *   - 传输被掐断：DocSync 不离线、不重新 open、不重放；断开期间的修改接续后按序落地，文档服务的版本号 = 提交次数；
- *   - `dropFor(ms)`：结束会话（长时间断网）：DocSync 离线，回来后建新会话、重新 open，修改照样落地；
- *   - 对着没有会话层的旧服务端：照旧能用（一条传输一个会话）。
- * 页面代码经 vite 的 ssrLoadModule 载入（同 `agent-c65.test.mjs`）。
+ *   - Transport cut: DocSync does not go offline, does not re-open, does not replay; edits made
+ *     during disconnect land in order after resume; document service version = commit count;
+ *   - `dropFor(ms)`: ends session (prolonged network outage): DocSync goes offline; upon return,
+ *     creates new session, re-opens, and edits land as usual;
+ *   - Against legacy server without session layer: works as before (one transport per session).
+ * Page code is loaded via vite's ssrLoadModule (same as `agent-c65.test.mjs`).
  */
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -24,9 +28,11 @@ async function startEnv(t, { gateway = true, direct = false } = {}) {
   const built = createSharedDocService({ mode: 'lan', dataDir: null, store: null, server, path: '/docservice', isLoopback: () => true, localDevice: { deviceId: 'pc-test-device-0001', deviceName: 'test' }, log: () => {} });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const docUrl = `ws://127.0.0.1:${server.address().port}/docservice`;
-  // direct：服务端会话层已合入（HT-a 集成），页面经代理直连真服务，不挡网关
+  // direct: server session layer merged (HT-a integration); page connects directly to real service
+  // via proxy, no gateway
   const gw = gateway && !direct ? await startSessionGateway({ upstream: docUrl }) : null;
-  // 没有网关时挡一层「旧服务端」前端：去掉会话项，服务端把页面当旧客户端（服务端会话层合入前后都成立）
+  // Place a "legacy server" front-end when no gateway: strips session items, so server treats page
+  // as legacy client (holds both before and after server session layer merge)
   const front = gw || direct ? null : await startLegacyFront({ upstream: docUrl });
   const proxy = await createTcpProxy({ target: gw ? gw.port : direct ? server.address().port : front.port });
   const vite = await createVite({ configFile: false, root: ROOT, logLevel: 'silent', server: { middlewareMode: true, hmr: false, ws: false, watch: null }, appType: 'custom', optimizeDeps: { noDiscovery: true, include: [] } });
@@ -65,7 +71,7 @@ async function startEnv(t, { gateway = true, direct = false } = {}) {
     return { link, events };
   }
 
-  /** 文档服务里这个项目的真身：另开一条旧式连接 project.open */
+  /** Real instance of this project in document service: opens a separate legacy connection project.open */
   async function body(projectId) {
     const c = wsClient(docUrl, ['promptcut.v1']);
     await c.opened;
@@ -78,7 +84,7 @@ async function startEnv(t, { gateway = true, direct = false } = {}) {
   return { gw, proxy, page, body, service: built.service };
 }
 
-/** 在当前项目上改一处：第 i 条轨道的名字 */
+/** Modify one place on current project: name of track i */
 function edit(link, i) {
   const p = link.ds.project;
   const next = { ...p, tracks: [...(p.tracks ?? []), { id: `sl-${i}`, name: `Track ${i}`, clips: [] }] };
@@ -160,11 +166,13 @@ test('SL-page-legacy against an old server without a session layer: the page sti
   assert.equal(again.rev, settled.rev + 1);
 });
 
-// 〔裁〕2026-09-27 主会话（契约第 17 节）：用户看得到的行为不许因会话层而变。脱开期间项目被删，接续得 4410、reason 里带
-// 原关闭码 4004：页面收到的 CloseInfo 与连着时收到 4004 相同（fatal、不重连），界面据它弹同一个「项目已删除」
-// （syncManager 的 blocked 只看 CloseInfo 的 code / reason / fatal）。
+// [ruling] 2026-09-27 lead session (contract Section 17): user-visible behavior must not change
+// due to session layer. If project is deleted during detach, resume gets 4410 with original close
+// code 4004 in reason: CloseInfo received by page is identical to receiving 4004 while connected
+// (fatal, no reconnect), and UI shows same "Project deleted" dialog based on it (syncManager's
+// blocked only checks code / reason / fatal of CloseInfo).
 
-/** 等服务端把这个页面的会话看成脱开，回它的 connId */
+/** Wait for server to consider this page's session detached, returning its connId */
 async function detachedConn(env) {
   let connId = null;
   await waitFor(() => {
@@ -193,7 +201,7 @@ for (const [code, reason] of [[4004, 'deleted'], [4003, 'removed']]) {
     assert.equal(events.opens, 1, 'No reconnect');
     assert.equal(link.connected, false);
 
-    // 对照：连着时收到同一个码
+    // Baseline: receives the same code while connected
     const live = env.page(`p-page-final-live-${code}`);
     await waitFor(() => live.link.ds.status === 'online', 8000, 'Control page connected');
     const liveConn = env.service.describe().conns.find((x) => !x.detached && !x.legacy && x.connId !== connId)?.connId;

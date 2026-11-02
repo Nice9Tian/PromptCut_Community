@@ -168,18 +168,19 @@ export class FramePlayback {
 }
 
 /* ======================================================================== *
- * 轨道流(R8 / G4)的排程 —— 纯函数,和上面的 `planPlaybackBatch` 同一个口径:
- * `frameMs` / `resetMs` / `jitterMs` / `deliveryMs` 是**生产侧**的墙钟毫秒,`rate` 是时间轴秒 / 墙钟秒。
+ * Scheduling for track streams (R8 / G4): pure function, same basis as `planPlaybackBatch` above:
+ * `frameMs` / `resetMs` / `jitterMs` / `deliveryMs` are wall-clock milliseconds on the **production side**,
+ * `rate` is timeline seconds / wall-clock seconds.
  * ======================================================================== */
 
-/** 一个分段 15 帧(G2;流的末段可以不满)。数和换算都取 `src/render/streamSegments.mjs` 的 */
+/** 15 frames per segment (G2; stream's final segment can be partial). Values and conversions taken from `src/render/streamSegments.mjs` */
 export const STREAM_SEGMENT = STREAM_SEGMENT_FRAMES;
 
 /**
- * G4 的 `firstMs`(**不是常数**):只在租约断掉时付 ——
- * `firstMs = resetMs + fixedMs + (runStartFrame − 该流各卡的最早挂载帧) × frameMs`。
- * `fixedMs` 是 G0-b 结论 7 补上的每趟挂载 / 热身固定开销(实测约 80 ms)。
- * 租约接得上(同一条流、紧接上一趟末尾)时只剩 0。
+ * G4's `firstMs` (**not a constant**): only paid when the lease is broken:
+ * `firstMs = resetMs + fixedMs + (runStartFrame − earliest mount frame across cards in this stream) × frameMs`.
+ * `fixedMs` is the fixed per-pass mount / warmup overhead added by G0-b Conclusion 7 (measured at ~80 ms).
+ * When the lease holds (same stream, immediately following the end of the previous pass), only 0 remains.
  */
 export function streamFirstMs({ leaseContinues = false, runStartFrame, mountFrame = 0, resetMs = 400, fixedMs = 80, frameMs = 30 }) {
   if (leaseContinues) return 0;
@@ -187,9 +188,11 @@ export function streamFirstMs({ leaseContinues = false, runStartFrame, mountFram
 }
 
 /**
- * G4 的可行性条件:`firstMs + n × 15 × frameMs / stride ≤ n × (15000 / fps) × workers`。
- * **`frameMs` 必须用有编码器在跑时的数**(G0-b 结论 7:是空闲时的 2.26 倍)。
- * 不满足时改产稀疏版(每个分段只截第一帧,`stride` = 分段的帧数;只有这一档)、再合并流 —— 这里只回判定和建议的 `stride`。
+ * G4 feasibility condition: `firstMs + n × 15 × frameMs / stride ≤ n × (15000 / fps) × workers`.
+ * **`frameMs` must use the value when an encoder is running** (G0-b Conclusion 7: 2.26x the idle value).
+ * When not met, switch to producing a sparse version (each segment captures only the first frame,
+ * `stride` = segment frame count; only this tier), then merge streams: here only returns the
+ * decision and recommended `stride`.
  */
 export function streamFeasibility({ n = 1, firstMs = 0, frameMs, fps, workers = 1, stride = 1 }) {
   const need = (s) => firstMs + n * STREAM_SEGMENT * frameMs / s;
@@ -202,21 +205,25 @@ export function streamFeasibility({ n = 1, firstMs = 0, frameMs, fps, workers = 
 }
 
 /**
- * G4 的 `planStreamSegments`(按流各一份):播放头前面要留几个分段的提前量,
- * 以及这条流接下来该生产哪个分段。
+ * G4's `planStreamSegments` (one per stream): how many segments of lead margin to keep ahead of the
+ * playhead, and which segment this stream should produce next.
  *
  *   `leadSegments = ceil((firstMs + segMs + jitterMs + deliveryMs) × rate × fps / (15 × 1000))`
  *   `segMs = 15 × frameMs / stride`
  *
- * 选段规则(worker 在流之间按「离播放头最近的未就绪分段」轮转,**但优先延续自己的租约**):
- *   1. 租约接得上(`leaseLastSegment + 1` 未就绪、没被别人占着)就接着做它 —— 不为新露出的远端段断租约;
- *   2. 否则从播放头所在分段 + `leadSegments` 起往后找第一个未就绪的;
- *   3. 后面都齐了再从流的第一段往后找(补播放头之前的洞)。
+ * Segment selection rules (workers rotate between streams by "unready segment closest to playhead",
+ * **but prioritize extending their own lease**):
+ *   1. If the lease holds (`leaseLastSegment + 1` is unready and not taken by others), continue working
+ *      on it: do not break the lease for newly exposed distant segments;
+ *   2. Otherwise look forward starting from playhead segment + `leadSegments` for the first unready one;
+ *   3. Once later ones are all ready, look forward from the stream's first segment (filling holes
+ *      before the playhead).
  *
- * `ready(n)` / `reserved` 由调用方给(`ready` 已经把「稀疏还是满密度」算进去了)。
+ * `ready(n)` / `reserved` are provided by the caller (`ready` already accounts for "sparse or full density").
  *
- * `playheadFrame` 是项目帧号,`originFrame` 是这条流自己的第一帧(分段从它起数,`streamSegments.mjs`):
- * 播放头还没到这条流时按它的第 0 段算。
+ * `playheadFrame` is the project frame number, and `originFrame` is this stream's own first frame
+ * (segments count from it, `streamSegments.mjs`):
+ * when the playhead has not yet reached this stream, it counts as its segment 0.
  */
 export function planStreamSegments({ playheadFrame = 0, originFrame = 0, fps, rate = 1, firstSegment = 0, lastSegment, stride = 1,
   frameMs = 30, firstMs = 0, jitterMs = 100, deliveryMs = 250, ready = () => false, reserved = new Set(), leaseLastSegment = null }) {

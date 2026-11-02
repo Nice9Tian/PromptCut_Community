@@ -1,38 +1,61 @@
 /**
- * 共享项目的成员与创建者操作模块（契约 `docs/plan/auth-contract.md` 第 7、8 节），类型前缀 `shared.`，外加 `auth.ticket`。
+ * Member and creator operations module for shared projects (contract `docs/plan/auth-contract.md`
+ * sections 7 and 8), type prefix `shared.`, plus `auth.ticket`.
  *
- * | 消息 | 回包 | 说明 |
+ * | Message | Response | Description |
  * |---|---|---|
- * | `shared.members` | `shared.members.list { devices }` | 本空间在线的设备，按「用户名 + 设备」聚合成一行 |
- * | `shared.watch` | `shared.members.list` | 订阅本空间的成员变化；之后每次有连接进出、创建者操作都再收一条 |
- * | `shared.challenge` | `shared.challenge.ok { nonce, salt, kdf }` | 为一次创建者操作取挑战（绑定这条连接与项目） |
- * | `shared.admin` | `shared.admin.ok { op }` 或 `error` | `{ op, proof: { nonce, m }, … }`，op 见下 |
- * | `auth.ticket` | `auth.ticket.ok { ticket, exp }` | 签发素材票据、连接票据，或云端 Agent 的委托（`kind: 'delegate'`，见 `delegateTicket`） |
+ * | `shared.members` | `shared.members.list { devices }` | Online devices in this space, aggregated into one row by "username + device" |
+ * | `shared.watch` | `shared.members.list` | Subscribe to member changes in this space; afterwards, receive one more message whenever a connection enters or leaves, or on creator operations |
+ * | `shared.challenge` | `shared.challenge.ok { nonce, salt, kdf }` | Fetch a challenge for a creator operation (binds this connection to the project) |
+ * | `shared.admin` | `shared.admin.ok { op }` or `error` | `{ op, proof: { nonce, m }, … }`, see below for op |
+ * | `auth.ticket` | `auth.ticket.ok { ticket, exp }` | Issue asset tickets, connection tickets, or Cloud Agent delegations (`kind: 'delegate'`, see `delegateTicket`) |
  *
- * 托管方的服务（契约 `docs/plan/hosted-render-contract.md` 第 1.6、1.7、3 节；只在托管端、组装方给了 `hostedServices` 时有）：
- * - `shared.members.list` 顶层多一个 `hosted: { render: { available, enabled }, agent: { available, enabled } }`
- *   （`available`：这台文档服务的登记表里有这个服务；`enabled`：本项目对它的开关，记录里没有这一项算开）。放本机的项目没有这个字段；
- * - 以服务自己的身份进来的连接（渲染服务）单独一行，行上多一个 `service: '<服务名>'`（`username` 是保留的 `service:<服务名>`、
- *   `creator: false`），界面按 `service` 字段显示，不看用户名；代成员进来的服务连接（云端 Agent）归在那位成员的行里，
- *   `conns` 里那一项带 `service: '<服务名>'`；
- * - 创建者操作 `set-hosted-service { service: 'render' | 'agent', enabled: boolean }`：改开关（项目记录 `hosted.<服务名>.enabled`），
- *   不加代数、不断成员自己的连接。关掉时这个项目里这个服务的连接先放回手里的认领、再以 4003 `service-disabled` 关闭；
- *   并给本空间其余成员连接发 `shared.notice { event: 'hosted-service-changed', service, enabled }`。
- *   登记表里没有这个服务时回 `bad-message`；改的时候只动 `enabled`，同一个服务下的子选项（`render.streams`）保留；
- * - 创建者操作 `set-hosted-option { service: 'render', option: 'streams', enabled: boolean }`：改服务下面的子选项（项目记录
- *   `hosted.<服务名>.<选项名>`，没有算关）。只记下并通知，不断连接、不动认领；成员列表顶层 `hosted.render` 多带 `streams`；
- *   给本空间其余成员连接（不含服务连接）发 `shared.notice { event: 'hosted-option-changed', service, option, enabled }`。
- *   `service` 不认识、登记表里没有它、`option` 不认识、`enabled` 不是布尔值，都回 `bad-message`；
- * - 服务连接（`scope: 'service'`）的 `auth.ticket` 只签素材票据，负载多带 `sv`（服务名）与 `sk`（公钥编号）；
- * - `service:` 开头的用户名留给服务身份：`set-list` 的名单项、`kick` / `unban` 的目标是这种用户名回 `bad-message`。
+ * Host services (contract `docs/plan/hosted-render-contract.md` sections 1.6, 1.7, 3; present only
+ * on the hosted side when the assembler provides `hostedServices`):
+ * - `shared.members.list` includes an extra top-level
+ *   `hosted: { render: { available, enabled }, agent: { available, enabled } }`
+ *   (`available`: this document service's registry contains this service; `enabled`: this
+ *   project's toggle for it, treated as enabled if missing from the record). Projects on this
+ *   machine do not have this field;
+ * - Connections entering under the service's own identity (render service) get a separate row,
+ *   with an extra `service: '<service-name>'` on the row (`username` is the reserved
+ *   `service:<service-name>`, `creator: false`), and the UI displays by the `service` field
+ *   instead of inspecting the username; service connections entering on behalf of a member (Cloud
+ *   Agent) are grouped into that member's row, with that item in `conns` carrying
+ *   `service: '<service-name>'`;
+ * - Creator operation `set-hosted-service { service: 'render' | 'agent', enabled: boolean }`:
+ *   changes toggle (project record `hosted.<service-name>.enabled`), does not increment generation,
+ *   and does not disconnect members' own connections. When turned off, connections for this
+ *   service in this project first release held claims, then close with 4003 `service-disabled`;
+ *   and sends `shared.notice { event: 'hosted-service-changed', service, enabled }` to other
+ *   member connections in this space. Returns `bad-message` if this service is not in the registry;
+ *   modification only changes `enabled`, preserving sub-options under the same service
+ *   (`render.streams`);
+ * - Creator operation `set-hosted-option { service: 'render', option: 'streams', enabled: boolean }`:
+ *   modifies a sub-option under the service (project record
+ *   `hosted.<service-name>.<option-name>`, treated as disabled if missing). Only records and
+ *   notifies, without disconnecting connections or modifying claims; member list top level
+ *   `hosted.render` additionally carries `streams`; sends
+ *   `shared.notice { event: 'hosted-option-changed', service, option, enabled }` to other member
+ *   connections in this space (excluding service connections). Returns `bad-message` if `service`
+ *   is unrecognized, not in the registry, `option` is unrecognized, or `enabled` is not boolean;
+ * - `auth.ticket` for service connections (`scope: 'service'`) only issues asset tickets, with the
+ *   payload additionally carrying `sv` (service name) and `sk` (public key id);
+ * - Usernames starting with `service:` are reserved for service identities: returns `bad-message`
+ *   if list items in `set-list` or targets of `kick` / `unban` use such usernames.
  *
- * 创建者操作：`set-password`、`set-list`、`kick`、`unban`、`delete`。每次都要一份新的创建者证明
- * `m = HMAC-SHA256(K_创建者, "promptcut.admin.v1\n" + projectId + "\n" + 创建者用户名 + "\n" + op + "\n" + nonce)`，
- * `nonce` 须由同一连接刚取的 `shared.challenge` 给出。不带证明、证明不对一律回 `forbidden`；证明不对计入限速
- * （第 9 节），冷却期内回 `rate-limited`。除这五种操作外，创建者和普通成员的一切行为完全相同。
+ * Creator operations: `set-password`, `set-list`, `kick`, `unban`, `delete`. Each time requires a
+ * new creator proof
+ * `m = HMAC-SHA256(K_creator, "promptcut.admin.v1\n" + projectId + "\n" + creatorUsername + "\n" + op + "\n" + nonce)`,
+ * where `nonce` must be provided by `shared.challenge` just fetched on the same connection.
+ * Returns `forbidden` if proof is missing or incorrect; incorrect proof counts towards rate
+ * limiting (section 9), returning `rate-limited` during the cooldown period. Except for these five
+ * operations, creator and ordinary members behave completely identically.
  *
- * 管理身份不在任何空间里（组装层的放行判断已挡住它发 `shared.*`）；`local` 身份没有项目，这里的请求一律 `forbidden`，
- * 只有 `shared.members` / `shared.watch` 照样回本空间（`local`）的连接。
+ * Admin identities do not belong to any space (the assembly layer's admission check already blocks
+ * them from sending `shared.*`); `local` identities have no project, and requests here always
+ * return `forbidden`, except `shared.members` / `shared.watch` which still return connections in
+ * this space (`local`).
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import {
@@ -54,39 +77,57 @@ export const ADMIN_OPS = Object.freeze([
   'set-hosted-service', 'set-hosted-option',
 ]);
 
-/** 成员能用的用户名：形状对，且不是留给服务身份的 `service:` 开头 */
+/** Usernames that members can use: valid shape, and not starting with `service:`, which is reserved for service identities */
 const isUsername = (v) => isUsernameShape(v) && !isReservedUsername(v);
 
 /**
- * C10a 补的三种创建者操作(`docs/plan/c10a-contract.md` 第 5 节;规则与存储在 `../../auth/invite.mjs`):
- * - `invite-create { expiresInSec?, maxUses? }`:作废旧的、签发新的(缺省 7 天、次数不限),回
- *   `shared.admin.ok { op, code, expiresAt, maxUses }`,原文只在这一次回包里出现。另带 `linkOrigin`:托管端的公网源
- *   (取 `PROMPTCUT_DOCSERVICE_PUBLIC_URL` 的源,组装层传进来;没设为 null),界面拼邀请链接 `<源>/editor#invite=<码>` 用;
- * - `invite-revoke`:作废当前的,之后凭它加入一律失败;没有邀请码时照样回 ok;
- * - `invite-status`:回 `{ op, active, expiresAt, maxUses, used, revokedAt }`,不含原文。
- * 三种都不加代数、不断任何连接(作废邀请码不影响已经进来的人)。证明、限速与其余 op 相同。
+ * Three creator operations added in C10a (`docs/plan/c10a-contract.md` section 5; rules and storage
+ * in `../../auth/invite.mjs`):
+ * - `invite-create { expiresInSec?, maxUses? }`: invalidates the old one and issues a new one
+ *   (default 7 days, unlimited uses), returning `shared.admin.ok { op, code, expiresAt, maxUses }`;
+ *   the plaintext appears only in this single response. Also carries `linkOrigin`: public origin
+ *   of the hosted side (takes the origin of `PROMPTCUT_DOCSERVICE_PUBLIC_URL`, passed in by the
+ *   assembly layer; null if unset), used by the UI to assemble the invite link
+ *   `<origin>/editor#invite=<code>`;
+ * - `invite-revoke`: invalidates the current one, subsequent joins using it will always fail;
+ *   returns ok as usual when there is no invite code;
+ * - `invite-status`: returns `{ op, active, expiresAt, maxUses, used, revokedAt }`, excluding
+ *   plaintext.
+ * None of the three increment the generation or disconnect any connections (invalidating an invite
+ * code does not affect users who have already joined). Proof and rate limiting are identical to
+ * other ops.
  */
 
 /**
- * C6.5 补的两种创建者操作(`docs/plan/c65-design.md` 第 9 节裁定、2026-09-26 主会话裁定):
- * - `set-creator-password { creator: { salt, key } }`:改创建者自己的口令(特权第 1 项「改项目密码」的一部分)。
- *   用户名不变;改完旧口令不能再以创建者身份进入,新口令可以,之后的创建者操作按新口令算证明。
- *   **不加代数**、不作废已发的票据、在线连接不断(只有改项目口令或名单才加代数)。两种进入方式都能用。
- * - `list-bans`:回 `shared.admin.ok { op, bans: [{ username, deviceId }], list?: [用户名] }`,只读(限定进入另带名单里的
- *   用户名,不带盐与 K)。界面「已禁入的设备」「改名单」要它;每次创建者操作前的「验证创建者身份」也用它当一次无副作用的证明核对。
- * - `set-list` 的条目可以写成 `{ username, keep: true }`:沿用这个人现有的口令(创建者拿不到别人的 K,
- *   只增删、只改某几个人时其余的照旧)。名单里没有这个人时整批 bad-message。
- * 另外,`set-password` 成功后给本空间其余在线连接各发一条 `shared.notice { event: 'password-changed' }`,
- * 界面据此出「项目密码已被修改」的气泡(交互稿第 5 节);在线连接照旧不断。
+ * Two creator operations added in C6.5 (`docs/plan/c65-design.md` section 9 ruling, lead session
+ * ruling 2026-09-26):
+ * - `set-creator-password { creator: { salt, key } }`: changes the creator's own passphrase (part
+ *   of privilege 1 "change project password"). Username stays unchanged; after changing, the old
+ *   passphrase can no longer enter as creator, while the new passphrase can, and subsequent creator
+ *   operations calculate proof using the new passphrase. **Does not increment generation**, does
+ *   not invalidate issued tickets, and does not disconnect online connections (only changing
+ *   project passphrase or list increments generation). Usable in both entry modes.
+ * - `list-bans`: returns `shared.admin.ok { op, bans: [{ username, deviceId }], list?: [usernames] }`,
+ *   read-only (restricted entry additionally includes usernames from the list, without salt and K).
+ *   Needed by UI for "Banned devices" and "Edit list"; also used as a side-effect-free proof check
+ *   for "Verify creator identity" before each creator operation.
+ * - Entries in `set-list` can be written as `{ username, keep: true }`: keeps this user's existing
+ *   passphrase (the creator cannot obtain others' K; when only adding/removing or changing specific
+ *   users, others remain unchanged). If this user is not in the list, the entire batch returns
+ *   bad-message.
+ * In addition, after `set-password` succeeds, sends a
+ * `shared.notice { event: 'password-changed' }` to each of the other online connections in this
+ * space; the UI displays a "Project password has been modified" bubble accordingly (interaction
+ * draft section 5); online connections remain connected as before.
  */
 
-/** 关闭码（第 7 节） */
+/** Close codes (section 7) */
 export const CLOSE_REMOVED = 4003;
 export const CLOSE_DELETED = 4004;
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isReqId = (v) => typeof v === 'string' || (typeof v === 'number' && Number.isFinite(v));
-// 管理身份、托管方服务的控制身份（没有 tenantId 的 service）不在任何空间里
+// Admin identities and host service control identities (services without tenantId) are not in any space
 const spaceOf = (p) => {
   if (typeof p?.tenantId === 'string' && p.tenantId !== '') return p.scope === 'admin' ? null : p.tenantId;
   return p?.scope === 'admin' || p?.scope === 'service' ? null : 'local';
@@ -101,16 +142,16 @@ class Refused extends Error {
 
 /**
  * @param {object} options
- * @param {() => object | null} options.store 取凭证存储（`../../auth/store.mjs`）
- * @param {ReturnType<import('../../auth/challenges.mjs').createChallenges>} options.challenges 创建者操作的挑战（和 HTTP 端点的进入挑战分开放）
+ * @param {() => object | null} options.store Fetches credential store (`../../auth/store.mjs`)
+ * @param {ReturnType<import('../../auth/challenges.mjs').createChallenges>} options.challenges Challenges for creator operations (stored separately from entry challenges of HTTP endpoints)
  * @param {ReturnType<import('../../auth/rate-limit.mjs').createRateLimiter>} options.limiter
- * @param {(tenantId: string) => void} [options.dropSpace] 删项目时丢掉这个空间的全部数据
- * @param {(connId: string) => number} [options.claimsOf] 这条连接持有的认领数（「渲染中」标签）
- * @param {(remote: string | null) => boolean} [options.isLoopbackRemote] 回环来源不计限速
+ * @param {(tenantId: string) => void} [options.dropSpace] Drops all data for this space when deleting a project
+ * @param {(connId: string) => number} [options.claimsOf] Number of claims held by this connection ("Rendering" label)
+ * @param {(remote: string | null) => boolean} [options.isLoopbackRemote] Loopback sources are not counted towards rate limiting
  * @param {() => number} [options.now]
  * @param {{ registry: () => object | null, releaseClaims?: (connId: string) => number, urls?: Record<string, string> } | null} [options.hostedServices]
- *   托管端才给：服务登记表的取法，以及「立即放回这条连接手里的认领」（关掉渲染节点的开关时用）；`urls` 是各服务对页面的公网地址
- *   （现在只有 `agent`），成员列表顶层的 `hosted.<服务名>` 里多带一个 `url`
+ *   Provided only on the hosted side: getter for service registry, and "immediately release claims held by this connection" (used when turning off a render node toggle); `urls` are public addresses of services facing pages
+ *   (currently only `agent`), and `hosted.<service-name>` at the top level of member list includes an extra `url`
  */
 export function sharedModule({
   store,
@@ -129,13 +170,13 @@ export function sharedModule({
     try { return hostedServices?.registry?.() ?? null; } catch { return null; }
   };
 
-  /** 成员列表顶层的 `hosted`：只有托管端的共享项目有 */
+  /** Top-level `hosted` in member list: present only for shared projects on the hosted side */
   function hostedOf(space) {
     if (!hostedServices || space === null) return undefined;
     const rec = storeOf()?.peek(space);
     if (!rec) return undefined;
     const state = hostedStateOf(registryOf(), rec);
-    // 页面怎么找到这种服务（云端 Agent 的公网地址，`cloud-agent-contract.md` 第 10.4 节）：组装方配了、且登记表里有这个服务才带
+    // How the page finds this service (public address of Cloud Agent, `cloud-agent-contract.md` section 10.4): included only when configured by the assembler and this service is in the registry
     for (const [name, url] of Object.entries(hostedServices.urls ?? {})) {
       if (typeof url === 'string' && url !== '' && state[name]?.available) state[name].url = url;
     }
@@ -149,7 +190,7 @@ export function sharedModule({
     return message;
   }
 
-  /** 这条连接是不是托管方服务的（以自己的身份，或代成员） */
+  /** Whether this connection belongs to a host service (under its own identity, or on behalf of a member) */
   const serviceOf = (p) => (typeof p?.service === 'string' ? p.service : null);
   /** connId → { principal, space, watching } */
   const conns = new Map();
@@ -164,12 +205,12 @@ export function sharedModule({
     return [...conns.entries()].filter(([, c]) => c.space === space);
   }
 
-  /** 本空间的成员列表（第 7 节） */
+  /** Member list of this space (section 7) */
   function devicesOf(space) {
     const rows = new Map();
     for (const [connId, c] of connsIn(space)) {
       const p = c.principal;
-      // 云端 Agent 服务只用来发布预渲染重试计划的连接（`cloud-agent-contract.md` 第 16 节）不是谁的设备，也不代表任何成员，不列出来
+      // Connections used by the Cloud Agent service only to publish prerender retry plans (`cloud-agent-contract.md` section 16) are not anyone's device and do not represent any member, so they are not listed
       if (p.purpose === 'publish') continue;
       const key = p.userId;
       let row = rows.get(key);
@@ -183,7 +224,7 @@ export function sharedModule({
           tags: { editing: false, rendering: false, agents: 0 },
           conns: [],
         };
-        // 托管方服务的连接：不是成员，界面按这个字段显示（「托管方的渲染节点」），不看用户名
+        // Connections for host services: not members; the UI displays by this field ("Host render node") instead of inspecting the username
         if (p.scope === 'service' && typeof p.service === 'string') row.service = p.service;
         rows.set(key, row);
       }
@@ -191,7 +232,7 @@ export function sharedModule({
       const item = { role };
       if (p.conversation !== undefined && p.conversation !== null) item.conversation = p.conversation;
       if (p.owner !== undefined && p.owner !== null) item.owner = { ...p.owner };
-      // 代成员进来的服务连接（云端 Agent）归在成员这一行里，连接项上标明是哪个服务
+      // Service connections entering on behalf of a member (Cloud Agent) are grouped into the member's row, with the connection item indicating which service it is
       if (serviceOf(p) !== null && p.scope !== 'service') item.service = p.service;
       row.conns.push(item);
       if (role === 'page') row.tags.editing = true;
@@ -203,7 +244,7 @@ export function sharedModule({
       }
     }
     const list = [...rows.values()];
-    // 同一用户名出现在不同设备上：这几台都显示为「用户名 (设备名)」
+    // When the same username appears on different devices: all of them display as "Username (device name)"
     for (const row of list) {
       const clash = list.some((o) => o !== row && o.username === row.username && o.deviceId !== row.deviceId);
       if (clash) row.displayName = `${row.username} (${row.deviceName ?? row.deviceId})`;
@@ -222,7 +263,7 @@ export function sharedModule({
     }
   }
 
-  /** 这条连接是共享项目的成员（含本机声明），且项目还在 */
+  /** This connection is a member of a shared project (including local declarations), and the project still exists */
   function memberRecord(c) {
     if (!c || c.principal.scope !== 'member') throw new Refused('forbidden', tr("Only members of a shared project can do this"));
     const rec = storeOf()?.peek(c.space);
@@ -237,7 +278,7 @@ export function sharedModule({
     return { remote, loop };
   }
 
-  // ---------- 消息 ----------
+  // ---------- Messages ----------
 
   function members(ctx, connId, msg, reqId) {
     const c = conns.get(connId);
@@ -260,7 +301,7 @@ export function sharedModule({
     reply(ctx, connId, { type: 'shared.challenge.ok', nonce, salt: rec.creator.salt, kdf: { ...rec.kdf } }, reqId);
   }
 
-  /** 托管方服务的连接要票据：只签素材票据，带 `sv` / `sk`；连接票据一律不签（那等于给自己换角色） */
+  /** Host service connection requesting tickets: only issues asset tickets with `sv` / `sk`; never issues connection tickets (which would be equivalent to changing its own role) */
   function serviceTicket(ctx, connId, c, msg, reqId) {
     const p = c.principal;
     if (c.space === null) throw new Refused('forbidden', 'A control connection cannot get a ticket');
@@ -285,9 +326,14 @@ export function sharedModule({
   }
 
   /**
-   * 代成员进项目的服务连接（云端 Agent，`docs/plan/cloud-agent-contract.md` 第 4.4 节）要素材票据：导入素材、配音等产物入库用。
-   * 票据的 `u`、`ug` 是成员的，带 `sv` / `sk`；`r` 不超过成员此刻的权限（只读成员要不到读写票据）。登记表、开关、名单、禁入表
-   * 这里核一次，素材服务每次核对票据时再核一次（`auth/asset-tickets.mjs`），所以撤销后当场失效，不等票据过期。
+   * Service connections entering a project on behalf of a member (Cloud Agent,
+   * `docs/plan/cloud-agent-contract.md` section 4.4) requesting asset tickets: used to store imported
+   * media, voiceover, and other outputs into the library. The ticket's `u` and `ug` belong to the
+   * member, carrying `sv` / `sk`; `r` does not exceed the member's current permissions (read-only
+   * members cannot obtain read-write tickets). Checked here against registry, switch, list, and ban
+   * table, and checked again every time by the asset service when verifying tickets
+   * (`auth/asset-tickets.mjs`), so it becomes invalid immediately upon revocation without waiting
+   * for the ticket to expire.
    */
   function memberServiceAssetTicket(ctx, connId, c, msg, reqId) {
     const p = c.principal;
@@ -310,7 +356,7 @@ export function sharedModule({
   function ticket(ctx, connId, msg, reqId) {
     const c = conns.get(connId);
     if (c?.principal?.scope === 'service') return serviceTicket(ctx, connId, c, msg, reqId);
-    // 代成员进来的服务连接（云端 Agent）：只签素材票据，权限不超过这位成员此刻的；连接票据、委托一律不签（不能给自己换角色、续命）
+    // Service connections entering on behalf of a member (Cloud Agent): only issue asset tickets, with permissions not exceeding this member's current permissions; connection tickets and delegations are never issued (cannot change its own role or extend its lifetime)
     if (serviceOf(c?.principal) !== null) return memberServiceAssetTicket(ctx, connId, c, msg, reqId);
     const rec = memberRecord(c);
     const p = c.principal;
@@ -344,10 +390,15 @@ export function sharedModule({
   }
 
   /**
-   * 云端 Agent 的委托（`docs/plan/cloud-agent-contract.md` 第 4.2 节）：`auth.ticket { kind: 'delegate', audience: 'agent', conversation? }`。
-   * 不带 `conversation` 是委托票据（2 分钟，页面每个请求出示）；带 `conversation: <对话 id>` 是对话委托（60 分钟，绑这个对话）。
-   * 只有成员自己的页面连接（`page` 角色）能要：`agent`、`render` 角色的连接要不到（Agent 不能给自己续命），服务连接在上面已经挡掉。
-   * 权限 `acc` 由这里按成员此刻的权限填，页面指定不了。这台文档服务没有这个服务、或项目关了它的开关，回 `service-disabled`。
+   * Delegations for Cloud Agent (`docs/plan/cloud-agent-contract.md` section 4.2):
+   * `auth.ticket { kind: 'delegate', audience: 'agent', conversation? }`.
+   * Without `conversation`, it is a delegation ticket (2 minutes, presented by the page on every
+   * request); with `conversation: <chat-id>`, it is a chat delegation (60 minutes, bound to this
+   * chat). Only the member's own page connection (`page` role) can request it: connections with
+   * `agent` or `render` roles cannot (Agents cannot extend their own lifetime), and service
+   * connections are already blocked above. Permission `acc` is populated here based on the
+   * member's current permissions and cannot be specified by the page. If this document service
+   * lacks this service or the project has disabled its switch, returns `service-disabled`.
    */
   function delegateTicket(ctx, connId, c, rec, msg, reqId) {
     const p = c.principal;
@@ -366,7 +417,7 @@ export function sharedModule({
     reply(ctx, connId, { type: 'auth.ticket.ok', ticket: out.ticket, exp: out.exp }, reqId);
   }
 
-  /** 关掉本空间里满足条件的连接 */
+  /** Closes matching connections in this space */
   function closeWhere(ctx, space, predicate, code, reason) {
     for (const [connId, c] of connsIn(space)) {
       if (predicate(c.principal)) ctx.close?.(connId, code, reason);
@@ -420,7 +471,7 @@ export function sharedModule({
       case 'list-bans': {
         const bans = (rec.bans ?? []).map((b) => ({ username: b.username, deviceId: b.deviceId }));
         const out = { type: 'shared.admin.ok', op, bans };
-        // 限定进入另带名单里的用户名(不带盐与 K):界面「改名单」要列出现有名单
+        // Restricted entry additionally includes usernames from the list (without salt and K): UI "Edit list" needs to list the existing list
         if (rec.mode === 'restricted') out.list = (rec.list ?? []).map((e) => e.username);
         ctx.log('shared.admin', { connId, projectId: space, op });
         reply(ctx, connId, out, reqId);
@@ -428,8 +479,9 @@ export function sharedModule({
       }
       case 'set-list': {
         if (rec.mode !== 'restricted') throw new Refused('bad-message', 'Open entry has no list, use set-password to change the password');
-        // `{ username, keep: true }`:沿用名单里这个人现有的口令(界面「改名单」只增删、只改某几个人的密码时用;
-        // 创建者拿不到别人的 K,也不该拿到)。名单里没有这个人时整批 bad-message
+        // `{ username, keep: true }`: keeps this user's existing passphrase in the list (used when UI
+        // "Edit list" only adds/removes or changes passwords for specific users; the creator cannot obtain
+        // others' K, nor should they). If this user is not in the list, the entire batch returns bad-message
         const current = new Map((rec.list ?? []).map((e) => [e.username, e]));
         const given = Array.isArray(msg.list)
           ? msg.list.map((e) => (isObj(e) && e.keep === true && typeof e.username === 'string' && current.has(e.username)
@@ -443,7 +495,7 @@ export function sharedModule({
           d.list = list;
           d.generation += 1;
         });
-        // 以服务自己的身份进来的连接（渲染服务、云端 Agent 的发布连接）不是成员，名单管不着它们：不关
+        // Connections entering under the service's own identity (render service, Cloud Agent publishing connection) are not members and are outside list management: do not close
         closeWhere(ctx, space, (p) => p.scope !== 'service' && p.creator !== true && p.username !== rec.creator.username && !keep.has(p.username), CLOSE_REMOVED, 'removed');
         break;
       }
@@ -464,10 +516,10 @@ export function sharedModule({
         if (!HOSTED_SERVICES.includes(name)) throw new Refused('bad-message', `service must be ${HOSTED_SERVICES.join(' / ')}`);
         if (!hostedServices || !registryOf()?.get(name)) throw new Refused('bad-message', 'This document service does not have this host\'s service');
         if (typeof msg.enabled !== 'boolean') throw new Refused('bad-message', 'enabled must be a boolean');
-        // 只改 enabled，同一个服务下别的字段（子选项，如 render.streams）保留，不整条换掉
+        // Only modifies enabled; other fields under the same service (sub-options, such as render.streams) are preserved, not replaced entirely
         st.update(space, (d) => { d.hosted = { ...(d.hosted ?? {}), [name]: { ...(d.hosted?.[name] ?? {}), enabled: msg.enabled } }; });
         if (!msg.enabled) {
-          // 关掉：这个服务在这个项目里的连接先放回手里的认领（不等断线宽限期），再关
+          // Turn off: connections for this service in this project first release held claims (without waiting for the disconnect grace period), then close
           for (const [other, oc] of connsIn(space)) {
             if (serviceOf(oc.principal) !== name) continue;
             try { hostedServices.releaseClaims?.(other); } catch (err) {
@@ -482,7 +534,7 @@ export function sharedModule({
         break;
       }
       case 'set-hosted-option': {
-        // 服务下面的子选项（现在只有 render 的 streams，缺省关）：只记下并通知，不断任何连接、不动认领
+        // Sub-options under the service (currently only streams for render, off by default): only recorded and notified, without disconnecting any connections or touching claims
         const name = msg.service;
         if (!HOSTED_SERVICES.includes(name)) throw new Refused('bad-message', `service must be ${HOSTED_SERVICES.join(' / ')}`);
         if (!hostedServices || !registryOf()?.get(name)) throw new Refused('bad-message', 'This document service does not have this host\'s service');
@@ -503,7 +555,7 @@ export function sharedModule({
         const opts = parseInviteOptions(msg);
         if (!opts) throw new Refused('bad-message', 'expiresInSec must be a positive integer in seconds, maxUses must be a positive integer or null');
         const { code, invite } = issueInvite(st.serverSecret, opts, clock(ctx));
-        // 整条换掉：旧摘要随之从索引里拿掉，旧链接立刻失效（store.mjs 的邀请码索引）
+        // Completely replaced: the old digest is removed from the index accordingly, and the old link is invalidated immediately (invite code index in store.mjs)
         st.update(space, (d) => { d.invite = invite; delete d.inviteDigestSecret; });
         ctx.log('shared.admin', { connId, projectId: space, op });
         reply(ctx, connId, { type: 'shared.admin.ok', op, code, expiresAt: invite.expiresAt, maxUses: invite.maxUses, linkOrigin }, reqId);

@@ -1,21 +1,29 @@
 /**
- * 在线浏览器模式的**运行期**标记(C10a 集成返工)。
+ * **Runtime** flag for online browser mode (C10a integration rework).
  *
- * `mode.ts` 的 `ONLINE` 是编译期常量,但它读 `import.meta.env`,会被 Node 单测载入的模块不能静态引它
- * (守门 `src/online/modeImportGuard.test.mjs`)。这些模块要在在线页面里停掉编辑器进程的 `/api/*` 调用
- * (契约第 2 节:要么隐藏或置灰,要么走在线替代),就读这个标记:`boot.ts` 在 `ONLINE` 时、别的模块求值之前设上。
- * 桌面运行环境与 Node 单测里恒为 false。
+ * `ONLINE` in `mode.ts` is a compile-time constant, but it reads `import.meta.env`, so modules loaded
+ * by Node unit tests cannot statically import it (gatekeeper `src/online/modeImportGuard.test.mjs`).
+ * To stop editor process `/api/*` calls in online pages (contract section 2: either hide/grey out or
+ * use online alternatives), these modules read this flag: `boot.ts` sets it when `ONLINE` is true,
+ * before other modules evaluate. It is always false in desktop runtime environments and Node unit
+ * tests.
  *
- * **在线构建剪枝**(M8 遗留 L24):这个标记是运行期的,在线构建不会因为它剪掉任何代码;`mode.ts` 的 `ONLINE`
- * 从别的模块引进来也一样 —— 实测 rolldown 摇树时不认引进来的常量(引进来的常量要到之后的内联、压缩才换成字面量,
- * 那时只剪得掉就地写的函数字面量,剪不掉它引用的模块)。要让在线构建连同背后的 `/api` 调用一起剪掉,
- * 在**用到它的模块里**就地写一行:
+ * **Online build pruning** (M8 leftover L24): this flag is runtime, so the online build will not prune
+ * any code because of it; the same applies when importing `ONLINE` from `mode.ts` from other modules:
+ * testing showed rolldown tree-shaking does not recognize imported constants (imported constants are
+ * only replaced with literals during subsequent inlining and minification, at which point only locally
+ * written function literals can be pruned, but not the modules they import). To let the online build
+ * prune both the code and the underlying `/api` calls, write a line in-place in **modules that use
+ * it**:
  *
  *     const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
  *
- * 值与 `ONLINE` 相同(Vite 在构建和开发服务里都把 `import.meta.env.VITE_PC_ONLINE` 换成字面量),Node 单测里
- * `import.meta.env` 不存在、为 false,不会像静态引 `mode.ts` 那样当场抛错。守门:`src/online/onlinePrune.test.mjs`
- * 核对这一行逐字相同,`server/test/c10a-online-build.test.mjs` 核对 `/api` 棘轮清单与产物一致。
+ * The value is identical to `ONLINE` (Vite replaces `import.meta.env.VITE_PC_ONLINE` with a literal in
+ * both build and dev server), and in Node unit tests `import.meta.env` does not exist and is false,
+ * avoiding immediate throws like statically importing `mode.ts`. Gatekeeper:
+ * `src/online/onlinePrune.test.mjs` checks that this line is identical verbatim, and
+ * `server/test/c10a-online-build.test.mjs` checks that the `/api` ratchet manifest matches build
+ * artifacts.
  */
 
 const KEY = "__pcOnlinePage";

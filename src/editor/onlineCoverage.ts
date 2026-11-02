@@ -1,7 +1,9 @@
 /**
- * 时间轴要看的「这个片段的预渲染结果覆盖整段没有」(C10 契约第 9 节的徽标)。数据在在线来源里
- * (`OnlineSnapshotSource.coverage`),时间轴组件经这里读、订阅变化;在线来源由 `Preview` 挂上 / 摘下。
- * 桌面不挂来源:`clipCoverage` 恒为 null(桌面也不出徽标)。
+ * What the timeline wants to know: "does this clip's prerender output cover the whole clip" (the badge of
+ * C10 contract section 9). The data is in the online source (`OnlineSnapshotSource.coverage`); the
+ * timeline component reads it and subscribes to changes through here; the online source is attached and
+ * detached by `Preview`.
+ * The desktop attaches no source: `clipCoverage` is always null (the desktop shows no badge either).
  */
 import type { LayerCoverage } from "../render/snapshotSource";
 
@@ -17,7 +19,7 @@ const listeners = new Set<() => void>();
 
 function bump(): void {
   version++;
-  for (const l of [...listeners]) { try { l(); } catch { /* 订阅方坏了 */ } }
+  for (const l of [...listeners]) { try { l(); } catch { /* The subscriber is broken */ } }
 }
 
 export function setCoverageSource(next: CoverageSource | null): void {

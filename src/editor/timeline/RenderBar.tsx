@@ -9,38 +9,48 @@ import {
 import { xOfTime } from "./utils";
 import { tr as trText } from "../../i18n/index.ts";
 
-/** 进度条高度(px)。够看见、又不抢时间轴的地方 */
+/** Progress bar height (px). Enough to be seen, without crowding the timeline */
 export const RENDER_H = 2;
 
 /**
- * 预渲染进度条(AE 顶上那条)。就是时间标尺(Ruler)的底边线。
+ * Prerender progress bar (the strip at the top in AE). It is the bottom edge line of the time ruler (Ruler).
  *
- * # 两种颜色说的是两件事
+ * # The two colors mean two different things
  *
- * **黄 = 低帧率那一档已经有了。** 拖过去立刻有画面,但看到的那一刻最多和播放头差 0.25 秒。
- * 这一档先把整条片子铺满 —— 成本只有原始帧率的零头。
+ * **Yellow = the low frame rate tier is already there.** Dragging there gives a picture at once, but
+ * at that moment it is at most 0.25 seconds off the playhead.
+ * This tier covers the whole video first: its cost is only a fraction of the original frame rate.
  *
- * **绿 = 原始帧率那一档也有了。** 那一段是逐帧精确的。低帧率全部铺完之后才开始渲它。
+ * **Green = the original frame rate tier is there too.** That span is frame-accurate. It starts
+ * rendering only after the low frame rate tier is completely filled.
  *
- * **空白 = 什么都没有,拖过去要等它现场渲染(一张约 4 秒)。**
+ * **Blank = nothing at all; dragging there waits for a live render (about 4 seconds per frame).**
  *
- * # 改了一张卡,它那一段**当帧**就变白
+ * # Edit a card and its span turns white **on the same frame**
  *
- * 覆盖是**按卡**存的,每条带着那张卡当时的内容指纹(见 bakeCoverage 的 ClipCoverage)。
- * 这里每次渲染都拿**当前项目**的指纹对一遍,对不上的直接不画。
+ * Coverage is stored **per card**, each entry carrying the content fingerprint of that card at the
+ * time (see ClipCoverage in bakeCoverage).
+ * On every render, this compares against the fingerprints of the **current project**, and anything
+ * that does not match is simply not drawn.
  *
- * 所以「改完卡片条子立刻变白」不依赖任何异步:用户一改参数,store 里的 project 就换了,
- * 这个组件这一帧就把那张卡抹掉了 —— 不等盘点、不等预渲染,也不可能有竞态。
+ * So "the strip turns white right after a card edit" does not depend on anything asynchronous: the
+ * moment the user changes a parameter, the project in the store is replaced, and this component
+ * wipes that card on this very frame: no waiting for a recount, no waiting for prerender, and no
+ * possible race.
  *
- * 之前不是这样:覆盖是所有卡合成一整条存的,**只有预渲染循环能更新它**,而那个循环得先把
- * 手上这批渲完、再盘点一次才轮得到发布。于是改完卡片条子纹丝不动,看起来像被预渲染卡住了。
- * 那是结构问题,不是时序没调好 —— 所以这次改的是结构。
+ * It used to be different: coverage was stored as one strip merged from all cards, **and only the
+ * prerender loop could update it**, and that loop had to finish the current batch and then recount
+ * before it was its turn to publish. So after a card edit the strip did not budge, which looked like
+ * it was stuck on prerender.
+ * That was a structural problem, not poorly tuned timing: so this change fixes the structure.
  *
- * # 画法上的两条硬要求
+ * # Two hard requirements on drawing
  *
- * 1. **画的是真实覆盖的时间段,不是百分比。** 一个预渲染好的时刻覆盖到同一张卡的下一个时刻为止。
- *    百分比进度条做不到这件事 —— 它能显示 90%,而用户偏偏拖到剩下那 10% 里,一样干等。
- * 2. **宁可少画不能多画。** 多画一格就是骗人:那儿明明要等五秒,条却是有色的。
+ * 1. **It draws time spans that are really covered, not a percentage.** A prerendered moment covers
+ *    up to the next moment of the same card. A percentage progress bar cannot do this: it can show
+ *    90%, yet the user drags into the remaining 10% and waits just the same.
+ * 2. **Better to draw too little than too much.** Drawing one extra cell is lying: it clearly has to
+ *    wait five seconds there, yet the bar is colored.
  */
 export function RenderBar() {
   const { pxPerSec } = useTimelineContext();
@@ -48,16 +58,18 @@ export function RenderBar() {
   const duration = useStore((s) => Math.max(s.project.duration, s.t + 10));
   const startScrub = useScrub();
   /*
-   * 订阅模块级仓库。用 useSyncExternalStore 而不是自己 useState + useEffect:
-   * 它保证并发渲染下读到的值和订阅到的是同一份,不会出现"画面用的是旧值"。
+   * Subscribe to the module-level store. Use useSyncExternalStore instead of rolling your own
+   * useState + useEffect: it guarantees that under concurrent rendering the value read and the value
+   * subscribed to are the same one, so you never get "the picture used an old value".
    */
   const cov = useSyncExternalStore(subscribeCoverage, getCoverage, getCoverage);
 
   /**
-   * 当前项目里每张卡长什么样、现在待在哪儿。指纹 → 当前起点。
+   * What each card in the current project looks like and where it currently sits. Fingerprint → current start.
    *
-   * 指纹变了 → 那张卡的覆盖当帧作废(改参数、剪长短、换画幅)。
-   * 指纹没变但起点变了 → 覆盖跟着平移(挪位置不改像素,预渲染好的图还能用)。两条都在 visibleCoverage 里。
+   * Fingerprint changed → that card's coverage is invalidated on the same frame (parameter edit, trim, aspect ratio change).
+   * Fingerprint unchanged but start changed → coverage shifts along (moving does not change pixels, so
+   * the prerendered images are still usable). Both are in visibleCoverage.
    */
   const liveFps = useMemo(() => {
     const map = new Map<string, number>();
@@ -65,24 +77,26 @@ export function RenderBar() {
     return map;
   }, [project]);
 
-  // 过滤 + 合并的逻辑放在 bakeCoverage 里(纯函数,有单测钉着这条行为)
+  // The filtering + merging logic lives in bakeCoverage (pure functions, with unit tests pinning this behavior)
   const shown = useMemo(() => visibleCoverage(cov, liveFps), [cov, liveFps]);
 
   /**
-   * 「本来就没东西要渲」的那几段,和渲好的一样涂上色。
+   * Spans that "have nothing to render anyway" are colored just like rendered ones.
    *
-   * 空白的几秒、素材段(视频 / 图片本来就是位图,`bakeTarget` 会直接拒绝预渲染)、
-   * scene-3d(在 3D 视图里是真几何,不需要贴图)—— 拖过去立刻就是它该有的样子。
-   * 按条子的契约("绿的地方拖过去一定立刻有画面")它们就该是绿的。
+   * Blank seconds, media clips (video / images are bitmaps already; `bakeTarget` flatly refuses to
+   * prerender them), scene-3d (real geometry in the 3D view, no texture needed): dragging there
+   * immediately gives what it should look like.
+   * By the bar's contract ("dragging onto green always gives a picture at once") they should be green.
    *
-   * 不这么画的话,一条全部渲完的片子上永远留着几块白,用户没法把「还没渲」和
-   * 「本来就没东西」分开,看上去就是预渲染一直卡在那儿不动。
+   * Without this, a fully rendered video would always keep a few white patches, and the user could
+   * not tell "not rendered yet" from "nothing to render anyway"; it would look like prerender is
+   * stuck there and not moving.
    */
   const idle = useMemo(() => {
     const busy: { start: number; end: number }[] = [];
     for (const tr of project?.tracks ?? []) {
       for (const c of tr.clips ?? []) {
-        if ((c as any).mediaId || c.cardId === "scene-3d") continue; // 这两类不用渲
+        if ((c as any).mediaId || c.cardId === "scene-3d") continue; // These two kinds need no rendering
         busy.push({ start: c.start, end: c.end });
       }
     }
@@ -96,7 +110,7 @@ export function RenderBar() {
     segs.map((seg, i) => {
       const left = xOfTime(seg.start, pxPerSec);
       const w = xOfTime(seg.end, pxPerSec) - left;
-      // 缩得很小时一段可能不足 1px。给它兜个底,不然整条看着像没渲
+      // When zoomed far out, a span may be under 1px. Give it a floor, or the whole strip looks unrendered
       if (w <= 0) return null;
       return <div key={`${cls}-${seg.start}-${i}`} className={cls} style={{ left, width: Math.max(1, w) }} />;
     });
@@ -116,18 +130,19 @@ export function RenderBar() {
       data-pc="render-bar"
       className="pc-tl-renderbar relative overflow-hidden select-none touch-none cursor-ew-resize"
       style={{ height: RENDER_H }}
-      // 和标尺一样能拖播放头:它紧贴在标尺下面,点到这几个像素上却没反应会让人以为界面卡了
+      // Like the ruler, you can drag the playhead here: it sits right under the ruler, and clicking these few pixels with no response would make people think the UI froze
       onPointerDown={(e) => startScrub(e, { jumpToPointer: true })}
       title={title}
     >
-      {/* 底槽:整条片子的长度,标出"还有多少没预渲染" */}
+      {/* Bottom groove: the length of the whole video, marking "how much is still not prerendered" */}
       <div className="pc-tl-renderbar-track absolute top-0 bottom-0" style={{ left: x0, width }} />
-      {/* 先铺黄的(低帧率),再把绿的(原始帧率)盖在上面 —— 绿的一定落在黄的之内 */}
+      {/* Lay yellow (low frame rate) first, then cover it with green (original frame rate): green always falls within yellow */}
       {band(mergeSegments([...shown.coarse, ...idle]), "pc-tl-renderbar-coarse absolute top-0 bottom-0")}
       {band(mergeSegments([...shown.full, ...idle]), "pc-tl-renderbar-done absolute top-0 bottom-0")}
       {/*
-        正在渲的那一刻单独标一下。它还没进任何一档的覆盖(还没渲完),
-        但用户看得见"进度正卡在这儿",而不是对着一条不动的条猜是不是死了。
+        Mark the moment currently rendering separately. It hasn't entered any tier's coverage yet
+        (rendering unfinished), but users can see that "progress is stuck here", instead of staring at a
+        frozen bar wondering if it crashed.
       */}
       {cov.bakingAt !== null && (
         <div

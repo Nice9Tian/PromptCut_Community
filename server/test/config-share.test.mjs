@@ -1,5 +1,6 @@
-// 加密分发的往返测试。直接跑前端那份 configShare.ts(Node 24 原生剥类型),
-// 免得测试里再抄一份实现——抄一份就迟早和真代码跑偏。
+// Round-trip test for encrypted distribution. Run frontend configShare.ts directly (Node 24
+// native type stripping), avoiding copying the implementation into tests: a duplicate will
+// sooner or later diverge from real code.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { encryptConfig, decryptConfig, looksLikeShareBlob } from "../../src/ai/configShare.ts";
@@ -13,7 +14,8 @@ const CONFIG = {
   apiKey: "sk-test-ABC123456789xyz",
   note: "给小王用",
 };
-// 正式默认 60 万轮,测试里没必要每次都烧;轮数写在密文头里,解密照样认
+// Production defaults to 600,000 rounds, no need to burn every time in tests; round count is
+// written in ciphertext header, and decryption recognizes it just the same
 const FAST = { iterations: 20_000 };
 
 test("Encrypting then decrypting returns the original config", async () => {
@@ -85,7 +87,7 @@ test("Empty key and empty passphrase are both blocked on the spot", async () => 
 
 test("Round count in the ciphertext header is capped to a sane range, so it can't be used to freeze the browser", async () => {
   const blob = await encryptConfig(CONFIG, CODE, FAST);
-  // 头 4 字节是大端轮数,把它改成 20 亿
+  // First 4 bytes are big-endian rounds; change it to 2 billion
   const body = Buffer.from(blob.slice("PCAI1.".length).replace(/-/g, "+").replace(/_/g, "/"), "base64");
   body.writeUInt32BE(2_000_000_000, 0);
   const evil = "PCAI1." + body.toString("base64url");

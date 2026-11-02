@@ -1,33 +1,47 @@
 /**
- * R8 轨道流**生产侧**的端到端探针(任务书 `docs/plan/r8-streams-task.md` 的「验收」里编码 / 切分与索引 /
- * 连续生产 / 隔离那几条)。
+ * End-to-end probe for R8 track stream **production side** (encoding / splitting and indexing /
+ * continuous production / isolation items in "Acceptance check" of task brief `docs/plan/r8-streams-task.md`).
  *
  *   node scripts/probes/stream-produce-probe.mjs [--origin http://127.0.0.1:5230] [--out <dir>] [--keep] [--json <file>]
  *
- * 本进程里直接起一个 `FramePipeline`(和预渲染进程同一份代码,`interactive: true`),库根放在临时目录,
- * 导出页打 `--origin` 那台 dev server(缺省 `.claude/launch.json` 的 `dev-test`,或 `PC_STAGE_TEST_URL`)。
- * 灌一个含三张重卡的项目,等轨道流全部生产完(先稀疏、后补密),然后逐条核对:
+ * Directly spins up a `FramePipeline` in this process (same code as prerender process, `interactive: true`),
+ * store root placed in temp directory, export page hitting the dev server at `--origin` (defaults to
+ * `dev-test` in `.claude/launch.json`, or `PC_STAGE_TEST_URL`). Feeds a project containing three heavy cards,
+ * waits for all track streams to finish production (sparse first, then full density), then checks each item:
  *
- *   1. 每个分段恰好 15 个样本(每条流自己的末段除外:分段从流自己的第一帧起数,到它的最后一帧为止)、首帧是 IDR、只有一个 moof;`mfra` 不落盘;
- *   2. 同一个变体里 `init.mp4` 只写一次,后续分段算出来的 `ftyp + moov` 与它逐字节相同;
- *   3. 稀疏分段(每个分段只截第一帧、其余帧重复它)体积 ≤ 满密度的 1.0 倍;稀疏分段被满密度替换后,旧文件 5 秒内删除;
- *   4. 一条 15 帧分段的编码耗时(只记录,不当通过条件;原门槛 1080p 全幅流 p50 ≤ 300 ms)、分段体积(≤ 512 KB);
- *   5. 连续生产只付一次换页:`bakeStream` 的重挂载次数 ≤ 流数 × 2(稀疏一趟 + 补密一趟);
- *      同时存活的分段编码器 ≤ 2 × streamPool;
- *   6. 就绪索引里每条流一层 `kind: 'stream'`、单位是分段号;组流(`--group` 把解码器预算压到 1)带 `groupClipIds`;
- *   7. **隔离**:和粒子卡重叠的另一张卡的颜色不出现在粒子流的分段里(ffmpeg 解出来逐像素查);
- *   8. 收紧矩形:框比画面小的卡,稀疏一趟量完之后补密分段用的是收紧后的矩形(新变体);
- *   9. alpha 平均误差 ≤ 0.5 / 255(同一批 15 张 PNG 编一段、ffmpeg 解回来比 alpha 半区);
- *  10. 单独重新生产第 5 段(把它的签名弄旧):只重做这一段,索引区间不变,旧文件 5 秒内删掉(G6);
- *  11. F5:关掉这个 FramePipeline,同一个库根上新起一个 —— 扫盘挂键、项目到位后按键认领、每条流的层原样发出,
- *      一个分段都不重新生产;
- *  12. 组流(`--group`):组流的分段里恰好是组内那几张卡(粒子的绿、药丸的蓝都在);
- *  13. 环境指纹进结果键(M4,契约 E.7):诊断里的指纹是 16 位十六进制,快照键与流键都等于
- *      `resultKeyOf(内容键, 指纹)`。
+ *   1. Exactly 15 samples per segment (except the last segment of each stream: segments count from
+ *      the stream's own first frame to its last frame); first frame is IDR; only one moof; `mfra` not
+ *      written to disk;
+ *   2. `init.mp4` is written only once per variant, and subsequent segments calculate `ftyp + moov`
+ *      byte-for-byte identical to it;
+ *   3. Sparse segment (each segment captures only the first frame and repeats it for remaining frames)
+ *      size ≤ 1.0× full density; after sparse segments are replaced by full density, old files are
+ *      deleted within 5 seconds;
+ *   4. Encoding time for a 15-frame segment (recorded only, not a pass condition; original gate was
+ *      1080p full-frame stream p50 ≤ 300 ms), segment size (≤ 512 KB);
+ *   5. Continuous production pays only one page turn: remount count in `bakeStream` ≤ stream count × 2
+ *      (one sparse pass + one full-density pass); concurrent active segment encoders ≤ 2 × streamPool;
+ *   6. One `kind: 'stream'` layer per stream in ready index, unit is segment number; group streams
+ *      (`--group` squeezes decoder budget to 1) carry `groupClipIds`;
+ *   7. **Isolation**: color of another card overlapping with the particle card does not appear in
+ *      particle stream segments (decoded with ffmpeg and checked pixel-by-pixel);
+ *   8. Tight rectangle: for cards with bounding box smaller than frame, after measurement in the sparse
+ *      pass, full-density segments use the tightened rectangle (new variant);
+ *   9. Mean alpha error ≤ 0.5 / 255 (encode a segment from the same batch of 15 PNGs, decode back with
+ *      ffmpeg and compare lower half alpha);
+ *  10. Reproduce segment 5 alone (outdate its signature): redo only this segment, index interval unchanged,
+ *      old file deleted within 5 seconds (G6);
+ *  11. F5: shut down this FramePipeline, start a new one on the same store root: scan disk and mount keys,
+ *      claim by key after project arrives, emit each stream's layers as-is, without reproducing any segment;
+ *  12. Group stream (`--group`): group stream segments contain exactly those cards in the group (both
+ *      particle green and pill blue are present);
+ *  13. Environment fingerprint goes into result key (M4, contract E.7): fingerprint in diagnostics is
+ *      16-character hex, snapshot key and stream key both equal `resultKeyOf(content key, fingerprint)`.
  *
- * 输出 JSON 结论;任何一条不过就以非零退出。`--keep` 不删库根(给 `stream-play-probe.mjs` 接着用)。
+ * Outputs JSON conclusion; exits non-zero if any item fails. `--keep` does not delete store root
+ * (keeps it for `stream-play-probe.mjs`).
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import os from 'node:os';
@@ -72,7 +86,7 @@ async function until(label, fn, timeoutMs, everyMs = 500) {
   }
 }
 
-/** ffmpeg 把 init + 一个分段解成逐帧 RGBA(上下拼合的编码画面) */
+/** ffmpeg decodes init + one segment into frame-by-frame RGBA (top-bottom stacked encoded frame) */
 async function decodeSegment(init, seg, dir, name) {
   const file = path.join(dir, `${name}.mp4`);
   await fs.writeFile(file, Buffer.concat([init, seg]));
@@ -84,7 +98,8 @@ async function decodeSegment(init, seg, dir, name) {
 const out = { origin, library: OUT, group: GROUP };
 await fs.mkdir(OUT, { recursive: true });
 const pipeline = new FramePipeline({ root: OUT, origin: () => origin, interactive: true, playhead: () => null });
-// 读口:这支探针不经 http 取字节(直接读盘核对),但生产者要读口接上才开工(见 `routeAttached`)
+// Read endpoint: this probe does not fetch bytes over HTTP (verifies disk directly), but producer only
+// starts after read endpoint is connected (see `routeAttached`)
 pipeline.streamProducer().attachRoute();
 const layers = [];
 const off = pipeline.readyIndex.subscribe(message => { if (message.type === 'layer' && message.kind === 'stream') layers.push(message); });
@@ -95,7 +110,7 @@ try {
   if (!producer) throw new Error('The producer did not start');
   const expect = GROUP ? 1 : 3;
   check(producer.streams.size === expect, `Stream count should be ${expect}`, producer.streams.size);
-  // 全部分段满密度、没有在跑的 worker / 编码
+  // All segments full density, no running workers / encoding
   const done = await until('all segments at full density', () => {
     const status = producer.status();
     if (!status.streams.length) return null;
@@ -107,10 +122,11 @@ try {
   out.produceMs = Date.now() - started;
   timings.record('All segments at full density (from preload)', out.produceMs);
   if (!done) throw new Error('Production did not finish');
-  // G6:旧文件延迟 5 秒删除 —— 等 6 秒再看盘
+  // G6: old files deleted with 5-second delay: wait 6 seconds before inspecting disk
   await new Promise(r => setTimeout(r, 6000));
   const status = producer.status();
-  // M4(契约 E.7「探针」):环境指纹定下来了,快照键与流键都 = resultKeyOf(内容键, 指纹)
+  // M4 (contract E.7 "Probes"): environment fingerprint is finalized, snapshot key and stream key
+  // both = resultKeyOf(content key, fingerprint)
   {
     const diagnostics = pipeline.diagnostics();
     const fingerprint = diagnostics.environment?.fingerprint;
@@ -144,14 +160,17 @@ try {
       encodeMs: [], bytes: [], sparseBytes: {} };
     check(!files.some(f => f.includes('mfra')), 'mfra is not written to disk', files);
     check(segFiles.length === record.segments, `${spec.clipIds}: after replacement only one file per segment remains on disk`, { segFiles: segFiles.length, segments: record.segments });
-    // 每个变体的 init 逐字节相同:每个分段按清单找自己的 init,再和 ffmpeg 输出里的 ftyp+moov 比 —— 清单里的
-    // init 本身就是「第一次编码时截下来的那份」,后续分段编出来的若不同会记成新变体,所以变体数就是判据
+    // Each variant's init is byte-for-byte identical: each segment finds its own init from manifest,
+    // then compares with ftyp+moov in ffmpeg output: manifest's init itself is "the copy captured during
+    // the first encode"; if subsequent segments encode differently it is recorded as a new variant, so
+    // variant count is the criterion
     check(record.variants <= 2, `${spec.clipIds}: variant count (upper bound + tightened) ≤ 2`, record.variants);
     for (let n = spec.firstSegment; n <= spec.lastSegment; n++) {
       const seg = manifest.segments[n];
       const buf = await fs.readFile(path.join(dir, seg.file));
       const info = segmentInfo(buf);
-      // 分段从这条流自己的第一帧起数,末段到它的最后一帧为止(`src/render/streamSegments.mjs`)
+      // Segments count from this stream's own first frame, last segment ends at its last frame
+      // (`src/render/streamSegments.mjs`)
       const want = streamSegmentFrameCount(n, spec.originFrame, spec.lastFrame);
       check(want >= 1 && want <= SEGMENT_FRAMES && (n === spec.lastSegment || want === SEGMENT_FRAMES), `${spec.clipIds}#${n}: only the last segment may be partial`, want);
       check(info.sampleCount === want, `${spec.clipIds}#${n}: sample count`, { got: info.sampleCount, want });
@@ -163,17 +182,19 @@ try {
     }
     out.streams.push(record);
   }
-  // 稀疏 vs 满密度的体积:日志里记了每个变体;这里从生产日志拿不到稀疏分段的字节(已被替换删除),
-  // 所以另跑一次同一段的稀疏编码不划算 —— 由 status 的 segment 表在稀疏那一趟结束时记下(见 sparseSnapshot)
+  // Sparse vs. full-density size: logs record each variant; sparse segment bytes cannot be obtained from
+  // production logs here (already replaced and deleted), so running another sparse encoding for the same
+  // segment is wasteful: recorded by status segment table at the end of the sparse pass (see sparseSnapshot)
   out.sparseSnapshot = producer.sparseBytes ?? null;
-  // 连续生产只付一次换页:10 个分段的粒子背景,稀疏一趟、补密一趟各只重挂载一次(失败重试另算)
+  // Continuous production pays only one page turn: 10-segment particle background remounts only once
+  // each for sparse pass and full-density pass (failure retries counted separately)
   for (const s of status.streams) out[`resets_${s.clipIds.join('+')}`] = s.resets;
   const bgStatus = status.streams.find(s => s.clipIds.includes('clip-bg'));
   if (bgStatus && !GROUP) check(bgStatus.resets?.sparse === 1 && bgStatus.resets?.dense === 1 && bgStatus.lastSegment - bgStatus.firstSegment + 1 >= 10,
     'Stream of 10 segments: the sparse pass and the density-fill pass each pay for only one page swap', bgStatus.resets);
   check(status.stats.maxAliveEncoders <= 2 * status.pool, 'Concurrently alive segment encoders ≤ 2 × streamPool', status.stats);
   check(status.stats.replacedDeleted >= 1, 'Old segments are deleted within 5 seconds after replacement', status.stats.replacedDeleted);
-  // 就绪索引
+  // Ready index
   const byClip = new Map();
   for (const m of layers) byClip.set(m.clipId, m);
   out.layers = [...byClip.values()];
@@ -184,7 +205,8 @@ try {
     if (layer) check(layer.originFrame === state.spec.originFrame, `${state.spec.topClipId}: the layer carries this stream's first frame`, { layer: layer.originFrame, spec: state.spec.originFrame });
     if (GROUP && layer) check(Array.isArray(layer.groupClipIds) && layer.groupClipIds.length === state.spec.clipIds.length, 'The group stream\'s layer carries groupClipIds', layer);
   }
-  // 隔离:绿色粒子背景那条流(单卡流)里不能有金句药丸的蓝色
+  // Isolation: blue from punchline pill must not appear in green particle background stream
+  // (single-card stream)
   if (!GROUP) {
     const bg = [...producer.streams.values()].find(s => s.spec.clipIds[0] === 'clip-bg');
     const pill = [...producer.streams.values()].find(s => s.spec.clipIds[0] === 'clip-pill');
@@ -201,7 +223,8 @@ try {
         const i = (y * W + x) * 4;
         const a = frame[((y + H + 8) * W + x) * 4];
         if (a > 200) opaque++;
-        // 药丸的蓝:B 高、R 低、B 比 G 高出一截(预乘色 ≤ a;绿色粒子是 G 高 B 低)
+        // Pill blue: high B, low R, B significantly higher than G (premultiplied color ≤ a; green particle
+        // is high G low B)
         if (a > 200 && frame[i + 2] > 180 && frame[i] < 140 && frame[i + 2] - frame[i + 1] > 50) blue++;
       }
       out[`isolation_${name}`] = { width: W, height: H, bluePixels: blue, opaquePixels: opaque, rect: meta.rect };
@@ -210,8 +233,10 @@ try {
     if (out.isolation_pill) check(out.isolation_pill.bluePixels > 1000, 'The punchline pill stream has its own blue pixels', out.isolation_pill);
     if (pill) check(pill.manifest.tight && pill.manifest.tight.w * pill.manifest.tight.h < pill.manifest.bound.w * pill.manifest.bound.h, 'Card whose frame is smaller than the picture: the tight rectangle is smaller than the upper bound', { bound: pill.manifest.bound, tight: pill.manifest.tight });
   }
-  // 编码耗时(只记录;原验收门槛「一条 1080p 流 15 帧分段编码 ≤ 300 ms,前提:没有别的编码器争 CPU」已不作通过条件):
-  // 先把 15 张 PNG 截在内存里,再一次性喂给编码器计时(G0-b 的量法,和出帧不重叠)
+  // Encoding time (recorded only; original acceptance check gate "a 1080p stream 15-frame segment encodes
+  // in ≤ 300 ms, given no other encoders competing for CPU" is no longer a pass condition):
+  // Capture 15 PNGs in memory first, then feed all at once to encoder for timing (G0-b measurement
+  // method, non-overlapping with frame output)
   out.bench = [];
   for (const clipId of GROUP ? [] : ['clip-bg', 'clip-pill']) {
     const state = [...producer.streams.values()].find(s => s.spec.clipIds[0] === clipId);
@@ -236,7 +261,8 @@ try {
         runs.push({ ms: Date.now() - e0, bytes: result.bytes.length });
       }
       runs.sort((a, b) => a.ms - b.ms);
-      // alpha 误差:这 15 张编成一段,ffmpeg 解回来,下半区的灰度 vs 原 PNG 的 alpha
+      // Alpha error: encode these 15 images into a segment, decode back with ffmpeg, compare lower half
+      // grayscale vs. original PNG alpha
       const enc = openStreamSegmentEncoder('ffmpeg', { encoder: status.encoder, fps: 30 });
       for (const png of pngs) await enc.write(png);
       const encoded = await enc.finish();
@@ -258,7 +284,8 @@ try {
     } finally { pipeline.returnStreamBakery(bakery); }
   }
   const bgBench = out.bench.find(b => b.clipId === 'clip-bg');
-  // 耗时只记录(verification.md「耗时只记录,不当闸门」):编码 p50 原来是 ≤ 300 ms 的通过条件,现在只记数
+  // Elapsed time recorded only (verification.md "elapsed time recorded only, not used as gate"): encoding
+  // p50 was originally a pass condition of ≤ 300 ms, now only recorded
   for (const b of out.bench) {
     timings.record(`${b.clipId} 15-frame segment encoding p50`, b.p50, b.clipId === 'clip-bg' ? { formerLimit: '1080p full-frame stream ≤ 300 ms' } : {});
     timings.record(`${b.clipId} 15-frame capture`, b.captureMsFor15);
@@ -266,7 +293,8 @@ try {
   for (const item of status.stats.sparseVsDense ?? []) {
     if (item.sameRect) check(item.sparse <= item.dense, 'Sparse segment (one frame per segment) ≤ 1.0× full density (same rectangle)', item);
   }
-  // 组流:分段里恰好是组内那几张卡 —— 药丸的蓝、粒子的绿都在
+  // Group stream: segments contain exactly those cards in the group: both pill blue and particle green
+  // are present
   if (GROUP) {
     const state = [...producer.streams.values()][0];
     const seg = state.manifest.segments[1];
@@ -274,7 +302,8 @@ try {
     const raw = await decodeSegment(init, await fs.readFile(path.join(producer.store.dir(state.spec.streamKey), seg.file)), OUT, 'decoded-group');
     const meta = state.manifest.inits[seg.init];
     const W = meta.width, H = meta.height / 2 - 8;
-    // 药丸的蓝(画面中间);粒子:画面右边那一条(x ≥ 1300)只有粒子背景,那里有不透明的像素就是它
+    // Pill blue (center of frame); particles: right strip of frame (x ≥ 1300) has only particle background,
+    // opaque pixels there belong to it
     let blue = 0, particles = 0;
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const i = (y * W + x) * 4;
@@ -285,7 +314,8 @@ try {
     out.groupContent = { clipIds: state.spec.clipIds, blue, particles };
     check(blue > 1000 && particles > 100, 'The group stream contains exactly the cards in the group (the pill\'s blue and the particles in the strip on the right are both present)', out.groupContent);
   }
-  // G6:单独重新生产第 5 段 —— 把它的签名弄旧,只有这一段重做,索引区间不变,旧文件 5 秒内删
+  // G6: reproduce segment 5 alone: outdate its signature, redo only this segment, index interval
+  // unchanged, delete old file within 5 seconds
   if (!GROUP) {
     const bg = [...producer.streams.values()].find(s => s.spec.clipIds[0] === 'clip-bg');
     const before = { ...bg.manifest.segments[5] };
@@ -296,7 +326,9 @@ try {
       const seg = bg.manifest.segments[5];
       return seg.sig !== 'stale' && !producer.workers.size && !producer.encoding.size ? seg : null;
     }, 120000);
-    // 旧文件延迟 5 秒删:原来固定等 6 秒就看盘(等于拿 6 秒当门槛)。现在等到它没了为止(至多 60 秒,防卡死),用时只记录
+    // Old file deleted with 5-second delay: originally waited a fixed 6 seconds before inspecting disk
+    // (effectively using 6 seconds as a gate). Now waits until it is gone (up to 60 seconds to prevent
+    // hanging), elapsed time recorded only
     const goneT0 = Date.now();
     const oldFile = path.join(producer.store.dir(bg.spec.streamKey), before.file);
     let oldGone = before.file === redone?.file;
@@ -315,7 +347,7 @@ try {
   const checkExists = file => fs.access(file).then(() => true, () => false);
   check(!(await checkExists(path.join(OUT, 'controls-html'))), 'No controls-html snapshot directory is generated under the frame store anymore');
   check(!(await checkExists(path.join(OUT, 'controls-local'))), 'No controls-local snapshot directory is generated under the frame store anymore');
-  // F5:同一个库根上重起一个 FramePipeline(模拟预渲染进程被杀后拉起)
+  // F5: restart a FramePipeline on the same store root (simulates restart after prerender process is killed)
   {
     const keys = [...producer.streams.keys()];
     await pipeline.close();

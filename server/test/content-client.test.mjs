@@ -1,18 +1,23 @@
 /**
- * 内容库客户端（契约 `docs/plan/manifest-contract.md` 第 2 节，第 6 节用例 Q1～Q3）。
- * 跑：node --test server/test/content-client.test.mjs
+ * Content store client (contract `docs/plan/manifest-contract.md` section 2, section 6 cases
+ * Q1-Q3).
+ * Run: node --test server/test/content-client.test.mjs
  *
- * 只照契约写，不看实现。
+ * Written strictly to the contract, without looking at the implementation.
  *
- * 约定：
- *   - 真文档服务：独立模式、端口 0、`autoTick: false`，挂 C6.3 的内容库模块（memory 存储）；
- *     连接用 M5a 的 `createWsEndpoint`，客户端 `createContentClient(endpoint, { timeoutMs })`（见 `fake-manifest-env.mjs`）。
- *   - 「服务端不回」：挂一个吞掉 `content.*` 的假模块（不回包），或者用一个假端点（只记下发出的消息，
- *     由测试决定何时、按什么顺序回包、何时断线）。假端点只满足 `WsEndpoint` 的形状：
- *     `send` / `onMessage` / `onOpen` / `onClose` / `connected` / `closed` / `close` / `stats`。
- *   - 回包形状照 C6.3 契约第 2 节：`content.stored` / `content.item`（`missing: true`）/ `content.listing` / `error { reason }`。
+ * Conventions:
+ *   - Real document service: standalone mode, port 0, `autoTick: false`, mounting C6.3's content
+ *     store module (memory storage); connection uses M5a's `createWsEndpoint`, client
+ *     `createContentClient(endpoint, { timeoutMs })` (see `fake-manifest-env.mjs`).
+ *   - "Server does not respond": mount a mock module that swallows `content.*` (no response), or
+ *     use a mock endpoint (only records sent messages; tests decide when, in what order to respond,
+ *     and when to disconnect). Mock endpoint only satisfies the shape of `WsEndpoint`:
+ *     `send` / `onMessage` / `onOpen` / `onClose` / `connected` / `closed` / `close` / `stats`.
+ *   - Response shape follows C6.3 contract section 2: `content.stored` / `content.item`
+ *     (`missing: true`) / `content.listing` / `error { reason }`.
  *
- * `server/render-node/content-client.mjs` 还不存在时每条用例各自失败、报原因。
+ * When `server/render-node/content-client.mjs` does not yet exist, each test case fails
+ * individually and reports the reason.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,10 +28,10 @@ import {
 
 const hashOf = (body) => crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex');
 
-/** 吞掉 content.* 的模块：收到什么都不回（模拟「服务端不回」） */
+/** Module that swallows content.*: responds to nothing received (simulating "server does not respond") */
 const silentModule = () => ({ name: 'silent-content', types: ['content.'], channels: [], handle() {} });
 
-/** 假端点：满足 WsEndpoint 的形状，测试手动回包、断线、重连 */
+/** Mock endpoint: satisfies WsEndpoint shape; tests manual responses, disconnection, reconnection */
 function fakeEndpoint() {
   const handlers = { message: [], open: [], close: [] };
   const sent = [];
@@ -52,7 +57,7 @@ function fakeEndpoint() {
   };
 }
 
-/** 等一个 promise 落定，回 { ok, value | error, ms } */
+/** Wait for a promise to settle, returns { ok, value | error, ms } */
 async function settleOf(promise) {
   const t0 = Date.now();
   try { return { ok: true, value: await promise, ms: Date.now() - t0 }; } catch (error) { return { ok: false, error, ms: Date.now() - t0 }; }
@@ -80,13 +85,13 @@ test('Q1 get after put returns the same body; missing returns null; list filters
   assert.equal(await content.get('snapshot-manifest', `${rk}:60-119`), null, 'A missing key returns null');
   assert.equal(await content.get('render-manifest', `${rk}:0-59`), null, 'Not present under another kind');
 
-  // card-source 带 rev
+  // card-source includes rev
   const r1 = await content.put('card-source', 'card/x', { src: 1 });
   const r2 = await content.put('card-source', 'card/x', { src: 1 });
   assert.deepEqual([r1.rev, r2.rev], [1, 2], 'rev of card-source passes through');
   assert.equal((await content.get('card-source', 'card/x')).rev, 2);
 
-  // list 按前缀、升序
+  // list by prefix, ascending
   const other = 'd'.repeat(64);
   for (const key of [`${rk}:120-129`, `${other}:0-59`, `${rk}:60-119`]) await content.put('snapshot-manifest', key, { k: key });
   const listed = await content.list('snapshot-manifest', `${rk}:`);
@@ -96,17 +101,17 @@ test('Q1 get after put returns the same body; missing returns null; list filters
   const all = await content.list('snapshot-manifest');
   assert.equal(all.items.length, 4, 'Without a prefix, lists everything');
 
-  // 服务端回 error：按 reqId 抛出，带 reason
+  // Server returns error: throws by reqId, with reason
   const tooBig = await settleOf(content.put('snapshot-manifest', 'big', { blob: 'x'.repeat(300 * 1024) }));
   assert.equal(tooBig.ok, false, 'Body over 256 KiB is rejected');
   assert.equal(tooBig.error.reason, 'too-large', `Error carries reason: ${tooBig.error?.message}`);
   const badKind = await settleOf(content.get('no-such-kind', 'k'));
   assert.equal(badKind.ok, false);
   assert.equal(badKind.error.reason, 'bad-message');
-  // 错误之后客户端照常可用
+  // Client remains usable as usual after an error
   assert.deepEqual((await content.get('snapshot-manifest', `${rk}:0-59`)).body, body);
 
-  // render-node/index.mjs 也要转出（契约第 7 节「加出」）
+  // render-node/index.mjs must also re-export (contract section 7 "Additions")
   const idx = await import('../render-node/index.mjs');
   assert.equal(idx.createContentClient, (await loadContentClient()).createContentClient, 'render-node/index.mjs re-exports createContentClient');
 });
@@ -120,7 +125,7 @@ test('Q2 20 concurrent requests: each carries a unique reqId and is matched by r
   const endpoint = await connectEndpoint(env.url('node-a'), { env });
   const sent = [];
   const rawSend = endpoint.send.bind(endpoint);
-  // 包一层 send 数请求（在建客户端之前包，客户端拿到的就是包过的）
+  // Wrap send once to count requests (wrapped before creating client, so client gets the wrapped one)
   const counted = { ...endpoint, send: (m) => { sent.push(m); return rawSend(m); }, onMessage: endpoint.onMessage, onOpen: endpoint.onOpen, onClose: endpoint.onClose,
     close: endpoint.close, stats: endpoint.stats, get connected() { return endpoint.connected; }, get closed() { return endpoint.closed; } };
   const content = createContentClient(counted);
@@ -130,7 +135,7 @@ test('Q2 20 concurrent requests: each carries a unique reqId and is matched by r
   const stored = await Promise.all(keys.map((k, i) => content.put('render-manifest', k, bodies[i])));
   stored.forEach((s, i) => assert.equal(s.hash, hashOf(bodies[i]), `Reply to put #${i} matches its own body`));
 
-  // 20 个 get 与 20 个 put / list 混在一起并发
+  // 20 get and 20 put / list mixed concurrently
   const ops = [];
   for (let i = 0; i < 20; i++) {
     ops.push(content.get('render-manifest', keys[i]).then((r) => ['get', i, r]));
@@ -158,11 +163,11 @@ test('Q2 replies out of order and interleaved with unrelated messages: still mat
   await until(() => ep.sent.length === N, { timeoutMs: 2000, what: () => `Only ${ep.sent.length} requests were sent` });
   assert.equal(new Set(ep.sent.map((m) => m.reqId)).size, N, 'reqId is unique');
 
-  // 无关消息：别的模块的推送、没带 reqId 的、带陌生 reqId 的
+  // Irrelevant messages: pushes from other modules, without reqId, or with unfamiliar reqId
   ep.deliver({ type: 'queue.snapshot', tasks: [] });
   ep.deliver({ type: 'content.changed', kind: 'snapshot-manifest', key: 'k0', hash: 'f'.repeat(64) });
   ep.deliver({ type: 'content.item', kind: 'snapshot-manifest', key: 'k1', body: { wrong: true }, hash: 'e'.repeat(64), reqId: 'not-mine' });
-  // 倒序回包
+  // Responses in reverse order
   for (const m of [...ep.sent].reverse()) {
     const i = Number(m.key.slice(1));
     if (m.type === 'content.put') ep.deliver({ type: 'content.stored', kind: m.kind, key: m.key, hash: hashOf(m.body), reqId: m.reqId });
@@ -198,7 +203,7 @@ test('Q3 disconnect: in-flight requests fail immediately with code: disconnected
   const inflight = [content.get('snapshot-manifest', 'a'), content.put('snapshot-manifest', 'b', { b: 1 }), content.list('snapshot-manifest', '')].map(settleOf);
   await new Promise((resolve) => setTimeout(resolve, 100));
   const closedSeen = new Promise((resolve) => endpoint.onClose(resolve));
-  await env.service.close(); // 服务端断开全部连接
+  await env.service.close(); // Server disconnects all connections
   await closedSeen;
   const t0 = Date.now();
   const results = await Promise.all(inflight);
@@ -214,7 +219,7 @@ test('Q3 no replay after disconnect: in-flight requests are not resent after rec
   const ep = fakeEndpoint();
   const content = createContentClient(ep, { timeoutMs: 150 });
 
-  // 超时，然后回包迟到：不抛、不影响后面的请求
+  // Timeout, then late response: does not throw, does not affect subsequent requests
   const late = settleOf(content.get('snapshot-manifest', 'late'));
   await until(() => ep.sent.length === 1);
   const lateReq = ep.sent[0];
@@ -222,7 +227,7 @@ test('Q3 no replay after disconnect: in-flight requests are not resent after rec
   assert.equal(r0.error?.code, 'timeout');
   ep.deliver({ type: 'content.item', kind: 'snapshot-manifest', key: 'late', body: { x: 1 }, hash: hashOf({ x: 1 }), reqId: lateReq.reqId });
 
-  // 在途 3 个，断线：全部立即 disconnected
+  // 3 in flight, disconnected: all immediately disconnected
   const inflight = [content.get('snapshot-manifest', 'a'), content.put('snapshot-manifest', 'b', { b: 1 }), content.list('render-manifest')].map(settleOf);
   await until(() => ep.sent.length === 4);
   ep.drop();
@@ -232,7 +237,7 @@ test('Q3 no replay after disconnect: in-flight requests are not resent after rec
   await new Promise((resolve) => setTimeout(resolve, 50));
   assert.equal(ep.sent.length, 4, 'Requests from before the disconnect are not replayed after reconnecting');
 
-  // 重连之后的新请求照常配对
+  // New requests after reconnection pair as usual
   const next = content.get('snapshot-manifest', 'c');
   await until(() => ep.sent.length === 5);
   const m = ep.sent[4];

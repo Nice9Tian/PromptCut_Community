@@ -11,9 +11,12 @@ interface Params extends HudParams {
 
 function RingMetricCard({ params }: CardProps<Params>) {
   const v = useMotionValue(0);
-  // 数字直接同步写进 DOM,不走 React state:导出时每帧截图前 React 的异步提交会和截图抢跑,
-  // 实测 10~15% 的帧数字停在上一帧的值,导两遍不一样。同步写就落在 Motion 的同一次 rAF 里。
-  // 写法照 magicui/vendor/number-ticker.tsx;初值写死在 JSX 里,免得重挂载后首帧空一下。
+  // The number is written into the DOM synchronously, not through React state: during export React's
+  // asynchronous commit races with the screenshot before each frame, and in testing 10~15% of frames
+  // had the number stuck at the previous frame's value, so two exports differed. Writing synchronously
+  // lands it in the same rAF as Motion's.
+  // The approach follows magicui/vendor/number-ticker.tsx; the initial value is hardcoded in the JSX,
+  // so the first frame after a remount is not blank for a moment.
   const numRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
@@ -84,7 +87,8 @@ export const ringMetric: CardDef<Params> = {
   useWhen: "A single percentage or completion metric, shown as ring progress with a number in the center.",
   tags: ["percentage","circular","progress","metric"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,

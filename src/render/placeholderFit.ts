@@ -1,36 +1,46 @@
 /**
- * 占位符在屏幕上多大(纯函数,单测直接载入;product/rendering.md「兜底顺序」)。
+ * Size of the placeholder on screen (pure function, loaded directly by unit tests;
+ * product/rendering.md "Fallback order").
  *
- * 舞台 iframe 按项目分辨率(1920×1080)画,父页用 CSS `scale(预览缩放)` 把它缩到预览框里;包裹层自己还可能有
- * `frame.scale`。占位组件按舞台像素画,不补偿的话 27% 预览下沙漏只剩七八个屏幕像素。这里算出组件在包裹层坐标里该放大多少:
+ * The stage iframe draws at project resolution (1920×1080), and the parent page scales it down into
+ * the preview box using CSS `scale(preview scale)`; the wrapper layer itself may also have
+ * `frame.scale`. The placeholder component draws in stage pixels; without compensation, at 27%
+ * preview the hourglass is reduced to only seven or eight screen pixels. Here we calculate how much
+ * the component should scale up in wrapper layer coordinates:
  *
- *   - **沙漏**(普通加载占位,徽标与铺满两种形态中间那个):屏幕上保持原大小(约 28 像素)—— 只抵消预览缩放,
- *     **不**抵消这一层自己的缩放(语义:占位符继承该层的坐标、旋转、缩放和层级);噪点照旧铺满实体框,不缩放。
+ *   - **Hourglass** (regular loading placeholder, the one in the middle of badge and solid forms):
+ *     maintains original size on screen (approx. 28 pixels): cancels out only preview scaling,
+ *     **does not** cancel out this layer's own scale (semantics: placeholder inherits coordinates,
+ *     rotation, scaling, and z-index of that layer); noise still fills the entity box as usual
+ *     without scaling.
  *
- * **不超出这一层的框**(徽标形态看位置框,铺满形态看实体框;四周留一点边距),所以相邻两个小片段的沙漏不会叠在一起。
- * (原先另有「本地 PC 辅助渲染」图标的排法,2026-10-21 随图标一起撤掉。)
- * 坐标一律是包裹层的本地像素(舞台像素 × 这一层的缩放之前)。
+ * **Does not exceed this layer's box** (badge form checks position box, solid form checks entity
+ * box; leaving some margin around the edges), so hourglasses of two adjacent small clips will not
+ * overlap. (Originally there was another layout for the "Local PC assisted rendering" icon,
+ * removed along with the icon on 2026-10-21.) Coordinates are always wrapper layer local pixels
+ * (stage pixels before multiplying by this layer's scale).
  */
 
-/** 框的宽高(包裹层本地像素) */
+/** Box width and height (wrapper layer local pixels) */
 export interface FitBox { width: number; height: number }
 
 /**
- * 组件该怎么放:`scale` 是组件在包裹层坐标里的放大倍数(1 = 按舞台像素原样画)。
- * 同样的输入回同样的数,缓存由 `placeholderHost.placeholderFitFor` 管。
+ * How to place the component: `scale` is the component's magnification factor in wrapper layer
+ * coordinates (1 = drawn as-is in stage pixels). Same input returns the same values; caching is
+ * managed by `placeholderHost.placeholderFitFor`.
  */
 export interface PlaceholderFit {
   scale: number;
 }
 
-/** 沙漏(徽标形态的圆、铺满形态中间那个)未放大时的边长(舞台像素) */
+/** Unscaled side length of the hourglass (badge form circle, the middle one in solid form) (stage pixels) */
 export const HOURGLASS_SIZE = 28;
-/** 离框边至少留这么多屏幕像素(框太小时改按框短边的 `FIT_MARGIN_RATIO`,取小的那个) */
+/** Leave at least this many screen pixels from box edges (when box is too small, use `FIT_MARGIN_RATIO` of box shorter side instead, taking the smaller value) */
 export const FIT_MARGIN_PX = 4;
 export const FIT_MARGIN_RATIO = 0.08;
-/** 缩到最小也不小于这个倍数(框几乎是 0 时不画成 0) */
+/** Scaled down no smaller than this factor even at minimum (not drawn as 0 when box is near 0) */
 export const FIT_MIN_SCALE = 0.05;
-/** 预览缩放的倒数夹在这个范围里(坏值当 1) */
+/** Reciprocal of preview scale clamped within this range (bad values treated as 1) */
 export const VIEW_INVERSE_MIN = 1 / 8;
 export const VIEW_INVERSE_MAX = 16;
 
@@ -39,14 +49,14 @@ const positive = (v: unknown, dflt: number): number => {
   return Number.isFinite(n) && n > 0 ? n : dflt;
 };
 
-/** 抵消预览缩放要放大多少:`1 / 预览缩放`,夹在 [1/8, 16];不是正的有限数时回 1 */
+/** How much to scale up to offset preview scale: `1 / preview scale`, clamped to [1/8, 16]; returns 1 if not a positive finite number */
 export function viewInverse(viewScale: unknown): number {
   const s = Number(viewScale);
   if (!Number.isFinite(s) || s <= 0) return 1;
   return Math.min(VIEW_INVERSE_MAX, Math.max(VIEW_INVERSE_MIN, 1 / s));
 }
 
-/** 框里能用的宽高(扣掉边距;`perScreenPx` = 一个屏幕像素是几个本地像素) */
+/** Usable width and height within the box (deducting margins; `perScreenPx` = how many local pixels in one screen pixel) */
 function available(box: FitBox, perScreenPx: number): { w: number; h: number } {
   const W = Math.max(0, Number(box?.width) || 0), H = Math.max(0, Number(box?.height) || 0);
   const m = Math.min(FIT_MARGIN_PX * perScreenPx, FIT_MARGIN_RATIO * Math.min(W, H));
@@ -54,8 +64,10 @@ function available(box: FitBox, perScreenPx: number): { w: number; h: number } {
 }
 
 /**
- * 沙漏放多大:屏幕上保持原大小(只抵消预览缩放),放不进框就按框缩小。
- * `layerScale` 只用来把屏幕像素的边距换成本地像素,不参与放大倍数。
+ * Hourglass size: it keeps its original size on screen (only the preview scale is cancelled out),
+ * and shrinks to fit the box if it does not fit.
+ * `layerScale` is only used to convert margins in screen pixels to local pixels; it takes no part in
+ * the magnification.
  */
 export function hourglassFit(o: { box: FitBox; viewScale: unknown; layerScale?: unknown }): PlaceholderFit {
   const k = viewInverse(o.viewScale);

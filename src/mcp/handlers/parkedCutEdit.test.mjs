@@ -1,13 +1,21 @@
 /**
- * 不切换激活剪辑,就地改停放剪辑里的片段(线上 2026-10-21:每轮都要 switch_cut 切过去改完再切回来,
- * activeCutId 是共享字段,所有成员的界面一起翻)。钉住:
- *   - update_clip / get_clip / set_clip / set_position / set_rect / align / nudge / set_emphasis / set_clip_volume / set_clip_muted
- *     找得到停放剪辑里的片段并改在对的那条剪辑里,activeCutId 与激活剪辑的内容(同一份对象)原样不动;
- *   - 没有任何监听者、同步层、撤销栈看到过「视图」形状的项目;提交只改那条剪辑条目(文档差异里只有 /cuts/@B/…);
- *   - 改的全是新对象,没改到的序列 / 片段保持同一份对象;一步撤销就回来;
- *   - 回包标明在哪条剪辑、timeline 是那条剪辑的、look 的调用带上 cutId(see_frames 能看没激活的剪辑,2026-10-21);停放剪辑的总时长跟着内容走;
- *   - 其它按 clipId 找的工具(删、复制、切分)找到停放剪辑里的片段时说清在哪条剪辑、要 switch_cut,而不是静默什么都没做。
- * 跑:node --experimental-test-module-mocks --test src/mcp/handlers/parkedCutEdit.test.mjs
+ * Edit clips in parked cuts in place without switching the active cut (production, 2026-10-21:
+ * every round required switch_cut to switch over, make edits, and switch back; activeCutId is
+ * a shared field, flipping the UI for all members at once). Pin down:
+ *   - update_clip / get_clip / set_clip / set_position / set_rect / align / nudge / set_emphasis /
+ *     set_clip_volume / set_clip_muted find clips in parked cuts and edit them in the right cut,
+ *     leaving activeCutId and active cut content (the same object identity) intact;
+ *   - No listener, sync layer, or undo stack ever sees a "view"-shaped project; commits only
+ *     modify that cut entry (document diff only has /cuts/@B/…);
+ *   - Modifications produce all-new objects, while untouched tracks / clips retain identical
+ *     object references; a single undo step restores them;
+ *   - Response indicates which cut it is in, timeline belongs to that cut, look calls include
+ *     cutId (see_frames can view non-active cuts, 2026-10-21); total duration of parked cuts
+ *     follows their content;
+ *   - Other tools finding by clipId (delete, duplicate, split) state clearly which cut it is in
+ *     and require switch_cut when finding a clip in a parked cut, rather than silently doing
+ *     nothing.
+ * Run: node --experimental-test-module-mocks --test src/mcp/handlers/parkedCutEdit.test.mjs
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test, { mock } from "node:test";
@@ -61,7 +69,10 @@ const fresh = () => { actions.loadProject(proj()); return getState().project; };
 const cutB = (p = getState().project) => p.cuts.find((c) => c.id === "B");
 const clipB = (id, p = getState().project) => cutB(p).tracks.flatMap((t) => t.clips).find((c) => c.id === id);
 
-/** 记下每一次通知时 store 里的项目:任何时候都必须是真实形状(激活的是 A、tracks 是 A 的内容) */
+/**
+ * Records the project in the store at each notification: it must always be the real shape
+ * (A is active, tracks are A's content)
+ */
 function watchShapes() {
   const seen = [];
   const off = subscribe(() => seen.push(getState().project));

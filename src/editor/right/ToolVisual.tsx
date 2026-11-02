@@ -5,15 +5,20 @@ import { cloudTicket } from "../../ai/extensions";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 聊天栏里一步工具的「看得见的结果」:当时返回的位图、改了哪几个参数、前后两段动图。
+ * The "visible result" of one tool step in the chat panel: the bitmap returned at the time, which
+ * parameters were changed, and the before and after animated images.
  *
- * 记录由执行工具的那一方交给服务端存着(src/ai/mcpExecutor.ts 的 withVisual,或者服务端直接执行的
- * 看图工具),工具结果最前面带一个 visualId。四家的工具结果摘要都保留开头那一截,所以这里从摘要里
- * 认 id 就够了,不用关心这一步是 API 直连还是 agy / Claude / Codex 跑的。
+ * The record is handed by whoever executed the tool to the server to keep (`withVisual` in
+ * src/ai/mcpExecutor.ts, or the image-viewing tools the server executes directly), and the tool
+ * result carries a visualId at the very front. All four vendors' tool result summaries keep the
+ * leading part, so recognizing the id from the summary is enough here, with no need to care whether
+ * the step ran through direct API or agy / Claude / Codex.
  *
- * 本机模式下记录和动图存在预渲染进程上(/api/ai/visual);
- * 云端对话模式下记录和动图存在 Agent 服务的受权对话端点(/agent/v1/conversations/:id/visuals/:vid),
- * 每次读取核对当前对话 ACL 与 aclRevision,切私有或被撤权时立即失效并清空缓存与 DOM。
+ * In local mode the records and animated images are stored in the prerender process
+ * (/api/ai/visual); in cloud chat mode they are stored in the Agent service's authorized chat
+ * endpoint (/agent/v1/conversations/:id/visuals/:vid), and every read checks the current chat's ACL
+ * and aclRevision; on switching to private or on revocation they are invalidated immediately and
+ * the cache and DOM are cleared.
  */
 export function visualIdOf(summary?: string): string | null {
   const m = /"visualId"\s*:\s*"(v-[0-9a-z]{6,40})"/.exec(summary || "");
@@ -31,7 +36,7 @@ export interface VisualRecord {
 }
 
 export interface CloudVisualScope {
-  /** Agent 服务的 `/v1` 根地址（如 `/agent/v1` 或 `https://.../agent/v1`，不带末尾斜杠） */
+  /** Root URL of the Agent service's `/v1` (e.g. `/agent/v1` or `https://.../agent/v1`, without a trailing slash) */
   baseUrl: string;
   projectId: string;
   conversationId: string;
@@ -80,7 +85,8 @@ function notifyScopeListeners() {
 }
 
 /**
- * 清空可视记录与受权文件缓存（切换项目、切换对话、共有切私有、撤权时调用）。
+ * Clears the visual records and the authorized file cache (called on switching project, switching
+ * chat, switching a shared chat to private, and on revocation).
  */
 export function clearVisualCache(): void {
   scopeEpoch += 1;
@@ -91,8 +97,10 @@ export function clearVisualCache(): void {
 }
 
 /**
- * 设置或更新云端对话的可视记录作用域。
- * 当作用域（项目、对话、账号、aclRevision、可见性）变化或被撤权（`revoked: true`）时，立即作废旧缓存并通知界面卸载残留画面。
+ * Sets or updates the scope of the visual records of a cloud chat.
+ * When the scope (project, chat, account, aclRevision, visibility) changes or access is revoked
+ * (`revoked: true`), immediately invalidates the old cache and notifies the UI to unmount any
+ * leftover imagery.
  */
 export function setCloudVisualScope(scope: CloudVisualScope | null): void {
   const prevKey = scopeKeyOf(currentCloudScope);
@@ -204,7 +212,8 @@ async function loadCloudVisualRecord(id: string, scope: CloudVisualScope, myEpoc
   if (myEpoch !== scopeEpoch || currentCloudScope?.revoked) {
     throw new Error(tr("Chat permissions changed"));
   }
-  // 如果服务端返回的 aclRevision 与当前 scope 期望的不一致，同步更新缓存键
+  // If the aclRevision returned by the server differs from what the current scope expects, update the
+  // cache key accordingly
   const rawRec = (data?.record ?? data) as VisualRecord;
   const hydrated: VisualRecord = { ...rawRec };
 
@@ -273,13 +282,13 @@ export function loadVisualRecord(id: string): Promise<VisualRecord> {
   return p;
 }
 
-/** 已经取回来的记录,同步读;还没取回来或者取失败、或当前作用域被撤权时是 undefined */
+/** A record that has already been fetched, read synchronously; undefined if not yet fetched, the fetch failed, or the current scope was revoked */
 export function peekVisualRecord(id: string): VisualRecord | undefined {
   if (currentCloudScope?.revoked) return undefined;
   return loaded.get(cacheKeyOf(id, currentCloudScope));
 }
 
-/** 取一份记录给界面用:缓存里有就直接给(不闪「正在取回」),没有就去取,取失败或撤权把原因带出来并清空旧记录 */
+/** Get a record for the UI: if it is in the cache, hand it over directly (no "Fetching" flicker), otherwise go and fetch it; on fetch failure or revocation, surface the reason and clear the old record */
 export function useVisualRecord(id: string | null): { rec: VisualRecord | null; err: string } {
   const snap = useSyncExternalStore(subscribeVisualScope, getScopeSnapshot, getScopeSnapshot);
   const [state, setState] = useState<{ key: string; rec: VisualRecord | null; err: string }>(() => {
@@ -379,10 +388,12 @@ export function ToolVisual({ id }: { id: string }): JSX.Element {
 }
 
 /**
- * 动图第一次打开时服务端才去渲(8 帧 + 编码),要等几秒到几十秒 —— 转圈,失败了能重试。
- * 轮播也用它;挂载即开始加载,所以别在还没翻到的页里挂它。
+ * The server only renders the animated image (8 frames + encoding) when it is first opened, which
+ * takes a few seconds to tens of seconds: show a spinner, and allow retry on failure.
+ * The carousel uses it too; it starts loading as soon as it mounts, so don't mount it in a page that
+ * has not been flipped to yet.
  */
-/** onSettled:动图出来或确定失败时调(操作详细预览控件靠它判断这一页渲染好没有,好了才让翻过去) */
+/** onSettled: called when the animated image is ready or has definitively failed (the operation detail preview control uses it to tell whether this page has finished rendering, and only then lets you flip past it) */
 export function Gif({ src, label, onSettled }: { src: string; label: string; onSettled?: () => void }): JSX.Element {
   const [state, setState] = useState<"loading" | "ok" | "err">("loading");
   const [attempt, setAttempt] = useState(0);

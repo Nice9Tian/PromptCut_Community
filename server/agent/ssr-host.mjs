@@ -1,15 +1,22 @@
 /**
- * 在 Agent 服务端(编辑器 vite 进程)里载入页面那一套工具实现(C6.5 设计稿第 5 节:「用 vite 的 ssrLoadModule
- * 载入 src/mcp/handlers/* 和 store」)。
+ * Load the page's tool implementations in the Agent server (editor vite process) (Section 5 of
+ * C6.5 design draft: "use vite's ssrLoadModule to load src/mcp/handlers/* and store").
  *
- * `load(id)` 是 `server.ssrLoadModule`(测试里是自己起的 vite 服务器的同名方法)。每次执行工具前都调一遍:
- * 模块没被改过时 vite 直接回缓存;src 下的文件改了(含新建的定制卡),vite 把它和引用它的模块作废,下次载入即是新代码。
+ * `load(id)` is `server.ssrLoadModule` (in tests, the same-named method on a self-started vite
+ * server). Called before executing each tool: if the module was not modified, vite returns cache
+ * directly; if files under src changed (including newly created custom cards), vite invalidates
+ * it and modules importing it, so the next load gets new code.
  *
- * 服务端的 store 是这个进程里的一份单例:执行器(`agent-exec.mjs`)在串行锁里先把项目副本放进去,跑完再取出来算差异。
- * 页面独有的状态(播放头、选区、面板)在这份 store 里只是缺省值,不代表页面;读它们的工具留在页面执行。
+ * Server-side store is a singleton in this process: executor (`agent-exec.mjs`) first puts the
+ * project replica into it under a serial lock, and retrieves it after running to compute diff.
+ * Page-exclusive states (playhead, selection, panels) are only default values in this store and do
+ * not represent the page; tools reading them remain executed on the page.
  */
 
-/** 注册表要先于工具实现就位:卡片、部件都靠 import 时的副作用登记 */
+/**
+ * Registry must be in place before tool implementations: cards and parts both rely on side
+ * effects during import to register.
+ */
 const REGISTRIES = ['/src/cards/index.ts', '/src/parts/index.ts'];
 
 export { diffScopes, overlappingScopes, splitScopes, scopeOverlaps, parkedCutsIndex, cutLookView } from '../../src/kernel/agentScopes.mjs';
@@ -24,7 +31,7 @@ export {
 } from '../../src/kernel/creativity.mjs';
 export const ROLES_DIR = new URL('../../src/ai/roles/', import.meta.url);
 
-/** 卡片的翻译、审查、语法检查:纯函数,在 `server/vite-plugin-cards.ts` 里(桌面版建卡用的同一份) */
+/** Card translation, review, and syntax check: pure functions in `server/vite-plugin-cards.ts` (the same copy used by the desktop app when creating cards) */
 let cardLibPromise = null;
 export function loadCardLib(loadModule = null) {
   cardLibPromise ??= import(new URL('../vite-plugin-cards.ts', import.meta.url).href).catch(async (err) => {
@@ -34,12 +41,12 @@ export function loadCardLib(loadModule = null) {
   return cardLibPromise;
 }
 
-/** store 模块 → 它刚载入时的那份空项目(`clearProject` 放回去的就是它) */
+/** store module → the empty project from when it was first loaded (this is what `clearProject` puts back) */
 const EMPTY_PROJECT = new WeakMap();
 
 /**
  * @param {(id: string) => Promise<any>} load
- * @param {{ apiBase?: string }} [options] 工具实现里打编辑器接口用的地址(`src/mcp/apiUrl.ts`)
+ * @param {{ apiBase?: string }} [options] URL used by tool implementations to call editor APIs (`src/mcp/apiUrl.ts`)
  */
 export async function loadSsrHost(load, { apiBase } = {}) {
   for (const id of REGISTRIES) await load(id);
@@ -70,7 +77,7 @@ export async function loadSsrHost(load, { apiBase } = {}) {
   const editorApi = api.editorApi;
   const routeTable = routes.TOOL_ROUTES;
   return {
-    /** 把项目放进服务端 store(不进撤销栈、不经同步挂钩) */
+    /** Put the project into the server store (does not enter the undo stack, does not go through sync hooks) */
     setProject(project) {
       core.set({ project });
     },
@@ -78,19 +85,21 @@ export async function loadSsrHost(load, { apiBase } = {}) {
       return core.getState().project;
     },
     /**
-     * 多个实例共用这一份 store 时(托管档,`agent-exec.mjs` 的 `isolateStore`)进锁先调:项目以外的页面状态
-     * (播放头、选区、手动时长等)回到缺省值,撤销栈清空 —— 上一个实例的工具实现留下的东西不带给下一个。
+     * Called first upon entering the lock when multiple instances share this store (hosted tier,
+     * `isolateStore` in `agent-exec.mjs`): page state outside the project (playhead, selection,
+     * manual duration, etc.) resets to defaults, and the undo stack is cleared: nothing left by
+     * the previous instance's tool implementation is carried over to the next.
      */
     resetStore() {
       core.set({ t: 0, playing: false, selection: [], filePath: null, dirty: false, durationManual: null, lastCamera3dFov: null });
       dropUndo();
     },
-    /** 出锁时调:把项目换回刚载入时的空项目,store 里不留任何实例的内容 */
+    /** Called when exiting the lock: swaps the project back to the empty project from initial load, leaving no instance content in the store */
     clearProject() {
       core.set({ project: EMPTY_PROJECT.get(core), selection: [] });
       dropUndo();
     },
-    /** 路由表里的工具 → EditorApi 方法;不在表里回 undefined */
+    /** Tools in the routing table → EditorApi methods; returns undefined if not in the table */
     routeOf(tool) {
       return Object.hasOwn(routeTable, tool) ? routeTable[tool] : undefined;
     },
@@ -101,10 +110,13 @@ export async function loadSsrHost(load, { apiBase } = {}) {
       return route.passArgs ? fn(args) : fn();
     },
     /**
-     * 把向页面要来的只读页面状态放进服务端 store(c65-integ2 裁定:既读页面状态又写项目的 5 个工具,
-     * 写入在这里执行,页面状态向页面要一次):`t` 是页面播放头(切剪辑时存回被停放的那条);
-     * `track` 是页面内存里 `track_points` 跑出来的轨迹(`attach_clip_motion` 读)。
-     * 回一个收拾函数:跑完 handler 就把放进去的轨迹拿掉,不让它留在服务端(服务端没有作业表)。
+     * Puts read-only page state requested from the page into the server store (c65-integ2 ruling:
+     * for the 5 tools that both read page state and write to the project, writes are performed here,
+     * and page state is requested once from the page): `t` is the page playhead (saved back to the
+     * parked cut when switching cuts); `track` is the trajectory produced by `track_points` in page
+     * memory (read by `attach_clip_motion`). Returns a cleanup function: removes the inserted
+     * trajectory once the handler finishes, preventing it from lingering on the server (the server
+     * has no jobs table).
      */
     setPageState(ps = {}) {
       core.set({ t: typeof ps.t === 'number' && Number.isFinite(ps.t) ? ps.t : 0, playing: false, selection: [], durationManual: null });
@@ -122,7 +134,7 @@ export async function loadSsrHost(load, { apiBase } = {}) {
       };
     },
     diffProject: diff.diffProject,
-    /** 项目总时长的规则(`src/kernel/duration.ts`):执行器按它在同一次写入里把总时长跟着内容更新(`settleDuration`) */
+    /** Rules for project total duration (`src/kernel/duration.ts`): the executor follows them to update total duration alongside content in the same write (`settleDuration`) */
     durationRules: {
       contentEndOf: duration.contentEndOf,
       effectiveDuration: duration.effectiveDuration,
@@ -131,26 +143,30 @@ export async function loadSsrHost(load, { apiBase } = {}) {
     frameLayoutOf: common.frameLayoutOf,
     stageSize: common.stageSize,
 
-    /* ---------------- 托管档:项目自己的用户卡与素材登记(契约 cloud-agent-contract.md 第 9.3、9.4 节) ---------------- */
+    /* ---------------- Hosted tier: project user cards and asset registration (contract cloud-agent-contract.md, sections 9.3 and 9.4) ---------------- */
 
-    /** 服务端卡片表里现有的卡片 id(检出里带的内置卡与随仓库的用户卡) */
+    /** Existing card IDs in the server card table (built-in cards from checkout and user cards shipped with the repo) */
     cardIds() {
       return registry.allCards().map((c) => c.id);
     },
     /**
-     * 静态解析一份用户卡源码(`src/kernel/cardSourceParse.mjs`):取 id、名字、说明、参数默认值与控件,只认字面量,**不执行源码**。
-     * `files(key)` 给它引到的同目录文件的源码。回 `[{ id, name, description?, defaults, controls, controlsIncomplete }]`。
+     * Statically parses user card source code (`src/kernel/cardSourceParse.mjs`): extracts id, name,
+     * description, parameter defaults, and controls; recognizes only literals;
+     * **does not execute source code**. `files(key)` provides source code for files in the same
+     * directory referenced by it. Returns `[{ id, name, description?, defaults, controls, controlsIncomplete }]`.
      */
     parseCard(source, { key, files } = {}) {
       return cardParse.parseCardSource(source, { key, ...(typeof files === 'function' ? { files } : {}) });
     },
-    /** 一份卡片源码经相对导入引到的文件(仓库相对路径) */
+    /** Files referenced via relative imports by card source code (repository-relative paths) */
     cardImports(source, key) {
       return cardParse.cardSourceImports(source, key);
     },
     /**
-     * 把一组静态解析出的用户卡临时登记进卡片表(只有数据:组件是个空壳,从不渲染),回撤掉它们的函数。
-     * 与表里已有的 id 撞车的不登记(内置卡优先,和 `src/cards/index.ts` 的兜底一致)。只在进程级的锁里用。
+     * Temporarily registers a set of statically parsed user cards into the card table (data only:
+     * the component is an empty shell and never renders); returns a function to unregister them.
+     * Cards that collide with existing IDs in the table are not registered (built-in cards take
+     * priority, consistent with the fallback in `src/cards/index.ts`). Used only within process-level locks.
      */
     registerProjectCards(parsed) {
       const taken = new Set(registry.allCards().map((c) => c.id));
@@ -169,17 +185,19 @@ export async function loadSsrHost(load, { apiBase } = {}) {
       registry.registerCards(defs);
       return () => registry.unregisterCards(defs.map((d) => d.id));
     },
-    /** 登记一条已经入库的素材(不进撤销栈);回登记好的那一条 */
+    /** Registers an asset already stored in the library (does not enter the undo stack); returns the registered item */
     addMedia(asset) {
       return store.actions.addMedia(asset);
     },
-    /** 把一条素材放上时间轴(与桌面版导入视频后自动放一段相同);回片段或 null */
+    /** Places an asset onto the timeline (same as the desktop app automatically placing a clip after importing video); returns a clip or null */
     addMediaClip(mediaId, start, opts = {}) {
       return store.actions.addMediaClip(mediaId, start, opts);
     },
     /**
-     * 音效合成(契约第 9.4a 节):与桌面版同一份纯函数。`plan` 把 sound_generate 的参数变成配方与落点(只读传进来的项目);
-     * `renderWav` 按块合成 PCM16 WAV;`commit` 在放好项目的 store 上原子登记素材与片段(只在进程级的锁里用)。
+     * Sound effect synthesis (contract section 9.4a): same pure functions as the desktop app.
+     * `plan` turns sound_generate parameters into recipes and drop targets (read-only on the passed-in
+     * project); `renderWav` synthesizes PCM16 WAV in chunks; `commit` atomically registers assets
+     * and clips on the store with the project loaded (used only within process-level locks).
      */
     sound: {
       plan: (project, options) => soundRequest.planSoundGeneration(project, options),
@@ -190,23 +208,28 @@ export async function loadSsrHost(load, { apiBase } = {}) {
       commit: (spec) => store.actions.commitSoundEffect(spec),
     },
     /**
-     * 卡片声音(契约第 9.4c 节):WAV 已经由渲染服务的工作进程算好、入了库,这里只在放好项目的 store 上原子登记
-     * (与桌面版同一份 `commitCardAudio`;只在进程级的锁里用)。**这里不执行卡片代码。**
+     * Card audio (contract section 9.4c): WAV has already been computed and stored in the library
+     * by render service worker processes; here it only atomically registers on the store with the
+     * project loaded (same `commitCardAudio` as the desktop app; used only within process-level locks).
+     * **Card code is not executed here.**
      */
     cardAudio: {
       commit: (args) => cardAudioActions.commitCardAudio({ ...args, loadToken: core.getState().projectLoadToken }),
     },
     /**
-     * 测响度(契约第 9.4b 节):与桌面版同一份。`measureRequest` 按放好项目的 store 算出「测谁」(只在进程级的锁里用),
-     * `measureFinish` 给量出来的数标上谁在出声。
+     * Loudness measurement (contract section 9.4b): same as the desktop app. `measureRequest` calculates
+     * "who to measure" from the store with the project loaded (used only within process-level locks);
+     * `measureFinish` tags the measured values with who is outputting sound.
      */
     audio: {
       measureRequest: (args) => common.measureAudioRequest(args),
       measureFinish: (req, data) => common.measureAudioFinish(req, data),
     },
     /**
-     * 感知与一键流程的工具包(镜头、主体、一键流程;`server/agent/service/perception/`、`hosted-workflow.mjs`)要用的内核函数。
-     * 那些文件不引用 `src/`:宿主从这里取来,经工厂参数 `kernel` 注入(契约第 2.1 节「载入缝」)。都是只读项目数据的纯函数。
+     * Kernel functions needed by perception and one-click workflow toolkits (shots, subjects, one-click
+     * workflow; `server/agent/service/perception/`, `hosted-workflow.mjs`). Those files do not import
+     * `src/`: the host retrieves them from here and injects them via factory parameter `kernel` (contract
+     * section 2.1 "loading seam"). All are pure functions that only read project data.
      */
     kernel: Object.freeze({
       subjectForRange: kernelProject.subjectForRange,
@@ -217,20 +240,22 @@ export async function loadSsrHost(load, { apiBase } = {}) {
       getCard: registry.getCard,
     }),
     /**
-     * 感知结果写回素材(与桌面版同一份 store 动作:换新对象,不原地改)。只在放好项目的 store 上、进程级的锁里用。
+     * Writes perception results back to assets (same store action as the desktop app: replaces with
+     * a new object, does not mutate in place). Used only on the store with the project loaded,
+     * within process-level locks.
      */
     media: {
       setTranscript: (mediaId, transcript) => store.actions.setMediaTranscript(mediaId, transcript),
       setShots: (mediaId, shots) => store.actions.setMediaShots(mediaId, shots),
       setSubjects: (mediaId, subjects) => store.actions.setMediaSubjects(mediaId, subjects),
     },
-    /** 一键流程落卡用的三个 store 动作(与桌面版 `src/mcp/tools/autoWorkflow.ts` 用的是同一份);只在进程级的锁里用 */
+    /** Three store actions used by one-click workflows to place cards (the same copy used by desktop app `src/mcp/tools/autoWorkflow.ts`); used only within process-level locks */
     workflow: {
       addCardClip: (cardId, start, opts = {}) => store.actions.addCardClip(cardId, start, opts),
       ensureCaptionTrack: () => store.actions.ensureCaptionTrack(),
       setProjectMeta: (meta) => store.actions.setProjectMeta(meta),
     },
-    /** 此刻 store 里项目内容的末尾(秒):新导入的视频接在后面放 */
+    /** End of project content in the store at this moment (seconds): newly imported videos are placed after it */
     contentEnd() {
       return duration.contentEndOf(core.getState().project.tracks ?? []);
     },

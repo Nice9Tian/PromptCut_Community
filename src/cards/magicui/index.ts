@@ -1,7 +1,8 @@
 import type { CardDef } from "../../kernel/types";
-// MagicUI 组件用到的 animate-* 动画 class(shiny-text / marquee / orbit …)。
-// 它们在 MagicUI 自己的 Tailwind 主题里,我们这边没有;这里引一次,全站可用,
-// 翻译器导入的组件不用改一个 class 名。见该文件头的说明。
+// The animate-* animation classes used by MagicUI components (shiny-text / marquee / orbit …).
+// They live in MagicUI's own Tailwind theme, which we do not have; importing them once here makes
+// them available site-wide, and components imported by the translator do not need a single class
+// name changed. See the explanation at the head of that file.
 import "./vendor/magicui-animations.css";
 import { numberTickerCard } from "./number-ticker.card";
 import { blurFadeCard } from "./blur-fade.card";

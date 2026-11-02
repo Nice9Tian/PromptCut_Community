@@ -1,11 +1,15 @@
 /**
- * M7 页面上传器(`src/online/snapUploader.ts`,契约第 4.5 节、D7):对着真的素材服务 HTTP 层(`fake-asset-service.mjs` 转译的
- * `asset-service.ts`,memory 存储)推 `snap` / `px` 块。
- *   - 对账 → 缺的分片 PUT(每片带大小与扩展名)→ complete,之后 `has` 为真;已有的跳过;
- *   - 写入凭 rw 票据,手里那张被拒(401)就强制换一张、这一步重试一次;
- *   - 哈希对不上 complete 回 409,抛出(可重试);
- *   - 同一哈希按单飞推;收尾回 incomplete 时重查 chunks 补传一次(探针 P4)。
- * 跑:node --test server/test/m7-uploader.test.mjs
+ * M7 page uploader (`src/online/snapUploader.ts`, contract Section 4.5, D7): pushes `snap` / `px`
+ * chunks against real asset service HTTP layer (`asset-service.ts` transpiled from
+ * `fake-asset-service.mjs`, memory storage).
+ *   - Reconcile → PUT missing parts (each with size and extension) → complete, after which `has` is
+ *     true; skip existing;
+ *   - Writes require rw ticket; if current ticket is rejected (401), force-replace it and retry this
+ *     step once;
+ *   - Hash mismatch returns 409 on complete, throws (retryable);
+ *   - Same hash pushed via single-flight; when finalize returns incomplete, recheck chunks and
+ *     re-upload once (probe P4).
+ * Run: node --test server/test/m7-uploader.test.mjs
  */
 import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
@@ -25,7 +29,7 @@ test('M7-UP-01 push snap and px: reconcile, PUT, complete; skip what already exi
   const issued = [];
   const ticket = async (force) => {
     issued.push(!!force);
-    // 第一张是坏的(模拟过期),强制换时给真的
+    // First ticket is broken (simulating expiration); gives a valid one upon forced replacement
     return force ? KIT.issue('rw') : 'v1.bad.ticket';
   };
   const up = createSnapUploader({ base: () => srv.base, ticket });
@@ -44,7 +48,7 @@ test('M7-UP-01 push snap and px: reconcile, PUT, complete; skip what already exi
   assert.deepEqual([st.pushed, st.skipped, st.failed], [2, 1, 0]);
   assert.equal(st.pushedBytes, html.length + webp.length);
   assert.ok(st.reauth >= 1 && issued.includes(true), 'The ticket was force-refreshed after the 401');
-  // 取回来的字节就是推上去的
+  // Retrieved bytes match what was pushed
   const got = await fetch(`${srv.base}/snap/${h1}`, { headers: { Authorization: `Bearer ${KIT.issue('r')}` } });
   assert.equal(got.status, 200);
   assert.equal(Buffer.from(await got.arrayBuffer()).equals(html), true);
@@ -95,7 +99,7 @@ test('M7-UP-04 finalize answers 400 incomplete: re-check chunks, upload the miss
   const up = createSnapUploader({ base: () => 'https://h.example/api/asset', ticket: async () => 't', fetch: f });
   assert.equal(await up.put('snap', h, body, 'html'), 'pushed');
   assert.deepEqual({ completes, puts, chunkCalls, recheck: up.stats().recheck }, { completes: 2, puts: 2, chunkCalls: 2, recheck: 1 });
-  // 第二次还是 incomplete:抛(可重试),不无限重来
+  // Second attempt is still incomplete: throws (retryable), does not retry infinitely
   completes = 0;
   const f2 = async (url, init) => (url.endsWith('/complete') ? json(400, { error: 'incomplete', missing: [0] }) : f(url, init));
   const up2 = createSnapUploader({ base: () => 'https://h.example/api/asset', ticket: async () => 't', fetch: f2 });

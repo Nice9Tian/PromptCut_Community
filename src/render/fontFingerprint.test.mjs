@@ -1,21 +1,24 @@
 /**
- * 字体指纹的单测(I0,A3a 第 2 步落地)。跑:node --test src/render/fontFingerprint.test.mjs
+ * Unit test for font fingerprint (I0, landed in step 2 of A3a). Run:
+ *   node --test src/render/fontFingerprint.test.mjs
  *
- * 这个值进共享快照键。它算错不会报错,只会让两台字体不同的机器互相复用对方的快照
- * (字全换掉、排版全错),或者反过来让同一台机器每次开项目都算出新键、共享档永远
- * 不命中。所以三条性质各钉一条:只认已加载的、同一族只算一次、和迭代顺序无关。
+ * This value enters the shared snapshot key. An error here throws no exception, but causes two
+ * machines with different fonts to reuse each other's snapshots (replacing all characters and
+ * breaking layout completely), or conversely makes the same machine generate a new key each time
+ * a project opens so the shared tier never hits. Therefore, three properties are pinned: only
+ * recognize loaded fonts, compute each family only once, and stay independent of iteration order.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import { fontFamilyNames, fontFingerprintOf } from "./fontFingerprint.ts";
 
-/** FontFaceSet 是可迭代的 FontFace 集合;这里只用到 family / status 两个字段。 */
+/** FontFaceSet is an iterable collection of FontFace; only family and status fields are used here. */
 const set = (...faces) => faces.map(([family, status = "loaded"]) => ({ family, status }));
 
 test("only take loaded families: an @font-face that is declared but not downloaded does not affect this frame's layout", () => {
   assert.deepEqual(fontFamilyNames(set(["Inter"], ["Noto Sans CJK SC", "unloaded"], ["Fira Code", "loading"])), ["Inter"]);
-  // 一个都没加载:是空列表,不是「没算过」。
+  // None loaded: an empty list, not "uncomputed".
   assert.deepEqual(fontFamilyNames(set(["Inter", "unloaded"])), []);
   assert.deepEqual(fontFamilyNames([]), []);
   assert.deepEqual(fontFamilyNames(null), []);
@@ -23,7 +26,7 @@ test("only take loaded families: an @font-face that is declared but not download
 });
 
 test("multiple weights / glyph styles of one family count once, empty names do not count", () => {
-  // 一个 family 的 400 / 700 / italic 是三个 FontFace,但排版落到的是同一族。
+  // 400 / 700 / italic for one family are three FontFaces, but typography resolves to the same family.
   assert.deepEqual(fontFamilyNames(set(["Inter"], ["Inter"], ["Inter"])), ["Inter"]);
   assert.deepEqual(fontFamilyNames(set(["Inter"], ["  Inter  "])), ["Inter"], "leading and trailing whitespace is not a different family");
   assert.deepEqual(fontFamilyNames(set(["", "loaded"], ["   "], ["Inter"])), ["Inter"]);
@@ -40,9 +43,10 @@ test("the fingerprint changes when the font set changes; a machine missing fonts
   const full = fontFingerprintOf(set(["Inter"], ["Noto Sans CJK SC"]));
   const missingCjk = fontFingerprintOf(set(["Inter"]));
   assert.notEqual(full, missingCjk);
-  // 多出一个族也算变。
+  // An extra family also counts as a change.
   assert.notEqual(full, fontFingerprintOf(set(["Inter"], ["Noto Sans CJK SC"], ["Fira Code"])));
-  // 「一个字体都没有」是一个确定值,不是空串 —— 「没有字体」和「没算过」必须分得开。
+  // "No fonts at all" is a deterministic value, not an empty string: "no fonts" and "uncomputed"
+  // must be distinguishable.
   const empty = fontFingerprintOf([]);
   assert.match(empty, /^[0-9a-f]{16}$/);
   assert.equal(empty, fontFingerprintOf(null));
@@ -54,6 +58,6 @@ test("the same input always gives the same value (pure function, reproducible ac
   const fonts = set(["Inter"], ["Noto Sans CJK SC"]);
   assert.equal(fontFingerprintOf(fonts), fontFingerprintOf(fonts));
   assert.match(fontFingerprintOf(fonts), /^[0-9a-f]{16}$/);
-  // 不是把名字直接拼起来:族名里出现分隔符也不会撞键。
+  // Does not simply concatenate names: delimiters in family names will not cause key collisions.
   assert.notEqual(fontFingerprintOf(set(["A\nB"])), fontFingerprintOf(set(["A"], ["B"])));
 });

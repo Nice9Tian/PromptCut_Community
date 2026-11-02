@@ -1,18 +1,25 @@
 /**
- * M6c 契约（`docs/plan/m6c-contract.md`）X1～X4 能在单进程里验的部分。X1 的执行器烟测与 X5 在 `m6c-executor.test.mjs`。
- * 跑：node --experimental-test-module-mocks --test server/test/m6c-contract.test.mjs
+ * The parts of M6c contract (`docs/plan/m6c-contract.md`) X1-X4 that can be verified in a single
+ * process. Executor smoke test for X1 and X5 are in `m6c-executor.test.mjs`.
+ * Run: node --experimental-test-module-mocks --test server/test/m6c-contract.test.mjs
  *
- * 只照契约写，不看实现。契约没写死的接口名集中在 `m6c-kit.mjs`（〔假设 A-…〕），主会话集成时对账。
- * 实现不在测试分支上：新行为的用例在这里失败是预期的。
+ * Written strictly per contract, not looking at implementation. Interface names not fixed by
+ * contract are gathered in `m6c-kit.mjs` ([Assumption A-…]), reconciled during lead session
+ * integration. Implementation is not on test branch: new behavior cases expected to fail here.
  *
- *   MC-X1-*  流任务的能力闸：`requires.capabilities.streams = true`，`streams: false` 的节点 0 次认领；
- *            切分出的流任务带这一项；流任务以 StreamResult 报完成、每个任务恰好一次 task.done
- *   MC-X2-*  本地档素材闸 `requires.localMedia`：别的节点认领 0、收到 task.opened 0；发布方节点能认领、全部完成
- *   MC-X3-*  `watch: 'all'`：browser → forbidden；host 只收摘要（单任务增量 0 条，每周期 ≤ 1 条、每项目 ≤ 1 项）；pc 照旧
- *   MC-X4-*  plan 就近认领：窗口内别的 pc 被拒、窗口后能认领、host 与 browser 始终 0 次
+ *   MC-X1-*  Capability gate for stream tasks: `requires.capabilities.streams = true`, nodes with
+ *            `streams: false` claim 0 times; split stream tasks include this item; stream tasks
+ *            report completion with StreamResult, exactly one task.done per task
+ *   MC-X2-*  Local tier media gate `requires.localMedia`: other nodes claim 0, receive 0
+ *            task.opened; publisher node can claim, all completed
+ *   MC-X3-*  `watch: 'all'`: browser → forbidden; host receives only summaries (0 deltas per task,
+ *            ≤ 1 per cycle, ≤ 1 item per project); PC as usual
+ *   MC-X4-*  plan nearest claim: other PCs rejected within window, can claim after window, host
+ *            and browser always 0 times
  *
- * 队列只经 A.3 的公开接口（connect / handle / tick / describe）驱动；节点会话只经 B.5 的公开接口驱动；
- * 会话与队列之间用 D.3 的环回传输（`fake-loopback-transport.mjs`），假时钟，不起网络。
+ * Queue driven only via public interfaces of A.3 (connect / handle / tick / describe); node session
+ * driven only via public interfaces of B.5; loopback transport of D.3 (`fake-loopback-transport.mjs`)
+ * used between session and queue, with fake clock, no network started.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,18 +37,18 @@ import {
 
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
-/* ================================================================== 进程内拓扑：真队列 + 环回 + 会话 / 本机节点 */
+/* ================================================================== In-process topology: real queue + loopback + session / local node */
 
 function createTopology({ constants } = {}) {
   const clock = createFakeClock();
   const lb = createLoopback();
   const queue = createRenderQueue({ now: clock.now, send: lb.queueSend, ...(constants ? { constants } : {}) });
   lb.attach(queue);
-  /** nodeId → 这个节点发出的 task.claim 的 id */
+  /** nodeId → id of task.claim sent by this node */
   const claims = new Map();
-  /** nodeId → 这个节点收到的（task.opened 或 queue.snapshot 里的）任务 id */
+  /** nodeId → task id received by this node (in task.opened or queue.snapshot) */
   const seen = new Map();
-  /** nodeId → 收到的 task.claimed 的 id */
+  /** nodeId → id of received task.claimed */
   const claimed = new Map();
   const push = (map, key, value) => { if (!map.has(key)) map.set(key, []); map.get(key).push(value); };
   const taps = (nodeId, message) => {
@@ -54,7 +61,7 @@ function createTopology({ constants } = {}) {
 
   const topo = {
     clock, lb, queue, claims, seen, claimed,
-    /** 纯会话节点：认领到的任务只拿着（不干活） */
+    /** Pure session node: only holds claimed tasks (does no work) */
     session(connId, nodeId, node, { projects = 'all', maxConcurrent = 8, isIdle } = {}) {
       const ep = lb.connect(connId, { userId: node.userId ?? 'u1', tenantId: 't1' });
       const s = createNodeSession({
@@ -68,7 +75,7 @@ function createTopology({ constants } = {}) {
       sessions.push(s);
       return s;
     },
-    /** 本机节点：假执行器、假产物库，`put` 回 `result` 给的清单 */
+    /** Local node: fake executor, fake artifact store, `put` returns manifest given in `result` */
     local(connId, nodeId, node, { resultOf = () => ({}), maxConcurrent = 1, isIdle } = {}) {
       const ep = lb.connect(connId, { userId: node.userId ?? 'u1', tenantId: 't1' });
       const endpoint = {
@@ -89,7 +96,7 @@ function createTopology({ constants } = {}) {
       locals.push(local);
       return local;
     },
-    /** 页面发布方：收它的 task.done */
+    /** Page publisher: receives its task.done */
     page(connId = 'conn-page', publisherId = 'page-1', userId = 'u1') {
       const ep = lb.connect(connId, { userId, tenantId: 't1' });
       const inbox = [];
@@ -102,7 +109,7 @@ function createTopology({ constants } = {}) {
         done: () => inbox.filter(m => m.type === 'task.done'),
       };
     },
-    /** 推进 `steps` 拍：每拍 tick 队列、会话、本机节点，投递，等异步执行落定 */
+    /** Advance `steps` ticks: each tick ticks queue, session, and local node, delivers, and waits for async execution to settle */
     async run(steps = 40, stepMs = 250) {
       for (let i = 0; i < steps; i += 1) {
         clock.advance(stepMs);
@@ -119,15 +126,18 @@ function createTopology({ constants } = {}) {
   return topo;
 }
 
-/* ================================================================== X1 轨道流走队列 */
+/* ================================================================== X1 track streams go through queue */
 
 test('MC-X1-filter: stream tasks require capabilities.streams, nodes with streams:false are filtered out and nodes with streams:true pass', () => {
   const task = { ...streamTask(), source: { projectId: 'p1', projectRev: 1, userId: 'u1' } };
   assert.equal(task.requires.capabilities.streams, true, 'Fixture: the stream task carries requires.capabilities.streams = true');
   const no = checkClaimable(task, nodeDescriptor({ nodeId: 'n-no', capabilities: { transcode: true, streams: false } }));
   assert.equal(no.ok, false, `streams:false (even with transcode) should not be able to claim stream tasks: ${JSON.stringify(no)}`);
-  // 集成对账（B 类，按主会话裁定 X1 改）：「没有 streams 字段的节点回落 transcode」（m6c-contract「集成时的裁定」）。
-  // 契约 X1 原文只说「节点侧过滤照此执行」，没说没报 streams 的旧节点怎么算；原断言按「不收」写，与裁定不符。
+  // Integration reconciliation (Class B, modified per lead session ruling X1): "nodes without
+  // streams field fall back to transcode" (m6c-contract "integration ruling").
+  // The original contract X1 only states "node-side filtering executes accordingly", without
+  // specifying how older nodes not reporting streams are handled; original assertion was written
+  // as "not accepted", which does not match ruling.
   const missing = checkClaimable(task, nodeDescriptor({ nodeId: 'n-missing', capabilities: { transcode: true } }));
   assert.equal(missing.ok, true, `A node that does not report streams but has transcode is judged by transcode and can claim: ${JSON.stringify(missing)}`);
   const missingNoTranscode = checkClaimable(task, nodeDescriptor({ nodeId: 'n-missing-2', capabilities: { transcode: false } }));
@@ -184,7 +194,7 @@ test('MC-X1-hello: the session reports capabilities.streams as is in node.hello'
 
 test('MC-X1-done: stream tasks complete through the queue, the result of task.complete is a StreamResult, and the page gets exactly one task.done per task', async () => {
   const topo = createTopology();
-  // 〔假设 A-X1-2〕StreamResult 经 sink.put 的 result 进 task.complete
+  // [Assumption A-X1-2] StreamResult enters task.complete via result of sink.put
   const resultOf = (entry) => ({
     v: 1, kind: 'stream', resultKey: entry.resultKey, range: { from: entry.range.from, to: entry.range.to },
     header: { kind: 'bg', plane: 0, clipIds: ['clip-bg'], fps: 30, bound: null, offset: 0, tight: null },
@@ -214,7 +224,7 @@ test('MC-X1-done: stream tasks complete through the queue, the result of task.co
   }
 });
 
-/* ================================================================== X2 本地档素材闸 */
+/* ================================================================== X2 local tier media gate */
 
 test('MC-X2-queue: for a task with localMedia, other nodes receive 0 task.opened and their claims are rejected; the publisher node can claim', () => {
   const h = createQueueHarness(createRenderQueue);
@@ -229,7 +239,7 @@ test('MC-X2-queue: for a task with localMedia, other nodes receive 0 task.opened
   assert.ok(openedB.includes(shared.id), 'Tasks without localMedia are sent to node-B as usual');
   assert.ok(step.of('conn-a', 'task.opened').some(m => m.task.id === local.id), 'node-A receives the localMedia task');
 
-  // 晚来的 watch 同样看不到
+  // Late-arriving watch also cannot see it
   const late = h.node('conn-c', 'node-C', { hello: { envFingerprint: FP } });
   const snapC = late.of('conn-c', 'queue.snapshot')[0]?.tasks.map(t => t.id) ?? [];
   assert.ok(!snapC.includes(local.id), `queue.snapshot should not contain the localMedia task: ${JSON.stringify(snapC)}`);
@@ -245,7 +255,7 @@ test('MC-X2-queue: for a task with localMedia, other nodes receive 0 task.opened
 
 test('MC-X2-node: node-side filtering skips other nodes\' localMedia tasks (even if the queue sent them over)', () => {
   const task = { ...snapTask({ localMedia: 'node-A' }), source: { projectId: 'p1', projectRev: 1, userId: 'u1' }, state: 'open', version: 1, attempts: 0 };
-  // 会话层：直接喂 queue.snapshot，看它发不发认领
+  // Session layer: directly feed queue.snapshot to see if it sends a claim
   const run = (nodeId) => {
     const sent = [];
     const s = createNodeSession({ nodeId, node: nodeDescriptor({ nodeId }), send: m => sent.push(m), now: () => 1, random: () => 0.5 });
@@ -257,7 +267,7 @@ test('MC-X2-node: node-side filtering skips other nodes\' localMedia tasks (even
   };
   assert.deepEqual(run('node-B'), [], 'node-B\'s session does not claim');
   assert.deepEqual(run('node-A'), [task.id], 'node-A\'s session claims');
-  // 纯函数层〔假设 A-X2-1〕
+  // Pure function layer [Assumption A-X2-1]
   assert.equal(checkClaimable(task, nodeDescriptor({ nodeId: 'node-B' })).ok, false);
   assert.equal(checkClaimable(task, nodeDescriptor({ nodeId: 'node-A' })).ok, true);
 });
@@ -279,7 +289,7 @@ test('MC-X2-e2e: for a project with local-tier media, other nodes claim 0 and re
   for (const t of tasks) assert.ok(byA.has(t.id), `${t.id} should be claimed by node-A`);
 });
 
-/* ================================================================== X3 watch: 'all' 收紧 */
+/* ================================================================== X3 watch: 'all' tightened */
 
 test('MC-X3-browser: a browser node\'s watch all returns forbidden, while watching a specified project works as usual', () => {
   const rig = createDocQueueRig();
@@ -287,7 +297,7 @@ test('MC-X3-browser: a browser node\'s watch all returns forbidden, while watchi
   rig.clear('conn-w');
   rig.send('conn-w', { type: 'queue.watch', projects: 'all', reqId: 'w1' });
   const reply = rig.inbox('conn-w').find(m => m.reqId === 'w1');
-  // 〔假设 A-X3-3〕
+  // [Assumption A-X3-3]
   assert.equal(reply?.type, 'error', JSON.stringify(rig.inbox('conn-w')));
   assert.equal(reply?.reason, 'forbidden');
   rig.send('conn-w', { type: 'queue.watch', projects: ['p1'], reqId: 'w2' });
@@ -303,7 +313,7 @@ test('MC-X3-host: host watch all gets 0 single-task deltas, at most 1 summary pe
   const perTick = [];
   let seq = 0;
   for (let round = 0; round < 6; round += 1) {
-    // 三个项目各发一批，pc 认领并完成其中一个：产生 opened / taken / closed
+    // Three projects each dispatch a batch; PC claims and completes one: produces opened / taken / closed
     const batch = ['p1', 'p2', 'p3'].map(projectId => snapTask({ projectId, key: `rk-${projectId}-${round}`, seg: seq++ }));
     rig.publish('conn-p', batch);
     const target = batch[0];
@@ -318,14 +328,14 @@ test('MC-X3-host: host watch all gets 0 single-task deltas, at most 1 summary pe
   const increments = rig.inbox('conn-h').filter(m => TASK_TYPES.includes(m.type) && !(m.type === 'queue.snapshot' && (m.tasks ?? []).length === 0));
   assert.equal(increments.length, 0, `host should not receive single-task deltas: ${JSON.stringify(increments.map(m => m.type))}`);
   const summaries = rig.of('conn-h', 'queue.summary');
-  // 〔假设 A-X3-2〕
+  // [Assumption A-X3-2]
   assert.ok(summaries.length >= 1, `host watch all should receive summaries; inbox: ${JSON.stringify(rig.inbox('conn-h').map(m => m.type))}`);
   for (const [i, n] of perTick.entries()) assert.ok(n <= 1, `Cycle ${i} received ${n} summaries`);
   for (const s of summaries) {
     const ids = (s.projects ?? []).map(p => p.projectId);
     assert.equal(new Set(ids).size, ids.length, `At most 1 entry per project in a summary: ${JSON.stringify(ids)}`);
   }
-  // pc 保持现状
+  // PC remains unchanged
   assert.ok(rig.of('conn-pc', 'task.opened').length >= 18, `pc should receive task.opened in full: ${rig.of('conn-pc', 'task.opened').length}`);
 });
 
@@ -339,7 +349,7 @@ test('MC-X3-pc: a pc node\'s watch all returns queue.snapshot as usual', () => {
   assert.equal(snap.tasks.length, 1);
 });
 
-/* ================================================================== X4 plan 就近认领 */
+/* ================================================================== X4 plan nearest claim */
 
 test('MC-X4-const: PLAN_PREFER_MS is in constants.mjs, default 5000', () => {
   assert.equal(PLAN_PREFER_MS_DEFAULT(), 5000);
@@ -409,9 +419,9 @@ test('MC-X4-sessions: with sessions running a full 20 seconds, host and browser 
   const page = topo.page('conn-p', 'node-A');
   const plan = planTask({ projectId: 'p1', projectRev: 1, preferNode: 'node-A' });
   page.publish([plan]);
-  await topo.run(16, 250);   // 4 秒，窗口内
+  await topo.run(16, 250);   // 4 seconds, within window
   assert.equal(topo.count(topo.claimed, 'node-B', id => id === plan.id), 0, 'node-B cannot claim within the window');
-  await topo.run(64, 250);   // 再 16 秒
+  await topo.run(64, 250);   // Another 16 seconds
   assert.equal(topo.count(topo.claimed, 'node-H', id => id === plan.id), 0, 'host claims the plan 0 times');
   assert.equal(topo.count(topo.claimed, 'node-W', id => id === plan.id), 0, 'browser claims the plan 0 times');
   assert.equal(topo.count(topo.claimed, 'node-B', id => id === plan.id), 1, 'node-B claims it after the window');

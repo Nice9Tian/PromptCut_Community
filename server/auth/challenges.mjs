@@ -1,31 +1,35 @@
 /**
- * 挑战用的一次性随机数（契约 `docs/plan/auth-contract.md` 第 4、7 节）。
+ * One-time nonce for challenges (contract `docs/plan/auth-contract.md` Sections 4 and 7).
  *
- * `nonce` 是 32 字节随机数（base64url），只能用一次，60 s 过期，绑定一组字段（进入：`projectId`、`username`、
- * `deviceId`、`as`；创建者操作：连接与项目）。核对时不论成败，`nonce` 立即作废。
- * 只在内存里：文档服务重启后，没用掉的全部失效，客户端重新取即可。
+ * A `nonce` is a 32-byte random number (base64url), single-use, expires in 60 s, bound to a set of
+ * fields (entry: `projectId`, `username`, `deviceId`, `as`; creator operations: connection and
+ * project). Upon verification, whether success or failure, the `nonce` is invalidated immediately.
+ * In-memory only: after the document service restarts, all unused ones are invalidated, and clients
+ * simply fetch a new one.
  *
- * 用过的 nonce 在原定的过期时刻之前还记着（`spent`），核对时能分出「重放了一个用过的」（`used`）。
- * 握手据此不把重放计入口令错误限速：Node 内置的 WebSocket（undici）在握手回 401 时会用同一组子协议原样再请求一次，
- * 一次输错口令会被数成两次；而重放用过的 nonce 永远进不来，不计数也不帮猜口令的人任何忙。
+ * Used nonces are kept until their original expiration time (`spent`), so verification can
+ * distinguish "replayed a used one" (`used`). The handshake uses this to avoid counting replays
+ * toward passphrase error rate limits: Node's built-in WebSocket (undici) requests again with the
+ * exact same subprotocols when handshake returns 401, counting a single wrong passphrase twice;
+ * replaying a used nonce can never get in, neither counting nor helping passphrase guessers.
  */
 import { randomBytes } from 'node:crypto';
 
 export const CHALLENGE_DEFAULTS = Object.freeze({ TTL_MS: 60_000, MAX: 20_000 });
 
-/** 绑定的字段拼成一个键：各字段 JSON 化后按顺序拼，字段里有什么字符都不会串 */
+/** Bound fields concatenated into a key: fields are JSON-stringified and joined in order, so field characters never collide */
 const bindingKey = (binding) => JSON.stringify(binding);
 
 /**
  * @param {object} [options]
  * @param {() => number} [options.now]
  * @param {number} [options.ttlMs]
- * @param {number} [options.max] 同时在册的上限；超出时丢最早发的
+ * @param {number} [options.max] Concurrency limit; drops the earliest issued when exceeded
  */
 export function createChallenges({ now = Date.now, ttlMs = CHALLENGE_DEFAULTS.TTL_MS, max = CHALLENGE_DEFAULTS.MAX } = {}) {
-  /** nonce → { key, expires }；Map 按插入顺序，最早发的在前 */
+  /** nonce → { key, expires }; Map in insertion order, earliest issued comes first */
   const live = new Map();
-  /** 用过的 nonce → 原定的过期时刻 */
+  /** Used nonce → original expiration time */
   const spent = new Map();
 
   function prune(at) {
@@ -41,7 +45,7 @@ export function createChallenges({ now = Date.now, ttlMs = CHALLENGE_DEFAULTS.TT
   }
 
   return {
-    /** 发一个 nonce，绑定 `binding`（数组，字段按固定顺序） */
+    /** Issues a nonce, bound to `binding` (array, fields in fixed order) */
     issue(binding) {
       const at = now();
       prune(at);
@@ -51,8 +55,9 @@ export function createChallenges({ now = Date.now, ttlMs = CHALLENGE_DEFAULTS.TT
     },
 
     /**
-     * 核对并作废，回 `'ok'`，或失败原因：`'used'`（用过的，重放）、`'expired'`、`'mismatch'`（绑定不符）、`'unknown'`。
-     * 不论成败，这个 nonce 都作废。
+     * Verifies and invalidates, returning `'ok'` or failure reason: `'used'` (already used, replay),
+     * `'expired'`, `'mismatch'` (binding mismatch), `'unknown'`. This nonce is invalidated regardless
+     * of success or failure.
      */
     check(nonce, binding) {
       if (typeof nonce !== 'string') return 'unknown';
@@ -64,12 +69,12 @@ export function createChallenges({ now = Date.now, ttlMs = CHALLENGE_DEFAULTS.TT
       return entry.key === bindingKey(binding) ? 'ok' : 'mismatch';
     },
 
-    /** `check` 的布尔版 */
+    /** Boolean version of `check` */
     consume(nonce, binding) {
       return this.check(nonce, binding) === 'ok';
     },
 
-    /** 作废满足条件的 nonce（连接断开时清它的创建者挑战） */
+    /** Invalidates matching nonces (clears its creator challenges when connection disconnects) */
     dropWhere(predicate) {
       for (const [nonce, entry] of live) {
         if (predicate(JSON.parse(entry.key))) {

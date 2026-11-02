@@ -1,9 +1,11 @@
 import { NOISE_TILE } from "./noise";
 
 /**
- * 性能降级开关:P4 曾按熔断协议打开(每拍主线程 p90 超标),用户接受起播 +2.5 ms 后关回,恢复噪点与转动。打开时降级为
- * **极简静态占位符** —— 纯色底 + 静止沙漏,不铺噪点、不转。120 ms 出现延迟仍保留(只跑一次的 opacity 动画)。
- * `index.ts` 的 `maxAnimated` / `layersFor` 跟着它走。
+ * Performance downgrade switch: opened during P4 under the circuit breaker protocol (main thread
+ * p90 exceeded limit per tick), turned back off after user accepted +2.5 ms on playback start,
+ * restoring noise and rotation. When enabled, downgrades to a **minimal static placeholder**: solid
+ * background + static hourglass, no noise, no spinning. The 120 ms appearance delay remains (a
+ * one-shot opacity animation). `maxAnimated` / `layersFor` in `index.ts` follow it.
  */
 export const PERF_DEGRADED = false;
 

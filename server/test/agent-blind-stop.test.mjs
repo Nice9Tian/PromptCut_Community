@@ -1,10 +1,13 @@
 /**
- * 「用不了的能力怎么办」:提示词里那张决策表,与云端注记里素材模式那句话按真实情况写。
+ * "What to do with unavailable capabilities": Write the decision table in the prompt and the
+ * statement about media mode in the cloud notes according to the actual situation.
  *
- * 起因(docs/plan/agent-blind-stop.md):2026-10-24 的一次云端运行里,模型同时收到三句打架的话 ——
- * 提示词说「排卡前必须先用素材模式看过画面」、云端注记说「素材模式云端还没有」、工具清单里
- * 却真的有这个工具。它试了两轮拿到一串内部错误码,就蒙着眼睛手写了一张 637 行的卡,
- * `create_card` 一次没调到就撞了轮次上限。
+ * Cause (docs/plan/agent-blind-stop.md): In a cloud run on 2026-10-24, the model received three
+ * conflicting statements at the same time: the prompt said "must inspect visuals using media mode
+ * before arranging cards", the cloud notes said "media mode is not yet available in the cloud",
+ * while the tool list actually contained this tool. It tried for two rounds, received a series of
+ * internal error codes, then blindly wrote a 637-line card by hand, hitting the round limit
+ * without calling `create_card` even once.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -37,7 +40,8 @@ test('cloud note: the two wordings differ only in the media sentence, and the li
   assert.equal(on.split('\n').length, off.split('\n').length);
   assert.match(on, /Viewing frames works as usual, but slower than on this machine/);
   assert.match(off, /Viewing frames works as usual, but slower than on this machine/);
-  // look 为 false 时 see_frames 整个没交给模型,素材模式接没接上都不改这段话
+  // When look is false, see_frames is not provided to the model at all; whether media mode is
+  // connected or not does not change this passage
   assert.equal(cloudSystemNote({ look: false, mediaFrames: true }), CLOUD_SYSTEM_NOTE);
 });
 
@@ -50,20 +54,21 @@ test('prompt: the "must look at the media first" item points to the decision tab
 test('prompt: all three options of the decision table are present, and "hard prerequisite" has an actionable criterion', () => {
   const table = prompt.slice(prompt.indexOf('- **What to do when a capability is unavailable'), prompt.indexOf('- **Land it first, polish later'));
   assert.ok(table, 'the decision table section must be in the interaction principles');
-  // 三条路
+  // Three paths
   assert.match(table, /It \*\*is\*\* a hard prerequisite/);
   assert.match(table, /It is \*\*not\*\* a hard prerequisite/);
   assert.match(table, /the same error 2 times in a row/);
-  // 硬前提那条要落到 final + blocked 的汇报并停下:blocked 是界面上「等你回话」那一位
+  // The hard prerequisite path must land on a final + blocked progress report and stop: blocked is
+  // the "waiting for your reply" bit in the UI
   assert.match(table, /`report_progress` with `final: true` and `blocked: true`/);
   assert.match(table, /Then stop and do not call any more tools/);
-  // 判据:用户提到画面内容就算硬前提;拿不准就停
+  // Criterion: user mentioning visual content counts as a hard prerequisite; stop if unsure
   assert.match(table, /who is where, what to avoid/);
   assert.match(table, /When in doubt, treat it as a hard prerequisite and stop to ask/);
-  // 明确排除「重试第三次」和「当它不存在接着做」
+  // Explicitly exclude "retry a third time" and "continue as if it does not exist"
   assert.match(table, /includes "retry a third time"/);
   assert.match(table, /includes "carry on as if it did not exist"/);
-  // 结果里带 cloudUnavailable 也算一种信号
+  // Having cloudUnavailable in the result also counts as a signal
   assert.match(table, /cloudUnavailable/);
 });
 
@@ -75,13 +80,15 @@ test('prompt: land it first and polish later, and state that only what is handed
 });
 
 test('prompt: every place that stops to wait for the user is changed to blocked, with a clear note not to fill it in carelessly', () => {
-  // 决策表之外还有三处「停下来等用户」:汇报那一节、网页撞墙交接、指令含糊要澄清
+  // Outside the decision table, there are three other places to "stop and wait for user": the progress
+  // report section, web page blocked handoff, and clarifying ambiguous instructions
   for (const anchor of ['The same applies when you need the user to do something or answer', 'Ask when you cannot understand', 'bring the window to the user']) {
     assert.ok(prompt.includes(anchor), anchor);
   }
   assert.match(prompt, /in all these cases call `report_progress` with `final: true` \*\*and `blocked: true`\*\*/);
   assert.match(prompt, /- \*\*Ask when you cannot understand\*\*: [^\n]*`final: true` and `blocked: true`/);
-  // 别乱填:做完了或只是撞上限不算「等你回话」
+  // Do not fill arbitrarily: completed or merely hitting the limit does not count as "waiting for
+  // your reply"
   assert.match(prompt, /If you finished by yourself, or merely hit the turn limit, do not set `blocked`/);
   assert.match(prompt, /`blocked: true` implies `final`/);
 });

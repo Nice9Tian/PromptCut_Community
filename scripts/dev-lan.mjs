@@ -1,17 +1,21 @@
 /**
- * 以局域网模式起本机编辑器（语义 `docs/semantics/mechanism/platforms.md`「局域网里的第二块屏」）。
+ * Starts the local editor in LAN mode (semantics `docs/semantics/mechanism/platforms.md`
+ * "The second screen on the LAN").
  *
  *   npm run dev:lan [-- --port 5190 ...]
  *
- * 和 `npm run dev` 的区别只有两样：
- *   1. 设 `PROMPTCUT_LAN_HOST=1` —— 编辑器绑 `0.0.0.0`（`vite.config.ts` 的 `lanHostPlugin`），
- *      挂在它上面的文档服务与素材服务随之对局域网可达；放本机的共享项目建成后开始广播
- *      （`server/vite-plugin-docservice.ts`）。
- *   2. 命令行也给 `--host 0.0.0.0`，免得哪天 `dev` 的缺省改回回环时这条命令跟着失效。
+ * Only two differences from `npm run dev`:
+ *   1. Sets `PROMPTCUT_LAN_HOST=1`: the editor binds to `0.0.0.0` (`lanHostPlugin` in `vite.config.ts`),
+ *      making document service and asset service mounted on it accessible over LAN; shared projects
+ *      hosted locally begin broadcasting once created (`server/vite-plugin-docservice.ts`).
+ *   2. Also passes `--host 0.0.0.0` on CLI, lest this command break if `dev` default reverts to
+ *      loopback someday.
  *
- * 只给开发与验收用。打包的桌面应用由外壳起编辑器（它给 `--host 127.0.0.1`），要不要绑局域网归外壳管。
+ * For development and acceptance check only. Packaged desktop apps have the shell launch the editor
+ * (passing `--host 127.0.0.1`); whether to bind LAN is handled by the shell.
  *
- * 子进程按硬约束设 `windowsHide`（`docs/semantics/guide_files/constraints.md`），别把终端窗口弹到前台。
+ * Child processes set `windowsHide` per hard constraints (`docs/semantics/guide_files/constraints.md`);
+ * avoid popping terminal windows into the foreground.
  */
 import { spawn } from "node:child_process";
 import path from "node:path";
@@ -19,7 +23,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const rest = process.argv.slice(2);
-/** 用户自己给了 --port / --host 就不再补一份，免得 vite 拿到两个同名参数 */
+/** If user provided --port / --host, do not append another, avoiding duplicate args in vite */
 const has = (flag) => rest.some((a) => a === flag || a.startsWith(`${flag}=`));
 const args = [
   ...(has("--port") ? [] : ["--port", "5190"]),

@@ -1,9 +1,12 @@
 /**
- * `c10-fake-idb.mjs`（C10 契约测试自写的内存 IndexedDB 桩）本身的单测：桩不对，L2 的用例就没有意义。
- * 跑：node --test server/test/c10-fake-idb.test.mjs
+ * Unit tests for `c10-fake-idb.mjs` (the custom in-memory IndexedDB stub for C10 contract tests):
+ * if the stub is incorrect, L2 test cases are meaningless.
+ * Run: node --test server/test/c10-fake-idb.test.mjs
  *
- * 钉的是 L2 用例依赖的那几条浏览器行为：升级建表、读写、游标与索引、事务自动提交、事务不活跃时发请求抛错、
- * 两种配额错误的事件顺序（请求 error → 事务 error → 事务 abort；只有 abort）、中止回滚、`forceQuota`。
+ * Pins down browser behaviors that L2 test cases rely on: creating stores on upgrade, reads/writes,
+ * cursors and indexes, transaction auto-commit, throwing errors when issuing requests on inactive
+ * transactions, event ordering for the two quota errors (request error → transaction error →
+ * transaction abort; abort only), abort rollback, and `forceQuota`.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -70,7 +73,7 @@ test('FIDB-02 index cursor in ascending order of at, deleting inside the cursor;
   assert.deepEqual(seen, [1, 2, 3, 4, 5]);
   const keys = await reqP(db.transaction('a').objectStore('a').getAllKeys());
   assert.deepEqual(keys, ['k3', 'k4', 'k5']);
-  // 微任务里接着发请求：事务仍活跃（浏览器的行为，idb 这类封装靠它）
+  // Continuing to issue requests in a microtask: transaction remains active (browser behavior that wrappers like idb rely on)
   const tx3 = db.transaction('a', 'readwrite');
   const os3 = tx3.objectStore('a');
   await reqP(os3.get('k3'));
@@ -103,7 +106,7 @@ test('FIDB-04 quota request mode: request error → transaction error → transa
   assert.deepEqual(await txDone(t2), ['error', 'abort']);
   assert.deepEqual(reqEvents, ['QuotaExceededError']);
   assert.equal(t2.error.name, 'QuotaExceededError');
-  // 同一事务里先成功的那条也回滚了
+  // The earlier successful request in the same transaction is also rolled back
   assert.deepEqual(await reqP(db.transaction('a').objectStore('a').getAllKeys()), ['one']);
   assert.equal(f.log.at(-2).outcome, 'abort');
 });

@@ -1,32 +1,55 @@
 /**
- * 云端 Agent 的主体识别(`subject_status`、`subject_install`、`detect_subjects`、`list_subjects`;
- * 拆包表 `docs/plan/cloud-agent-tools-implementation.md` 的 P4)。
+ * Subject detection for Cloud Agent (`subject_status`, `subject_install`, `detect_subjects`,
+ * `list_subjects`; package breakdown table P4 in `docs/plan/cloud-agent-tools-implementation.md`).
  *
- * 桌面版里这四个工具打编辑器进程的 `/api/subject/*`(`server/vite-plugin-subject.ts`),作业放在 RAM 里,结果由页面写回项目。
- * 云节点上没有编辑器进程,这里照同一份命令行与 JSONL 约定起同一个 Python 包(`promptcut_subject`,隔离模式起),规矩是:
+ * In the desktop app, these four tools call `/api/subject/*` on the editor process
+ * (`server/vite-plugin-subject.ts`), jobs are stored in RAM, and results are written back to the
+ * project by the page. There is no editor process on cloud nodes; here we launch the same Python
+ * package (`promptcut_subject`, launched in isolated mode) following the same command-line and
+ * JSONL conventions, with the rules:
  *
- *   - **上下文只来自 F0**:每个调用带的 `context` 是 `tool-context.mjs` 发的可信八字段;每次读素材、起进程、写项目之前,
- *     都用 `run-resources.mjs` 的 `authorize` 重验 doc 的当前 grant / fence,不信工具参数里的任何项目或路径;
- *   - **素材只经 `project-assets.mjs` 的 `openRead`**(带哈希核对)取到这个对话的工作目录(`subject/<作业号>/`),
- *     跑完删;Python 只读这份本地文件,并且加 `--local-only`,ffmpeg / ffprobe 只准读本地文件;
- *   - **子进程只经工作区的受限子进程起**(`workspace.mjs` 的 `spawn`:环境变量白名单、不弹窗口、起成一棵杀得掉的进程树),并登记到
- *     `run-resources.mjs`(kind `child`):这一轮被停、转私有、Agent 关闭、服务关闭时,进程树真被杀掉、`exit` 与 `close` 都到了才算关
- *     (杀树、等收尾、登记用公共实现 `runner.mjs`);
- *   - **Python 用隔离模式起**(`-I`,`runner.mjs` 的 `isolatedPythonArgs`):工作目录是对话工作区,里面是成员和模型弄进来的文件,
- *     不让它排进模块搜索路径;包目录与受控安装的目录只来自部署配置,经引导代码递进去;
- *   - **作业记在 `tool-jobs.mjs` 的持久账本里**(`subject.detect` / `subject.install`):服务重启后 `running` 变 `interrupted`,
- *     不是「找不到」;账本只存状态与进度,中文的失败原因与采样点数等放在对话工作区的 `subject/jobs.json`;
- *   - **结果写项目素材的当前版本**:`project.setMediaSubjects` 带上取字节时的 `mediaRev` 做版本预期,素材中途被换掉就丢弃这次结果,
- *     不写;写之前再验一次 write 权限(只读成员在起作业之前就被拒);
- *   - **没有兜底档**:两档都用不了(`engine` 为 null)就如实回「用不了」,不起一个注定失败的作业;
- *     light 档不假称提示词生效,full 档缺权重如实报告。
+ *   - **Context comes only from F0**: each call carries `context` with the trusted eight fields
+ *     issued by `tool-context.mjs`; before reading assets, spawning processes, or writing to
+ *     projects each time, re-verify current doc grant / fence using `authorize` from
+ *     `run-resources.mjs`, trusting no project or path in tool arguments;
+ *   - **Assets are fetched only via `openRead` in `project-assets.mjs`** (with hash verification)
+ *     into the working directory of this chat (`subject/<job id>/`), deleted after the run;
+ *     Python reads only this local file and adds `--local-only`, ffmpeg / ffprobe are only
+ *     allowed to read local files;
+ *   - **Child processes are spawned only via workspace restricted child process** (`spawn` in
+ *     `workspace.mjs`: environment variable allowlist, no popups, spawned as a killable process
+ *     tree), and registered to `run-resources.mjs` (kind `child`): when stopped in this round,
+ *     switched to private, Agent closed, or service closed, considered closed only after the
+ *     process tree is truly killed and both `exit` and `close` have arrived (killing trees, waiting
+ *     for cleanup, and registration use shared implementation `runner.mjs`);
+ *   - **Python is launched in isolated mode** (`-I`, `isolatedPythonArgs` in `runner.mjs`): the
+ *     working directory is the chat workspace, containing files brought in by members and the model,
+ *     prevented from entering module search paths; package directories and controlled installation
+ *     directories come only from deployment config, passed in via bootstrap code;
+ *   - **Jobs are recorded in persistent ledger of `tool-jobs.mjs`** (`subject.detect` /
+ *     `subject.install`): `running` becomes `interrupted` after service restart, not "not found";
+ *     the ledger stores only status and progress, Chinese failure reasons and sample counts are
+ *     placed in `subject/jobs.json` of the chat workspace;
+ *   - **Results are written to current version of project asset**: `project.setMediaSubjects`
+ *     carries `mediaRev` from byte retrieval as version expectation; if asset is swapped mid-way,
+ *     discard this result without writing; re-verify write permissions before writing (read-only
+ *     members are rejected before starting the job);
+ *   - **No fallback tier**: if neither tier is usable (`engine` is null), report "unavailable"
+ *     truthfully without starting a job doomed to fail; light tier does not falsely claim prompt
+ *     takes effect, and full tier reports missing weights truthfully.
  *
- * **`subject_install` 在云端受限**:只装包内锁定的清单(部署者可给一份锁版本的 `requirements`),不收任何 pip 参数;
- * 没有配 `pylibs` 与 `requirements` 就不装(回「用不了」)。full 档(torch + 690 MB 权重)本来就不走在线装,只随部署送达。
+ * **`subject_install` is restricted in the cloud**: installs only the locked manifest inside the
+ * package (deployers can provide a locked-version `requirements`), accepts no pip arguments;
+ * do not install if `pylibs` and `requirements` are not configured (returns "unavailable"). The full
+ * tier (torch + 690 MB weights) never goes through online installation anyway, delivered only with
+ * deployment.
  *
- * 表里本包列的四个工具名在 `SUBJECT_TOOL_NAMES`。工具总表(`cloud-tools.mjs`)的接线归 G 包,本文件不碰它。
- * 纯 Node,不引用浏览器,也不直接 import `src/`(独立入口对前端代码只经 `server/agent/ssr-host.mjs` 的载入缝):
- * 取采样时刻与建议位置要的内核函数由宿主经 `kernel` 参数注入,没注入就是「没配置全」,工厂直接拒绝。
+ * The four tool names listed for this package in the table are in `SUBJECT_TOOL_NAMES`. Wiring for
+ * the master tool table (`cloud-tools.mjs`) belongs to package G, untouched by this file. Pure Node,
+ * without referencing browser, nor directly importing `src/` (standalone entry points access frontend
+ * code only through the loading seam in `server/agent/ssr-host.mjs`): Kernel functions needed to
+ * obtain sample times and suggested positions are injected by the host via the `kernel` parameter;
+ * if not injected, it is considered "incompletely configured", and the factory rejects directly.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
@@ -36,25 +59,25 @@ import { isolatedPythonArgs, splitRoots, superviseChild } from './runner.mjs';
 export const SUBJECT_TOOL_NAMES = Object.freeze(['subject_status', 'subject_install', 'detect_subjects', 'list_subjects']);
 
 export const SUBJECT_DEFAULTS = Object.freeze({
-  /** `status` 子进程的时限(full 档要 import torch,冷启动慢) */
+  /** Time limit for `status` child process (full tier imports torch, cold start is slow) */
   statusMs: 45_000,
-  /** 状态结果缓存多久(每次 status 都要起一个 Python) */
+  /** How long status results are cached (each status spawns a Python process) */
   statusCacheMs: 15_000,
-  /** 一个检测作业的时限:每帧 perFrameMs、下限 minDetectMs(与桌面版同一组数) */
+  /** Time limit for a detection job: perFrameMs per frame, lower bound minDetectMs (same set of numbers as desktop app) */
   perFrameMs: 20_000,
   minDetectMs: 120_000,
-  /** 在线安装 light 档的时限 */
+  /** Time limit for online installation of light tier */
   installMs: 10 * 60_000,
-  /** 把素材取到工作目录:大小与时限 */
+  /** Fetch asset into workspace directory: size and timeout */
   maxFetchBytes: 1024 * 1024 * 1024,
   fetchMs: 5 * 60_000,
-  /** 整个进程同时在跑的检测作业 */
+  /** Detection jobs running concurrently across the entire process */
   maxRunning: 2,
-  /** 进度写账本的最小间隔 */
+  /** Minimum interval for writing progress to the ledger */
   progressMinMs: 400,
-  /** 工作区索引里留多少条作业 */
+  /** How many jobs to keep in the workspace index */
   historyJobs: 20,
-  /** 提示词最长 */
+  /** Maximum prompt length */
   maxPromptChars: 300,
 });
 
@@ -78,19 +101,19 @@ const REQUEST_RE = /^[A-Za-z0-9_-]{8,128}$/;
 const OUTPUT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$/;
 const INDEX_FILE = 'subject/jobs.json';
 const RESERVED = Symbol('reserved');
-/** 进程没起来时没有登记,也就没有取消信号:给一个永远不响的 */
+/** When process has not started, there is no registration and thus no abort signal: provide one that never fires */
 const NEVER_ABORTED = Object.freeze({ aborted: false });
 const sha = (text) => createHash('sha256').update(text).digest('hex');
 
 /**
- * 节点上的主体识别配置(部署决定)。
+ * Subject detection configuration on the node (deployment decision).
  *
- *   PROMPTCUT_AGENT_SUBJECT_PYTHON       装了依赖的 Python 解释器(绝对路径)。配了主体识别才可用
- *   PROMPTCUT_AGENT_SUBJECT_MODELS       权重目录(绝对路径;yunet.onnx、rtdetr_r18vd.onnx、grounding-dino-tiny/)
- *   PROMPTCUT_AGENT_SUBJECT_PYLIBS       可选:受控安装的目标目录(同时进 Python 的模块搜索路径)
- *   PROMPTCUT_AGENT_SUBJECT_REQUIREMENTS 可选:受控安装用的锁定版本清单(绝对路径);与 PYLIBS 都给了才允许 `subject_install`
- *   PROMPTCUT_AGENT_SUBJECT_WHEELHOUSE   可选:受控安装只从这个本地轮子目录装(`pip --no-index --find-links`),不连网
- *   PROMPTCUT_FFMPEG                     ffmpeg 的绝对路径,取它所在目录进 PATH
+ *   PROMPTCUT_AGENT_SUBJECT_PYTHON       Python interpreter with dependencies installed (absolute path). Subject detection is available only when configured
+ *   PROMPTCUT_AGENT_SUBJECT_MODELS       Weights directory (absolute path; yunet.onnx, rtdetr_r18vd.onnx, grounding-dino-tiny/)
+ *   PROMPTCUT_AGENT_SUBJECT_PYLIBS       Optional: target directory for controlled installation (also enters Python module search paths)
+ *   PROMPTCUT_AGENT_SUBJECT_REQUIREMENTS Optional: locked version manifest for controlled installation (absolute path); `subject_install` is allowed only when both this and PYLIBS are provided
+ *   PROMPTCUT_AGENT_SUBJECT_WHEELHOUSE   Optional: controlled installation installs only from this local wheel directory (`pip --no-index --find-links`), without network access
+ *   PROMPTCUT_FFMPEG                     Absolute path to ffmpeg, its directory is prepended to PATH
  */
 export function readSubjectConfig(env, { root }) {
   const python = env.PROMPTCUT_AGENT_SUBJECT_PYTHON;
@@ -124,14 +147,14 @@ const jsonLines = (onEvent) => {
       const line = buf.slice(0, i).trim();
       buf = buf.slice(i + 1);
       if (!line) continue;
-      try { const ev = JSON.parse(line); if (ev && typeof ev === 'object') onEvent(ev); } catch { /* 不是 JSON 的行不要 */ }
+      try { const ev = JSON.parse(line); if (ev && typeof ev === 'object') onEvent(ev); } catch { /* Discard non-JSON lines */ }
     }
   };
   feed.flush = () => { if (buf.trim()) feed('\n'); };
   return feed;
 };
 
-/** 框按面积取前几个并取整(与桌面版 `topBoxes` 同一口径) */
+/** Take top boxes by area and round to integers (same standard as desktop app `topBoxes`) */
 function topBoxes(boxes, limit = 4) {
   return [...boxes].sort((a, b) => b.w * b.h - a.w * a.h).slice(0, limit).map((b) => ({
     label: b.label, x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.w), h: Math.round(b.h), conf: Math.round(b.conf * 100) / 100,
@@ -140,16 +163,16 @@ function topBoxes(boxes, limit = 4) {
 
 /**
  * @param {object} d
- * @param {object | null} d.config `readSubjectConfig` 的结果;没有就是 null(工具如实回「没配」)
- * @param {object} d.resources `run-resources.mjs` 的 `createRunResources`(register / signalFor / authorize / verifyFence)
- * @param {object} d.assets `project-assets.mjs` 的 `createProjectAssets`(只用 `openRead`)
- * @param {object} d.jobs `tool-jobs.mjs` 的 `createToolJobs`(它的 authorize / verifyFence 由宿主接到同一个 `resources`)
- * @param {(context: object) => (object | Promise<object>)} d.workspace 这个对话的工作区(`workspace.mjs` 的 `open()` 的结果)
- * @param {object} d.project 项目一侧的窄接口(G 包接到 doc 的版本预期与操作栅栏):
- *   `getMedia(context, mediaId)` -> 项目当前副本里的素材记录或 null(带 `mediaRev` 更好);
- *   `setMediaSubjects(context, { mediaId, expectedMediaRev, subjects, jobId })` -> `{ projectRev? }`,版本对不上抛带 `code: 'media-changed'` 的错
- * @param {{ startProxy(): Promise<{ url: string, close(): Promise<void> }> } | null} [d.egress] 受控安装连网时才要
- * @param {object} d.kernel 宿主经 ssr-host 载入缝取来注入:`{ MAX_SUBJECT_TIMES, subjectSampleTimes, suggestPosition }`(必需)
+ * @param {object | null} d.config Result of `readSubjectConfig`; null if missing (tools report "not configured" truthfully)
+ * @param {object} d.resources `createRunResources` in `run-resources.mjs` (register / signalFor / authorize / verifyFence)
+ * @param {object} d.assets `createProjectAssets` in `project-assets.mjs` (uses only `openRead`)
+ * @param {object} d.jobs `createToolJobs` in `tool-jobs.mjs` (its authorize / verifyFence are wired by host to the same `resources`)
+ * @param {(context: object) => (object | Promise<object>)} d.workspace Workspace for this chat (result of `open()` in `workspace.mjs`)
+ * @param {object} d.project Narrow interface on project side (package G wires version expectation and operation fence to doc):
+ *   `getMedia(context, mediaId)` -> asset record in the current replica of the project, or null (better with `mediaRev`);
+ *   `setMediaSubjects(context, { mediaId, expectedMediaRev, subjects, jobId })` -> `{ projectRev? }`, throws error with `code: 'media-changed'` on version mismatch
+ * @param {{ startProxy(): Promise<{ url: string, close(): Promise<void> }> } | null} [d.egress] Required only when controlled installation connects to network
+ * @param {object} d.kernel Injected by host via ssr-host loading seam: `{ MAX_SUBJECT_TIMES, subjectSampleTimes, suggestPosition }` (required)
  */
 export function createSubjectTools({
   config = null, resources, assets, jobs, workspace, project, egress = null,
@@ -164,8 +187,11 @@ export function createSubjectTools({
     if (typeof kernel?.[name] !== type) throw new SubjectToolError(`Subject detection is not fully configured: missing kernel item ${name} (the host must inject the kernel via the ssr-host loading seam)`, 'subject-unconfigured');
   }
   const limits = { ...SUBJECT_DEFAULTS, ...limitsIn };
-  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响工具 */ } };
-  /** `config.args` 只给单测与探针(把解释器整个换成替身脚本);正式的一律隔离模式,包目录来自部署配置 */
+  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* Logging failure does not affect tools */ } };
+  /**
+   * `config.args` is only for unit tests and probes (replaces interpreter entirely with a stub
+   * script); production always uses isolated mode, package directory comes from deployment config.
+   */
   const stubArgs = config && Array.isArray(config.args) && config.args.length ? config.args : null;
   const globalArgs = config ? ['--models-dir', config.modelsDir, '--local-only'] : [];
   const pythonArgv = (subArgs) => (stubArgs
@@ -173,18 +199,21 @@ export function createSubjectTools({
     : isolatedPythonArgs('promptcut_subject', { roots: splitRoots(config.pythonPath), args: [...globalArgs, ...subArgs] }));
   const loadKernel = async () => kernel;
 
-  /** 正在跑的作业(本进程):jobId -> 状态。close 要等它们的子进程真关 */
+  /** Running jobs (this process): jobId -> status. close must wait for child processes to actually close */
   const live = new Map();
-  /** 同一素材同一时刻只一个检测作业:`项目\0素材` -> jobId */
+  /** Only one detection job per asset at a time: `project\0media` -> jobId */
   const byMedia = new Map();
   let installLive = null;
-  /** 正在登记账本、还没进 live 的检测作业数(两个并发调用不能同时越过上限检查) */
+  /**
+   * Number of detection jobs registering in ledger and not yet live (two concurrent calls cannot
+   * bypass the limit check at the same time).
+   */
   let reserving = 0;
   let installSummary = null;
   let statusCache = null;
   let closing = false;
   const settled = new Set();
-  /** 本进程起的、还没关的 Python 子进程(含 status):close 要全部杀掉并等它们真关 */
+  /** Python child processes spawned by this process and not yet closed (including status): close must kill all of them and wait for them to truly close */
   const children = new Set();
 
   const authorize = async (context, action) => {
@@ -192,7 +221,8 @@ export function createSubjectTools({
     try { return await resources.authorize(context, action); }
     catch (error) {
       if (error instanceof SubjectToolError) throw error;
-      // 文档服务联系不上:fail closed,但说清是「上游不可用」(503),不是「没权限」(403)
+      // Cannot reach document service: fail closed, but clarify it is "upstream unavailable" (503),
+      // not "no permission" (403)
       if (['run-authority-unavailable', 'tool-instance-unavailable', 'fence-unavailable', 'authorization-unavailable'].includes(error?.code)) {
         throw Object.assign(new SubjectToolError('The document service is temporarily unreachable, so permissions for this turn could not be confirmed and subject detection did not start. Try again later.', 'authority-unavailable'), { status: 503 });
       }
@@ -202,7 +232,7 @@ export function createSubjectTools({
 
   const workspaceKey = (context) => `${context.projectId}\0${context.conversationId}`;
 
-  /* ---------------------------------------------------------------- 工作区索引(中文原因、采样点数等账本不存的东西) */
+  /* ---------------------------------------------------------------- Workspace index (things not stored in the ledger such as Chinese reasons and sample counts) */
 
   function readIndex(ws) {
     try {
@@ -211,7 +241,7 @@ export function createSubjectTools({
       return Array.isArray(rows) ? rows.filter((r) => r && typeof r === 'object') : [];
     } catch { return []; }
   }
-  /** 读-改-写在一个同步段里完成,同一进程内不会交错 */
+  /** Read-modify-write is completed in a synchronous block; will not interleave within same process */
   function mutateIndex(ws, mutate) {
     try {
       const rows = readIndex(ws);
@@ -220,16 +250,19 @@ export function createSubjectTools({
     } catch (err) { say('agent.subject.index-failed', { message: String(err?.message ?? err).slice(0, 120) }); }
   }
 
-  /* ---------------------------------------------------------------- 起 Python */
+  /* ---------------------------------------------------------------- Start Python */
 
   /**
-   * 起一次 `promptcut_subject <子命令>`(隔离模式)。登记到 run-resources(整棵进程树真关了才算关),
-   * 逐行读 JSONL。回 `{ done, kill, signal, closed }`:`done` 解析成 `{ code, events, stderrTail, timedOut }`。
+   * Spawns `promptcut_subject <subcommand>` once (isolated mode). Registers with run-resources
+   * (only considered closed once the entire process tree is truly closed), and reads JSONL line by
+   * line. Returns `{ done, kill, signal, closed }`: `done` resolves to
+   * `{ code, events, stderrTail, timedOut }`.
    */
   async function runPython(context, ws, subArgs, { timeoutMs, env: extraEnv = {}, onEvent = () => {} } = {}) {
     if (!config) throw new SubjectToolError(NOT_CONFIGURED, 'subject-unavailable');
     const pathKey = Object.keys(process.env).find((k) => /^path$/i.test(k)) ?? 'PATH';
-    // PYTHON* 环境变量在隔离模式下不生效(无缓冲、UTF-8、不写字节码、包目录都由命令行给),这里不设
+    // PYTHON* environment variables have no effect in isolated mode (unbuffered, UTF-8, no bytecode,
+    // and package directory are all supplied via command line), so they are not set here
     const env = {
       ...(config.ffmpegDir ? { [pathKey]: `${config.ffmpegDir}${path.delimiter}${process.env[pathKey] ?? ''}` } : {}),
       ...extraEnv,
@@ -248,7 +281,7 @@ export function createSubjectTools({
         },
       });
     } catch {
-      // 登记被拒:superviseChild 已经杀掉整棵树并等它收干净
+      // Registration rejected: superviseChild already killed the entire tree and waited for cleanup
       throw new SubjectToolError('This turn no longer has permission to continue (stopped, switched to private, or the Agent was shut down), so the subject detection process was not started.', 'subject-forbidden');
     }
     const done = run.done.then((end) => {
@@ -263,7 +296,7 @@ export function createSubjectTools({
     return { done, kill: entry.kill, signal: run.signal ?? NEVER_ABORTED, closed: entry.closed };
   }
 
-  /** 路径与盘符不回给模型 */
+  /** Paths and drive letters are not returned to the model */
   const scrub = (text, ws) => {
     let out = String(text ?? '');
     let workDir = null;
@@ -294,7 +327,7 @@ export function createSubjectTools({
         : 'Neither tier is usable, so subjects cannot be detected on this machine. For position and occlusion, fall back to viewing images with see_frames; do not guess "the person is on the left" without evidence.';
   }
 
-  /** 查一次档位(缓存几秒)。回 `{ ok, ready, engine, detail?, reason? }`,不抛 */
+  /** Check tier once (cached a few seconds). Returns `{ ok, ready, engine, detail?, reason? }`, never throws */
   async function readStatus(context, ws, { fresh = false } = {}) {
     if (!config) return { ok: true, ready: false, engine: null, reason: NOT_CONFIGURED };
     if (!fresh && statusCache && now() - statusCache.at < limits.statusCacheMs) return statusCache.value;
@@ -329,11 +362,13 @@ export function createSubjectTools({
     };
   }
 
-  /* ---------------------------------------------------------------- 账本更新 */
+  /* ---------------------------------------------------------------- Ledger update */
 
   /**
-   * 一个作业的账本句柄:更新串行(revision 精确),共有已读任务进入 retained 后自动补一次检查点。
-   * 作业已经是终态(被栅栏取消)时回 `{ terminal: true }`,调用方据此收手。
+   * A job's ledger handle: updates are serialized (exact revision); automatically adds a checkpoint
+   * once shared read tasks enter retained.
+   * Returns `{ terminal: true }` when the job is already in a terminal state (cancelled by fence),
+   * signaling caller to stop.
    */
   function tracker(context, jobId, startRevision = 0) {
     let revision = startRevision;
@@ -437,7 +472,8 @@ export function createSubjectTools({
     if (live.size + reserving >= limits.maxRunning) throw new SubjectToolError('Too many subject detection jobs are running on the node, try again in a moment.', 'subject-busy');
 
     const requestId = REQUEST_RE.test(options.requestId ?? '') ? options.requestId : `sd_${randomUUID().replace(/-/g, '')}`;
-    // 先占位再 await:同一素材的两个并发调用,第二个看到占位就回 busy
+    // Place placeholder before await: of two concurrent calls on same asset,
+    // second sees placeholder and returns busy
     byMedia.set(mediaKey, RESERVED);
     reserving += 1;
     let started;
@@ -464,7 +500,7 @@ export function createSubjectTools({
         + ' After it finishes, each shot from list_shots will carry subject and suggestedPosition.',
     };
     if (started.state !== 'queued' || live.has(started.jobId)) {
-      // 同一 requestId 的重试:作业已经开了,不再开第二个
+      // Retry with same requestId: job is already started, do not start a second one
       if (byMedia.get(mediaKey) === RESERVED) byMedia.delete(mediaKey);
       return { ...result, started: false, alreadyRunning: started.state === 'queued' || started.state === 'running', state: started.state };
     }
@@ -484,7 +520,11 @@ export function createSubjectTools({
     return result;
   }
 
-  /** 作业的收尾:账本一笔、工作区索引一笔。账本写不了(权限已撤)也不抛——栅栏取消由宿主的 `cancelForFence` 补 */
+  /**
+   * Finalizing the job: one entry in ledger, one in workspace index. Does not throw even if ledger
+   * cannot be written (permissions revoked): fence cancellation is supplemented by host's
+   * `cancelForFence`.
+   */
   async function finishJob(job, ws, track, { state, errorCode, message, extra = {} }) {
     const patch = { state, ...(errorCode ? { errorCode } : {}), ...(state === 'done' ? { progress: 1 } : {}), ...(extra.outputRefs ? { outputRefs: extra.outputRefs } : {}) };
     const applied = await track.patch(patch);
@@ -505,7 +545,7 @@ export function createSubjectTools({
       const first = await track.patch({ state: 'running', stage: 'fetch', progress: 0 });
       if (!first.ok) return;
 
-      // 1) 取素材字节(带哈希核对)到工作目录
+      // 1) Fetch asset bytes (with hash verification) to working directory
       let read;
       try { read = await assets.openRead(context, mediaId); }
       catch (error) {
@@ -541,7 +581,7 @@ export function createSubjectTools({
       await read.closed.catch(() => {});
       if (abortedBySignal()) return await finishJob(job, ws, track, { state: closing ? 'interrupted' : 'cancelled', errorCode: closing ? 'SERVICE_CLOSING' : 'SUBJECT_CANCELLED', message: 'Subject detection was cancelled.' });
 
-      // 2) 起 Python 抽帧检测
+      // 2) Spawn Python for frame-extraction detection
       await track.patch({ stage: 'detect', progress: 0.1 });
       mutateIndex(ws, (rows) => { const row = rows.find((r) => r.jobId === job.jobId); if (row) row.status = 'running'; });
       const limitMs = Math.max(limits.minDetectMs, times.length * limits.perFrameMs);
@@ -590,10 +630,11 @@ export function createSubjectTools({
       try { subjects = toSubjects(resultEvent, prompt, now()); }
       catch (error) { return await finishJob(job, ws, track, { state: 'error', errorCode: 'SUBJECT_FAILED', message: error.message }); }
 
-      // 3) 写项目素材的当前版本(带取字节时的 mediaRev 做版本预期)
+      // 3) Write current version of project asset (with mediaRev when fetching bytes as expected version)
       const committing = await track.patch({ stage: 'commit', progress: 0.97 });
       if (!committing.ok) {
-        // 账本已被栅栏取消(终态),或权限已撤、账本写不了:都不写项目
+        // If ledger was cancelled by fence (terminal state), or permissions revoked and ledger
+        // cannot be written: do not write to project
         return await finishJob(job, ws, track, { state: 'cancelled', errorCode: 'FENCE_CANCELLED', message: 'This round can no longer write to the project (it was stopped, made private, or permissions changed); the detection result was not written.' });
       }
       try { await authorize(context, 'write'); }
@@ -615,11 +656,11 @@ export function createSubjectTools({
         },
       });
     } finally {
-      if (mediaFile) { try { ws.remove(mediaFile); } catch { /* 留给对话删除时清 */ } try { fs.rmSync(path.dirname(ws.resolve(mediaFile)), { recursive: true, force: true }); } catch { /* 同上 */ } }
+      if (mediaFile) { try { ws.remove(mediaFile); } catch { /* Left to be cleaned up when chat is deleted */ } try { fs.rmSync(path.dirname(ws.resolve(mediaFile)), { recursive: true, force: true }); } catch { /* Same as above */ } }
     }
   }
 
-  /** Python 的 result 事件 -> 项目里 `MediaAsset.subjects` 的形状(与 `src/ai/subject.ts` 的 `waitForSubjects` 同一口径) */
+  /** Python result event -> shape of `MediaAsset.subjects` in project (aligned with `waitForSubjects` in `src/ai/subject.ts`) */
   function toSubjects(ev, prompt, at) {
     const samples = Array.isArray(ev.samples) ? ev.samples : null;
     const sampleOk = (s) => s && typeof s === 'object' && Number.isFinite(s.t) && Array.isArray(s.boxes)
@@ -653,7 +694,8 @@ export function createSubjectTools({
     if (row) {
       let ledger = null;
       try { ledger = await jobs.get(context, row.jobId); } catch { ledger = null; }
-      // 账本是主;但作业已经收尾而账本没写成(权限已撤,账本等宿主的栅栏取消)时,以工作区索引里的终态为准
+      // Ledger is primary; but if job has finalized and ledger was not written (permissions revoked,
+      // host fences such as ledger cancelled), final state in workspace index prevails
       const finished = ['done', 'error', 'cancelled', 'interrupted'];
       const state = !ledger
         ? (row.status === 'queued' || row.status === 'running' ? 'interrupted' : row.status)
@@ -711,7 +753,7 @@ export function createSubjectTools({
 
     const requestId = REQUEST_RE.test(options.requestId ?? '') ? options.requestId : `si_${randomUUID().replace(/-/g, '')}`;
     let started;
-    installLive = { jobId: null }; // 占位:两个并发的 subject_install 只有一个能往下走
+    installLive = { jobId: null }; // Placeholder: only one of two concurrent subject_install calls can proceed
     try { started = await jobs.start(context, 'subject.install', sha('subject.install:light'), requestId); }
     catch (error) { installLive = null; throw new SubjectToolError(`Subject recognition install could not register a job (${error?.code ?? 'ledger unavailable'})`, 'subject-job'); }
     if (started.state !== 'queued' || closing) {
@@ -793,7 +835,7 @@ export function createSubjectTools({
     }
   }
 
-  /* ---------------------------------------------------------------- 对外 */
+  /* ---------------------------------------------------------------- External */
 
   const handlers = {
     subject_status: (context) => subjectStatus(context),
@@ -805,17 +847,21 @@ export function createSubjectTools({
   return Object.freeze({
     handles: new Set(SUBJECT_TOOL_NAMES),
     /**
-     * @param {string} name 工具名
-     * @param {object} args 模型给的参数(只收 mediaId / times / prompt / force)
-     * @param {object} context F0 发的可信八字段
-     * @param {{ requestId?: string }} [options] 宿主给的幂等号(工具调用 id);同一号重试不会开第二个作业
+     * @param {string} name Tool name
+     * @param {object} args Arguments from model (accepts only mediaId / times / prompt / force)
+     * @param {object} context Trusted 8 fields issued by F0
+     * @param {{ requestId?: string }} [options] Idempotency key from host (tool call id); retrying
+     *   with the same id will not start a second job
      */
     call(name, args, context, options = {}) {
       const handler = Object.hasOwn(handlers, name) ? handlers[name] : null;
       if (!handler) return Promise.reject(new SubjectToolError(`Subject recognition does not handle ${String(name).slice(0, 60)}`, 'unknown-tool'));
       return Promise.resolve().then(() => handler(context, args ?? {}, options));
     },
-    /** 取消本对话的一个检测作业(宿主的控制路径与单测用;不是模型能调的工具)。回子进程已关的凭据 */
+    /**
+     * Cancels a detection job for this chat (for host control path and unit tests; not a tool
+     * callable by model). Returns receipt that child process has closed.
+     */
     async cancel(context, jobId) {
       await authorize(context, 'write');
       const job = live.get(jobId);

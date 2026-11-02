@@ -1,11 +1,13 @@
 /**
- * 时间轴上的镜头切换标记。
+ * Shot change markers on the timeline.
  *
- * 硬切画一条竖线加一张缩略图（切换之后的画面）；溶解画成一段区间，把渐变前后
- * 两个镜头的缩略图**叠着画**——画面正在交融这件事，用两张叠图比任何文字都直观。
+ * A hard cut draws a vertical line plus a thumbnail (the frame after the change); a dissolve is drawn
+ * as a range, with the thumbnails of the two shots before and after the fade **stacked**: the picture
+ * blending together is more obvious with two stacked images than with any text.
  *
- * 位置换算要经过 mediaOffset：片段可能只截取了素材中间一段，素材里 T 秒发生的
- * 转场，在时间轴上是 clip.start + (T - mediaOffset) / speed（片段速度，见 kernel/clipTime.mjs）。
+ * Position conversion goes through mediaOffset: a clip may cover only a middle part of the asset, and a
+ * transition happening at T seconds in the asset is at clip.start + (T - mediaOffset) / speed on the
+ * timeline (speed is the clip speed, see kernel/clipTime.mjs).
  */
 import { useStore } from "../../store/project";
 import type { ShotTransition, TrackClip } from "../../kernel/project";
@@ -13,12 +15,14 @@ import { mediaSpanOf, timelineSpanOf } from "../../kernel/clipTime.mjs";
 import { useTimelineContext } from "./TimelineContext";
 import { tr } from "../../i18n/index.ts";
 
-/** 缩略图太小就看不清，太大又盖住片段本身，行高不够时干脆只留竖线 */
+/** Thumbnails that are too small are hard to see, and ones that are too large cover the clip itself, so when the row is not tall enough only the vertical line is kept */
 const THUMB_MIN_ROW_H = 40;
 
 /**
- * 在线构建的编译期常量(写法与用意见 `src/online/pageFlag.ts` 的「在线构建剪枝」)。缩略图在编辑器进程的镜头检测目录里,
- * 在线页面只画竖线;两个标记里再判一次,在线构建里连同 `/api/shots/thumb/` 地址一起剪掉(M8 遗留 L24)。
+ * Compile-time constant of the online build (see "Online build pruning" in `src/online/pageFlag.ts` for how
+ * it is written and why). Thumbnails live in the shot detection directory of the editor process,
+ * and the online page only draws vertical lines; both markers check it again, so the online build prunes
+ * them together with the `/api/shots/thumb/` URL (M8 leftover L24).
  */
 const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
 
@@ -34,13 +38,13 @@ export function ShotMarkers({ clip, rowHeight }: { clip: TrackClip; rowHeight: n
   const offset = clip.mediaOffset ?? 0;
   const visibleFrom = offset;
   const visibleTo = offset + mediaSpanOf(clip);
-  // 缩略图在编辑器进程的镜头检测目录里(`/api/shots/thumb/`);在线页面没有编辑器进程,只画竖线,不发请求(C10 契约第 10 节)
+  // Thumbnails live in the shot detection directory of the editor process (`/api/shots/thumb/`); the online page has no editor process, so it only draws vertical lines and sends no requests (C10 contract, section 10)
   const showThumbs = !ONLINE_BUILD && rowHeight >= THUMB_MIN_ROW_H;
 
   return (
     <div className="pc-shot-layer" aria-hidden>
       {transitions.map((t, i) => {
-        // 只画落在这个片段可见范围内的转场
+        // Only draw transitions that fall within the visible range of this clip
         if (t.end < visibleFrom || t.start > visibleTo) return null;
         const left = timelineSpanOf(clip, t.start - offset) * pxPerSec;
         const width = Math.max(1, timelineSpanOf(clip, t.end - t.start) * pxPerSec);
@@ -53,12 +57,14 @@ export function ShotMarkers({ clip, rowHeight }: { clip: TrackClip; rowHeight: n
 }
 
 /**
- * 缩略图不能用 loading="lazy"。
+ * Thumbnails must not use loading="lazy".
  *
- * 它们在 overflow:hidden 的标记层里，CSS 又是 height 固定、width:auto ——
- * 没加载出来就没有固有尺寸，宽度算出来是 0；浏览器看到零面积元素就判定它不可见，
- * 于是不加载；不加载就永远没有尺寸。死循环，图一张也出不来（实测如此）。
- * 给上 width/height 属性让浏览器先按 16:9 预留位置，并且立即加载——每张才 2 KB。
+ * They sit in an overflow:hidden marker layer, and the CSS has a fixed height and width:auto:
+ * until loaded they have no intrinsic size, so the computed width is 0; the browser sees a zero-area
+ * element and decides it is not visible, so it does not load it; and without loading it never gets a size.
+ * A dead loop, and not a single image shows up (confirmed by testing).
+ * Give it width/height attributes so the browser reserves space at 16:9 first, and load immediately:
+ * each one is only 2 KB.
  */
 function thumbUrl(name: string): string {
   return `/api/shots/thumb/${encodeURIComponent(name)}`;
@@ -70,9 +76,10 @@ function CutMark({ t, left, showThumbs }: { t: ShotTransition; left: number; sho
     <div className="pc-shot-cut" style={{ left }} title={tr("Hard cut {0}s", t.time.toFixed(2))}>
       <div className="pc-shot-line" />
       {!ONLINE_BUILD && showThumbs && thumb && (
-        // 和溶解用同一个 .pc-shot-stack 包一层:标记本身宽度是 0(它就是一条线),
-        // 绝对定位的 img 拿零宽包含块算 width:auto 会得到 0。包一层有宽度的容器、
-        // 让 img 静态定位，它才会按自身宽高比撑开。
+        // Wrap it in the same .pc-shot-stack as the dissolve: the marker itself has width 0 (it is just a line),
+        // and an absolutely positioned img computing width:auto against a zero-width containing block gets 0.
+        // Wrap it in a container that has a width and
+        // let the img be statically positioned, and it will expand by its own aspect ratio.
         <span className="pc-shot-stack pc-shot-stack--cut">
           <img className="pc-shot-thumb" src={thumbUrl(thumb)} alt="" draggable={false} width={160} height={90} />
         </span>
@@ -91,14 +98,14 @@ function DissolveMark(
       style={{ left, width }}
       title={tr("Dissolve {0}~{1}s", t.start.toFixed(2), t.end.toFixed(2))}
     >
-      {/* 渐变的两端各一条细线，中间一层薄底表示「这一段在交融」 */}
+      {/* A thin line at each end of the fade, with a thin background layer between them to show "this stretch is blending" */}
       <div className="pc-shot-line pc-shot-line--start" />
       <div className="pc-shot-line pc-shot-line--end" />
       {!ONLINE_BUILD && showThumbs && a && (
         <span className="pc-shot-stack">
           <img className="pc-shot-thumb" src={thumbUrl(a)} alt="" draggable={false} width={160} height={90} />
           {b && (
-            // 后一张压在前一张上、半透明，就是「两张叠画」
+            // The later image sits on top of the earlier one, semi-transparent: that is the "two stacked images"
             <img className="pc-shot-thumb pc-shot-thumb--over" src={thumbUrl(b)} alt="" draggable={false} width={160} height={90} />
           )}
         </span>

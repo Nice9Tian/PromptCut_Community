@@ -1,16 +1,21 @@
 /*
- * R9 M4 / M5:canvas 卡迁进共享渲染器之后,「导出」和「生成快照 → 重放」对得上。
+ * R9 M4 / M5: after canvas cards moved into the shared renderer, "export" matches
+ * "generate snapshots → replay".
  *
- * 照 `scripts/verify-unified-frames.mjs` 的骨架,把卡换成两张 `scene-3d`(一张带贴图),不带视频:
- *   1. 预渲染页逐帧生成 HTML 快照(`bakeFrames({ snapshotOnly })`):gl 平面由 `rasterizeCanvas` 换成 `<img>`,
- *      每一帧都要等 GL 的 `done` —— 没等到就是 `lossy`,`bake.mjs` 当场抛错(这条路本身就是验收);
- *   2. 快照 HTML 里 three 卡是非空的 `<img>`(PNG data URL);
- *   3. `captureSnapshot` 重放第 8 帧,和 `exportUnified` 导出的第 8 帧比:M5 的口径(非边缘像素差 ≤ 1/255);
- *   4. 同一帧重放两次逐字节相同。
+ * Following the skeleton of `scripts/verify-unified-frames.mjs`, replace cards with two `scene-3d`
+ * (one with texture), without video:
+ *   1. Prerender page generates HTML snapshots frame by frame (`bakeFrames({ snapshotOnly })`):
+ *      gl planes are replaced from `rasterizeCanvas` to `<img>`; each frame must wait for GL's
+ *      `done`: not receiving it is `lossy`, and `bake.mjs` throws immediately (this path itself
+ *      is an acceptance check);
+ *   2. Three cards in snapshot HTML are non-empty `<img>` (PNG data URL);
+ *   3. `captureSnapshot` replays frame 8, compared against frame 8 exported by `exportUnified`:
+ *      M5 criteria (non-edge pixel difference ≤ 1/255);
+ *   4. Replaying the same frame twice is byte-for-byte identical.
  *
  *   PC_FRAME_TEST_URL=http://127.0.0.1:5240 node scripts/probes/gl-unified-probe.mjs
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import assert from 'node:assert/strict';

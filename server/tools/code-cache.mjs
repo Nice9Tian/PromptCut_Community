@@ -1,31 +1,41 @@
 /**
- * 代码块空间(A07,2026-10-22 用户定:「给项目一个代码块空间,让Agent可以对代码块进行操作比如read(code_cache)/replace(code_cache,xxx,yyy)」)。
+ * Code cache (A07, user decision, 2026-10-22: "Give the project a code cache so that the Agent can
+ * operate on code blocks such as read(code_cache)/replace(code_cache,xxx,yyy)").
  *
- * 按项目放的一组有名字的文本块。Agent 用 code_cache_write / append / read / replace / list / delete 操作它;
- * 任何工具的字符串参数整个写成 `@code_cache:名字` 时,harness 在调用那个工具之前把它换成代码块的内容(resolveCodeCacheRefs)。
- * 用途:大段源码分几次写进代码块,最后一次小调用交给 create_card / edit_card;回复写到输出上限被截断时,
- * 写了一半的参数由 harness/agent.mjs 存进代码块,模型接着追加。
+ * A set of named text chunks stored per project. The Agent operates on them using
+ * code_cache_write / append / read / replace / list / delete; when the entire string argument of
+ * any tool is written as `@code_cache:name`, the harness replaces it with the code block content
+ * before calling that tool (resolveCodeCacheRefs).
+ * Use cases: large source code written in chunks into the code block over multiple calls, with a
+ * final small call passing it to create_card / edit_card; when a response hits the output limit
+ * and is truncated, half-written arguments are saved to the code block by harness/agent.mjs so the
+ * model can continue appending.
  *
- * 存在哪〔裁:output-cache 2026-10-22〕:一个目录一个项目,一块一个文件 `<名字>.txt`,另有 `index.json` 记每块的
- * 更新时间与最后写它的对话。目录由宿主给:本机是编辑器工作目录下 `exports/ai-workspace/code-cache/<项目>`,
- * 云端账号模式是共用数据目录下 `tenants/<项目>/code-cache`(和这个项目的对话目录同级,各代任务进程都看得到);
- * 宿主没给时退回这个对话的历史文件旁边(只在这个对话里有效)。
- * 同一项目的几个对话共用一份:名字撞了会互相覆盖,截断时自动存的块名字带工具名和序号,不会撞。
- * 不进项目文档、不经文档服务:它是 Agent 的草稿,不是项目内容,不进撤销历史,也不同步给别的成员的页面。
+ * Where it is stored [ruling: output-cache 2026-10-22]: one directory per project, one file
+ * `<name>.txt` per block, plus `index.json` recording each block's update timestamp and the chat
+ * that last wrote it. The directory is provided by the host: locally it is
+ * `exports/ai-workspace/code-cache/<project>` under the editor working directory; in cloud account
+ * mode it is `tenants/<project>/code-cache` under the shared data directory (sibling to this
+ * project's chat directory, visible to task processes across generations); when omitted by the
+ * host, falls back next to this chat's history file (valid only within this chat).
+ * Several chats in the same project share one copy: name collisions overwrite each other; blocks
+ * auto-saved upon truncation include tool name and sequence number, so they will not collide.
+ * Not stored in project documents, does not go through document service: it is the Agent's draft,
+ * not project content, does not enter undo history, and does not sync to other members' pages.
  *
- * 本文件不引用 `src/`。
+ * This file does not reference `src/`.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 
 export const CODE_CACHE_LIMITS = Object.freeze({
-  /** 一块最大字节数 */
+  /** Maximum bytes per chunk */
   blockBytes: 2 * 1024 * 1024,
-  /** 一个项目最多几块 */
+  /** Maximum chunks per project */
   blocks: 64,
-  /** 一个项目所有块合计最大字节数 */
+  /** Maximum total bytes across all chunks in a project */
   totalBytes: 16 * 1024 * 1024,
-  /** code_cache_read 一次最多交回的字数 */
+  /** Maximum words returned by code_cache_read in a single call */
   readChars: 60000,
 });
 
@@ -42,7 +52,7 @@ const bytes = (text) => Buffer.byteLength(text, 'utf8');
 
 /**
  * @param {{ dir: string, limits?: Partial<typeof CODE_CACHE_LIMITS>, now?: () => number, writer?: string }} o
- *   writer:记在 index.json 里「最后谁写的」(对话 id);不给就空
+ *   writer: recorded in index.json as "who wrote it last" (chat id); empty if omitted
  */
 export function createCodeCacheStore({ dir, limits = {}, now = () => Date.now(), writer = '' } = {}) {
   if (typeof dir !== 'string' || !dir) throw new Error('The code block space has no directory');
@@ -101,9 +111,9 @@ export function createCodeCacheStore({ dir, limits = {}, now = () => Date.now(),
   const info = (name, text) => ({ name, chars: text.length, lines: lineCount(text), bytes: bytes(text) });
   const list = () => {
     const index = readIndex();
-    return names().map((n) => { let text = ''; try { text = read(n); } catch { /* 刚被删 */ } return { ...info(n, text), updatedAt: index[n]?.updatedAt ?? null, by: index[n]?.by ?? '' }; });
+    return names().map((n) => { let text = ''; try { text = read(n); } catch { /* Just deleted */ } return { ...info(n, text), updatedAt: index[n]?.updatedAt ?? null, by: index[n]?.by ?? '' }; });
   };
-  /** 起一个还没用过的名字:`<prefix>_1`、`<prefix>_2`…… */
+  /** Generate an unused name: `<prefix>_1`, `<prefix>_2`… */
   const freshName = (prefix) => {
     const base = String(prefix || 'block').replace(/[^A-Za-z0-9_.-]/g, '_').replace(/^\.+/, '').slice(0, 56) || 'block';
     for (let n = 1; n < 10000; n += 1) { const name = `${base}_${n}`; if (!has(name)) return name; }
@@ -112,7 +122,7 @@ export function createCodeCacheStore({ dir, limits = {}, now = () => Date.now(),
   return { dir, limits: lim, has, read, write, append, remove, list, info, freshName, withWriter: (w) => createCodeCacheStore({ dir, limits, now, writer: w }) };
 }
 
-/** 尾巴几行(告诉模型写到哪了) */
+/** Trailing lines (tells the model where writing left off) */
 export function tailLines(text, n = 3, maxChars = 400) {
   const lines = String(text ?? '').split('\n');
   const tail = lines.slice(-n).join('\n');
@@ -120,9 +130,11 @@ export function tailLines(text, n = 3, maxChars = 400) {
 }
 
 /**
- * 工具参数里所有整个写成 `@code_cache:名字` 的字符串换成那块的内容(在调用工具之前,harness 做)。
- * 只认「整个字符串就是这个写法」,源码里顺带出现的这几个字不受影响。返回新对象,不改原来的;没有引用时原样返回。
- * 引用的块不存在时抛错(工具不执行,模型看得到原因)。
+ * Replaces all strings in tool arguments written entirely as `@code_cache:name` with that chunk's
+ * content (performed by the harness before calling the tool).
+ * Only recognizes "the entire string matches this pattern"; incidental occurrences in source code
+ * are unaffected. Returns a new object without mutating original; returns as is if no references.
+ * Throws an error if referenced chunk does not exist (tool is not executed, model sees the reason).
  */
 export function resolveCodeCacheRefs(input, store) {
   if (!store) return input;
@@ -146,7 +158,7 @@ export function resolveCodeCacheRefs(input, store) {
 const str = (description) => ({ type: 'string', description });
 const int = (description) => ({ type: 'integer', description });
 
-/** 交给模型的六个工具(harness 工具的形状:name、description、inputSchema、execute) */
+/** Six tools provided to the model (harness tool shape: name, description, inputSchema, execute) */
 export function codeCacheTools(store) {
   const lim = store.limits;
   return [

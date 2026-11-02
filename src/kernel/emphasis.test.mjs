@@ -12,7 +12,7 @@ test("normalizeEmphasis: fills in defaults, clamps ranges, returns null for an u
   assert.equal(big.size, 80);
   assert.equal(big.opacity, 1);
   assert.equal(big.dx, -200);
-  // 不是数就用默认值,不会算出 NaN
+  // Use default value if not a number, never calculates NaN
   assert.equal(normalizeEmphasis({ kind: "shadow", size: "Thick" }).size, EMPHASIS_DEFAULTS.shadow.size);
   assert.equal(normalizeEmphasis({ kind: "shadow", color: "   " }).color, "#000000");
 });
@@ -30,12 +30,12 @@ test("Opacity is applied with color-mix, without parsing the color string itself
 test("Outline: eight directions around a circle, the line width is the radius; thick ones get a touch of blur to fill the gaps", () => {
   const thin = emphasisFilter({ kind: "outline", color: "#fff", size: 3, opacity: 1 });
   assert.equal(thin.match(/drop-shadow/g).length, 8);
-  assert.match(thin, /drop-shadow\(3px 0px 0px #fff\)/); // 正右方向
+  assert.match(thin, /drop-shadow\(3px 0px 0px #fff\)/); // Due right direction
   assert.equal(/0px 0px 0px/.test(thin.split(" drop-shadow")[0]), false);
 
   const thick = emphasisFilter({ kind: "outline", color: "#fff", size: 10, opacity: 1 });
   assert.equal(thick.match(/drop-shadow/g).length, 8);
-  assert.match(thick, /drop-shadow\(10px 0px 2px #fff\)/); // 模糊 = 10 × 0.2
+  assert.match(thick, /drop-shadow\(10px 0px 2px #fff\)/); // Blur = 10 × 0.2
 });
 
 test("scale: the media layer scales the line width by its own ratio; it is not needed when the whole stage is scaled", () => {

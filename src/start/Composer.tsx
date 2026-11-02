@@ -1,43 +1,47 @@
 /**
- * 聊天页的输入框。拆出来是因为它要在**两个地方**出现(用户 2026-10-26 定,issue #4):
+ * The chat page's input box. It was split out because it appears in **two places** (user decision,
+ * 2026-10-26, issue #4):
  *
- *   - 平时在聊天列底部(`.ps-chat-foot`);
- *   - 「详细编辑」展开、右侧拓展栏也开着时，搬进拓展栏里那块聊天面板(`ExtChatPanel.tsx`)的底部 ——
- *     详细编辑要占满整个聊天区，输入框留在时间轴正下方不合适(issue #4 的原话)。
+ *   - normally at the bottom of the chat column (`.ps-chat-foot`);
+ *   - when "Detail editing" is expanded and the right side panel is also open, it moves to the bottom of
+ *     the chat panel in the side panel (`ExtChatPanel.tsx`): detail editing takes up the whole chat area,
+ *     and an input box left directly under the timeline is unsuitable (the original wording of issue #4).
  *
- * 两处是**同一个** React 状态，所以搬家时打了一半的草稿自己跟着走，不用另写搬运逻辑；换地方之后
- * textarea 会重挂，焦点由调用方(`ChatView.tsx`)补回来。
+ * Both places share the **same** React state, so a half-typed draft follows when it moves, with no
+ * separate moving logic; after the move the textarea remounts, and focus is restored by the caller
+ * (`ChatView.tsx`).
  *
- * `narrow` 只管窄栏里那一套外框和自增高上限，发不发得出去、停止键什么时候出现，两处规则完全一样。
+ * `narrow` only controls the frame and the auto-grow cap used in the narrow rail; whether it can send and
+ * when the stop button appears follow exactly the same rules in both places.
  */
 import { useLayoutEffect } from "react";
 import type { JSX, RefObject } from "react";
 import { tr } from "../i18n/index.ts";
 
-/** 自增高的上限，和 CSS 里 `.ps-chat-input` / 窄栏那一条的 max-height 对齐 */
+/** Auto-grow cap, aligned with max-height of `.ps-chat-input` / the narrow-rail rule in CSS */
 const MAX_H = 200;
 const MAX_H_NARROW = 110;
 
 export function Composer(props: {
   text: string;
   onText: (t: string) => void;
-  /** 发出输入框里这一句 */
+  /** Send the sentence in the input box */
   onSend: () => void;
-  /** 停止这一轮(输入框空着、又正在跑的时候，发送键换成它) */
+  /** Stop this round (when the input box is empty and a run is in progress, the send button turns into this) */
   onStop: () => void;
   area: RefObject<HTMLTextAreaElement | null>;
   canSend: boolean;
   canStop: boolean;
   stopMode: boolean;
   placeholder: string;
-  /** 输入框底下那一行小字:为什么发不了、排了几条、引用放进去了 */
+  /** The line of small text under the input box: why it cannot send, how many are queued, that a reference was put in */
   note: string;
-  /** 在右侧拓展栏那块面板里(窄) */
+  /** Inside the panel in the right side panel (narrow) */
   narrow: boolean;
 }): JSX.Element {
   const max = props.narrow ? MAX_H_NARROW : MAX_H;
 
-  // 文字变了、或者整个框换了地方，都重算一次高度 —— 搬过去之后不能停在上一处算出来的高度上
+  // Recompute the height when the text changes or the whole box moves: after moving it cannot stay at the height computed at the previous place
   useLayoutEffect(() => {
     const el = props.area.current;
     if (!el) return;
@@ -58,7 +62,8 @@ export function Composer(props: {
           aria-label={tr("Write a message")}
           onChange={(e) => props.onText(e.target.value)}
           onKeyDown={(e) => {
-            // 回车发送、Shift+回车换行;输入法组合中的回车不算(中文输入按回车是在选字)
+            // Enter sends, Shift+Enter inserts a newline; Enter during IME composition does not count
+            // (in Chinese input, Enter confirms a candidate)
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               props.onSend();

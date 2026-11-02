@@ -1,17 +1,23 @@
 /**
- * 手机版缩略时间轴（`src/mobile/ThumbStrip.tsx` + `src/mobile/mainContent.ts`）同步算术与状态机单元测试。
- * 验证「1 段 6 秒卡片段」与「3 段各 2 秒对照组」下 cardPosAtTime / timeAtCardPos / scrollForPos / posFromScroll、
- * useLayoutEffect 的 1px 死区在 60 / 30 / 24 fps 下的逐帧模拟、以及 onScroll 的 1.5px 门限读数。
+ * Unit tests for sync arithmetic and state machine of mobile app mini timeline
+ * (`src/mobile/ThumbStrip.tsx` + `src/mobile/mainContent.ts`).
+ * Verifies cardPosAtTime / timeAtCardPos / scrollForPos / posFromScroll under "1 6-second card clip"
+ * and "control group of 3 2-second clips each", frame-by-frame simulation of useLayoutEffect 1px
+ * dead zone at 60 / 30 / 24 fps, and onScroll 1.5px threshold readings.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { cardPosAtTime, timeAtCardPos } from './mainContent.ts';
 
 /**
- * 忠实照抄 `src/mobile/ThumbStrip.tsx` 第 43~53 行 `posFromScroll`，
- * 仅把闭包读取的 `sc.current!` 与 `blocks()` 改为参数 `(el, bl)`，未改动任何表达式或边界判断。
+ * Faithfully copied from lines 43-53 of `src/mobile/ThumbStrip.tsx` (`posFromScroll`), only changing
+ * `sc.current!` and `blocks()` read from closure to parameters `(el, bl)`, without changing
+ * any expressions or boundary checks.
  */
-/** 照抄 `ThumbStrip.tsx` 的 `spanOf`：第 i 段占的区间是「本卡左缘 → 下一卡左缘」，把转场标记那 30px 并进前一段 */
+/**
+ * Copied from `ThumbStrip.tsx`'s `spanOf`: interval occupied by segment i is "left edge of this card
+ * → left edge of next card", merging the 30px transition marker into previous segment
+ */
 function spanOf(bl, i) {
   const l = bl[i].offsetLeft;
   return [l, i + 1 < bl.length ? bl[i + 1].offsetLeft : l + bl[i].offsetWidth];
@@ -27,8 +33,9 @@ function posFromScroll(el, bl) {
 }
 
 /**
- * 忠实照抄 `src/mobile/ThumbStrip.tsx` 第 54~61 行 `scrollForPos`，
- * 仅把闭包读取的 `sc.current!` 与 `blocks()` 改为参数 `(el, bl, pos)`，未改动任何表达式或边界判断。
+ * Faithfully copied from lines 54-61 of `src/mobile/ThumbStrip.tsx` (`scrollForPos`), only changing
+ * `sc.current!` and `blocks()` read from closure to parameters `(el, bl, pos)`, without changing
+ * any expressions or boundary checks.
  */
 function scrollForPos(el, bl, pos) {
   if (!bl.length) return 0;
@@ -39,7 +46,8 @@ function scrollForPos(el, bl, pos) {
 }
 
 /**
- * 忠实照抄 `src/mobile/ThumbStrip.tsx` 第 64~71 行 `useLayoutEffect` 的同步步。
+ * Faithfully copied from sync step of `useLayoutEffect` in lines 64-71 of
+ * `src/mobile/ThumbStrip.tsx`.
  */
 function runLayoutSyncStep(el, bl, clips, t, dragging, progSl, { integerScrollLeft = false } = {}) {
   if (!el || !el.clientWidth || dragging.current) return false;
@@ -51,7 +59,7 @@ function runLayoutSyncStep(el, bl, clips, t, dragging, progSl, { integerScrollLe
 }
 
 /**
- * 忠实照抄 `src/mobile/ThumbStrip.tsx` 第 76~80 行 `onScroll`。
+ * Faithfully copied from lines 76-80 of `src/mobile/ThumbStrip.tsx` (`onScroll`).
  */
 function runOnScrollStep(el, bl, clips, progSl, onScrub) {
   if (!el.clientWidth || Math.abs(el.scrollLeft - progSl.current) < 1.5) return false;
@@ -61,13 +69,13 @@ function runOnScrollStep(el, bl, clips, progSl, onScrub) {
 }
 
 /**
- * 按给定几何参数构造假 DOM：
- * - `.strip-scroll` 宽度 W（= clientWidth）
- * - `.sp-l` 宽 W/2 - 46
- * - `.madd` 宽 40 + margin-right 6 = 46
- * - 每段 `.mblock` 宽 80（border-box，offsetWidth = 80）
- * - 段间 `.mark` 宽 24 + 左右 margin 各 3 = 30
- * - `.sp-r` 宽 W/2
+ * Construct mock DOM based on given geometric parameters:
+ * - `.strip-scroll` width W (= clientWidth)
+ * - `.sp-l` width W/2 - 46
+ * - `.madd` width 40 + margin-right 6 = 46
+ * - `.mblock` per segment width 80 (border-box, offsetWidth = 80)
+ * - inter-segment `.mark` width 24 + left and right margin 3 each = 30
+ * - `.sp-r` width W/2
  */
 function makeStripLayout(W, blockCount) {
   const spL = W / 2 - 46;
@@ -128,7 +136,7 @@ test('SS1 1 clip of 6 s card: pos and want at t = 0 / 1 / 3 / 5.7 / 6 (W = 390) 
   assert.equal(readings[4].pos, 1);
   assert.equal(readings[4].want, 80);
 
-  // 检查 t = 6 端点附近（6 - 2e-9、6 - 1e-9、6）是否存在跳变
+  // Check whether a jump exists near the t = 6 endpoint (6 - 2e-9, 6 - 1e-9, 6)
   const posJustBefore = cardPosAtTime(clips, 6 - 2e-9);
   const posAtThreshold = cardPosAtTime(clips, 6 - 1e-9);
   const posAtEnd = cardPosAtTime(clips, 6);
@@ -228,21 +236,22 @@ test('SS3 playback simulation loop (1 clip of 6 s, fps = 60 / 30 / 24 tiers): ve
 
   console.log('[SS3] 1 clip of 6 s three fps tiers (60 / 30 / 24) simulation results:', { r60, r30, r24 });
 
-  // fps = 60: 每 tick 2/9 px，每 5 tick 跳 10/9 px，360 ticks 共写入 72 次，终点 80
+  // fps = 60: 2/9 px per tick, jumps 10/9 px every 5 ticks, 72 writes total over 360 ticks, endpoint 80
   assert.equal(r60.ticksPerJump, 5);
   assert.equal(r60.floatScrollLeft.updateCount, 72);
   assert.equal(r60.floatScrollLeft.finalScrollLeft, 80);
   assert.equal(r60.intScrollLeft.updateCount, 80);
   assert.equal(r60.intScrollLeft.finalScrollLeft, 80);
 
-  // fps = 30 (项目默认 fps): 每 tick 4/9 px，每 3 tick 跳 4/3 px，180 ticks 共写入 60 次，终点 80
+  // fps = 30 (project default fps): 4/9 px per tick, jumps 4/3 px every 3 ticks, 60 writes total
+  // over 180 ticks, endpoint 80
   assert.equal(r30.ticksPerJump, 3);
   assert.equal(r30.floatScrollLeft.updateCount, 60);
   assert.equal(r30.floatScrollLeft.finalScrollLeft, 80);
   assert.equal(r30.intScrollLeft.updateCount, 80);
   assert.equal(r30.intScrollLeft.finalScrollLeft, 80);
 
-  // fps = 24: 每 tick 5/9 px，每 2 tick 跳 10/9 px，144 ticks 共写入 72 次，终点 80
+  // fps = 24: 5/9 px per tick, jumps 10/9 px every 2 ticks, 72 writes total over 144 ticks, endpoint 80
   assert.equal(r24.ticksPerJump, 2);
   assert.equal(r24.floatScrollLeft.updateCount, 72);
   assert.equal(r24.floatScrollLeft.finalScrollLeft, 80);
@@ -316,20 +325,21 @@ test('SS5 posFromScroll and scrollForPos round-trip consistency (1 clip of 6 s) 
     assert.ok(Math.abs(r.tBack - r.tFromPos) < 1e-12, `t=${r.tFromPos} round-trip consistent`);
   }
 
-  // 验证 onScroll 的 1.5px 门限：微动 < 1.5px 被吞，累计 >= 1.5px 正常触发 onScrub
+  // Verify onScroll 1.5px threshold: slight movements < 1.5px are swallowed, cumulative >= 1.5px
+  // triggers onScrub normally
   el.scrollLeft = 0;
   const progSl = { current: 0 };
   const scrubbedTimes = [];
   const onScrub = (t) => scrubbedTimes.push(t);
 
-  el.scrollLeft = 1.0; // |1.0 - 0| < 1.5 -> 吞掉
+  el.scrollLeft = 1.0; // |1.0 - 0| < 1.5 -> swallowed
   assert.equal(runOnScrollStep(el, bl, clips, progSl, onScrub), false);
   assert.equal(progSl.current, 0, 'progSl.current is not updated when swallowed, later displacement keeps accumulating');
 
-  el.scrollLeft = 1.49; // |1.49 - 0| < 1.5 -> 仍被吞掉
+  el.scrollLeft = 1.49; // |1.49 - 0| < 1.5 -> still swallowed
   assert.equal(runOnScrollStep(el, bl, clips, progSl, onScrub), false);
 
-  el.scrollLeft = 1.5; // |1.5 - 0| >= 1.5 -> 触发 onScrub(0.1125s)
+  el.scrollLeft = 1.5; // |1.5 - 0| >= 1.5 -> triggers onScrub(0.1125s)
   assert.equal(runOnScrollStep(el, bl, clips, progSl, onScrub), true);
   assert.equal(progSl.current, 1.5);
   assert.equal(scrubbedTimes.length, 1);
@@ -342,9 +352,12 @@ test('SS5 posFromScroll and scrollForPos round-trip consistency (1 clip of 6 s) 
 });
 
 /*
- * 段边界那 30px 死区（2026-10-25 修）。改之前：`scrollForPos` 按卡宽算，pos 从 1−ε 跨到 1 时
- * want 从上一段末尾直接跳到下一段左缘，中间那 30px（.mark 宽 24 + 左右各 3）不属于任何一段 ——
- * 播到边界瞬移、手动滚进去时间卡住。改成按「本卡左缘 → 下一卡左缘」算之后两头都连续。
+ * 30px dead zone at segment boundaries (fixed 2026-10-25). Before the change: `scrollForPos` was
+ * calculated from card width; when pos crossed from 1-ε to 1, want jumped directly from end of
+ * previous segment to left edge of next segment, and the 30px in between (.mark width 24 + 3 on each
+ * side) did not belong to any segment: playback teleported at boundaries, and manually scrolling into
+ * it froze time. After changing to calculate by "left edge of this card → left edge of next card",
+ * both ends are continuous.
  */
 test('SS6 segment boundaries no longer have a 30px dead zone: want is continuous and reversible back and forth (3 segments of 2 s each, two .mark in the middle)', () => {
   const W = 390, CARD = 80, MARK = 30;
@@ -352,7 +365,8 @@ test('SS6 segment boundaries no longer have a 30px dead zone: want is continuous
   const left0 = W / 2;
   const bl = [0, 1, 2].map((i) => ({ offsetLeft: left0 + i * (CARD + MARK), offsetWidth: CARD }));
 
-  // 1) want 在整条上单调且处处连续：相邻采样点的跨度不许出现 .mark 那一下 30px 的跳变
+  // 1) want is monotonic and everywhere continuous across the whole strip: the span between adjacent
+  // sample points must not show that 30px jump from .mark
   const STEP = 1 / 512;
   let prev = scrollForPos(el, bl, 0), maxJump = 0;
   for (let pos = STEP; pos <= 3; pos += STEP) {
@@ -361,10 +375,12 @@ test('SS6 segment boundaries no longer have a 30px dead zone: want is continuous
     maxJump = Math.max(maxJump, w - prev);
     prev = w;
   }
-  // 每段跨 CARD+MARK=110px、512 步，单步约 0.215px；留宽到 1px 仍远小于 30
+  // Each segment spans CARD+MARK=110px, 512 steps, ~0.215px per step; relaxing margin to 1px is
+  // still far less than 30
   assert.ok(maxJump < 1, `Max span between adjacent steps is ${maxJump}px, a 30px jump must not occur`);
 
-  // 2) 整条可逆：滚动位置 → pos → 滚动位置，误差可忽略（改之前 .mark 那 30px 恒回整数）
+  // 2) Reversible across the whole strip: scroll position → pos → scroll position, error is
+  // negligible (before the change, that 30px of .mark always returned integers)
   const maxScroll = scrollForPos(el, bl, 3);
   for (let x = 0; x <= maxScroll; x += 1) {
     el.scrollLeft = x;
@@ -373,7 +389,8 @@ test('SS6 segment boundaries no longer have a 30px dead zone: want is continuous
   }
   el.scrollLeft = 0;
 
-  // 3) 段边界左右各取一点，pos 必须连续穿过整数，不是两边都卡在 1
+  // 3) Taking one point each on left and right of segment boundary, pos must cross integers
+  // continuously, rather than being stuck at 1 on both sides
   const boundary = scrollForPos(el, bl, 1);
   el.scrollLeft = boundary - 5; const before = posFromScroll(el, bl);
   el.scrollLeft = boundary + 5; const after = posFromScroll(el, bl);

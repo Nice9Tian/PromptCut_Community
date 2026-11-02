@@ -14,7 +14,7 @@ import { compositeCard } from "./composite";
 import { audiovisualPulse } from "./av-pulse";
 import { notificationSoundCard, keyboardSoundCard } from "./sound-effects";
 
-/** 自家用 Motion 写的卡。每张卡一个文件,在这里汇总。 */
+/** In-house cards written with Motion. One file per card, collected here. */
 export const nativeCards: CardDef<any>[] = [
   audiovisualPulse,
   notificationSoundCard,

@@ -1,10 +1,12 @@
-// 只当类型用 —— 写成 import type,node 的类型剥离会把整行抹掉,单测就不用去解析
-// 那个没写扩展名的路径了(否则 node --test 直接 ERR_MODULE_NOT_FOUND)
+// Used as a type only: written as import type, node's type stripping erases the whole line, so the
+// unit tests do not have to resolve that path without an extension (otherwise node --test fails
+// right away with ERR_MODULE_NOT_FOUND)
 import type { Project, Track } from "../../kernel/project";
-// 带 .ts 后缀:单测用 node --test 直接跑源码,不写后缀它解析不到(仓库里已有这种写法)
+// With the .ts suffix: unit tests run the source directly with node --test, which cannot resolve it
+// without the suffix (the repo already does this elsewhere)
 import { atFrameGrid } from "../../render/frameGrid.ts";
 
-/** 轨道行高配置 */
+/** Track row height config */
 export type RowSize = "small" | "medium" | "large";
 export const ROW_SIZE_H: Record<RowSize, number> = {
   small: 28,
@@ -13,23 +15,24 @@ export const ROW_SIZE_H: Record<RowSize, number> = {
 };
 export const DEFAULT_ROW_SIZE: RowSize = "medium";
 
-/** 左侧行头列宽(px)配置 */
+/** Left row header column width (px) config */
 export const HEADER_W_DEFAULT = 180;
 export const HEADER_W_MIN = 120;
 export const HEADER_W_MAX = 420;
 
-/** 内容层右边的拖动余量(px) */
+/** Drag margin to the right of the content layer (px) */
 export const TAIL_SLACK_PX = 200;
 
 /**
- * 可见内容的末尾。播放范围的上界就是它 —— 空无一物的地方不该能播,拖到那里也只会
- * 看到黑屏。规则本身在 kernel/duration.ts。
+ * End of the visible content. It is the upper bound of the playback range: an empty area should not
+ * be playable, and dragging there would only show a black screen. The rule itself is in
+ * kernel/duration.ts.
  */
 export { contentEndOf } from "../../kernel/duration.ts";
 
 /**
- * 可见内容的开头:最早一个片段的开始时间。没有任何片段就是 0。
- * 播放从这里开始 —— 播放范围是「最早的卡片 ~ 最晚的卡片」。
+ * Start of the visible content: the start time of the earliest clip. 0 if there are no clips.
+ * Playback starts here: the playback range is "earliest card ~ latest card".
  */
 export function contentStartOf(tracks: Track[]): number {
   let start = Infinity;
@@ -42,12 +45,13 @@ export function contentStartOf(tracks: Track[]): number {
 }
 
 /**
- * 0 秒前面留的一点间距(px,和缩放无关)。纯粹是留白,不代表时间——时间没有负数。
- * 有它 0 秒的片段和播放头才不会贴死在行头上。
+ * A small gap before 0 seconds (px, independent of zoom). Pure padding, it does not represent
+ * time: time has no negative values.
+ * With it, a clip at 0 seconds and the playhead do not stick right against the row header.
  */
 export const GUTTER_PX = 24;
 
-/** 时间 ↔ 内容层像素。所有换算都走这两个函数,不要再直接乘 pxPerSec。 */
+/** Time ↔ content layer pixels. All conversions go through these two functions, do not multiply by pxPerSec directly again. */
 export function xOfTime(t: number, pxPerSec: number): number {
   return GUTTER_PX + t * pxPerSec;
 }
@@ -86,14 +90,17 @@ export function snapTime(
   pxPerSec: number = 100
 ) {
   /*
-   * **一律落到帧格上**,alt 也不例外。
+   * **Always snap to the frame grid**, alt included.
    *
-   * alt 的意思是「别吸到别的片段和整秒上」,不是「可以停在成片里不存在的时刻」——
-   * 成片逐帧渲,一条 4.041s 开始的片段在成片里其实从第 122 帧(4.0667s)开始。
+   * What alt means is "do not snap to other clips and whole seconds", not "may stop at a moment that
+   * does not exist in the final video": the final video is rendered frame by frame, so a clip that
+   * starts at 4.041s actually starts at frame 122 (4.0667s) in the final video.
    *
-   * 这不只是不好看:三维视图的预渲染时刻是按**片段起点**排格子的,导出渲的是**全局帧格**,
-   * 起点不在帧格上两套格子就对不齐,而且不是一一对应 —— 实测起点 4.041 时,播放头
-   * 第 121 / 122 / 123 帧拿到的预渲染帧是 121 / 121 / 122,三维比二维整整慢一帧,不报错。
+   * This is not just ugly: the 3D view's prerender moments are laid out by **clip start**, while
+   * export renders on the **global frame grid**. If the start is not on the frame grid, the two grids
+   * do not line up, and not one-to-one either. Measured with start 4.041, playhead frames
+   * 121 / 122 / 123 get prerender frames 121 / 121 / 122, so 3D is a full frame slower than 2D,
+   * with no error reported.
    */
   const grid = (v: number) => atFrameGrid(v, project.fps || 30);
   if (altKey) return grid(time);

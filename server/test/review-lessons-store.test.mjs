@@ -1,6 +1,7 @@
 /**
- * 审查环路的教训跨运行保存(runners/api.mjs 的 lessonsStore):放在 ai.json 同目录,
- * 去重、只留最近 30 条、文件坏了不崩。用 PROMPTCUT_AI_CONFIG 指到临时目录,不碰真配置。
+ * Review loop lessons persisted across runs (lessonsStore in runners/api.mjs): placed in the same
+ * directory as ai.json, deduplicated, keeping only the latest 30, and does not crash if the file is
+ * corrupted. Point PROMPTCUT_AI_CONFIG to a temporary directory without touching real config.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

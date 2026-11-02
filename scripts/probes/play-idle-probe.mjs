@@ -1,31 +1,47 @@
 /**
- * 播放保活 —— **真的编辑器 + 真的预渲染进程**的端到端探针(任务「桌面版播放保活」;语义 `docs/semantics/mechanism/rendering.md`
- * 「重管线:预渲染」:之后要补的只在暂停时产,播放时不产)。
+ * Playback keep-alive: end-to-end probe with **real editor + real prerender process** (task
+ * "Desktop app playback keep-alive"; semantics `docs/semantics/mechanism/rendering.md` "Heavy
+ * pipeline: prerender": work to catch up later is produced only when paused, not during playback).
  *
- *   node scripts/probes/play-idle-probe.mjs --port 27100 [--out <目录>] [--json <文件>] [--keep]
- *   node scripts/probes/play-idle-probe.mjs --origin http://127.0.0.1:27100 …   # 接一台已经起好的 dev server
+ *   node scripts/probes/play-idle-probe.mjs --port 27100 [--out <dir>] [--json <file>] [--keep]
+ *   node scripts/probes/play-idle-probe.mjs --origin http://127.0.0.1:27100 …   # Connect to an already running dev server
  *
- * 要复现的毛病:预渲染进程判断「用户在不在播放」只看页面报来的播放头(`FramePipeline.streamBusy()`:在播且 5 秒内有过音讯,或 800 毫秒内动过)。
- * 播放中页面只有「缺口」(`wanted`)那条路能刷新这个音讯,而播放头下每一层都有流盖着时没有缺口、不发。于是连着播放超过 5 秒,
- * 预渲染进程就当成机器闲了,在播放中接着把别的卡的流补成满密度。
+ * Bug to reproduce: the prerender process determines "whether user is playing" solely by the
+ * playhead reported by the page (`FramePipeline.streamBusy()`: playing with activity within 5 s, or
+ * moved within 800 ms). During playback, the page can only refresh this activity via the "gap"
+ * (`wanted`) path, but when every layer under the playhead is covered by streams, there are no gaps
+ * and nothing is sent. Thus, after playing continuously for over 5 seconds, the prerender process
+ * assumes the machine is idle and resumes topping up other cards' streams to full density during
+ * playback.
  *
- * 流程:
- *   0. 编辑器 `?editor&nosetup=1&preview=stage`;新建项目,放八张每帧横移 10 像素的卡(`r6-stateful`),每张 6 秒,依次排开;
- *      都钉成重卡,触发预渲染。第一张(A)是播放用的:等它的轨道流盖满全段(稀疏的就算),这时别的卡的流还在补。
- *   1. 在 A 里循环播放(到近尾处跳回 A 的前段;播放头下只有 A,A 有流盖着,所以没有缺口)。页面一侧记下 `/api/data/playhead` 发了几条、
- *      带不带 `wanted`。
- *   2. 每 0.5 秒读一次预渲染进程的诊断(`/api/frames/diagnostics` 的 `streams`:已产分段数、截了多少帧、满密度分段数)和它手里的播放头
- *      (`/api/data/playhead`:最近一次收到的时刻 `at` 和 `playing`)。
- *   3. 播放 20 秒后停下。再读 12 秒,看它多久恢复产流。
+ * Workflow:
+ *   0. Editor `?editor&nosetup=1&preview=stage`; create a project, place eight cards that shift 10
+ *      pixels horizontally per frame (`r6-stateful`), 6 seconds each, arranged in sequence; pin all
+ *      as heavy cards to trigger prerendering. Card 1 (A) is for playback: wait for its track
+ *      stream to cover the entire clip (even sparse counts), while streams for other cards are
+ *      still catching up.
+ *   1. Loop playback inside A (jump back to earlier part of A near the end; only A is under the
+ *      playhead, and A is covered by streams, so there are no gaps). Page side records how many
+ *      `/api/data/playhead` requests were sent and whether they carried `wanted`.
+ *   2. Every 0.5 s, read prerender process diagnostics (`streams` in `/api/frames/diagnostics`:
+ *      produced segments, frames captured, full-density segments) and the playhead in its hands
+ *      (`/api/data/playhead`: most recently received timestamp `at` and `playing`).
+ *   3. Stop after playing for 20 seconds. Read for another 12 seconds to observe how long it takes
+ *      to resume producing streams.
  *
- * 断言:
- *   a. 起播 5 秒以后到停下之前,预渲染进程手里的播放头一直是「在播」、最近一次音讯不超过 `MAX_HEAD_AGE_MS`(保活要明显小于服务端的 5 秒窗口);
- *   b. 起播 5 秒以后到停下之前,已产分段数、截帧数、满密度分段数一个都没涨(一帧都没产);
- *   c. 停下以后 `RESUME_MS` 内恢复产流(证明剩下的活是真的在等,不是已经产完了才没动)。
+ * Assertions:
+ *   a. From 5 seconds after playback starts until stopping, the playhead in the prerender process's
+ *      hands remains continuously "playing", and the most recent ping does not exceed
+ *      `MAX_HEAD_AGE_MS` (keep-alive must be significantly shorter than server's 5-second window);
+ *   b. From 5 seconds after playback starts until stopping, produced segments, captured frames, and
+ *      full-density segments do not increase at all (zero frames produced);
+ *   c. After stopping, resume stream production within `RESUME_MS` (proving remaining work was
+ *      truly waiting, not inactive because it was already finished).
  *
- * 结论 JSON 写 stdout,过程写 stderr;任何一条不过以非零退出。耗时只记录,等待时限只为防卡死。
+ * Write conclusion JSON to stdout, progress to stderr; exit non-zero if any item fails. Duration is
+ * recorded only; timeout is solely to prevent hangs.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -44,20 +60,24 @@ const OUT = path.resolve(flagArg('out', null, args) || path.join(os.tmpdir(), `p
 if (!GIVEN_ORIGIN && !PORT) { console.error('Pass --origin <dev server> or --port <start your own>'); process.exit(2); }
 
 const FPS = 30, SEG = 15;
-/** 八张卡各 6 秒(剩下的活要比播放的 20 秒长;一路满密度 40 帧每秒上下);入点按秒写,落在两帧之间(第一张是第 40～219 帧,共 12 个分段) */
+/**
+ * Eight cards, 6 seconds each (remaining work must be longer than the 20-second playback; around
+ * 40 fps full density throughout); in points written in seconds, landing between two frames
+ * (card 1 is frames 40–219, 12 segments in total).
+ */
 const CLIP_SECONDS = 6;
 const STARTS = [1.32, 8.32, 15.32, 22.32, 29.32, 36.32, 43.32, 50.32];
 const FIRST = Math.ceil(STARTS[0] * FPS), LAST = Math.ceil((STARTS[0] + CLIP_SECONDS) * FPS) - 1;
 const SEG_COUNT = Math.ceil((LAST - FIRST + 1) / SEG);
-/** 循环播放的范围:都在 A(1.32～7.32 秒)里 */
+/** Loop playback range: all within A (1.32-7.32 seconds) */
 const LOOP_FROM = 2.0, LOOP_TO = 6.8;
-/** 播放多久;预渲染进程的「在播」窗口是 5 秒,要播得比它长得多 */
+/** How long to play; the prerender process "playing" window is 5 seconds, must play much longer than that */
 const PLAY_MS = 20_000;
-/** 起播多久以后开始要求「一帧都不产」:服务端的窗口是 5 秒 */
+/** How long after starting playback to start requiring "zero frames produced": the server window is 5 seconds */
 const QUIET_FROM_MS = 5_000;
-/** 保活的最大间隔上限:预渲染进程手里的播放头最近一次音讯不许老过这个数(服务端窗口 5 秒,保活取 2 秒) */
+/** Keepalive max interval: playhead in prerender process cannot be older than this (server window 5s, keepalive 2s) */
 const MAX_HEAD_AGE_MS = 3_500;
-/** 停下以后多久内要恢复产流(停下推一次播放头,服务端再静 0.8 秒,生产者再醒;一个分段出完才计数,所以给宽一点) */
+/** Time to resume stream after stop (push playhead once, server idle 0.8s, producer wakes; counts full segment, so allow margin) */
 const RESUME_MS = 12_000;
 
 const say = (step, fields = {}) => process.stderr.write(`${JSON.stringify({ step, t: Date.now(), ...fields })}\n`);
@@ -97,7 +117,7 @@ try {
   await page.setViewport({ width: 1920, height: 1200 });
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(String(e).slice(0, 300)));
-  // 数页面向 /api/data/playhead 发了什么:在页面脚本跑之前装好。
+  // Count what the page sends to /api/data/playhead: install before the page script runs.
   await page.evaluateOnNewDocument(() => {
     const tally = window.__playheadPosts = { total: 0, playing: 0, withWanted: 0, playingNoWanted: 0, at: [] };
     const real = window.fetch.bind(window);
@@ -112,7 +132,7 @@ try {
           else if (body.playing) tally.playingNoWanted++;
           tally.at.push([Date.now(), body.playing ? 1 : 0, Array.isArray(body.wanted) && body.wanted.length ? 1 : 0]);
         }
-      } catch { /* 只是计数 */ }
+      } catch { /* Just counting */ }
       return real(input, init);
     };
   });
@@ -127,7 +147,7 @@ try {
     return new Function('actions', 'getState', 'args', src)(actions, getState, a2);
   }, fn, a);
 
-  /* ---------------------------------------------------------------- 0. 项目 */
+  /* ---------------------------------------------------------------- 0. Project */
   const clipIds = await store(`actions.newProject('play-idle-${RUN}');
     const ids = [];
     for (const start of args[0]) { const c = actions.addCardClip('r6-stateful', start, { duration: args[1], params: {} }); if (c) ids.push(c.id); }
@@ -168,7 +188,7 @@ try {
   const prerender = await (await fetch(origin + '/api/prerender/info')).json();
   out.prerender = { url: prerender.url, ready: prerender.ready, mode: prerender.mode };
   const getJson = (url) => fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(5000) }).then((r) => (r.ok ? r.json() : null), () => null);
-  /** 预渲染进程现在产了多少:已产分段数、截帧数、满密度分段数、稀疏分段数 */
+  /** Prerender process output so far: produced segments, snapshots, full-density segments, sparse segments */
   const produced = async () => {
     const d = await getJson(`${prerender.url}/api/frames/diagnostics`);
     const s = d?.streams;
@@ -180,7 +200,7 @@ try {
     }
     return { segments: s.stats?.segments ?? 0, frames, dense, sparse, streams: (s.streams ?? []).length };
   };
-  /** 预渲染进程手里的播放头:最近一次收到的时刻离现在多久、在播不在播 */
+  /** Playhead held by the prerender process: how long ago the latest received time was, whether playing or not */
   const headNow = async () => {
     const h = await getJson(`${prerender.url}/api/data/playhead`);
     return h ? { playing: !!h.playing, age: Date.now() - Number(h.at), wanted: h.wanted?.length ?? 0 } : null;
@@ -207,8 +227,8 @@ try {
   out.beforePlay = await produced();
   say('before-play', out.beforePlay);
 
-  /* ---------------------------------------------------------------- 1. 循环播放 */
-  // 页面里的循环:近尾处跳回前段。seek 不改 playing;播放头始终在 A 里。
+  /* ---------------------------------------------------------------- 1. Loop playback */
+  // Loop in the page: jump back to earlier section near the end. seek does not change playing; playhead stays in A.
   await page.evaluate(async (from, to) => {
     const { actions, getState } = await import('/src/store/project.ts');
     window.__loopTimer = setInterval(() => {
@@ -222,7 +242,7 @@ try {
   const samples = [];
   let baseline = null;
   while (Date.now() - playStart < PLAY_MS) {
-    // 每隔几轮重钉一次:页面测完第二趟会把成本记录整条重写,钉重卡那一位会被冲掉
+    // Re-pin every few rounds: after pass 2 measurement, page rewrites entire cost record, wiping out the pinned heavy card bit
     if (samples.length % 6 === 0) await pinHeavy(true).catch(() => {});
     const elapsed = Date.now() - playStart;
     const [p, h, st] = await Promise.all([produced(), headNow(), page.evaluate(async () => { const { getState } = await import('/src/store/project.ts'); const s = getState(); return { t: s.t, playing: s.playing }; })]);
@@ -239,7 +259,7 @@ try {
     playingNoWanted: playPosts.filter((p) => p[1] === 1 && p[2] === 0).length, atMs: playPosts.map((p) => p[0] - playStart) } };
   say('played', { posts: out.posts.duringPlay, lastProduced });
 
-  /* ---------------------------------------------------------------- 3. 停下,看多久恢复 */
+  /* ---------------------------------------------------------------- 3. Stop, see how long to recover */
   const stopAt = Date.now();
   await store(`actions.pause();`);
   let resumedAfterMs = null;
@@ -255,7 +275,7 @@ try {
   out.afterSamples = afterSamples;
   out.resumedAfterMs = resumedAfterMs;
 
-  /* ---------------------------------------------------------------- 断言 */
+  /* ---------------------------------------------------------------- Assertions */
   const quiet = samples.filter((s) => s.ms >= QUIET_FROM_MS && s.produced && s.head);
   check(samples.every((s) => s.playing), 'Playback keeps playing (the page\'s playing never dropped)', samples.filter((s) => !s.playing).slice(0, 3));
   check(quiet.length >= 10, 'enough samples were collected after the first 5 seconds of playback', quiet.length);
@@ -268,15 +288,15 @@ try {
     check(grew.segments === 0 && grew.frames === 0 && grew.dense === 0, `b. From ${QUIET_FROM_MS / 1000} seconds after playback starts until it stops, the prerender process produced not a single frame`, { baseline: baseline.produced, last: lastProduced, grew });
   } else check(false, 'b. No baseline was obtained', { baseline: !!baseline, lastProduced: !!lastProduced });
   check(resumedAfterMs !== null, `c. Within ${RESUME_MS / 1000} seconds after stopping, stream production resumes (the remaining work really was waiting)`, { after: afterSamples.slice(-3), lastProduced });
-  // 页面一侧:播放中没有缺口(没有 wanted),也就是说这个场景确实是「没有缺口」的那一种
+  // Page side: no gaps during playback (no wanted), meaning this scene is indeed the "no gap" kind
   check(out.posts.duringPlay.withWanted === 0, 'Scenario holds: the page reported no gaps during playback (every layer under the playhead is covered by a stream)', out.posts.duringPlay);
   check(pageErrors.length === 0, 'Page has no uncaught errors', pageErrors.slice(0, 3));
 } catch (error) {
   fails.push(`Exception: ${error?.stack || error}`);
 } finally {
-  try { await browser?.close(); } catch { /* 收尾 */ }
-  try { await dev?.stop(); } catch { /* 收尾 */ }
-  if (!KEEP && dev) { try { await fs.rm(path.join(OUT, 'dev-data'), { recursive: true, force: true }); } catch { /* 收尾 */ } }
+  try { await browser?.close(); } catch { /* Cleanup */ }
+  try { await dev?.stop(); } catch { /* Cleanup */ }
+  if (!KEEP && dev) { try { await fs.rm(path.join(OUT, 'dev-data'), { recursive: true, force: true }); } catch { /* Cleanup */ } }
 }
 out.fails = fails;
 out.notes = notes;

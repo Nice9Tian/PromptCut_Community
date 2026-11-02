@@ -1,9 +1,11 @@
 /**
- * stream-cut(2026-10-22 用户定:「现在修:中途被网关掐断按截断处理(保住半截参数、走代码块续写),按实测速度给单次输出设上限;
- * 顺带把合并窗口放宽到 1 秒。」)。报告 `docs/reports/AGENT-stream-cut.md`。
+ * stream-cut (user decision, 2026-10-22: "Fix now: mid-stream gateway cutoff treated as truncation
+ * (preserve partial parameters, continue via code block), cap single output by measured speed; also
+ * loosen merge window to 1 second."). Report `docs/reports/AGENT-stream-cut.md`.
  *
- * 全部用假模型:假 fetch 交的 SSE,以及在 5990～5999 上起的本机假网关(真 fetch,网关在流中途发 error 事件或直接断连接)。
- * 不调真模型。
+ * All use fake models: SSE delivered via fake fetch, and local fake gateways started on 5990-5999
+ * (real fetch, gateway emits error event mid-stream or disconnects directly). No calls to real
+ * models.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,12 +28,12 @@ import {
 } from '../harness/output-speed.mjs';
 
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), `pc-sc-${p}-`));
-const rm = (d) => { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* 清理 */ } };
+const rm = (d) => { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* Cleanup */ } };
 const GATEWAY_CUT = 'The upstream stream ended before the response was complete.';
 
-// ───────────── 假 SSE ─────────────
+// ───────────── Fake SSE ─────────────
 
-/** chunks 交完后:end 正常结束;throw 抛 err(模拟连接被断) */
+/** After chunks delivered: end completes normally; throw throws err (simulating dropped connection) */
 function sse(chunks, { throwAfter = null } = {}) {
   return { ok: true, status: 200, headers: { get: () => 'text/event-stream' },
     body: (async function* () { for (const c of chunks) yield c; if (throwAfter) throw throwAfter; })() };
@@ -48,7 +50,7 @@ const terminated = () => Object.assign(new TypeError('terminated'), { cause: new
 
 const HALF_ARGS = '{"id":"demo","source":"export default {\\n  name: \\"half written';
 
-// ── OpenAI 兼容口 ──
+// ── OpenAI compatible endpoint ──
 const openaiHead = [
   d({ choices: [{ delta: { role: 'assistant' } }] }),
   d({ choices: [{ delta: { content: 'Let me write the card.' } }] }),
@@ -159,7 +161,7 @@ test('Gemini: failures before any content appears still throw; a normal ending i
   assert.equal(evs.at(-1).reason, 'STOP');
 });
 
-// ───────────── 截断收尾:给模型和用户的话说「被网关掐断」 ─────────────
+// ───────────── Truncation finalization: message to model and user says "cut off by gateway" ─────────────
 
 test('The message saved with the code block and the status line, on a cut-off, say "cut off midway by the gateway", not "exceeded the per-call output limit"', () => {
   const dir = tmp('salvage');
@@ -175,7 +177,7 @@ test('The message saved with the code block and the status line, on a cut-off, s
     assert.doesNotMatch(s.status, /per-output limit/);
     const empty = salvageTruncation([], store, { cause: 'cut' });
     assert.match(empty.status, /cut off midway by the gateway.*and no action was executed/);
-    // 写到上限的那种照旧
+    // Those writing up to the limit remain unchanged
     assert.match(salvageTruncation([], store).status, /exceeded the per-output limit and was truncated/);
   } finally { rm(dir); }
 });
@@ -202,7 +204,7 @@ test('Agent: stream_cut saves a code block and has the model continue writing, s
     assert.match(statuses[0], /cut off midway by the gateway \(the gateway limits the duration of a single request\); the half-written create_card/);
     const diag = events.filter((e) => e.type === 'diagnostic' && e.stage === 'truncated');
     assert.equal(diag[0].data.cause, 'cut');
-    // 第一次掐断后交给模型的话
+    // Message passed to model after the first cutoff
     const notes = agent.history.get().filter((m) => m.role === 'user').flatMap((m) => m.content).filter((b) => b.type === 'text').map((b) => b.text);
     assert.ok(notes.some((t) => /was cut off midway: the gateway closed the connection/.test(t)));
   } finally { rm(dir); }
@@ -219,7 +221,7 @@ test('Agent: when cut-offs and hitting the limit are mixed, the message mentions
   } finally { rm(dir); }
 });
 
-// ───────────── 按实测速度设上限 ─────────────
+// ───────────── Cap based on measured speed ─────────────
 
 test('Speed constants: the gateway is about 300 seconds, the budget is 250 seconds; with no record the default speed is used, and the limit = default speed × 250', () => {
   assert.equal(GATEWAY_REQUEST_LIMIT_S, 300);
@@ -238,14 +240,14 @@ test('Speed record: samples that are too short are not recorded; the slower end 
   assert.equal(book.speedOf('M ').tps, 100, 'fewer than 5 samples use the slowest; keys are case-insensitive');
   assert.equal(book.capFor('m'), 25000);
   for (const tps of [190, 60, 120, 80]) book.record('m', { output: tps * 100, ms: 100_000 });
-  // 60 80 100 120 150 190:四分之一处是第 2 个(80)
+  // 60 80 100 120 150 190: the first quartile is the 2nd one (80)
   assert.equal(book.speedOf('m').tps, 80);
   assert.equal(conservativeSpeed([{ tps: 50 }]), 50);
-  // 很慢也不低于下限
+  // Does not fall below the lower bound even when very slow
   const slow = createOutputSpeedBook();
   slow.record('s', { output: 2000, ms: 1_000_000 });
   assert.equal(slow.capFor('s'), MIN_SPEED_CAP);
-  // 太旧的样本不算
+  // Samples that are too old are ignored
   t += 15 * 24 * 3600 * 1000;
   assert.equal(book.speedOf('m').samples, 0);
 });
@@ -253,18 +255,18 @@ test('Speed record: samples that are too short are not recorded; the slower end 
 test('Per-call limit = min(model limit, configured limit, speed × budget): with a record, without a record, configured limit smaller, model limit smaller', () => {
   const book = createOutputSpeedBook();
   const cap = () => book.capFor('gemini-3.8-flash');
-  // 没记录:40 × 250 = 10000
+  // No record: 40 × 250 = 10000
   assert.equal(resolveMaxOutput({ model: 'gemini-3.8-flash', outputCap: cap }), 10000);
-  // 有记录:120 token/s × 250 = 30000
+  // With record: 120 token/s × 250 = 30000
   book.record('gemini-3.8-flash', { output: 12000, ms: 100_000 });
   assert.equal(resolveMaxOutput({ model: 'gemini-3.8-flash', outputCap: cap }), 30000);
-  // 配置更小
+  // Config is smaller
   assert.equal(resolveMaxOutput({ model: 'gemini-3.8-flash', maxTokens: 20000, outputCap: cap }), 20000);
-  // 模型上限更小:速度很快时 Gemini 停在 65536
+  // Model limit is smaller: at high speed Gemini caps at 65536
   const fast = createOutputSpeedBook();
   fast.record('gemini-3.8-flash', { output: 100000, ms: 200_000 }); // 500 token/s → 125000
   assert.equal(resolveMaxOutput({ model: 'gemini-3.8-flash', outputCap: () => fast.capFor('gemini-3.8-flash') }), 65536);
-  // 没给 outputCap 时与原来相同
+  // Same as before when outputCap is not provided
   assert.equal(resolveMaxOutput({ model: 'gemini-3.8-flash' }), 65536);
 });
 
@@ -275,9 +277,9 @@ test('The speed record is saved to a file and the next generation of the process
     const a = createOutputSpeedBook({ file });
     a.record('gemini-3.8-flash', { output: 9000, ms: 100_000 });
     assert.ok(fs.existsSync(file));
-    const b = createOutputSpeedBook({ file }); // 相当于任务进程新开的一代
+    const b = createOutputSpeedBook({ file }); // Equivalent to a newly spawned generation of the task process
     assert.deepEqual(b.speedOf('gemini-3.8-flash'), { tps: 90, samples: 1 });
-    // 两份各记一笔,合并不丢
+    // Record an entry in each copy, merge loses nothing
     b.record('gemini-3.8-flash', { output: 7000, ms: 100_000 });
     a.record('claude-sonnet-5-5', { output: 5000, ms: 100_000 });
     const c = createOutputSpeedBook({ file });
@@ -285,7 +287,7 @@ test('The speed record is saved to a file and the next generation of the process
     assert.equal(c.speedOf('claude-sonnet-5-5').tps, 50);
     _resetOutputSpeedBooks();
     assert.equal(outputSpeedBookFor(file), outputSpeedBookFor(file));
-    // 文件坏了也照常工作(当没有记录)
+    // Works as usual even if file is corrupted (treated as having no records)
     fs.writeFileSync(file, '{bad');
     assert.equal(createOutputSpeedBook({ file }).speedOf('gemini-3.8-flash').samples, 0);
     _resetOutputSpeedBooks();
@@ -317,13 +319,13 @@ test('Wrapping a provider: samples are recorded from usage (including thinking);
     yield { type: 'usage', input: 0, output: 0 };
     yield { type: 'stop', reason: 'stream_cut' };
   } };
-  for await (const _ of withOutputSpeed(cutP, cutBook, 'm').stream()) { /* 读完 */ }
-  // 60000 字 ÷ 4 = 15000 token / 300 秒 = 50 token/s → 上限 12500
+  for await (const _ of withOutputSpeed(cutP, cutBook, 'm').stream()) { /* Read to end */ }
+  // 60000 chars ÷ 4 = 15000 tokens / 300 s = 50 token/s → cap 12500
   assert.equal(cutBook.speedOf('m').tps, 50);
   assert.equal(cutBook.capFor('m'), 12500);
 });
 
-// ───────────── 端到端:本机假网关,create_card 写源码时被中途掐断 ─────────────
+// ───────────── End-to-end: local fake gateway, create_card cut off midway while writing source code ─────────────
 
 const { startRun } = await import('../runners/api.mjs');
 const FULL_SOURCE = [
@@ -335,7 +337,7 @@ const FULL_SOURCE = [
   '});',
 ].join('\n');
 
-/** 在 5990～5999 里找一个空端口起假网关(端口段由主会话分配) */
+/** Find an idle port in 5990-5999 to start a fake gateway (port range allocated by lead session) */
 async function listenInRange(server) {
   for (let port = 5990; port <= 5999; port += 1) {
     const ok = await new Promise((resolve) => {
@@ -350,8 +352,10 @@ async function listenInRange(server) {
 }
 
 /**
- * 假网关:按 OpenAI 兼容口回 SSE。第一次请求写到 create_card 源码中途被掐断(mode 'error-event':发 error 事件后结束;'socket':直接断连接),
- * 之后几次按模型「看了提示」的样子:code_cache_append 接着写 → create_card 用引用交 → 说一句收尾。
+ * Fake gateway: returns SSE via OpenAI-compatible endpoint. First request is cut off midway while
+ * writing create_card source (mode 'error-event': ends after sending error event; 'socket': directly
+ * disconnects), subsequent requests act as if model "saw prompt": continue writing with
+ * code_cache_append → submit via reference with create_card → say a closing remark.
  */
 async function fakeGateway(mode) {
   const requests = [];
@@ -377,7 +381,7 @@ async function fakeGateway(mode) {
         return;
       }
       if (n === 2) {
-        // 「模型」看到提示,知道写到哪了:接着写剩下的
+        // "Model" sees prompt, knows where it left off: continues writing the rest
         const note = JSON.stringify(json.messages.at(-1));
         const written = /at line \d+ \((\d+) chars\)/.exec(note);
         const at = written ? Number(written[1]) : 0;
@@ -418,13 +422,13 @@ for (const mode of ['error-event', 'socket']) {
       const err = events.find((e) => e.type === 'error');
       assert.equal(err, undefined, err?.message);
       assert.equal(gw.requests.length, 4);
-      // 单次上限按速度压:还没有记录,40 token/s × 250 秒 = 10000
+      // Per-request cap throttled by speed: no records yet, 40 token/s × 250 s = 10000
       assert.equal(gw.requests[0].max_tokens, 10000);
-      // 第二次请求里交给模型的话说的是被网关掐断
+      // The message given to the model in the second request states it was cut off by the gateway
       const note = JSON.stringify(gw.requests[1].messages.at(-1));
       assert.match(note, /was cut off midway: the gateway closed the connection/);
       assert.match(note, /cut_create_card_1/);
-      // 掐断那次的文字留在历史里
+      // Text from the cut-off attempt remains in history
       assert.match(JSON.stringify(gw.requests[1].messages), /Let me create this card\./);
       const created = calls.filter((c) => c.name === 'create_card');
       assert.equal(created.length, 1, 'The attempt that was cut off was not executed');
@@ -436,7 +440,7 @@ for (const mode of ['error-event', 'socket']) {
       assert.ok(events.some((e) => e.type === 'diagnostic' && e.stage === 'truncated' && e.data.cause === 'cut'));
       assert.equal(events.find((e) => e.type === 'done')?.outcome, 'completed');
       assert.ok(!JSON.stringify(events).includes('test-key-not-real'), 'Key is not included in events');
-    } finally { await gw.close(); rm(dir); try { fs.unlinkSync(historyOf(sid)); } catch { /* 清理 */ } }
+    } finally { await gw.close(); rm(dir); try { fs.unlinkSync(historyOf(sid)); } catch { /* Cleanup */ } }
   });
 }
 
@@ -447,7 +451,8 @@ test('End-to-end: a gateway disconnect before any data arrives still reports an 
   const server = http.createServer((req, res) => { req.resume(); req.on('end', () => { hits += 1; res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(d({ error: { message: GATEWAY_CUT } })); }); });
   const port = await listenInRange(server);
   try {
-    // 现有的重试(retry-fetch.mjs 的首块预读)照旧:还没出内容就来的可重试 error 先重发;这里只给 1 次、退避 10 毫秒
+    // Existing retry (first-chunk preread in retry-fetch.mjs) as usual: retryable errors before content
+    // is emitted are resent first; here only 1 attempt given, 10 ms backoff
     const { events, calls } = await runAgainst(port, { codeCacheDir: path.join(dir, 'cc'), sessionId: sid, outputSpeedFile: path.join(dir, 'model-speed.json'), retry: { maxRetries: 1, baseDelayMs: 10, maxDelayMs: 10 } });
     assert.equal(hits, 2, 'Resent once first by the existing retry');
     const err = events.find((e) => e.type === 'error');
@@ -456,7 +461,7 @@ test('End-to-end: a gateway disconnect before any data arrives still reports an 
     assert.equal(err.retryable, true);
     assert.equal(calls.filter((c) => c.name === 'create_card').length, 0);
     assert.ok(!events.some((e) => e.type === 'diagnostic' && e.stage === 'truncated'));
-  } finally { server.closeAllConnections?.(); await new Promise((r) => server.close(() => r())); rm(dir); try { fs.unlinkSync(historyOf(sid)); } catch { /* 清理 */ } }
+  } finally { server.closeAllConnections?.(); await new Promise((r) => server.close(() => r())); rm(dir); try { fs.unlinkSync(historyOf(sid)); } catch { /* Cleanup */ } }
 });
 
 test('Simulate the provider\'s cut step: ends with stream_cut, and the status line says the gateway cut it off', async () => {
@@ -480,5 +485,5 @@ test('Simulate the provider\'s cut step: ends with stream_cut, and the status li
     assert.equal(events.find((e) => e.type === 'error'), undefined);
     assert.equal(calls.find((c) => c.name === 'create_card').args.source, "import x from 'y';\nexport default 1;");
     assert.ok(events.some((e) => e.type === 'status' && /cut off midway by the gateway/.test(e.text)));
-  } finally { rm(dir); try { fs.unlinkSync(historyOf(sid)); } catch { /* 清理 */ } }
+  } finally { rm(dir); try { fs.unlinkSync(historyOf(sid)); } catch { /* Cleanup */ } }
 });

@@ -4,7 +4,10 @@ import assert from "node:assert/strict";
 const { SOUND_COST_BLOCK_FRAMES, SOUND_MEASURE_MAX_MS, createMemorySoundCostStore, createSoundJudge, measureSoundBlocks, soundBudgetMs, soundCostStoreKey, soundDeviceString, soundIsHeavy } = await import("./soundCost.ts");
 const { createNotificationRecipe, renderSoundEffectBlock } = await import("../kernel/soundEffects.ts");
 
-/** 假时钟:每合成一块走 `cost(i)` 毫秒;让出主线程的时间不走表 */
+/**
+ * Fake clock: each synthesized chunk advances `cost(i)` ms; yielding the main thread does not
+ * advance the clock
+ */
 function clock(cost) {
   let t = 0, i = 0;
   return { now: () => t, block: () => { t += cost(i++); }, calls: () => i };

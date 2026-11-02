@@ -1,21 +1,30 @@
 /**
- * 页面侧的共享成本记录(语义 `mechanism/document-service.md`「成本记录」、`mechanism/rendering.md`「界限搜索与成本记录」;
- * 契约 `docs/plan/c10-contract.md` 第 3 节、第 18 节第 7 条)。经页面已有的文档服务连接(共享项目那一条,
- * `assetTiers.ts` 的 `docRequest`)说话,协议见 `server/docservice/modules/costs.mjs`:
+ * Page-side shared cost records (semantics `mechanism/document-service.md` "Cost records",
+ * `mechanism/rendering.md` "Bound search and cost records"; contract `docs/plan/c10-contract.md`
+ * section 3, section 18 item 7). It talks through the document service connection the page already
+ * has (the shared project one, `docRequest` in `assetTiers.ts`); for the protocol see
+ * `server/docservice/modules/costs.mjs`:
  *
- * - **写**(`publishSharedCosts`):桌面版与所有在线浏览器测完卡,都把活渲单帧耗时写进文档服务(2026-10-07 用户定)。
- *   后台舞台测的(`probeRunner.ts`)由本文件的 `SharedCostRelay` 补传、`Preview` 每测完一张当场转写;只有一个舞台时
- *   界限搜索测的由 `costSearch.ts` 测完直接写。
- * - **读**(`listSharedCosts`):只有一个舞台的在线页面打开项目时读本项目的全部记录,做界限搜索(`costSearch.ts`)。
+ * - **Write** (`publishSharedCosts`): the desktop app and all online browsers, after measuring a
+ *   card, write the live render single-frame time to the document service (user decision,
+ *   2026-10-07). Those measured on the background stage (`probeRunner.ts`) are relayed by
+ *   `SharedCostRelay` in this file, and `Preview` transcribes them on the spot as each one is
+ *   measured; when there is only one stage, those measured by the bound search are written
+ *   directly by `costSearch.ts` once measured.
+ * - **Read** (`listSharedCosts`): an online page with only one stage reads all records of this
+ *   project when opening the project, to do the bound search (`costSearch.ts`).
  *
- * 环境只报原始值(`pageEnvironment.mjs`),指纹由文档服务按预渲染结果键同一套规则算,页面不另算。
- * 本文件不引有状态的模块(连接、store 都由调用方注入),Node 单测直接载入。
+ * The environment reports only raw values (`pageEnvironment.mjs`); the fingerprint is computed by
+ * the document service using the same rules as the prerender output key, and the page does not
+ * compute it separately.
+ * This file imports no stateful modules (connection and store are injected by the caller), so Node
+ * unit tests load it directly.
  */
 import type { CardCostRecord } from "../render/cardCostKey.mjs";
 
 type Request = (msg: Record<string, unknown>, timeoutMs?: number) => Promise<Record<string, unknown>>;
 
-/** 页面报给文档服务的原始环境(`pageEnvironment.mjs` 的 `readPageEnvironment`) */
+/** Raw environment the page reports to the document service (`readPageEnvironment` in `pageEnvironment.mjs`) */
 export interface PageEnvironment {
   platform: string;
   userAgent: string;
@@ -23,7 +32,7 @@ export interface PageEnvironment {
   vendor: string;
 }
 
-/** 文档服务里的一条成本记录 */
+/** One cost record in the document service */
 export interface SharedCostRecord {
   identityKey: string;
   envFingerprint: string;
@@ -33,20 +42,20 @@ export interface SharedCostRecord {
   mode: "dev" | "build";
 }
 
-/** 写入时的一条(环境整批给,不在每条里) */
+/** One entry on write (the environment is given once per batch, not in every entry) */
 export type SharedCostInput = Omit<SharedCostRecord, "envFingerprint">;
 
-/** 一次 `cost.put` 最多几条(与服务端 `COSTS_LIMITS.MAX_PUT` 相同) */
+/** Max entries per `cost.put` (same as the server's `COSTS_LIMITS.MAX_PUT`) */
 export const SHARED_COST_PUT_MAX = 500;
-/** 请求等回包的上限 */
+/** Upper limit for a request waiting for its reply */
 export const SHARED_COST_TIMEOUT_MS = 15_000;
-/** 转写的核对间隔:连接、项目、本机记录任一变了,下一拍补传 */
+/** Re-check interval for mirroring: if the connection, project or local records change, the next tick re-uploads */
 export const SHARED_COST_RELAY_MS = 5_000;
 
 const finite = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
 const IDENTITY_RE = /^[A-Za-z0-9._:-]{1,128}$/;
 
-/** 采样帧数:记录里有就用;没有(桌面的 K1 记录不存它)就取 `device` 串里的最少样本数 `stepN=`,再没有按 1 */
+/** Sampled frame count: use the record's value if present; otherwise (desktop K1 records don't store it) take the minimum sample count `stepN=` from the `device` string, and failing that use 1 */
 export function samplesOf(record: Partial<CardCostRecord> & { samples?: unknown }): number {
   if (Number.isSafeInteger(record.samples) && (record.samples as number) > 0) return record.samples as number;
   const m = /(?:^| \| )stepN=(\d+)(?: \||$)/.exec(String(record.device ?? ""));
@@ -54,7 +63,7 @@ export function samplesOf(record: Partial<CardCostRecord> & { samples?: unknown 
   return Number.isSafeInteger(n) && n > 0 ? n : 1;
 }
 
-/** K1 的一条本机记录 → 文档服务的形状;不合格(没有 identityKey / stepMs)回 null */
+/** One local K1 record → the document service's shape; returns null if invalid (no identityKey / stepMs) */
 export function toSharedInput(record: Partial<CardCostRecord> & { samples?: unknown }, now: () => number = Date.now): SharedCostInput | null {
   if (!record || typeof record.identityKey !== "string" || !IDENTITY_RE.test(record.identityKey)) return null;
   if (!finite(record.stepMs) || record.stepMs < 0) return null;
@@ -69,9 +78,12 @@ export function toSharedInput(record: Partial<CardCostRecord> & { samples?: unkn
 }
 
 /**
- * 这条 K1 记录是不是这台浏览器测的:`device` 串以「本页 UA | 本页 GPU 渲染器」开头(`costDevice.mjs` 的拼法)。
- * 别的机器、离线探针在别的浏览器里测的记录环境对不上,不转写(指纹要按测量环境算)。
- * 单舞台、双舞台测的都转写(2026-10-07 用户定所有在线浏览器测完都写)。
+ * Whether this K1 record was measured in this browser: the `device` string starts with
+ * "this page's UA | this page's GPU renderer" (as built by `costDevice.mjs`).
+ * Records measured on other machines, or by offline probes in other browsers, have a mismatched
+ * environment and are not mirrored (the fingerprint is computed from the measurement environment).
+ * Records from both single-stage and dual-stage measurements are mirrored (user decision, 2026-10-07:
+ * write everything measured in any online browser).
  */
 export function measuredHere(record: Partial<CardCostRecord>, env: PageEnvironment): boolean {
   const device = String(record?.device ?? "");
@@ -81,7 +93,8 @@ export function measuredHere(record: Partial<CardCostRecord>, env: PageEnvironme
 }
 
 /**
- * 写进文档服务。超过一批的分批发。连不上、被拒都不抛,回 `{ ok: false, error }`。
+ * Write to the document service. Sends in batches if there is more than one batch. Never throws on
+ * connection failure or rejection; returns `{ ok: false, error }`.
  */
 export async function publishSharedCosts({ request, projectId, environment, records, timeoutMs = SHARED_COST_TIMEOUT_MS }: {
   request: Request;
@@ -108,7 +121,7 @@ export async function publishSharedCosts({ request, projectId, environment, reco
   }
 }
 
-/** 读本项目的全部记录,顺带取本机环境的指纹。失败抛错(调用方决定怎么兜底) */
+/** Read all records of this project and also fetch the local environment fingerprint. Throws on failure (the caller decides the fallback) */
 export async function listSharedCosts({ request, projectId, environment, timeoutMs = SHARED_COST_TIMEOUT_MS }: {
   request: Request;
   projectId: string;
@@ -123,12 +136,17 @@ export async function listSharedCosts({ request, projectId, environment, timeout
 }
 
 /**
- * 桌面版与在线浏览器(连着共享项目的页面)把本机测完的成本记录转写进文档服务。
+ * The desktop app and the online browser (a page connected to a shared project) mirror the cost
+ * records measured locally into the document service.
  *
- * - 只在连着共享项目时写(`projectId()` 与 `linkKey()` 都给出值);没连就不写、不报错;
- * - 只转写这台浏览器测的记录(`measuredHere`),只转写当前项目用到的卡(`identityKeys()`);
- * - 按「连接 + 项目」记下传过的「identityKey @ measuredAt」,换了连接或项目从头补传一遍(服务端按测量时刻留最新,重复无害);
- * - 同时只跑一次;失败的下一拍再试。
+ * - Writes only while connected to a shared project (both `projectId()` and `linkKey()` return a
+ *   value); when not connected, nothing is written and no error is reported;
+ * - Mirrors only records measured in this browser (`measuredHere`), and only for cards used by the
+ *   current project (`identityKeys()`);
+ * - Remembers the "identityKey @ measuredAt" entries already sent per "connection + project"; when the
+ *   connection or project changes, it re-uploads from scratch (the server keeps the latest by
+ *   measurement time, so duplicates are harmless);
+ * - Runs one at a time; a failed write is retried on the next tick.
  */
 export class SharedCostRelay {
   private readonly deps: {
@@ -143,14 +161,14 @@ export class SharedCostRelay {
   private scope: { link: unknown; projectId: string } | null = null;
   private sent = new Set<string>();
   private busy = false;
-  /** 诊断:最近几次写入 */
+  /** Diagnostics: the most recent writes */
   readonly log: { at: number; projectId: string; count: number; ok: boolean; error?: string }[] = [];
 
   constructor(deps: SharedCostRelay["deps"]) {
     this.deps = deps;
   }
 
-  /** 现在就核一次;回这一次写了几条(没写回 0) */
+  /** Check once right now; returns how many entries this run wrote (0 if none) */
   async sync(): Promise<number> {
     if (this.busy) return 0;
     const link = this.deps.linkKey();
@@ -181,7 +199,7 @@ export class SharedCostRelay {
     try {
       const res = await publishSharedCosts({ request: this.deps.request, projectId, environment: env, records: pending.map((p) => p.input) });
       this.note({ at: now(), projectId, count: pending.length, ok: res.ok, ...(res.error ? { error: res.error } : {}) });
-      // 写的时候连接或项目又换了:这一批算在旧的那一份上,新的一份下一拍从头补传
+      // The connection or project changed again during the write: this batch counts against the old copy, and the new copy re-uploads from scratch on the next tick
       if (res.ok && this.scope?.link === link && this.scope?.projectId === projectId) for (const p of pending) this.sent.add(p.mark);
       return res.ok ? pending.length : 0;
     } finally {

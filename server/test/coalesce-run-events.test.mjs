@@ -1,4 +1,7 @@
-/** 文字 / 思考增量攒成一条再交:次序不变、收尾前交齐、字数到顶就交(`server/agent/service/coalesce-run-events.mjs`) */
+/**
+ * Coalesce text / thinking deltas into one before delivering: preserve order, deliver all before
+ * finalize, deliver when character count hits the cap (`server/agent/service/coalesce-run-events.mjs`)
+ */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { coalesceRunEvents, COALESCE_WINDOW_MS, COALESCE_MAX_CHARS } from '../agent/service/coalesce-run-events.mjs';
@@ -17,7 +20,7 @@ function manualTimers() {
 
 test('Consecutive text coalesces into one event; when another event arrives, the accumulated text is emitted first, order unchanged', () => {
   const w = fakeWriter(), t = manualTimers(), c = coalesceRunEvents(w, t);
-  for (const d of ['你', '好', '世界']) assert.equal(c.emit({ type: 'text', delta: d }), undefined);
+  for (const d of ['你', 'OK', '世界']) assert.equal(c.emit({ type: 'text', delta: d }), undefined);
   assert.deepEqual(w.emitted, [], 'Still accumulating');
   assert.equal(c.emit({ type: 'tool_call', name: 'x' }), 'e2');
   assert.deepEqual(w.emitted, [{ type: 'text', delta: '你好世界' }, { type: 'tool_call', name: 'x' }]);

@@ -1,16 +1,17 @@
 /**
- * see_frames({ source: "media" }) 的镜头分段、分页规划、拼图 ffmpeg 参数与图片尺寸探查。
- * 纯 Node 模块，不引用 src/、不碰网络或全局 store。
+ * Shot segmentation, pagination planning, sheet ffmpeg arguments, and image dimension probing for
+ * see_frames({ source: "media" }). Pure Node module; does not import src/, touch network, or
+ * access global store.
  */
 
 export const DEFAULT_PER_PAGE = 6;
 export const MAX_PER_PAGE = 12;
-/** 没跑镜头识别（或识别失败）时按固定间隔切段 */
+/** Splits into segments at fixed intervals when shot detection was not run (or failed) */
 export const FALLBACK_STEP_SEC = 10;
-/** 抽帧从镜头起点往后挪一点点，避开正卡在转场上的那一帧 */
+/** Shifts frame extraction slightly past shot start to avoid the frame landing right on a transition */
 export const FRAME_EPS = 0.05;
 
-/** 镜头识别结果 → 镜头清单；没有结果就按固定间隔切，并标 fallback */
+/** Shot detection results → shot list; falls back to fixed intervals if no results, marked fallback */
 export function scenesOf(shots, durationSec, step = FALLBACK_STEP_SEC) {
   if (shots?.shots?.length) {
     return {
@@ -40,7 +41,7 @@ export function scenesOf(shots, durationSec, step = FALLBACK_STEP_SEC) {
   return { scenes, fallback: 'fixed-interval' };
 }
 
-/** 筛选 + 分页。scene 指定了就只看那一个（默认 9 格），忽略分页 */
+/** Filter + pagination. If scene is specified, inspects only that one (default 9-grid), ignoring pagination */
 export function planSequences(all, opts = {}) {
   const totalScenes = all.length;
   if (opts.scene !== undefined) {
@@ -85,7 +86,7 @@ export function planSequences(all, opts = {}) {
   };
 }
 
-/** 一个镜头抽哪几帧（秒）：等间隔，起点略往后挪；和服务端 ffmpeg 的 fps 滤镜取法一致 */
+/** Frames (seconds) to extract for a shot: even intervals, start shifted slightly; matches server ffmpeg fps filter */
 export function frameTimes(start, end, grid) {
   const dur = Math.max(0, end - start - FRAME_EPS);
   const n = Math.max(1, grid | 0);
@@ -94,7 +95,7 @@ export function frameTimes(start, end, grid) {
   return out;
 }
 
-/** 这段时间里的字幕文本（有转写才有）；和区间有交集的段都算 */
+/** Caption text during this period (only if transcribed); includes all segments intersecting the interval */
 export function transcriptFor(transcript, start, end) {
   if (!transcript?.segments?.length) return '';
   return transcript.segments
@@ -105,7 +106,7 @@ export function transcriptFor(transcript, start, end) {
 }
 
 /**
- * 生成单个镜头拼图的 ffmpeg 命令行参数（与 /api/vision/sheet 一致）。
+ * Generates ffmpeg CLI arguments for a single shot sheet (consistent with /api/vision/sheet).
  * @param {{ file: string, start: number, end: number, grid?: number, out: string, localOnly?: boolean }} p
  */
 export function sheetFfmpegArgs({ file, start, end, grid = 4, out, localOnly = true }) {
@@ -130,7 +131,7 @@ export function sheetFfmpegArgs({ file, start, end, grid = 4, out, localOnly = t
 }
 
 /**
- * 从常见图片格式（PNG / JPEG / GIF / WebP）头部解析宽高与 MIME。
+ * Parses width, height, and MIME from headers of common image formats (PNG / JPEG / GIF / WebP).
  * @param {Buffer} buf
  * @returns {{ width: number, height: number, mime: string } | null}
  */

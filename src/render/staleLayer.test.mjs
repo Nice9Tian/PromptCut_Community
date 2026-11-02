@@ -1,12 +1,18 @@
 /**
- * 在线来源认出旧参数的层(stale-layer;`snapshotSource.ts` 的 `OnlineSnapshotSource.setInputs`、层表的 `inputSig`):
- *   SL-1 改参数:旧层马上撤掉(就绪发空、取不到字节);结果在路上时不确认缺料(沙漏)、时间轴不出徽标;
- *        等满 STALE_AWAIT_MS 还没新层才确认(图标、徽标),并叫覆盖订阅方;新层表到了照常换上
- *   SL-2 改回原来的参数:原来那一层还在,照贴
- *   SL-3 旧层表(没有 inputSig)照旧贴,改参数也不撤(向后兼容);页面没给项目也不比
- *   SL-4 取原尺寸(层表 v 3 候选)同样撤;layerClipIds 不含过期的层;layerRefOf 带签名比对
- *   SL-5 导出(`originals.ts`):给了项目时,旧输入的层算缺
- * 跑:node --test src/render/staleLayer.test.mjs
+ * Online source identifies layers with stale parameters (stale-layer;
+ * `OnlineSnapshotSource.setInputs` in `snapshotSource.ts`, `inputSig` in layer table):
+ *   SL-1 Change parameters: old layer is revoked immediately (ready emits empty, cannot fetch
+ *        bytes); while results are in transit, do not confirm missing (hourglass), no badge on
+ *        timeline; confirm (icon, badge) only after STALE_AWAIT_MS has fully elapsed without a new
+ *        layer, and notify overlay subscribers; swap in as usual when new layer table arrives
+ *   SL-2 Change back to original parameters: original layer is still there, paste as usual
+ *   SL-3 Old layer table (without `inputSig`) pastes as before, not revoked even when parameters
+ *        change (backward compatibility); do not compare if page provides no project
+ *   SL-4 Fetching original size (layer table v 3 candidate) also revokes; `layerClipIds` does not
+ *        contain expired layers; `layerRefOf` compares with signature
+ *   SL-5 Export (`originals.ts`): when project is provided, layers with stale inputs count as
+ *        missing
+ * Run: node --test src/render/staleLayer.test.mjs
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import { test } from "node:test";
@@ -90,7 +96,7 @@ test("SL-1 parameter change: the old layer is removed immediately, shows an hour
   const p1 = project({ title: "world" });
   const before = coverageCalls();
   src.setInputs(p1);
-  // 同步撤掉:不等下一轮轮询
+  // Revoke synchronously: do not wait for the next polling round
   assert.deepEqual(layerOf(index, "a", "html"), { clipId: "a", kind: "html", key: "KA1", ranges: [] }, "Old layer removed (ready sends empty)");
   assert.deepEqual(layerOf(index, "b", "html").ranges, [[0, 59]], "Unchanged clips are still applied");
   await assert.rejects(src.fetchSnapshot("html", "KA1", 3), /No small-size prerender for this frame/, "Bytes of the old layer are no longer served");
@@ -100,7 +106,7 @@ test("SL-1 parameter change: the old layer is removed immediately, shows an hour
   assert.equal(src.layerClipIds().has("a"), false, "An expired layer does not count as having output");
   assert.equal(src.debug().stale[0].clipId, "a");
 
-  // 等满等待期:确认缺料
+  // Wait out the full wait period: confirm missing
   advance(STALE_AWAIT_MS + 1);
   const mid = coverageCalls();
   await src.tickNow();
@@ -108,7 +114,7 @@ test("SL-1 parameter change: the old layer is removed immediately, shows an hour
   assert.equal(src.coverage("a"), "none");
   assert.ok(coverageCalls() > mid, "Coverage subscriber is called on expiry");
 
-  // 渲染节点按新输入重写层表、渲完:照常换上
+  // Render node rewrites layer table according to new inputs, finishes rendering: swap in as usual
   w.layerMap([layer("a", "KA2", clipInputSig(p1, "a")), layer("b", "KB1", clipInputSig(p1, "b"))]);
   w.manifest("KA2", 60, 7);
   advance(10_000);
@@ -124,7 +130,7 @@ test("SL-2 parameters changed back to the original: if the original layer is sti
   const { src, index } = await setup({ p: p0, layers: (p) => [layer("a", "KA1", clipInputSig(p, "a"))] });
   src.setInputs(project({ title: "world" }));
   assert.deepEqual(layerOf(index, "a", "html").ranges, []);
-  src.setInputs(project({ title: "hello" })); // 新对象、同样的输入
+  src.setInputs(project({ title: "hello" })); // New object, same inputs
   assert.deepEqual(layerOf(index, "a", "html"), { clipId: "a", kind: "html", key: "KA1", ranges: [[0, 59]] });
   assert.deepEqual(src.debug().stale, []);
 });

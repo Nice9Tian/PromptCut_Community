@@ -1,15 +1,26 @@
 /**
- * 项目设置「多用户协作」的动作（C10a 契约 `docs/plan/c10a-contract.md` 第 6 节；语义 `workflow/project.md`「多用户协作」）。
+ * Actions of the "multi-user collaboration" project setting (C10a contract `docs/plan/c10a-contract.md`
+ * section 6; semantics `workflow/project.md` "Multi-user collaboration").
  *
- * - **开启**：放云端向托管端 `POST shared/create`（地址缺省是内置托管地址，可改，沿用 C6.5）→ 以创建者身份进入、把当前项目
- *   以根替换写进去（`enterShared`，C6.5 的路径）→ `invite-create` → 界面显示邀请链接与二维码。放本机沿用 C6.5 的本机托管
- *   （本机文档服务 `/docservice/shared/create`），以原设备绑定向云端登记并保持出站隧道。
- * - **勾上时的缺省**：放本机、自由进入、创建者用户名取设备名；项目密码与创建者密码都自动生成（各 16 个字符）并存在本机〔裁，第 6 节〕。
- * - **邀请码**：原文只在签发时回给创建者，存在他本机保护存储；服务端不存原文，别的成员取不到〔裁，第 6 节〕。
- * - **取消**：放云端的先把项目真身与被引用的素材原尺寸全部拉回本机（预渲染产物可以再生，不拉），再以创建者身份 `delete`，
- *   本机项目回到 `local` 空间；中途失败就恢复为开启状态。放本机的停本机托管（删掉本机文档服务里的共享项目），回到 `local` 空间。
+ * - **Enable**: if placed in the cloud, `POST shared/create` to the hosted side (the address defaults to the
+ *   built-in hosted address and can be changed, as in C6.5) → enter as the creator and write the current
+ *   project in with a root replace (`enterShared`, the C6.5 path) → `invite-create` → the UI shows the
+ *   invite link and a QR code. If placed on this machine, it reuses C6.5's local hosting (this machine's
+ *   document service `/docservice/shared/create`), registers with the cloud using the original device
+ *   binding and keeps an outbound tunnel.
+ * - **Defaults when ticked**: placed on this machine, open entry, creator username taken from the device
+ *   name; the project password and the creator password are both generated automatically (16 characters
+ *   each) and stored on this machine [ruling, section 6].
+ * - **Invite code**: the plaintext is returned to the creator only at issue time and stored in the
+ *   protected storage of his machine; the server does not store the plaintext, and other members cannot get
+ *   it [ruling, section 6].
+ * - **Cancel**: if placed in the cloud, first pull the project itself and the full-size originals of the
+ *   referenced assets all back to this machine (prerender output can be regenerated, so it is not pulled),
+ *   then `delete` as the creator, and the local project returns to the `local` space; if it fails midway,
+ *   it is restored to the enabled state. If placed on this machine, stop local hosting (delete the shared
+ *   project from this machine's document service) and return to the `local` space.
  *
- * 界面在 `CollabSection.tsx`；连接、进入、创建者操作在 `syncManager.ts`。
+ * The UI is in `CollabSection.tsx`; connecting, entering and creator operations are in `syncManager.ts`.
  */
 import { adminOp, enterShared, ensureDevice, expectSharedClose, getSyncView, leaveSharedToLocal, pushToast, whenSaved, recoveryRequest, type AdminError } from "./syncManager";
 import { errorStatus, route, hosted, type SharedMode, type Where } from "./sharedApi";
@@ -22,7 +33,7 @@ import { HOSTED_DOC_PATH, inviteLinkOf } from "../../online/invite";
 import { cacheCollabSecrets, cachedCollabSecrets } from "./collabSecrets";
 import { tr } from "../../i18n/index.ts";
 
-/* ---------------- 本机记下的东西 ---------------- */
+/* ---------------- What this machine records ---------------- */
 
 export interface InviteInfo {
   link: string;
@@ -30,7 +41,7 @@ export interface InviteInfo {
   maxUses: number | null;
 }
 
-/** 这台设备上以创建者身份开启过的协作项目：自动生成的两样密码、邀请链接（只有创建者本机有） */
+/** Collaboration projects enabled as creator on this device: the two automatically generated passwords and the invite link (only the creator's machine has them) */
 export interface LocalCollab {
   projectId: string;
   where: Where;
@@ -77,38 +88,40 @@ function dropLocal(projectId: string) {
   writeAll(all);
 }
 
-/* ---------------- 缺省值 ---------------- */
+/* ---------------- Defaults ---------------- */
 
 const PW_ALPHABET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
-/** 自动生成的密码：16 个字符，去掉容易看错的 0 O 1 l I */
+/** Automatically generated password: 16 characters, with easily misread 0 O 1 l I removed */
 export function generatePassword(length = 16): string {
   const bytes = new Uint8Array(length * 2);
   crypto.getRandomValues(bytes);
   let out = "";
   for (let i = 0; i < bytes.length && out.length < length; i++) {
-    // 拒绝采样，免得前几个字符概率偏高
+    // Rejection sampling, so the first few characters do not get a higher probability
     if (bytes[i] >= 256 - (256 % PW_ALPHABET.length)) continue;
     out += PW_ALPHABET[bytes[i] % PW_ALPHABET.length];
   }
   return out.length === length ? out : generatePassword(length);
 }
 
-/** 缺省的创建者用户名：设备名 */
+/** Default creator username: the device name */
 export async function defaultCreatorName(): Promise<string> {
   const d = await ensureDevice();
   return (d?.deviceName || tr("Me")).slice(0, 64);
 }
 
-/* ---------------- 邀请码 ---------------- */
+/* ---------------- Invite code ---------------- */
 
-/** 邀请链接的源：服务端给的公网源 → 在线页面自己的源 → 文档服务地址的源 */
+/** Origin of the invite link: the public origin given by the server → the online page's own origin → the origin of the document service address */
 /**
- * 邀请链接里要带的**文档服务路径**（`online/invite.ts` 的 `inviteLinkOf`）：托管端在 `/hosted/`、
- * 局域网主机在 `/docservice`，两种不一样,光有源推不出来,所以签发时写进链接。
+ * The **document service path** to carry in the invite link (`inviteLinkOf` in `online/invite.ts`): the
+ * hosted side is at `/hosted/`, a LAN host is at `/docservice`. The two differ and cannot be inferred from
+ * the origin alone, so it is written into the link at issue time.
  *
- * 服务端给了 `linkOrigin`（托管端的公网源）就按托管端的路径；没给就从文档服务的 base 上取它自己的路径
- * —— 放本机时那就是 `/docservice`。
+ * If the server gave `linkOrigin` (the public origin of the hosted side), use the hosted side's path; if
+ * not, take its own path from the document service's base
+ * --- when placed on this machine, that is `/docservice`.
  */
 function docPathOf(given: unknown, base: string): string {
   if (typeof given === "string" && /^https?:\/\//.test(given)) return HOSTED_DOC_PATH;
@@ -119,10 +132,12 @@ function docPathOf(given: unknown, base: string): string {
     return HOSTED_DOC_PATH;
   }
   /*
-   * **末尾斜杠要去掉**（2026-10-26 端到端探针照出来的）：托管端的 `/hosted/` 必须带斜杠（nginx 对
-   * 不带斜杠的回 301，WebSocket 升级跟不了重定向），**局域网主机的 `/docservice` 反过来，要的是不带斜杠的**
-   * （见 `online/invite.ts` 的 `hostedWsUrlOf`）。文档服务的 base 这边带着斜杠，原样写进链接的话
-   * 成员那边拼出 `ws://主机/docservice/`，握不上手，界面只说一句「连不上服务器」。
+   * **The trailing slash must be removed** (found by the 2026-10-26 end-to-end probe): the hosted side's
+   * `/hosted/` must have the slash (nginx answers 301 for the version without it, and a WebSocket upgrade
+   * cannot follow a redirect), while **a LAN host's `/docservice` is the opposite and needs the version
+   * without a slash** (see `hostedWsUrlOf` in `online/invite.ts`). The document service's base has a slash
+   * here; if it were written into the link as is, the member side would build `ws://host/docservice/`, the
+   * handshake would fail, and the UI would only say "Cannot connect to the server".
    */
   if (path === HOSTED_DOC_PATH) return path;
   return path.replace(/\/+$/, "") || "/";
@@ -140,18 +155,23 @@ function linkOriginOf(given: unknown, base: string): string {
 
 export type InviteResult = { ok: true; invite: InviteInfo } | { ok: false; error: AdminError };
 
-/** 签发（作废旧的、签发新的）：每次都要当场的创建者密码 */
+/** Issue (revoke the old one, issue a new one): needs the creator password on the spot every time */
 /**
- * 放本机时邀请链接要用的源：**主机的局域网地址**，不是创建者此刻连的那个。
+ * The origin to use in invite links when the project is hosted on this machine: **the host's LAN
+ * address**, not the one the creator is connected to right now.
  *
- * 创建者多半是从回环（`http://127.0.0.1:<口>`）连自己的文档服务的，照那个源拼出来的链接只有这台机器打得开
- * ——局域网里的手机拿到的是它自己的回环。所以问一下本机绑在哪几个网段（`/api/lan-open`，只答回环，正合适），
- * 取第一个网段 + 编辑器的端口。几块网卡时取第一个：用户要是连的是另一个网段，「在手机上打开」那个窗口会
- * 当场说明（`LanOpenDialog` 的 `linkOnLan`）。问不到就退回按 base 推，至少不比以前差。
+ * The creator usually reaches their own document service over loopback (`http://127.0.0.1:<port>`),
+ * and a link built from that origin only opens on this machine: a phone on the LAN would get its own
+ * loopback. So we ask which subnets this machine is bound to (`/api/lan-open`, which only answers
+ * over loopback, which is fine here) and take the first subnet + the editor's port. With several
+ * network adapters we take the first one: if the user is connected through another subnet, the
+ * "Open on phone" dialog says so on the spot (`linkOnLan` in `LanOpenDialog`). If the query fails,
+ * fall back to deriving it from base, which is no worse than before.
  */
 async function lanLinkOrigin(): Promise<string | null> {
-  // 在线构建里没有编辑器进程、也就没有 /api/lan-open。不剪掉这一支，这个接口地址会被
-  // createInvite() 无条件拖进在线产物（C10A-API-03 判红）。ONLINE 是编译期常量，这里会整段剪掉。
+  // The online build has no editor process, so no /api/lan-open either. If this branch is not pruned,
+  // the endpoint address gets dragged into the online output unconditionally by createInvite()
+  // (C10A-API-03 flagged red). ONLINE is a compile-time constant, so the whole block is pruned here.
   if (ONLINE) return null;
   try {
     const r = await fetch("/api/lan-open", { cache: "no-store" });
@@ -206,18 +226,18 @@ export async function fetchInviteStatus(creatorPassword: string): Promise<{ ok: 
   };
 }
 
-/* ---------------- 开启 ---------------- */
+/* ---------------- Enable ---------------- */
 
 export interface EnableOptions {
   where: Where;
   mode: SharedMode;
   name: string;
   creator: { username: string; password: string };
-  /** 自由进入的项目密码 */
+  /** Project password for open entry */
   projectPassword?: string;
-  /** 限定进入的名单 */
+  /** List for restricted entry */
   list?: { username: string; password: string }[];
-  /** 托管地址（放云端）；不给按覆盖顺序取 */
+  /** Host address (for cloud hosting); if omitted, taken in override order */
   hostedUrl?: string | null;
 }
 
@@ -267,30 +287,41 @@ export async function enableCollab(o: EnableOptions): Promise<{ ok: true; invite
   });
   if (o.where !== "hosted") {
     /*
-     * 放本机的项目也签一张邀请链接(2026-10-26 用户定「局域网共享项目那一整套」时补):局域网里的手机、平板
-     * 扫码就能加入(`product/platforms.md`「局域网里的第二块屏」)。链接的源由 `linkOriginOf` 从文档服务的
-     * base 取 —— 主机以 `PROMPTCUT_LAN_HOST=1` 起时那就是它的局域网地址。
-     * 签不成只少了链接(项目名 + 口令照样能加入),所以不挡开启。
+     * A project hosted on this machine also signs an invite link (added on 2026-10-26 when the user
+     * decided on "the whole LAN shared project set"): phones and tablets on the LAN can join by
+     * scanning the code (`product/platforms.md`, "The second screen on the LAN"). The link origin comes
+     * from the document service's base via `linkOriginOf`: when the host starts with
+     * `PROMPTCUT_LAN_HOST=1`, that is its LAN address.
+     * If signing fails we only lose the link (project name + passphrase still work for joining), so it
+     * does not block enabling.
      */
     const lanInvite = await createInvite(o.creator.password);
     return { ok: true, invite: lanInvite.ok ? lanInvite.invite : null };
   }
   /*
-   * 开启前就在项目里的素材也要上云(C10a 集成返工):等编辑器进程拿到托管端素材服务与 rw 票据(进入共享项目时
-   * connectSharedAssets 设的上传目标),再按哈希交给上传队列,之后照上传队列的规则传(所有素材小尺寸先传、再传素材原尺寸)。
-   * 不挡开启:传的进度由上传队列管,缺的(本机内容库里没有)记一笔。
+   * Assets already in the project before enabling must also go to the cloud (C10a integration rework):
+   * wait until the editor process has the hosted side's asset service and the rw ticket (the upload
+   * target set by connectSharedAssets when entering the shared project), then hand them to the upload
+   * queue by hash, and from then on follow the upload queue's rules (small sizes of all assets first,
+   * then the original sizes).
+   * Does not block enabling: upload progress is managed by the upload queue, and missing ones (not in
+   * the local content store) are logged.
    */
   void queueExistingMedia();
   const inv = await createInvite(o.creator.password);
-  // 项目已经建好、进去了；邀请码没签成只少了链接，设置里可以再点「作废并重新生成」
+  // The project is already created and entered; if the invite code was not signed we only lose the link, and in settings the user can click "Revoke and regenerate" again
   return { ok: true, invite: inv.ok ? inv.invite : null };
 }
 
 /**
- * 开启「放云端」后把项目里已有的素材交给上传队列:先把没有哈希、本机还取得到字节的老素材补入库
- * (`ingestUnhashedMedia`,写回素材表并同步到文档服务),再按哈希入队。补不上的、本机内容库里没有的
- * 传不上去,别的成员拿不到:用气泡把这些素材的名字列给用户(控制台那一行不算告知)。
- * 回交给队列的个数与传不上去的名字(账号办法的「搬到云端」`accountMoveFlow.ts` 也用它);没交成回 null。
+ * After enabling "host in the cloud", hand the assets already in the project to the upload queue:
+ * first add old assets that have no hash but whose bytes this machine can still get to the library
+ * (`ingestUnhashedMedia`, which writes back to the asset table and syncs to the document service),
+ * then enqueue by hash. Those that cannot be added and are not in the local content store cannot be
+ * uploaded, so other members cannot get them: list the names of these assets to the user in a bubble
+ * (the console line does not count as notifying).
+ * Returns the number handed to the queue and the names that could not be uploaded (the account
+ * method's "Move to the cloud" `accountMoveFlow.ts` uses it too); returns null if nothing was handed over.
  */
 export async function queueExistingMedia(): Promise<{ queued: number; missing: string[] } | null> {
   if (ONLINE) return null;
@@ -313,7 +344,7 @@ export async function queueExistingMedia(): Promise<{ queued: number; missing: s
   return { queued: r.queued.length, missing: names };
 }
 
-/** 放云端时传不上去的素材:给用户的那句话(名字去重,太多时只列前面若干条) */
+/** Assets that could not be uploaded when hosting in the cloud: the message for the user (names deduplicated, only the first several listed when there are too many) */
 export function uploadMissingMessage(names: readonly string[], limit = 8): string {
 // i18n-allow: names in older projects carry the Chinese marker
   const uniq = [...new Set(names.map((n) => String(n || "").replace(/^\((?:missing|缺失)\) /, "")).filter(Boolean))];
@@ -323,8 +354,10 @@ export function uploadMissingMessage(names: readonly string[], limit = 8): strin
 }
 
 /**
- * 编辑器进程的「按哈希入队」(`server/vite-plugin-media.ts`)。在线构建里 `ONLINE` 是常量 true,这一支连同接口地址被剪掉
- * (在线页面没有编辑器进程;也不会走到放云端的开启,那在桌面版里做)。
+ * The editor process's "enqueue by hash" (`server/vite-plugin-media.ts`). In the online build `ONLINE`
+ * is the constant true, and this branch is pruned together with the endpoint address (the online
+ * page has no editor process; it also never reaches enabling cloud hosting, which is done in the
+ * desktop app).
  */
 export const postEnqueue = ONLINE ? null : async (body: unknown): Promise<EnqueueExistingResult | null> => {
   try {
@@ -336,13 +369,13 @@ export const postEnqueue = ONLINE ? null : async (body: unknown): Promise<Enqueu
   }
 };
 
-/* ---------------- 取消 ---------------- */
+/* ---------------- Cancel ---------------- */
 
 export type DisableError = "forbidden" | "rate-limited" | "pull-failed" | "offline" | "online-page";
 
-/** 拉回素材原尺寸：交给编辑器进程的预取队列，轮询本地内容库直到到齐；一分钟没有进展算失败 */
+/** Pull back the original-size assets: hand them to the editor process's prefetch queue and poll the local content store until all arrive; no progress for one minute counts as failure */
 export async function pullOriginals(hashes: string[], onProgress?: (done: number, total: number) => void): Promise<boolean> {
-  if (ONLINE) return false; // 在线页面没有本机素材库
+  if (ONLINE) return false; // The online page has no local media library
   if (!hashes.length) return true;
   try {
     const r = await fetch("/api/media/prefetch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items: hashes.map((hash) => ({ hash })) }) });
@@ -361,7 +394,7 @@ export async function pullOriginals(hashes: string[], onProgress?: (done: number
         const j = (await r.json()) as { hashes?: string[] };
         for (const h of j.hashes ?? []) got.add(h);
       } catch {
-        /* 这一轮没问到：下轮再问 */
+        /* No answer this round: ask again next round */
       }
     }
     if (got.size > have.size) lastProgress = Date.now();
@@ -374,14 +407,17 @@ export async function pullOriginals(hashes: string[], onProgress?: (done: number
 }
 
 /**
- * 取消多用户协作（创建者）：核对创建者密码 → 放云端的先把项目真身与素材原尺寸拉回本机 → `delete` → 回到本机空间。
- * 删除前失败保留开启；服务删除成功后即使本机注销记录写失败，也不能报成房间还在。
+ * Cancel multi-user collaboration (creator): verify the creator password → if hosted in the cloud,
+ * first pull the project itself and the original-size assets back to this machine → `delete` →
+ * return to the local space.
+ * If it fails before deletion, collaboration stays enabled; once the service deletion succeeds, even
+ * if writing the local deregistration record fails, it must not be reported as the room still existing.
  */
 export async function disableCollab(creatorPassword: string, onProgress?: (done: number, total: number) => void): Promise<{ ok: true } | { ok: false; error: DisableError }> {
   const s = getSyncView().shared;
   if (!s) return { ok: false, error: "offline" };
   if (ONLINE) return { ok: false, error: "online-page" };
-  // 先核对一次创建者密码（无副作用），免得白拉一趟
+  // First verify the creator password once (no side effects), to avoid a wasted pull
   const check = await adminOp("list-bans", { password: creatorPassword });
   if (!check.ok) return { ok: false, error: check.error === "rate-limited" ? "rate-limited" : check.error === "offline" ? "offline" : "forbidden" };
   try {
@@ -401,8 +437,10 @@ export async function disableCollab(creatorPassword: string, onProgress?: (done:
     return { ok: false, error: del.error === "rate-limited" ? "rate-limited" : del.error === "forbidden" ? "forbidden" : "pull-failed" };
   }
   dropLocal(s.projectId);
-  // 拉回本机的是删除落地那一刻页面手里的内容,不是上面动手之前拷的那一份:从拷贝到删除落地之间房间收下的修改
-  // (别的成员的、自己还没确认的)都在同一条连接上先于删除的回包到了页面,用早先那份拷贝会把它们丢掉
+  // What gets pulled back to this machine is what the page holds at the moment the deletion lands, not
+  // the copy made before acting above: changes the room accepted between the copy and the deletion
+  // landing (other members', and our own not yet confirmed) all reached the page on the same
+  // connection before the deletion's reply, and using the earlier copy would lose them
   const final = structuredClone(getState().project);
   const descriptor = getSyncView().association;
   if (descriptor) {
@@ -413,7 +451,7 @@ export async function disableCollab(creatorPassword: string, onProgress?: (done:
   return { ok: true };
 }
 
-/** 创建者在成员浮层或设置里改了密码：本机记下的那份跟着换（这台设备上没开启过的不记） */
+/** The creator changed the password in the member popover or in settings: the copy recorded on this machine follows (not recorded on devices where it was never enabled) */
 export async function rememberPasswords(projectId: string, p: { creatorPassword?: string; projectPassword?: string }) {
   const prev = localCollab(projectId);
   if (!prev) return;

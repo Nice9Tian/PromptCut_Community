@@ -1,6 +1,7 @@
 /**
- * C6.6 集成 3b:改卡之后等两个舞台都换上这一版卡片再重测;过了时限没换上的才重载那一个(`stageCards.ts`)。
- * 跑:node --test src/editor/stageCards.test.mjs
+ * C6.6 Integration 3b: after modifying a card, wait until both stages switch to this card revision
+ * before retesting; only reload the one that has not switched after timeout (`stageCards.ts`).
+ * Run: node --test src/editor/stageCards.test.mjs
  */
 import "../testing/registerTs.mjs";
 import test from "node:test";

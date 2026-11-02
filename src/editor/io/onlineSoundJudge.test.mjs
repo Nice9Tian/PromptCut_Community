@@ -127,7 +127,8 @@ test('B13 Online classified as heavy: not synthesized in the browser; a user car
     const blocked = await decideClipSound(u.project, u.clip);
     assert.equal(blocked.synth, false); assert.equal(blocked.reason, 'not-runnable'); assert.equal(evaluations, 0);
   } finally { restore(); }
-  // 原来按档一律不合成(2026-10-07 撤销):判定的结果只有「合成」「判重」「跑不了」三种
+  // Previously never synthesized by tier (revoked 2026-10-07): classification results are only
+  // "synthesize", "classify as heavy", and "cannot run"
   const again = setup();
   try {
     const recipe = await decideRecipeSound(createNotificationRecipe());

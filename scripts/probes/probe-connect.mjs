@@ -67,7 +67,8 @@ export async function openBrowser({ connect, launch } = {}) {
       close: async () => { await browser.disconnect(); },
     };
   }
-  // 起的 Chrome 以 PROBE_CHROME_ARGS 打头(`probe-chrome.mjs`),调用方给的参数接在后面
+  // Launched Chrome starts with PROBE_CHROME_ARGS (`probe-chrome.mjs`), followed by caller-supplied
+  // arguments
   const opts = launch ?? { headless: true };
   const browser = await puppeteer.launch({ ...opts, args: [...PROBE_CHROME_ARGS, ...(opts.args ?? []).filter((a) => !PROBE_CHROME_ARGS.includes(a))] });
   return {

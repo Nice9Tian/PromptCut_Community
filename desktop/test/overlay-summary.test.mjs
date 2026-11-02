@@ -1,6 +1,7 @@
-// 后台运行悬浮窗上那两行字(desktop/ui/overlay-summary.js)。
-// 挡住的是:SKILL 与非 SKILL 写反、会话在跑却显示「等接入」、失败写成成功、工具名漏译成 undefined。
-// 跑法:node --test desktop/test/overlay-summary.test.mjs
+// The two lines of text on the background mode floating window (desktop/ui/overlay-summary.js).
+// Guards against: SKILL and non-SKILL inverted, showing "waiting for connection" while session is running,
+// failures written as success, tool names untranslated and falling back to undefined.
+// How to run: node --test desktop/test/overlay-summary.test.mjs
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -70,12 +71,12 @@ test('OV-7 overlay.html includes this script and wires up three things: click, r
   for (const ev of ['pc-overlay-open', 'pc-overlay-menu', 'pc-overlay-ready', 'pc-overlay-state', 'pc-skill-preview']) {
     assert.ok(html.includes(ev), ev);
   }
-  // 外壳那头的事件名要对得上(skill_shell.rs)
+  // Event names on the shell side must match (skill_shell.rs)
   const rs = readFileSync(fileURLToPath(new URL('../src-tauri/src/skill_shell.rs', import.meta.url)), 'utf8');
   for (const ev of ['pc-overlay-open', 'pc-overlay-menu', 'pc-overlay-ready', 'pc-overlay-state', 'pc-skill-preview']) {
     assert.ok(rs.includes(`"${ev}"`), `skill_shell.rs does not contain ${ev}`);
   }
-  // 老的无头实例启动进度已经没有了(A4 归档),别再出现
+  // Startup progress for legacy headless instances has been removed (archived in A4); do not let it reappear
   assert.ok(!html.includes('start a headless instance'));
 });
 

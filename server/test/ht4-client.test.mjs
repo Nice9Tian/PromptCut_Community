@@ -1,12 +1,17 @@
 /**
- * HT4：客户端会话层 `createDocEndpoint`（契约 `docs/plan/http-transport-contract.md` 第 3、4.1～4.4、9 节，第 11 节 HT4
- * 的 WebSocket 部分）。跑：node --test server/test/ht4-client.test.mjs
+ * HT4: Client session layer `createDocEndpoint` (contract `docs/plan/http-transport-contract.md`
+ * sections 3, 4.1-4.4, 9, and the WebSocket part of section 11 HT4).
+ * Run: node --test server/test/ht4-client.test.mjs
  *
- * 前半用假 WebSocket（`ht-kit.mjs` 的 `fakeWebSocketEnv`）逐步驱动；后半（`HT4-real-*`）对着真的文档服务、经可控 TCP 代理断线。
- * 只照契约写，没看实现；假设见 `ht-kit.mjs`（H10～H12）。客户端会话层没到位时（`server/render-node/session-link.mjs`
- * 不存在）整组跳过；到位后自动真跑。
- * HT-b 的部分（失败转 HTTP、沿用同一份列表、HTTP 临时错误重试不报断开、HTTP 回 404 / 410 重建）不在这里：
- * 这里给的 `fetch` 一律失败，只要求「每次都先试 WebSocket」。
+ * The first half is driven step-by-step using fake WebSocket (`fakeWebSocketEnv` in `ht-kit.mjs`);
+ * the second half (`HT4-real-*`) targets the real document service and disconnects via a
+ * controllable TCP proxy. Written strictly to the contract without looking at the implementation;
+ * see assumptions in `ht-kit.mjs` (H10-H12). When the client session layer is not in place
+ * (`server/render-node/session-link.mjs` does not exist), the entire group is skipped; once in place,
+ * it runs for real automatically. The HT-b parts (fallback to HTTP on failure, reusing the same list,
+ * retrying on temporary HTTP errors without reporting disconnect, rebuilding on HTTP 404 / 410) are
+ * not here: `fetch` provided here always fails, requiring only that "WebSocket is always tried first
+ * each time".
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -63,7 +68,7 @@ test('HT4-seq outbound application messages carry seq (from 1) and piggyback ack
   assert.deepEqual(h.s1.biz().map((m) => [m.n, m.seq]), [[1, 1], [2, 2]]);
   h.s1.push({ type: 'x', k: 1, seq: 1 });
   h.s1.push({ type: 'x', k: 2, seq: 2, ack: 2 });
-  h.s1.push({ type: 'x', k: 2, seq: 2 }); // 重发
+  h.s1.push({ type: 'x', k: 2, seq: 2 }); // Resend
   h.s1.push({ type: 'session.ack', ack: 2 });
   await sleep(20);
   assert.deepEqual(h.messages, [{ type: 'x', k: 1 }, { type: 'x', k: 2 }], `onMessage received the two messages with seq / ack stripped: ${JSON.stringify(h.messages)}`);
@@ -90,7 +95,7 @@ test('HT4-resume when the transport drops: the resume item carries the ack for e
   await sleep(10);
   h.s1.drop(1006);
   await sleep(5);
-  h.ep.send({ type: 'a', n: 3 }); // 脱开期间
+  h.ep.send({ type: 'a', n: 3 }); // During detach
   assert.ok(h.ep.stats().pendingBytes > 0, `unacknowledged outbound messages are in the buffer: ${JSON.stringify(h.ep.stats())}`);
   const s2 = await h.fake.nth(2);
   assert.deepEqual(resumeOf(s2.protocols), { sid: SID, ack: 1 }, `resume item: ${JSON.stringify(s2.protocols)}`);
@@ -106,7 +111,7 @@ test('HT4-resume when the transport drops: the resume item carries the ack for e
   assert.deepEqual(s2.biz().map((m) => [m.n, m.seq]), [[2, 2], [3, 3]], `only those after welcome.ack are resent, in order, with the original seq: ${JSON.stringify(s2.biz())}`);
   assert.equal(h.ep.stats().resumes, 1);
   assert.equal(h.ep.stats().transport, 'ws');
-  // 接续后服务端接着编号
+  // After resuming, the server continues numbering
   s2.push({ type: 'x', seq: 2, ack: 3 });
   await sleep(10);
   assert.equal(h.messages.length, 2);
@@ -120,7 +125,8 @@ test('HT4-error-only on handshake failure there is only error and no close (Node
   const s2 = await h.fake.nth(2, 2000);
   assert.ok(isNewSessionList(s2.protocols), 'no session has been established yet: the retry is still a new session');
   assert.equal(h.calls.protocols, 2, 'creating a new session fetches a one-time credential again');
-  // 已建成的会话断开后，接续的握手同样只报 error：照样再试
+  // After an established session disconnects, the resume handshake also only reports error: retry as
+  // usual
   s2.accept({ sid: SID });
   await waitFor(() => h.opened.length === 1, 2000, 'onOpen');
   s2.drop(1006);
@@ -171,7 +177,7 @@ for (const code of [4003, 4004, 1013, 1001, 1002]) {
   test(`HT4-server-end-${code} the server ends the session with ${code}: onClose { code } is reported, no resume, and the next attempt creates a new session; sends after the session ends are discarded and counted, and the old session's unacknowledged messages are not carried into the new session`, T, async (t) => {
     const h = await openedEndpoint();
     t.after(() => h.ep.close());
-    h.ep.send({ type: 'a', n: 1 }); // 未确认
+    h.ep.send({ type: 'a', n: 1 }); // Unacknowledged
     h.s1.drop(code, 'server-ended');
     await waitFor(() => h.closes.length === 1, 2000, 'onClose');
     assert.equal(h.closes[0].code, code);
@@ -283,7 +289,7 @@ test('HT4-index server/render-node/index.mjs exports createDocEndpoint', T, asyn
   assert.equal(index.createDocEndpoint, createDocEndpoint);
 });
 
-// ------------------------------------------------------------------ 对着真的文档服务
+// ------------------------------------------------------------------ Against real document service
 
 async function realPair(t, serviceOpts = {}) {
   const env = await startService({ retainMs: 60_000, ...serviceOpts });

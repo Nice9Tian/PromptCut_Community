@@ -1,10 +1,12 @@
 /**
- * 剪辑段的两个 Agent 工具走云端那条路(托管档在项目副本上执行,`server/agent/ssr-host.mjs`):
- * 路由表直连 `EditorApi.addCutSegment` / `setCutSegment`,服务端副本上真的有这两个方法,
- * 放置、改偏移、拒绝循环都在副本的 store 里生效。本机那条路(编辑台的工具执行器)用同一张表、同一份实现,
- * 见 `src/mcp/handlers/cutSegments.test.mjs`。
+ * Two Agent tools for cut segments take the cloud path (hosted tier executes on project replica,
+ * `server/agent/ssr-host.mjs`):
+ * Routing table connects directly to `EditorApi.addCutSegment` / `setCutSegment`; server replica
+ * genuinely has these two methods; placement, offset modification, and cycle rejection all take
+ * effect in replica store. Local path (editor tool executor) uses the same table and implementation,
+ * see `src/mcp/handlers/cutSegments.test.mjs`.
  *
- * 跑:node --test server/test/cut-segment-cloud-route.test.mjs
+ * Run: node --test server/test/cut-segment-cloud-route.test.mjs
  */
 import assert from 'node:assert/strict';
 import path from 'node:path';

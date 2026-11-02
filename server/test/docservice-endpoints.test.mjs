@@ -1,13 +1,17 @@
 /**
- * 服务地址登记模块（契约 `docs/plan/render-queue-contract.md` G.6，用例 E1～E8）。
- * 跑：node --test server/test/docservice-endpoints.test.mjs
+ * Service address registration module (contract `docs/plan/render-queue-contract.md` G.6,
+ * test cases E1-E8).
+ * Run: node --test server/test/docservice-endpoints.test.mjs
  *
- * 只照契约写，不看实现。时钟用 `now` 注入加 `autoTick: false`、手动 `service.tick()`（G.4）。
+ * Written strictly against the contract, ignoring implementation. Clock uses `now` injection plus
+ * `autoTick: false`, manual `service.tick()` (G.4).
  *
- * 工厂照契约 G.12：`endpointsModule(options?)`，选项平铺（`graceMs`、`maxAnnouncers`、`maxUrls`、
- * `maxMetaBytes`、`tickMs`），缺省取 `ENDPOINT_DEFAULTS`。没带 `meta` 的登记，`meta` 为 `null`；
- * 宽限期内从新连接再登记，`urls` 与 `meta` 都没变才不推送（G.12 第 6 条）。
- * 回包是否带 `reqId` 契约没写，测试不依赖它，按消息类型等。
+ * Factory follows contract G.12: `endpointsModule(options?)`, flattened options (`graceMs`,
+ * `maxAnnouncers`, `maxUrls`, `maxMetaBytes`, `tickMs`), defaulting to `ENDPOINT_DEFAULTS`.
+ * Registrations without `meta` have `meta` as `null`; re-registering from a new connection within
+ * grace period does not push only if both `urls` and `meta` are unchanged (G.12 item 6).
+ * Whether responses include `reqId` is not specified in the contract; tests do not depend on it,
+ * waiting by message type.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -52,14 +56,14 @@ async function startService(options) {
   return { service, clock, url, connect, health, cleanup, defaults, module };
 }
 
-/** 订阅并取回包（全量） */
+/** Subscribe and get response (full) */
 async function watch(c, kinds) {
   c.send({ type: 'service.watch', kinds });
   const m = await c.next(byType('service.endpoints'));
   return m.endpoints;
 }
 
-/** 登记，等 service.announced 或 error */
+/** Register, wait for service.announced or error */
 async function announce(c, fields) {
   c.send({ type: 'service.announce', ...fields });
   return c.next((m) => m.type === 'service.announced' || m.type === 'error');
@@ -72,7 +76,7 @@ async function withdraw(c, fields) {
 
 const pushes = (c) => c.quiet(byType('service.endpoints'), 150);
 
-/** 断开一条连接，等服务端记下 */
+/** Disconnect a connection, wait for server to record */
 async function drop(env, c) {
   const before = env.service.describe().connections;
   c.close();
@@ -134,7 +138,7 @@ test('E2 the service.watch reply is the full list currently visible; kinds filte
   assert.equal(renderOnly[0].meta, null, 'a registration without meta has meta null (G.12)');
   assert.equal(renderOnly[0].since, T0);
 
-  // 此后的推送也按各自的 kinds 过滤、并且是全量
+  // Subsequent pushes are also filtered by their respective kinds, and are full
   await announce(a, { announcerId: 'host-1', kind: 'render', urls: ['http://host-1.lan:9001/'] });
   const p5 = await w5.next(byType('service.endpoints'));
   assert.deepEqual(pick(p5.endpoints).map((e) => e.announcerId), ['host-1', 'pc-1']);
@@ -163,7 +167,7 @@ test('E3 registering the same (announcerId, kind) again: replaces, does not add'
   assert.deepEqual(push.endpoints[0].meta, { n: 2 });
   assert.equal((await env.health()).endpoints, 1);
 
-  // 同一 announcerId、不同 kind 是另一条
+  // Same announcerId with different kind is a separate entry
   await announce(a, { announcerId: 'pc-1', kind: 'render', urls: ['http://10.0.0.3:8791/'] });
   assert.equal((await w.next(byType('service.endpoints'))).endpoints.length, 2);
   assert.equal((await env.health()).endpoints, 2);
@@ -259,7 +263,7 @@ test('E6 re-registering with the same urls from a new connection within the grac
   assert.deepEqual(await pushes(w), [], 'rebound to the new connection, so it is not removed even after the original grace period');
   assert.equal((await env.health()).endpoints, 1);
 
-  // 改绑后只有新连接能撤回
+  // After rebinding, only the new connection can revoke
   const r = await withdraw(a2, { announcerId: 'pc-1', kind: 'asset' });
   assert.equal(r.removed, true);
 });
@@ -373,7 +377,7 @@ test('E7 validation: ftp:, with username and password, more than 8 addresses, in
   const y = await env.connect();
   assert.deepEqual(pick(await watch(y, 'all')), [{ announcerId: 'pc-1', kind: 'asset', urls: ['http://10.0.0.2:8790/'] }], 'state unchanged');
 
-  // 边界上的合法值
+  // Valid value on the boundary
   const edge = [
     { announcerId: 'a'.repeat(128), kind: `a${'b'.repeat(31)}`, urls: urlN(8) },
     { announcerId: 'x.y_z:w-1', kind: 'k-9', urls: ['https://example.lan/'], meta: { blob: 'x'.repeat(3000) } },

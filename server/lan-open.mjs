@@ -1,42 +1,52 @@
 /**
- * 「在手机上打开」要的那点信息（语义 `docs/semantics/mechanism/platforms.md`「局域网里的第二块屏」）。
+ * Information needed by "Open on phone" (semantics in `docs/semantics/mechanism/platforms.md`
+ * "Second screen on LAN").
  *
- * 跨设备进同一个项目走的是**共享项目**那条路：主机把项目设成「多用户协作 + 放本机」，局域网里的设备凭
- * **邀请链接**（`<主机局域网源>/editor#invite=<码>`）或项目名加口令加入（契约 `docs/plan/c10a-contract.md` 第 5 节，
- * 邀请码的规则在 `server/auth/invite.mjs`）。邀请链接与二维码由页面自己拼（`src/editor/LanOpenDialog.tsx`，
- * 链接的源来自文档服务的 base，就是主机的局域网地址），所以本模块**不碰项目，也不签任何码**。
+ * Accessing the same project across devices follows the **shared project** route: the host sets
+ * the project to "multi-user collaboration + local", and devices on the LAN join via an **invite
+ * link** (`<host LAN origin>/editor#invite=<code>`) or project name plus passphrase (contract
+ * `docs/plan/c10a-contract.md` section 5; invite code rules are in `server/auth/invite.mjs`). The
+ * invite link and QR code are assembled by the page itself (`src/editor/LanOpenDialog.tsx`; the
+ * link's origin comes from the document service base, which is the host's LAN address), so this
+ * module **does not touch projects or sign any codes**.
  *
- * 本模块只回答一件事：**这台机器的编辑器现在绑在局域网上没有，局域网地址是哪几个**。
- * 没绑局域网的话，邀请链接给出去手机也连不上，界面要先说清这一点。
+ * This module answers only one thing: **whether this machine's editor is currently bound to the
+ * LAN, and which LAN addresses it has**. If not bound to the LAN, phones cannot connect even if the
+ * invite link is shared, and the UI needs to clarify this first.
  *
- * 绑没绑按**实际监听地址**判，不看环境变量：编辑器绑哪儿由命令行 `--host`（桌面壳给 `127.0.0.1`，
- * `npm run dev` 给 `0.0.0.0`）和 `PROMPTCUT_LAN_HOST` 一起决定（`vite.config.ts` 的 `lanHostPlugin`），
- * 两者还可能对不上。界面上要说的是「手机现在连不连得上」，那只有真正的监听地址说得准。
+ * Whether it is bound is determined by the **actual listening address**, not environment variables:
+ * where the editor binds is determined jointly by the `--host` CLI flag (the desktop shell passes
+ * `127.0.0.1`, while `npm run dev` passes `0.0.0.0`) and `PROMPTCUT_LAN_HOST` (`lanHostPlugin` in
+ * `vite.config.ts`), and the two may even conflict. What the UI needs to state is "whether phones
+ * can connect right now", and only the real listening address can accurately tell.
  *
- * 纯函数：网卡表由调用方给（`lan/discovery.mjs` 的 `selectInterfaces`，它已经排掉了回环、链路本地和没启用的），
- * 监听地址由调用方从 `server.httpServer.address()` 取。不读环境、不碰网络，单测直接用
- * （`server/test/lan-open.test.mjs`）。
+ * Pure function: the NIC list is provided by the caller (`selectInterfaces` in `lan/discovery.mjs`,
+ * which has already excluded loopback, link-local, and disabled interfaces), and the listening
+ * address is obtained by the caller from `server.httpServer.address()`. Does not read the
+ * environment or touch the network; unit tests can use it directly
+ * (`server/test/lan-open.test.mjs`).
  */
 
-/** 页面问这条信息的地址；只答回环的请求（`vite-plugin-lan-open.ts`） */
+/** Address where the page requests this info; answers only loopback requests (`vite-plugin-lan-open.ts`) */
 export const LAN_OPEN_PATH = '/api/lan-open';
 
-/** 编辑器绑局域网的开关（`vite.config.ts` 的 `lanHostPlugin`）；这里只用来写提示文字 */
+/** Switch for binding editor to LAN (`lanHostPlugin` in `vite.config.ts`); used here only for prompt text */
 export const LAN_HOST_ENV = 'PROMPTCUT_LAN_HOST';
 
-/** 没绑局域网时告诉用户怎么起（`package.json` 的 `dev:lan`） */
+/** Tells the user how to start when not bound to LAN (`dev:lan` in `package.json`) */
 export const LAN_HOST_COMMAND = 'npm run dev:lan';
 
 const isPort = (v) => Number.isInteger(v) && v >= 1 && v <= 65535;
 
 /**
- * 这个监听地址对局域网可达吗。
+ * Whether this listening address is reachable from the LAN.
  *
- * - `0.0.0.0`、`::`、空串：绑了全部网卡，可达；
- * - `127.0.0.1`、`::1`、`localhost`、`::ffff:127.*`：只绑回环，不可达；
- * - 别的（绑在某一块网卡上）：可达。
+ * - `0.0.0.0`, `::`, empty string: bound to all network interfaces, reachable;
+ * - `127.0.0.1`, `::1`, `localhost`, `::ffff:127.*`: bound only to loopback, unreachable;
+ * - Other (bound to a specific network interface): reachable.
  *
- * 判不出来（不是字符串）时按**不可达**算：宁可让界面多说一句，也不让用户拿着连不上的链接试。
+ * If undetermined (not a string), treated as **unreachable**: better to have the UI give an extra
+ * explanation than let the user try an unreachable link.
  *
  * @param {unknown} address
  */
@@ -50,11 +60,14 @@ export function boundToLan(address) {
 }
 
 /**
- * 一次问答的答复。
+ * Response for a query.
  *
- * - 只绑回环时 `addresses` 为空：手机连不上，列地址没有意义，界面照 `command` 说清怎么起。
- * - 几块网卡就给几条：用户自己挑手机连的那个网段，软件猜不出来；界面拿它核对邀请链接里的那个地址
- *   是不是局域网上的（链接的源由文档服务的 base 定，主机有几块网卡时未必是用户要的那一块）。
+ * - When bound only to loopback, `addresses` is empty: phones cannot connect, so listing addresses
+ *   is meaningless; the UI explains how to start according to `command`.
+ * - Provides an entry for each NIC: the user selects the subnet that their phone is connected to, as
+ *   the software cannot guess; the UI uses it to verify whether the address in the invite link is on
+ *   the LAN (the origin of the link is determined by the document service base, which may not be the
+ *   one the user wants when the host has multiple NICs).
  *
  * @param {{ bound?: unknown, port?: unknown, nics?: Array<{ name?: string, address?: string }> }} o
  */
@@ -74,10 +87,11 @@ export function lanOpenInfo({ bound, port, nics = [] } = {}) {
 }
 
 /**
- * 一条地址（可以是整条链接，也可以只是主机名）落在这几块网卡上吗。
- * 界面据此判断邀请链接是不是局域网里打得开的；解析不了的一律回 false。
+ * Whether an address (can be a full link or just a hostname) falls on these network interfaces.
+ * The UI uses this to determine whether the invite link is accessible on the LAN; returns false for
+ * anything that cannot be parsed.
  *
- * @param {unknown} link 整条链接或主机名
+ * @param {unknown} link Full link or hostname
  * @param {Array<{ address?: string }>} addresses
  */
 export function linkOnLan(link, addresses = []) {

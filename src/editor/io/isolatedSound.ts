@@ -1,19 +1,23 @@
 /**
- * 编辑页面这一侧:把后台舞台的声音这一半(舞台 RPC 那头的 `stageSound.ts`)接成 `cardAudio.ts` 的隔离宿主
- * (`docs/plan/online-card-exec-contract.md` 3.5、第 6 节)。只有形状转换,不执行任何卡片代码。
+ * Editor page side: connects the sound half of the background stage (`stageSound.ts` on the stage RPC
+ * end) as the isolated host of `cardAudio.ts` (`docs/plan/online-card-exec-contract.md` 3.5, section 6).
+ * Only converts shapes; never executes any card code.
  *
- *   const link = createIsolatedSoundLink({ render: (request) => 后台舞台的 RPC.synthCardAudio(request) });
- *   link.setState(舞台报来的状态);     // 载入结果变了就再叫;null = 这条线程没了(舞台换了、页面不能执行了)
+ *   const link = createIsolatedSoundLink({ render: (request) => background stage RPC.synthCardAudio(request) });
+ *   link.setState(state reported by the stage);     // call again whenever the load result changes; null = this thread is gone (stage replaced, page cannot execute)
  *   link.dispose();
  *
- * 接上之后同步来的用户卡与素材效果卡的声音照 B 的规则走:判轻的经这里在声音线程里合成,判重的用已有产物。
+ * Once connected, the sound of user cards and media effect cards arriving synchronously follows rule B:
+ * those judged light are synthesized on the sound thread through here, those judged heavy use existing output.
  *
- * 舞台报来的东西当不可信输入:状态按形状校验、截短;采样块的形状在 `cardAudio.ts` 里再核一遍。
- * 项目每个版本只随请求发一次(结构化克隆一份),之后只带键;舞台说没有这一版(它重起过)就带上项目重发一次。
+ * Treat what the stage reports as untrusted input: the state is validated by shape and truncated;
+ * the shape of sample chunks is checked once more in `cardAudio.ts`.
+ * The project is sent with a request only once per version (a structured clone), after that only the key;
+ * if the stage says it does not have this version (it restarted), resend once with the project.
  */
 import { setIsolatedCardAudioHost, type CardAudioRequest, type IsolatedCardAudioHost } from "../../audio/cardAudio";
 
-/** 舞台报来的声音状态(形状同 `src/online/cardRuntime/stageSound.ts` 的 `StageSoundState`) */
+/** Sound state reported by the stage (same shape as `StageSoundState` in `src/online/cardRuntime/stageSound.ts`) */
 export interface IsolatedSoundState {
   ready: Record<string, string>;
   blocked: Record<string, string>;
@@ -37,7 +41,7 @@ export interface IsolatedSoundLink {
 const NO_PROJECT = /No such project version/;
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
-/** 舞台报来的状态 → 干净的一份(键是卡片 id,值是短字符串);形状不对回 null */
+/** State reported by the stage → a clean copy (keys are card ids, values are short strings); returns null if the shape is wrong */
 export function sanitizeSoundState(state: unknown): IsolatedSoundState | null {
   if (!isRecord(state)) return null;
   const pick = (v: unknown, max: number) => {
@@ -51,7 +55,7 @@ export function sanitizeSoundState(state: unknown): IsolatedSoundState | null {
 
 export function createIsolatedSoundLink(opts: { render: (request: IsolatedSoundRpcRequest, signal?: AbortSignal) => Promise<Float32Array> }): IsolatedSoundLink {
   let state: IsolatedSoundState | null = null;
-  /** 项目对象 → 键(编辑页面的项目是不可变更新,一个对象就是一个版本) */
+  /** Project object → key (projects on the editor page are updated immutably, so one object is one version) */
   const keys = new WeakMap<object, string>();
   const sent = new Set<string>();
   let seq = 0;
@@ -74,7 +78,7 @@ export function createIsolatedSoundLink(opts: { render: (request: IsolatedSoundR
       try {
         return await opts.render(first ? { ...base, project: request.project } : base, signal);
       } catch (err) {
-        // 舞台那头重起过、手里没有这一版了:带上项目重发一次
+        // The stage restarted and no longer has this version: resend once with the project
         if (first || !NO_PROJECT.test(String((err as Error)?.message ?? err))) throw err;
         return opts.render({ ...base, project: request.project }, signal);
       }
@@ -83,10 +87,12 @@ export function createIsolatedSoundLink(opts: { render: (request: IsolatedSoundR
   return {
     setState(next) {
       const clean = next === null ? null : sanitizeSoundState(next);
-      // 没变就不惊动声音那一侧(换宿主会让所有在用的声音重新取一遍;舞台每载入一次包都会报一次状态)
+      // Unchanged: do not disturb the sound side (switching host makes every sound in use fetch again; the
+      // stage reports its state every time it loads a bundle)
       const same = (clean === null && state === null) || (!!clean && !!state && JSON.stringify(clean) === JSON.stringify(state));
       state = clean;
-      // 舞台那头换了一批卡(或线程没了):之前发过的项目它不一定还留着,下一次带上项目
+      // The stage replaced its batch of cards (or the thread is gone): it may no longer hold the projects
+      // sent earlier, so send the project with the next request
       sent.clear();
       if (!same) setIsolatedCardAudioHost(clean ? host : null);
     },

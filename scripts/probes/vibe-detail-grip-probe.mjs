@@ -1,30 +1,40 @@
 // First import protects user directories and the shared port file before any fixture import.
 import '../lib/no-user-dirs.mjs';
 /**
- * 氛围式「详细编辑」里舞台和时间轴之间那条能拖的缝的验收探针（issue #40，用户 2026-10-26 提）。
+ * Acceptance probe for the draggable seam between stage and timeline in Vibe mode "Detail editing"
+ * (issue #40, user raised 2026-10-26).
  *
- * 跑的是**真页面**：本机桌面版那一条路（`/?ui=vibe` → 新建本机项目 → 聊天页 → 拓展栏「画面」→「详细编辑」），
- * 真舞台 iframe、真时间轴，不接云端、不接账号。开发服务由调用方先起好，探针只连它：
+ * Runs against the **real page**: the local desktop app route (`/?ui=vibe` → create local project →
+ * chat page → side panel "Video" → "Detail editing"), real stage iframe, real timeline, without
+ * connecting to cloud or account. Dev server is started beforehand by the caller; probe only connects to it:
  *
- *   PROMPTCUT_NO_PORT_FILE=1 PROMPTCUT_PROJECTS_DIR=<临时目录> npx vite --port 5203 --strictPort --host 127.0.0.1
- *   node scripts/probes/vibe-detail-grip-probe.mjs [--origin http://127.0.0.1:5203] [--out <截图目录>]
+ *   PROMPTCUT_NO_PORT_FILE=1 PROMPTCUT_PROJECTS_DIR=<temp-dir> npx vite --port 5203 --strictPort --host 127.0.0.1
+ *   node scripts/probes/vibe-detail-grip-probe.mjs [--origin http://127.0.0.1:5203] [--out <screenshot-dir>]
  *
- * 页面带 `?nosetup=1`:本机没配 Agent 时首启会弹「配置 Agent」那个模态框,它盖住整页、鼠标点不到缝。
+ * The page includes `?nosetup=1`: on first launch without a configured local Agent, the "Configure Agent"
+ * modal pops up, covering the entire page so the mouse cannot click the seam.
  *
- * 开发服务另占「端口 +1」「端口 +2」当舞台端口（`guide_files/verification.md`「验证环境」）。
- * `PROMPTCUT_PROJECTS_DIR` 给个临时目录：探针会在里面建一个空项目，不设就落在仓库的 `.pc-projects/`。
+ * Dev server additionally occupies "port + 1" and "port + 2" as stage ports (`guide_files/verification.md`
+ * "Verification environment"). Provide a temporary directory for `PROMPTCUT_PROJECTS_DIR`: probe creates
+ * an empty project inside; if unset, it falls back to `.pc-projects/` in the repository.
  *
- * 验收（每项一行进最后那行 JSON 的 `fails`）：
- *   G1 缝在传输控件和时间轴之间：`[data-pc="start-detail-grip"]` 在，`role=separator`、`aria-orientation=horizontal`、
- *      能 Tab 到（tabindex=0）；它的下沿贴着时间轴的上沿，上沿在那排传输控件下面。
- *   G2 平时不画线，鼠标压上来才亮：静止时那条线 `opacity: 0`，hover 之后 `opacity: 1`。
- *   G3 拖得动：往上拖 120px，时间轴高 +120（±3），上面的舞台跟着矮下去，页面不纵向溢出。
- *   G4 记在本机：松手后 `pc.start.detailTlH` 就是拖出来的高；收起详细编辑再打开，还是这个高。
- *   G5 双击复位：双击那条缝，回到没拖过时 CSS 给的默认高，本机那一条被删掉。
- *   G6 键盘也能调：聚焦那条缝，ArrowUp 四下 +32，Shift+ArrowDown 一下 −32（上去是变高，和拖的方向一致）。
- *   G7 拖到头有界：往上拖 2000px 顶多到这一页的七成（舞台还剩得下），往下拖 2000px 不低于 160px。
- * 截图：`grip-default.png`、`grip-hover.png`、`grip-tall.png`、`grip-short.png`。
- * 最后一行是一行 JSON：{ ok, fails, ... }。退出码 0 过、1 不过。
+ * Acceptance check (each item as one line in `fails` of the final JSON line):
+ *   G1 Seam sits between transport controls and timeline: `[data-pc="start-detail-grip"]` exists,
+ *      `role=separator`, `aria-orientation=horizontal`, tabbable (tabindex=0); its bottom edge
+ *      aligns with top edge of timeline, and top edge sits below that row of transport controls.
+ *   G2 No line drawn normally, highlights when hovered: line has `opacity: 0` at rest and `opacity: 1` on hover.
+ *   G3 Draggable: drag up 120px, timeline height +120 (±3), stage above shortens accordingly, and
+ *      page does not overflow vertically.
+ *   G4 Stored locally: after release, `pc.start.detailTlH` equals the dragged height; collapsing and
+ *      reopening detail editing retains this height.
+ *   G5 Double-click reset: double-click the seam to return to default CSS height before dragging;
+ *      the local entry is removed.
+ *   G6 Keyboard adjustable: focus the seam, press ArrowUp 4 times for +32, Shift+ArrowDown once
+ *      for -32 (up increases height, matching drag direction).
+ *   G7 Drag bounds enforced: drag up 2000px reaches at most 70% of the page (stage still has room
+ *      left); drag down 2000px no lower than 160px.
+ * Screenshots: `grip-default.png`, `grip-hover.png`, `grip-tall.png`, `grip-short.png`.
+ * Last line is a single JSON line: { ok, fails, ... }. Exit code 0 passes, 1 fails.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -40,7 +50,7 @@ const ORIGIN = arg('--origin', 'http://127.0.0.1:5203');
 const OUT = path.resolve(arg('--out', path.join(os.tmpdir(), 'vibe-detail-grip-shots')));
 fs.mkdirSync(OUT, { recursive: true });
 
-/** 这一页七成高是拖杆的上限（`DetailEdit.tsx` 的 TL_MAX_RATIO），最矮 160（TL_MIN_H） */
+/** 70% of page height is the grip upper bound (`TL_MAX_RATIO` in `DetailEdit.tsx`), minimum 160 (`TL_MIN_H`) */
 const MAX_RATIO = 0.7;
 const MIN_H = 160;
 const KEY = 'pc.start.detailTlH';
@@ -61,7 +71,7 @@ page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text().slice
 const sel = (pc) => `[data-pc="${pc}"]`;
 const click = async (pc) => { await page.waitForSelector(sel(pc), { timeout: 60_000 }); await page.click(sel(pc)); };
 
-/** 详细编辑这一页的几何：时间轴、舞台、那条缝、整页 */
+/** Geometry of the detail editing page: timeline, stage, seam, and full page */
 const geo = () => page.evaluate(() => {
   const r = (pc) => { const el = document.querySelector(`[data-pc="${pc}"]`); if (!el) return null; const b = el.getBoundingClientRect(); return { top: Math.round(b.top), bottom: Math.round(b.bottom), h: Math.round(b.height) }; };
   const transport = (() => { const el = document.querySelector('.ps-detail-transport'); if (!el) return null; const b = el.getBoundingClientRect(); return { bottom: Math.round(b.bottom) }; })();
@@ -76,7 +86,7 @@ const gripCenter = async () => {
   const b = await page.$eval(sel('start-detail-grip'), (el) => { const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
   return b;
 };
-/** 从缝上按下去，往上（dy<0）或往下拖 dy 像素 */
+/** Press down on the seam and drag dy pixels up (dy<0) or down */
 const drag = async (dy) => {
   const { x, y } = await gripCenter();
   await page.mouse.move(x, y);
@@ -87,20 +97,20 @@ const drag = async (dy) => {
 };
 
 try {
-  /* ── 真页面：新建一个本机项目，进聊天页 ── */
+  /* -- Real page: create a local project, enter chat page -- */
   await page.goto(`${ORIGIN}/?ui=vibe&nosetup=1`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await click('start-side-new');
   await page.waitForSelector(sel('start-ext-detail'), { timeout: 60_000 });
   await sleep(1200);
 
-  /* ── 进详细编辑 ── */
+  /* -- Enter detail editing -- */
   await click('start-ext-detail');
   await page.waitForSelector(sel('start-detail-tl'), { timeout: 60_000 });
   await sleep(600);
   const g0 = await geo();
   await page.screenshot({ path: path.join(OUT, 'grip-default.png') });
 
-  /* G1 缝在传输控件和时间轴之间 */
+  /* G1 Seam sits between transport controls and timeline */
   const a11y = await page.$eval(sel('start-detail-grip'), (el) => ({
     role: el.getAttribute('role'), orient: el.getAttribute('aria-orientation'),
     tabindex: el.getAttribute('tabindex'), title: el.getAttribute('title'), h: Math.round(el.getBoundingClientRect().height),
@@ -112,7 +122,7 @@ try {
   check(g0.grip && g0.tl && near(g0.grip.bottom, g0.tl.top, 1), 'G1 the grip\'s bottom edge is not flush with the timeline\'s top edge', out.G1);
   check(g0.grip && g0.transport && g0.grip.top >= g0.transport.bottom - 1, 'G1 the grip is not below the transport controls', out.G1);
 
-  /* G2 平时不画线，压上来才亮 */
+  /* G2 No line drawn normally, highlights when hovered */
   const lineOpacity = () => page.$eval(sel('start-detail-grip'), (el) => getComputedStyle(el, '::after').opacity);
   const idleOpacity = await lineOpacity();
   const c = await gripCenter();
@@ -124,7 +134,7 @@ try {
   check(Number(idleOpacity) === 0, 'G2 the line is already lit when not dragging', out.G2);
   check(Number(hoverOpacity) === 1, 'G2 the line does not light up when the mouse is over it', out.G2);
 
-  /* G3 拖得动 */
+  /* G3 Draggable */
   await drag(-120);
   const g1 = await geo();
   out.G3 = { before: { tl: g0.tl?.h, stage: g0.stage?.h }, after: { tl: g1.tl?.h, stage: g1.stage?.h }, overflowY: g1.overflowY };
@@ -133,7 +143,7 @@ try {
   check(g1.overflowY === 0, 'G3 the page overflows vertically after the drag', out.G3);
   await page.screenshot({ path: path.join(OUT, 'grip-tall.png') });
 
-  /* G4 记在本机，收起再打开还是这个高 */
+  /* G4 Saved on this machine; still this height after collapsing and reopening */
   const dragged = g1.tl.h;
   check(Number(g1.saved) === dragged, 'G4 the height was not saved locally on release', { saved: g1.saved, dragged });
   await click('start-detail-close');
@@ -145,9 +155,10 @@ try {
   out.G4 = { saved: g1.saved, dragged, reopened: g2.tl?.h };
   check(near(g2.tl.h, dragged, 2), 'G4 after collapsing and reopening, the timeline did not return to the dragged height', out.G4);
 
-  /* G5 双击复位 */
+  /* G5 Double-click reset */
   const c2 = await gripCenter();
-  // 浏览器按 clickCount 认双击:要一下一下按,第二下带 clickCount:2,才会发出 dblclick(`page.mouse.click` 两下不算)
+  // Browsers recognize double-clicks by clickCount: click one by one, the second with clickCount: 2,
+  // only then will dblclick fire (`page.mouse.click` twice does not count)
   await page.mouse.move(c2.x, c2.y);
   await page.mouse.down();
   await page.mouse.up();
@@ -159,7 +170,7 @@ try {
   check(near(g3.tl.h, g0.tl.h, 2), 'G5 double-click did not return to the default height', out.G5);
   check(g3.saved === null, 'G5 the local entry is still there after the double-click', out.G5);
 
-  /* G6 键盘 */
+  /* G6 Keyboard */
   await page.focus(sel('start-detail-grip'));
   for (let i = 0; i < 4; i += 1) await page.keyboard.press('ArrowUp');
   await sleep(300);
@@ -174,7 +185,7 @@ try {
   check(near(g5.tl.h, g4.tl.h - 32, 2), 'G6 Shift + Arrow Down once did not subtract 32', out.G6);
   check(Number(g5.saved) === g5.tl.h, 'G6 the keyboard adjustment was not saved locally', out.G6);
 
-  /* G7 拖到头有界 */
+  /* G7 Bounded when dragged to the end */
   await drag(-2000);
   const g6 = await geo();
   await page.screenshot({ path: path.join(OUT, 'grip-tall-max.png') });

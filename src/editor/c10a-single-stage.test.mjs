@@ -1,13 +1,17 @@
 /**
- * C10a 在线页面的单舞台 live 预览（`docs/plan/c10a-contract.md` 第 8 节「不开后台舞台：在线页面只有一个同源舞台」、
- * 第 8.1 节「`ONLINE` 时同源单舞台 A 按 live 变体渲……A 就是可见舞台，没有 B」）。
- * 跑：node --experimental-test-module-mocks --test src/editor/c10a-single-stage.test.mjs
+ * C10a online page single-stage live preview (`docs/plan/c10a-contract.md` section 8 "Do not open
+ * background stage: online page has only one same-origin stage", section 8.1 "During `ONLINE`,
+ * same-origin single-stage A renders as live variant... A is the visible stage, there is no B").
+ * Run: node --experimental-test-module-mocks --test src/editor/c10a-single-stage.test.mjs
  *
- * 假设 K7（`server/test/c10a-kit.mjs`）：仍由 `src/editor/previewMode.ts` 决定开几个舞台、舞台地址带什么——
- *   `dualStage()` 在 `ONLINE` 时恒为 false（就算页面上有舞台端口表）；`stageSrc('A')` 是同源地址，
- *   带 `preview=stage`（「相当于现在双舞台里 `&preview=stage` 的那一份」，舞台据此渲 live 变体）。
- * 2026-10-22：开几个舞台改由舞台闸门的档位定（`src/online/onlineTier.ts`；停在第一级只开跨源单舞台 A），
- * 原来随低内存档来的那个探测改认 `onlineTier.ts`。
+ * Hypothesis K7 (`server/test/c10a-kit.mjs`): `src/editor/previewMode.ts` still decides how many stages
+ * to open and what stage URLs carry:
+ *   `dualStage()` is always false during `ONLINE` (even if a stage port table is on the page);
+ *   `stageSrc('A')` is a same-origin URL with `preview=stage` ("equivalent to the `&preview=stage`
+ *   part in dual stage now", by which stage renders live variant).
+ * 2026-10-22: how many stages to open is now determined by the stage gate tier
+ * (`src/online/onlineTier.ts`; staying at level 1 opens only cross-origin single stage A), and the
+ * probe originally accompanying the low-memory tier now recognizes `onlineTier.ts`.
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import { test, mock, beforeEach } from "node:test";
@@ -40,14 +44,14 @@ test("C10A-GT-07 On the online page every stage is always cross-origin isolated:
   for (const ports of [undefined, [], [5191, 5192]]) {
     const restore = page({ ports });
     try {
-      // 未配置舞台源：禁止退回同源，直接抛错
+      // Stage origin not configured: falling back to same-origin is prohibited, throw error directly
       resetOnlineStagesForTest({ origins: null });
       assert.equal(pm.dualStage(), false, `Stage port table ${JSON.stringify(ports)}: dual stage is not enabled when no origin is configured`);
       assert.throws(() => pm.stageSrc("A"), /falling back to the same-origin stage is forbidden/);
       assert.throws(() => pm.stageTargetOrigin("A"), /falling back to the same-origin stage is forbidden/);
       assert.equal(pm.interimStage(), false, "interimStage is always false since the interim period was withdrawn");
 
-      // 配置了跨源舞台源：即使是单舞台也是跨源加载 stage.html，绝不退回同源
+      // Cross-origin stage origin configured: load stage.html cross-origin even for a single stage, never fall back to same-origin
       resetOnlineStagesForTest({ origins: { A: "https://s1.203-0-113-16.sslip.io", B: "https://s2.203-0-113-16.sslip.io" } });
       const src = pm.stageSrc("A", { dual: false });
       assert.ok(src.startsWith("https://s1.203-0-113-16.sslip.io/stage.html") || src.startsWith("https://s1.203-0-113-16.sslip.io/editor/stage.html"), `A must load from the cross-origin stage.html: ${src}`);
@@ -85,7 +89,7 @@ test("C10A-GT-07b When the stage gate stops at level 1 (lite, low-spec) only the
     initTier({ online: true, target: 3, reached: 3, lowest: null, identity: "desktop" });
     assert.match(pm.stageSrc("B", { dual: true }), /[?&]gl=perDocument(?:&|$)/, "At level 3 each stage gets its own set");
 
-    // 握手失败退回跨源单舞台 A(只管当次)
+    // Handshake failure falls back to cross-origin single stage A (only applies to current attempt)
     resetOnlineStagesForTest({ origins, config: "done", handshake: "failed" });
     assert.equal(pm.dualStage(), false, "Handshake failed: single stage");
     assert.ok(pm.stageSrc("A", { dual: false }).startsWith("https://s1.203-0-113-16.sslip.io/"), "The single stage after falling back is still the cross-origin A");

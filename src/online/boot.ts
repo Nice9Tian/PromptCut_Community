@@ -1,20 +1,22 @@
 /**
- * 在线运行时与云端扩展接缝入口（公开侧）。
+ * Entry point for online runtime and cloud extension seams (public side).
  *
- * 职责：
- *   1. 贯穿型接缝（`buildInfo`、`apiGuard`、`updateCheck`、`UpdateNotice`）：
- *      社区版无 `cloud/online/` 时全部安全降级（`CODE_VERSION = null`、`bootApiGuard` 空操作、
- *      `startUpdateCheck` 返回 `stale: false` 的静默控制器、`UpdateNotice` 不渲染）。
- *   2. 同步管理器云端后端接口（`SyncCloudBackend`）：
- *      封装 `syncManager.ts` 原先直接引用的 7 个云端模块（托管中继、恢复协调器、墓碑核验、
- *      云端账号客户端、云端 Agent 端点/身份/告知），社区版提供无害缺省实现。
+ * Responsibilities:
+ *   1. Pass-through seams (`buildInfo`, `apiGuard`, `updateCheck`, `UpdateNotice`):
+ *      Safe downgrade across all when `cloud/online/` is absent in community edition
+ *      (`CODE_VERSION = null`, `bootApiGuard` no-op, `startUpdateCheck` returns a silent controller
+ *      with `stale: false`, `UpdateNotice` does not render).
+ *   2. Sync manager cloud backend interface (`SyncCloudBackend`):
+ *      Wraps the 7 cloud modules originally referenced directly by `syncManager.ts` (hosted
+ *      relay, recovery coordinator, tombstone verification, cloud account client, Cloud Agent
+ *      endpoint / identity / notice); community edition provides harmless default implementations.
  */
-// @ts-expect-error 纯 JS 模块、没有类型声明（`src/` 一侧引 .mjs 也都是这么标的）
+// @ts-expect-error Pure JS module without type declarations (imports of .mjs from `src/` are marked this way too)
 import { RecoveryCoordinator } from "../../server/recovery/coordinator.mjs";
 import { tr } from "../i18n/index.ts";
 
 /* ======================================================================== *
- * 1. 贯穿型接缝：buildInfo / apiGuard / updateCheck / UpdateNotice
+ * 1. Pass-through seams: buildInfo / apiGuard / updateCheck / UpdateNotice
  * ======================================================================== */
 
 export interface BuildInfo {
@@ -38,32 +40,38 @@ export function getBuildInfo(): BuildInfo {
 }
 
 /*
- * 下面这几个形状必须和 `cloud/online/` 下的真实实现对得上 —— 它们**就是**两侧共同认的那份接口。
+ * The shapes below must match the real implementation under `cloud/online/`: they **are** the
+ * interface agreed upon by both sides.
  *
- * 2026-10-27 合并五份活时发现原来对不上：这里写的是 `{ online, entryModuleUrl, codeVersion,
- * onVersionSignal, locationLike, fetchTarget, wsTarget }` 和一个带 `uninstall()` 的句柄，
- * 而 `cloud/online/apiGuard.ts` 实际收 `{ href, base }`、回一个路径清单 `string[]`；
- * `UpdateCheckController` 也一样，这里写 `state` / `notifyProjectMinVersion` / `refreshNow`，
- * 真实现是 `getState()` / `subscribe()` / `stop()`。
+ * When merging five tasks on 2026-10-27, they were found not to match: here it wrote `{ online, entryModuleUrl, codeVersion,
+ * onVersionSignal, locationLike, fetchTarget, wsTarget }` and a handle with `uninstall()`,
+ * while `cloud/online/apiGuard.ts` actually takes `{ href, base }` and returns a path manifest
+ * `string[]`; the same goes for `UpdateCheckController`, where here it wrote `state` /
+ * `notifyProjectMinVersion` / `refreshNow`, while the real implementation is `getState()` /
+ * `subscribe()` / `stop()`.
  *
- * 之所以能一直对不上：`tsconfig.json` 的 include 只有 `["src"]`，`cloud/` 从来没进过类型检查，
- * 所以各活报的「tsc 零报错」都没看过它们自己写的云端代码。include 已经加上 `cloud`。
+ * The reason they could stay out of sync: `tsconfig.json` include only had `["src"]`, and
+ * `cloud/` was never type-checked, so the "zero tsc errors" reported by each task never inspected
+ * the cloud code they wrote. `cloud` has now been added to include.
  */
 export interface ApiGuardOptions {
-  /** 页面地址（相对地址按它解析）；缺省 `location.href` */
+  /** Page URL (relative URLs resolved against it); defaults to `location.href` */
   href?: string;
-  /** 构建的 base（`import.meta.env.BASE_URL`），缺省 `/` */
+  /** Build base (`import.meta.env.BASE_URL`), defaults to `/` */
   base?: string;
 }
 
 /**
- * 装上守卫，回它实际放行的路径清单。
+ * Installs the guard, returning the path manifest it actually permits.
  *
- * **第一个参数是 `online`，不能省。** 闭源侧 `cloud/online/apiGuard.ts` 导出两个函数：
- * `bootApiGuard(online, options)` 认这个判据，`installApiGuard(options)` **无条件装**。
- * 2026-10-28 两位审查者查出：云端表注册的是后者，而这里的接缝又把 `online` 整个丢了，
- * 于是**私有仓库的桌面构建与 dev server 里也会装上在线守卫**，桌面编辑器自己的 `/api/*` 被拒、全废。
- * 所以这里的形状必须带 `online`，由页面启动序列（`src/online/pageBoot.ts`）把 `ONLINE` 传进来。
+ * **The first parameter is `online` and cannot be omitted.** The closed-source side
+ * `cloud/online/apiGuard.ts` exports two functions: `bootApiGuard(online, options)` honors this
+ * predicate, while `installApiGuard(options)` **installs unconditionally**. On 2026-10-28, two
+ * reviewers found: the cloud table registered the latter, while the seam here dropped `online`
+ * entirely, meaning **the online guard was also installed in desktop builds and the dev server of
+ * the private repo**, rejecting the desktop editor's own `/api/*` and breaking completely.
+ * Therefore, the shape here must include `online`, passed in from `ONLINE` by the page startup
+ * sequence (`src/online/pageBoot.ts`).
  */
 export type ApiGuardInstaller = (online: boolean, options?: ApiGuardOptions) => string[] | null;
 
@@ -74,7 +82,8 @@ export function registerApiGuard(installer: ApiGuardInstaller | null): void {
 }
 
 /**
- * 在页面入口装上在线接口守卫。社区版（未注册云端守卫或非在线模式）直接回 `null`。
+ * Installs online API guard at the page entry point. In community edition (no cloud guard
+ * registered or not in online mode), returns `null` directly.
  */
 export function bootApiGuard(online: boolean, options: ApiGuardOptions = {}): string[] | null {
   if (!apiGuardInstaller) return null;
@@ -88,7 +97,7 @@ export function bootApiGuard(online: boolean, options: ApiGuardOptions = {}): st
 
 export const installApiGuard = bootApiGuard;
 
-/** 可见性来源（与 `cloud/online/updateCheck.ts` 的 `VisibilitySource` 一致） */
+/** Visibility source (consistent with `VisibilitySource` in `cloud/online/updateCheck.ts`) */
 export interface VisibilitySource {
   readonly visibilityState?: string;
   addEventListener(type: "visibilitychange", listener: () => void): void;
@@ -96,11 +105,11 @@ export interface VisibilitySource {
 }
 
 export interface UpdateCheckState {
-  /** 是否检测到与本页不同的新版本 */
+  /** Whether a new version different from this page has been detected */
   readonly hasUpdate: boolean;
-  /** 本页自己的代码版本（开发构建为 `null`） */
+  /** This page's own code version (`null` for development builds) */
   readonly currentVersion: string | null;
-  /** 检测到新版本时的远端代码版本；未检测到时为 `null` */
+  /** Remote code version when a new version is detected; `null` when not detected */
   readonly latestVersion: string | null;
 }
 
@@ -116,11 +125,11 @@ export interface UpdateCheckEnv {
 }
 
 export interface UpdateCheckController {
-  /** 读取当前状态；状态未变时返回同一个对象引用 */
+  /** Reads current state; returns the same object reference if state has not changed */
   getState: () => Readonly<UpdateCheckState>;
-  /** 订阅状态变化；返回取消订阅函数 */
+  /** Subscribes to state changes; returns unsubscribe function */
   subscribe: (listener: () => void) => () => void;
-  /** 停止监听与定时器 */
+  /** Stops listeners and timers */
   stop: () => void;
 }
 
@@ -142,7 +151,7 @@ export function startUpdateCheck(env: UpdateCheckEnv = {}): UpdateCheckControlle
   if (updateCheckStarter) {
     return updateCheckStarter(env);
   }
-  // 社区版缺省：永远「没有新版本」，订阅不会被调用
+  // Community edition default: always "no new version", subscriptions are never called
   return {
     getState: () => NOOP_UPDATE_STATE,
     subscribe: () => () => {},
@@ -152,12 +161,14 @@ export function startUpdateCheck(env: UpdateCheckEnv = {}): UpdateCheckControlle
 
 export interface UpdateNoticeExtension {
   /**
-   * 入口脚本自己的 `import.meta.url`（只有 `main.tsx` 拿得到）。闭源侧的真实现要把它剥成
-   * 相对 `base` 的文件名再比 —— 形状照真实现写（`string | undefined`，**不收 null**），
-   * 免得又出现「声明和实现对不上」。`invokeMountUpdateNotice` 负责把 null 归一成 undefined。
+   * Entry script's own `import.meta.url` (accessible only to `main.tsx`). The real implementation on
+   * the closed-source side strips it down to a filename relative to `base` before comparing: written
+   * to match the real implementation shape (`string | undefined`, **does not accept null**),
+   * avoiding another case of "declaration and implementation do not match".
+   * `invokeMountUpdateNotice` is responsible for normalizing null to undefined.
    */
   mountUpdateNotice?: (entryUrl?: string) => void;
-  /** 任意入参的 React 组件都算（云端那个收 `{ controller }`） */
+  /** Any React component with arbitrary props qualifies (the cloud one accepts `{ controller }`) */
   UpdateNoticeView?: (...args: never[]) => unknown;
 }
 
@@ -172,14 +183,14 @@ export function registerUpdateNotice(ext: UpdateNoticeExtension | null): void {
     try {
       ext.mountUpdateNotice(pendingMountEntryUrl ?? undefined);
     } catch {
-      /* 忽略挂载异常 */
+      /* Ignore mount exceptions */
     }
   }
   for (const fn of [...updateNoticeListeners]) {
     try {
       fn();
     } catch {
-      /* 忽略订阅方异常 */
+      /* Ignore subscriber exceptions */
     }
   }
 }
@@ -204,7 +215,7 @@ export function invokeMountUpdateNotice(entryModuleUrl?: string | null): void {
 }
 
 /* ======================================================================== *
- * 3. 同步管理器云端后端接口：SyncCloudBackend
+ * 3. Sync manager cloud backend interface: SyncCloudBackend
  * ======================================================================== */
 
 export interface ProjectSession {
@@ -366,7 +377,7 @@ export interface RecoveryCoordinatorHandlers {
   enter: (candidate: any, record: any, current: () => boolean) => Promise<any>;
 }
 
-/** 公开侧兜底的账号异常（与 `src/account/client.ts` 的 `AccountFailure` 形状一致） */
+/** Account exception fallback on the public side (matches shape of `AccountFailure` in `src/account/client.ts`) */
 export class PublicAccountFailure extends Error {
   status: number;
   code: string;
@@ -379,7 +390,7 @@ export class PublicAccountFailure extends Error {
   }
 }
 
-/** 公开侧兜底的云端 Agent 委托异常（与 `src/ai/cloud/identity.ts` 的 `CloudDelegationError` 形状一致） */
+/** Cloud Agent delegation error fallback on public side (matches `CloudDelegationError` in `src/ai/cloud/identity.ts`) */
 export class PublicCloudDelegationError extends Error {
   readonly code: string;
   constructor(reason: string) {
@@ -474,7 +485,7 @@ export function registerSyncCloudBackend(backend: Partial<SyncCloudBackend> | nu
     try {
       fn(active);
     } catch {
-      /* 忽略 */
+      /* Ignore */
     }
   }
 }
@@ -491,7 +502,7 @@ export function subscribeSyncCloudBackend(fn: (backend: SyncCloudBackend) => voi
 }
 
 /* ======================================================================== *
- * 4. 云端扩展清单注册与动态加载（仿 server/docservice/extensions.mjs）
+ * 4. Cloud extension manifest registration and dynamic loading (modeled after server/docservice/extensions.mjs)
  * ======================================================================== */
 
 export interface OnlineExtensionManifest {
@@ -500,7 +511,7 @@ export interface OnlineExtensionManifest {
   startUpdateCheck?: StartUpdateCheckFn;
   updateNotice?: UpdateNoticeExtension;
   syncBackend?: Partial<SyncCloudBackend>;
-  /** 异步注册的子扩展都装完才落定；`loadOnlineExtensions` 等它，所以「加载完」就是能用了 */
+  /** Settles only after all asynchronously registered sub-extensions are installed; `loadOnlineExtensions` awaits it, so "finished loading" means ready for use */
   ready?: Promise<unknown>;
 }
 
@@ -530,18 +541,21 @@ function resolveCloudManifestUrl(cloudDirOverride?: string): string | null {
     const prefix = normalized.startsWith("/") ? `file://${normalized}` : `file:///${normalized}`;
     return `${prefix}/online/manifest.ts`;
   }
-  // 缺省那一支走别名（见下面 loadOnlineExtensions），不在这里拼路径。
-  // 原来这里是 `["..","..","<闭源目录>","online","manifest.ts"].join("/")` 加
-  // `new URL(rel, import.meta.url)`：和 B1 同一个毛病（`.ts` 不进产物，正式构建里加载不到），
-  // 而且因为路径是拆成数组再 join 的、`new URL` 又在下一句，**G1 当时没抓到它**（闸门已收紧）。
+  // The default branch uses an alias (see loadOnlineExtensions below) rather than concatenating
+  // paths here. Previously, this was `["..","..","<closed-source-dir>","online","manifest.ts"].join("/")`
+  // plus `new URL(rel, import.meta.url)`: the same issue as B1 (`.ts` is not included in build
+  // artifacts and cannot be loaded in production builds), and because the path was split into an
+  // array and joined, with `new URL` on the next line, **G1 did not catch it at the time** (gate
+  // has been tightened).
   return null;
 }
 
 let loadPromise: Promise<boolean> | null = null;
 
 /**
- * 动态加载 `<cloudDir>/online/manifest.ts`。
- * 若 `cloud/` 目录不存在（社区版构建或把 `cloud` 挪走验收），静默降级返回 `false`。
+ * Dynamically loads `<cloudDir>/online/manifest.ts`.
+ * If the `cloud/` directory does not exist (community edition build or moving `cloud` away for
+ * acceptance check), silently downgrades and returns `false`.
  */
 export async function loadOnlineExtensions(options: { cloudDir?: string; forceReload?: boolean } = {}): Promise<boolean> {
   if (loadPromise && !options.forceReload && !options.cloudDir) {
@@ -549,16 +563,20 @@ export async function loadOnlineExtensions(options: { cloudDir?: string; forceRe
   }
   const run = (async () => {
     try {
-      // 调用方显式给了云端目录（单测、把 cloud 挪到别处验收）就按它拼；否则走别名，
-      // 由 `server/vite-plugin-cloud-seams.ts` 解析到闭源目录或空桩。说明符必须是字面量。
+      // If the caller explicitly provides a cloud directory (unit tests, moving cloud elsewhere for
+      // acceptance check), concatenate based on it; otherwise use the alias, resolved by
+      // `server/vite-plugin-cloud-seams.ts` to the closed-source directory or an empty stub. The specifier
+      // must be a string literal.
       const targetUrl = resolveCloudManifestUrl(options.cloudDir);
       const mod = targetUrl
         ? await import(/* @vite-ignore */ targetUrl)
         : await import("#promptcut-cloud-online");
-      // **不要**把 `mod` 本身当表兜底：社区版里别名解析到空桩，`mod` 是个什么都没导出的
-      // 命名空间对象（`typeof === "object"`），拿它当表会让这里**回 true**（「装上了」），
-      // 而其实一个扩展都没注册。2026-10-28 审查查出来的 —— 单测看起来绿只是因为在 Node 里
-      // 别名解析失败走了 catch，浏览器路径上那个保证是假的。
+      // **Do not** fall back to `mod` itself as a table: in community edition, the alias resolves to an
+      // empty stub, and `mod` is a namespace object that exports nothing (`typeof === "object"`), so
+      // using it as a table would make this **return true** ("installed"), when in fact not a single
+      // extension was registered. Found during review on 2026-10-28: unit tests only looked green because
+      // alias resolution failed in Node and went to catch, while the guarantee on the browser path was
+      // false.
       const manifest: OnlineExtensionManifest | undefined = mod?.manifest ?? mod?.default;
       if (!manifest || typeof manifest !== "object") return false;
       registerOnlineExtensions(manifest);
@@ -578,6 +596,8 @@ export function ensureOnlineExtensionsLoaded(): Promise<boolean> {
   return loadOnlineExtensions();
 }
 
-// 这个文件是**纯接缝注册表**，没有模块级副作用：它会被 Node 单测静态 import，
-// 而 C10A-MODE-01 不许被单测载入的模块静态引 `mode.ts`，所以这里拿不到 `ONLINE`。
-// 页面的启动序列（装守卫、读邀请链接、起舞台闸门……）在 `src/online/pageBoot.ts`，由 `main.tsx` 引。
+// This file is a **pure seam registry** with no module-level side effects: it is statically
+// imported by Node unit tests, and C10A-MODE-01 forbids modules loaded by unit tests from
+// statically importing `mode.ts`, so `ONLINE` cannot be obtained here. The page startup sequence
+// (installing guards, reading invite links, starting stage gates…) is in `src/online/pageBoot.ts`,
+// imported by `main.tsx`.

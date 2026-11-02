@@ -1,23 +1,44 @@
 /**
- * 在线浏览器执行用户卡与素材效果卡:转译接入这一块(`docs/plan/online-card-exec-contract.md` 第 1、2、5、8 节)。
- * 跑:node --experimental-test-module-mocks --test src/online/cardRuntime/cardRuntime.test.mjs
+ * Online browser execution of user cards and media effect cards: transpilation integration
+ * (`docs/plan/online-card-exec-contract.md` sections 1, 2, 5, 8).
+ * Run: node --experimental-test-module-mocks --test src/online/cardRuntime/cardRuntime.test.mjs
  *
- *   OCE-T-01 写法预检:六种不支持的写法各自认得出;注释、字符串、JSX 文本、类型里出现这些词不算
- *   OCE-T-02 转一个文件:TSX → CommonJS(automatic 的 JSX 运行时),取出 require 的说明符;语法错、文件太大给状态
- *   OCE-T-03 导入解析:包的白名单、同步来的源码、页面自带的内置模块、样式;范围之外的、别名、带查询的、资源都不支持
- *   OCE-T-04 一张卡打成包:跟着相对导入收闭包;缺文件、引了不支持的模块给状态并指出是哪一个;代的签名跟着哈希变;走缓存
- *   OCE-T-05 加载器:执行、收卡片定义、组件用页面那一份 React 渲得出来;相对导入、有环、样式回调
- *   OCE-T-06 加载器的失败状态:页面里没有的模块、顶层抛错、执行期才暴露的语法错、没有卡片定义、运行时版本不一致
- *   OCE-T-07 换代:没变的包不重新执行;变了整张卡重新执行;新一代失败时旧一代撤下;不在这一组里的撤下;clear
- *   OCE-T-08 运行状态:加载结论摊到卡上;编辑页面一侧十种状态的先后;每种状态的面板说明
- *   OCE-T-09 Tailwind 补生成:取候选类名;生成工具类与用到的主题变量,不带基础层;每张卡各编各的
- *   OCE-T-10 代码身份:页面算法与桌面 `cardCodeIdentity` 对仓库里每一张卡算出同一个值;内容库的哈希与现算的哈希同一算法
- *   OCE-T-11 转译缓存:按「运行时版本 + 键 + 哈希」;换运行时版本不命中;失败结果也存
- *   OCE-T-12 注册表:运行时载入的卡 `getCard` 取得到、`allCards` 不含、与构建时的卡撞 id 时构建时的赢;运行状态的校验
- *   OCE-T-13 执行的前提:缺省不执行;站点总开关只有明写 false 才关;隔离就绪后才可执行
- *   OCE-T-14 卡片源码同步里的转译:不能执行时不转译、不取样式文件(与原来一字不差);能执行时转译、取样式;输入没变不重转;又不能执行了清掉
- *   OCE-T-15 仓库里现有的卡片与部件文件全部转得出,每个导入都解析得到(包或页面自带的模块)
- *   OCE-T-16 守门:编辑页面与导出页的源码不引加载器、舞台接线、页面模块表;页面模块表的包名与白名单一致;运行时版本的形状
+ *   OCE-T-01 Syntax preflight: recognizes each of the six unsupported syntax forms;
+ *     occurrences of these words in comments, strings, JSX text, or types do not count
+ *   OCE-T-02 Transpile a single file: TSX → CommonJS (automatic JSX runtime), extract require
+ *     specifiers; return status on syntax errors or oversized files
+ *   OCE-T-03 Import resolution: package allowlist, synced source, page built-in modules, styles;
+ *     out-of-scope, aliases, queries, and assets are not supported
+ *   OCE-T-04 Bundle a card: collect closure following relative imports; return status and
+ *     identify which one on missing files or unsupported modules; generation signature changes
+ *     with hash; use cache
+ *   OCE-T-05 Loader: execute, collect card definitions, components render with page React;
+ *     relative imports, cycles, style callbacks
+ *   OCE-T-06 Loader failure states: module not in page, top-level throws, runtime syntax errors,
+ *     missing card definition, runtime version mismatch
+ *   OCE-T-07 Generation switch: unchanged packages are not re-executed; when changed, re-execute
+ *     the entire card; tear down old generation on new failure; tear down cards not in this
+ *     group; clear
+ *   OCE-T-08 Run state: spread loader results to cards; precedence of ten states on editor page;
+ *     panel description for each state
+ *   OCE-T-09 Tailwind supplementary generation: extract candidate classes; generate utility
+ *     classes and used theme variables, without base layer; compile each card independently
+ *   OCE-T-10 Code identity: page algorithm and desktop `cardCodeIdentity` compute the same value
+ *     for every card in repository; content store hash uses same algorithm as dynamic hash
+ *   OCE-T-11 Transpilation cache: by "runtime version + key + hash"; cache miss on runtime
+ *     version change; failure results are also cached
+ *   OCE-T-12 Registry: runtime-loaded cards retrieved by `getCard`, omitted from `allCards`, and
+ *     build-time card wins on id collision; validation of run states
+ *   OCE-T-13 Prerequisites for execution: do not execute by default; site master switch is off
+ *     only on explicit false; execute only after isolation is ready
+ *   OCE-T-14 Transpilation in card source sync: do not transpile or fetch styles when execution
+ *     is disabled (verbatim identical to before); transpile and fetch styles when enabled; skip if
+ *     inputs unchanged; clear if disabled again
+ *   OCE-T-15 All existing card and part files in repository can be transpiled, every import
+ *     resolves (packages or page built-in modules)
+ *   OCE-T-16 Gatekeeper: editor page and export page source do not import loader, stage wiring,
+ *     or page module table; package names in page module table match allowlist; shape of runtime
+ *     version
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import { test } from "node:test";
@@ -49,7 +70,7 @@ const SHARED = await import(srcUrl("render/cardCodeIdentity.mjs"));
 const RUNTIME = "ocr1:sucrase@test:tailwindcss@test";
 const sha256 = async (text) => createHash("sha256").update(text, "utf8").digest("hex");
 const hashOf = (body) => createHash("sha256").update(JSON.stringify(body.replace(/\r\n/g, "\n")), "utf8").digest("hex");
-/** 一组「内容库里的文件」 */
+/** A set of "files in the content store" */
 const lib = (files) => {
   const m = new Map(Object.entries(files).map(([k, body]) => [k, { body, hash: hashOf(body) }]));
   return { read: (k) => m.get(k) ?? null, set: (k, body) => m.set(k, { body, hash: hashOf(body) }), map: m };
@@ -159,7 +180,7 @@ test("OCE-T-04 bundle one card: closure, missing files, unsupported modules, gen
   assert.equal(b.runtime, RUNTIME);
   assert.equal(b.tailwind, "", "nothing is generated when no compiler is given");
   assert.ok(b.generation.startsWith(`${RUNTIME}|`));
-  // 依赖的哈希变了,代跟着变;没变的不变
+  // When dependency hashes change, the generation changes accordingly; unchanged ones stay the same
   const again = await bundle(files, `${U}a.tsx`);
   assert.equal(again.bundle.generation, b.generation);
   files.set(`${U}lib/deep.ts`, `export const deep: number = 2;`);
@@ -170,7 +191,7 @@ test("OCE-T-04 bundle one card: closure, missing files, unsupported modules, gen
   assert.notEqual(c3.bundle.generation, again.bundle.generation, "a style change also bumps the generation");
   assert.notEqual((await T.bundleCard({ runtime: "ocr2:x", entry: `${U}other.tsx`, read: files.read, hasBuiltin: () => false })).bundle.generation,
     (await bundle(files, `${U}other.tsx`)).bundle.generation, "the runtime version goes into the generation signature");
-  // 失败:指出是哪个模块、哪个文件
+  // Failure: identify which module and which file
   const f2 = lib({ [`${U}m.tsx`]: CARD("m", `import _ from "lodash";\nexport const z = _;`) });
   assert.deepEqual((await bundle(f2, `${U}m.tsx`)).state, { state: "missing-module", detail: "lodash", file: `${U}m.tsx` });
   const f3 = lib({ [`${U}n.tsx`]: CARD("n", `import { x } from "./gone";\nexport const z = x;`) });
@@ -178,7 +199,8 @@ test("OCE-T-04 bundle one card: closure, missing files, unsupported modules, gen
   const f4 = lib({ [`${U}p.tsx`]: CARD("p", `import { x } from "./p-bad";\nexport const z = x;`), [`${U}p-bad.ts`]: `export namespace X { export const x = 1 }\nexport const x = 1;` });
   assert.deepEqual((await bundle(f4, `${U}p.tsx`)).state, { state: "unsupported-syntax", detail: "namespace (line 1)", file: `${U}p-bad.ts` });
   assert.equal((await bundle(lib({}), `${U}none.tsx`)).state.state, "missing-module");
-  // 缓存:第二次不再转译(换一个会抛错的读法也照出结果是不行的,所以数 set 的次数)
+  // Cache: do not transpile a second time (switching to a read that throws still producing
+  // results is invalid, so count set calls)
   let sets = 0, gets = 0;
   const mem = new Map();
   const cache = { get: (k, h) => { gets++; return mem.get(`${k}@${h}`); }, set: (k, h, v) => { sets++; mem.set(`${k}@${h}`, v); } };
@@ -234,7 +256,8 @@ test("OCE-T-06 loader failure states", async () => {
     assert.deepEqual(loader.cards(), []);
     return r.state;
   };
-  // 转译时页面说有、舞台的表里却没有(声音线程的表比舞台的小)
+  // During transpilation the page reports it exists, but the stage table does not have it (the
+  // sound thread table is smaller than the stage table)
   assert.deepEqual(await one(`import { animate } from "motion";\nexport const card = { id: "c", name: "c", defaults: {}, controls: [], Component: () => animate };`),
     { state: "missing-module", detail: "motion", file: `${U}c.tsx` });
   assert.deepEqual(await one(`import { x } from "../../kernel/gone";\nexport const card = { id: "c", name: "c", defaults: {}, controls: [], Component: () => x };`),
@@ -246,12 +269,13 @@ test("OCE-T-06 loader failure states", async () => {
   const syntax = await one(`if (true) { await Promise.resolve(1); }\nexport const card = { id: "c", name: "c", defaults: {}, controls: [], Component: () => null };`);
   assert.equal(syntax.state, "unsupported-syntax", "An await inside a top-level block the precheck cannot recognize: a syntax error at load time is likewise classified as unsupported syntax");
   assert.deepEqual(await one(`export const nothing = 1;`), { state: "load-error", detail: "This file does not export a card definition", file: `${U}c.tsx` });
-  // 运行时版本不一致
+  // Runtime version mismatch
   const files = lib({ [`${U}c.tsx`]: CARD("c") });
   const out = await bundle(files, `${U}c.tsx`);
   const other = L.createCardLoader({ runtime: "ocr9:other", host: hostOf() });
   assert.equal((await other.setBundles([out.bundle]))[0].state.state, "load-error");
-  // 卡片代码里现拼的 require 不在转译时的表里:抛错,不会摸到别的模块
+  // A dynamically concatenated require in card code is not in the transpilation table: throws,
+  // will not touch other modules
   const sneaky = await one(`const r = require;\nconst fs = r("node:fs");\nexport const card = { id: "c", name: "c", defaults: {}, controls: [], Component: () => fs };`);
   assert.equal(sneaky.state, "load-error");
   assert.match(sneaky.detail, /The online page has no such module/);
@@ -277,24 +301,25 @@ test("OCE-T-07 generation change: unchanged is not re-executed; changed is re-ex
   assert.deepEqual(globalThis.__oceRuns, ["a:1", "b:1", "a:2"], "Only the card whose closure changed is re-executed, and it gets the new dependency");
   assert.notEqual(loader.cards()[0], defA);
   assert.equal(cardEvents, 2);
-  // 新一代失败:旧一代撤下,不拿旧代码画新版本
+  // New generation fails: tear down the old generation, do not draw the new version with old code
   files.set(`${U}a-dep.ts`, `throw new Error("Broke");`);
   const r = await loader.setBundles(await both());
   assert.equal(r[0].ok, false);
   assert.deepEqual(loader.cards().map((d) => d.id), ["b"]);
   assert.equal(loader.results().get(`${U}a.tsx`).state.state, "load-error");
-  // 修好了又回来
+  // Restored once fixed
   files.set(`${U}a-dep.ts`, `export const v = 3;`);
   await loader.setBundles(await both());
   assert.deepEqual(loader.cards().map((d) => d.id), ["a", "b"]);
-  // 这一组里没有的撤下,样式也撤
+  // Tear down those not in this group, and remove styles as well
   await loader.setBundles([(await both())[1]]);
   assert.deepEqual(loader.cards().map((d) => d.id), ["b"]);
   assert.deepEqual(styles.at(-1), [`${U}a.tsx`, ""]);
   loader.clear();
   assert.deepEqual(loader.cards(), []);
   assert.equal(loader.results().size, 0);
-  // 两张卡引同一份同步来的文件:各有各的实例(与桌面不同,范围说明见 loader.ts 文件头)
+  // Two cards importing the same synced file: each has its own instance (unlike desktop; see
+  // loader.ts file header for scope description)
   globalThis.__oceRuns = [];
   const shared = lib({ [`${U}x.tsx`]: `import "./s";\nexport const card = { id: "x", name: "n", defaults: {}, controls: [], Component: () => null };`,
     [`${U}y.tsx`]: `import "./s";\nexport const card = { id: "y", name: "n", defaults: {}, controls: [], Component: () => null };`, [`${U}s.ts`]: `(globalThis as any).__oceRuns.push("s");` });
@@ -317,13 +342,15 @@ test("OCE-T-08 run states: spread onto cards; order on the editor page side; pan
   assert.deepEqual(st({}), { a: "loading", b: "missing-module", c: "loading", d: "loading" }, "Those that fail to transpile use the transpiler's state; those the stage has not reported on and that are not yet transpiled are loading");
   const A = new Map([["a", { state: "ready" }], ["c", { state: "ready" }]]), B = new Map([["a", { state: "ready" }], ["c", { state: "gpu" }]]);
   assert.deepEqual(st({ stages: [A, null, B] }), { a: "ready", b: "missing-module", c: "gpu", d: "loading" }, "When the two stages differ, take the one that cannot run");
-  // 能运行的带上这一代的短签名(成本身份里的源码版本用它):同一代同一个,换代换一个
+  // Runnable cards carry this generation's short signature (used by source version in cost
+  // identity): identical within the same generation, changes on generation switch
   const verOf = (gen) => ERS.editorRunStates({ cards, available: true, stages: [A], bundles: [{ ok: true, entry: `${U}a.tsx`, bundle: { generation: gen } }] }).get("a").version;
   assert.equal(typeof verOf("gen-a-1"), "string");
   assert.equal(verOf("gen-a-1"), verOf("gen-a-1"));
   assert.notEqual(verOf("gen-a-1"), verOf("gen-a-2"));
   assert.equal(ERS.editorRunStates({ cards, available: false, blockedDetail: "This site does not have online running of user cards and media effect cards enabled", bundles: [] }).get("a").detail, "This site does not have online running of user cards and media effect cards enabled");
-  // 九种状态各有说明(ready、loading 不出;原来的第十种随旧档位 2026-10-22 删掉)
+  // Each of the nine states has an explanation (ready and loading are not shown; the original tenth
+  // was deleted on 2026-10-22 along with the old tier)
   const msg = (s) => ERS.runStateMessage(s);
   assert.equal(msg({ state: "ready" }), null);
   assert.equal(msg({ state: "loading" }), null);
@@ -356,7 +383,7 @@ test("OCE-T-09 Tailwind supplementary generation: candidate class names; utility
   const other = await compile(["flex"]);
   assert.doesNotMatch(other, /137px|fuchsia/, "A card compiled later does not carry the styles of a card compiled earlier");
   assert.equal(await compile(c), css, "Same input, same output");
-  // 接进打包
+  // Integrate into bundling
   const files = lib({ [`${U}a.tsx`]: CARD("a") });
   const out = await bundle(files, `${U}a.tsx`, { css: compile });
   assert.match(out.bundle.tailwind, /137px/);
@@ -383,7 +410,8 @@ test("OCE-T-10 code identity: the page algorithm and the desktop cardCodeIdentit
     const want = cards.cardCodeIdentity(ROOT, id);
     if (!want) continue;
     const entry = want.files[0];
-    // 页面的两个来源:入口与用户卡目录下的算「同步来的」(哈希由内容库给),其余算页面自带的(现算)
+    // Two sources for page: entry point and files under user card directory count as "synced" (hash
+    // provided by content store); the rest count as page built-in (computed dynamically)
     const isSynced = (rel) => rel === entry || rel.startsWith("src/cards/user/");
     const got = await CI.cardCodeIdentityOf(entry, {
       synced: (rel) => { const body = isSynced(rel) ? text(rel) : null; return body == null ? null : { body, hash: sourceHash(body) }; },
@@ -396,7 +424,7 @@ test("OCE-T-10 code identity: the page algorithm and the desktop cardCodeIdentit
   assert.ok(compared >= 50, `Compared ${compared} cards`);
   assert.ok(multi >= 10, `${multi} of them have a closure spanning more than one file`);
   assert.equal(await CI.cardCodeIdentityOf("src/cards/user/none.tsx", { synced: () => null, builtin: () => null }, { sha256 }), null);
-  // 共用模块的几条规则
+  // Rules for shared modules
   assert.equal(SHARED.isCardCodePath("src/cards/native/hud.tsx"), true);
   for (const bad of ["src/kernel/types.ts", "src/cards/x.test.ts", "../src/cards/a.ts", "/src/cards/a.ts", "C:/src/cards/a.ts", "src/cards/a.json", ""]) assert.equal(SHARED.isCardCodePath(bad), false, bad);
   assert.deepEqual(SHARED.localImportCandidates("src/cards/user/a.tsx", `import x from "./b";\nexport * from "../native/hud";\nconst y = import("./c.tsx");\nimport "react";\nimport z from "../../../../up";`),
@@ -422,7 +450,8 @@ test("OCE-T-11 transpile cache: keyed by runtime version, key and hash; a differ
   for (let i = 0; i < TC.TRANSPILE_CACHE_LIMIT + 5; i++) a.set(`f${i}`, "h", ok);
   assert.equal(a.size, TC.TRANSPILE_CACHE_LIMIT, "Has a size limit, evicts the oldest");
   assert.equal(a.get("k", "h"), undefined);
-  // 假的 IndexedDB:落库的键带运行时版本,warm 只收本版本的、形状对的
+  // Mock IndexedDB: stored keys include runtime version; warm accepts only this version with
+  // matching shape
   const rows = new Map([["rt1\nold\nh", ok], ["rt0\nstale\nh", ok], ["rt1\nbroken\nh", { ok: true }]]);
   const fakeIdb = { open: () => {
     const req = {};
@@ -470,7 +499,7 @@ test("OCE-T-12 registry: cards loaded at runtime and their run state", () => {
   assert.equal(R.setRuntimeCards([]), true);
   assert.equal(R.getCard("rt-a"), undefined);
   off();
-  // 运行状态
+  // Run state
   let s = 0;
   const offS = R.onCardRunStatesChanged(() => { s++; });
   assert.equal(R.setCardRunStates([["x", { state: "ready" }], ["y", { state: "load-error", detail: "d".repeat(500), file: "f" }], ["z", { state: "made-up" }], ["", { state: "ready" }], ["w", null]]), true);
@@ -578,9 +607,10 @@ test("OCE-T-15 all existing card and part files in the repo transpile, and every
   const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
   const rel = (f) => path.relative(ROOT, f).split(path.sep).join("/");
   const all = new Set(["src/cards", "src/parts", "src/kernel", "src/render/cards"].flatMap((d) => walk(path.join(ROOT, d))).map(rel));
-  // 把仓库的用户卡当成「同步来的」,其余当页面自带的
+  // Treat repository user cards as "synced", and the rest as page built-in
   const env = { hasSynced: (k) => all.has(k) && k.startsWith(U), hasBuiltin: (p) => all.has(p) };
-  // 用 import.meta.glob 的索引文件、构建期读目录清单的文件不是卡片能引的东西
+  // Index files using import.meta.glob and files reading directory manifests at build time cannot
+  // be imported by cards
   const skip = /(^|\/)index\.ts$|\/catalogAssets\.ts$|\/userOverlay\.ts$|\/builtinSourceExports\.ts$|\/demoClips\.ts$/;
   const files = [...all].filter((f) => (f.startsWith("src/cards/") || f.startsWith("src/parts/")) && /\.tsx?$/.test(f) && !/\.test\.|\.d\.ts$/.test(f) && !skip.test(f));
   const failed = [], unresolved = [];
@@ -589,13 +619,15 @@ test("OCE-T-15 all existing card and part files in the repo transpile, and every
     if (!out.ok) { failed.push(`${f}:${out.state.detail}`); continue; }
     for (const spec of out.specifiers) {
       const r = RS.resolveCardImport(f, spec, env);
-      // 样式:内置卡引的是页面自带的样式(已在页面里),不经这条路
+      // Styles: built-in cards import styles bundled with the page (already in page), not going
+      // through this path
       if (!r.ok && !(spec.endsWith(".css") && !f.startsWith(U))) unresolved.push(`${f} → ${spec}`);
     }
   }
   assert.ok(files.length >= 70, `File count ${files.length}`);
   assert.deepEqual(failed, [], "All transpile");
-  // 内置卡里唯一一处引到范围之外的页面模块(render 层);同步来的卡这样写会报「页面里没有的模块」
+  // The only place in built-in cards importing an out-of-scope page module (render layer); synced
+  // cards written this way report "module not in page"
   assert.deepEqual(unresolved, ["src/cards/native/caption-track.tsx → ../../render/captionFrame.mjs"], "Except this one, every import resolves");
 });
 
@@ -616,7 +648,7 @@ test("OCE-T-16 gatekeeper: the editor page and the export page do not import the
   for (const f of ["src/ExportView.tsx", "src/Shell.tsx", "src/App.tsx"]) {
     if (fs.existsSync(path.join(ROOT, f))) assert.doesNotMatch(fs.readFileSync(path.join(ROOT, f), "utf8"), forbidden, f);
   }
-  // 编辑页面一侧的转译模块本身不含执行的手段
+  // The transpilation module on the editor page side itself contains no execution mechanism
   for (const f of ["transpile.ts", "transpile.browser.ts", "precheck.ts", "remotionLock.mjs", "resolve.ts", "tailwind.ts", "transpileCache.ts", "codeIdentity.ts", "gate.ts"]) {
     const text = fs.readFileSync(path.join(ROOT, "src/online/cardRuntime", f), "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
     assert.doesNotMatch(text, /new Function|\beval\(|\bimport\(\s*[^)\s]/,`${f} must not contain any means of executing code`);

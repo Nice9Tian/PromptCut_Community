@@ -3,7 +3,7 @@
  *
  * node scripts/probes/sound-effects-probe.mjs --node-only
  * node --experimental-transform-types scripts/probes/sound-effects-probe.mjs --node-only --av
- * node scripts/probes/sound-effects-probe.mjs --origin http://127.0.0.1:5250 [--asset-port 5255]  (资产服务用 N 与 N+1)
+ * node scripts/probes/sound-effects-probe.mjs --origin http://127.0.0.1:5250 [--asset-port 5255]  (asset service uses N and N+1)
  *   [--chrome /path/to/chrome] [--no-sandbox] [--out work/sound-effects] [--av]
  *
  * The portable Node lane calls the real CardDef.audio, synthesis job manager, asset storage,
@@ -320,10 +320,12 @@ async function browserLane() {
     const generated = await page.evaluate(async recipes => {
       const { actions, getState } = await import('/src/store/project.ts');
       const { startSoundGeneration, waitSoundGeneration } = await import('/src/editor/io/soundGeneration.ts');
-      // 新项目的缺省时长很短,音效起点必须落在项目内(「音效起点在项目出点之外」),所以先装一个 5 秒的空项目。
+      // The default duration of a new project is very short, and sound effect start must fall within the
+      // project ("Sound effect start is outside project out point"), so load an empty 5-second project first.
       const { createEmptyProject } = await import('/src/kernel/project.ts');
       actions.loadProject({ ...createEmptyProject('Browser native sound generation acceptance'), width: 640, height: 360, fps: 30, duration: 5, media: [], tracks: [{ id: 'browser-visual', name: 'visual', clips: [] }] });
-      // 总时长跟着内容走、声音尾巴不会拉长出点:先放一张 5 秒的画面卡当内容,音效才有地方落。
+      // Total duration tracks the content; audio tails do not extend the out point: place a 5-second
+      // visual card as content first so the sound effect has a place to land.
       actions.addCardClip('mu-typing', 0, { duration: 5 });
       const jobs = Object.entries(recipes).map(([name, recipe]) => startSoundGeneration({ recipe, start: name === 'keyboard' ? .35 : 3.75, name, requestId: `browser-${name}` }));
       const results = await Promise.all(jobs.map(job => waitSoundGeneration(job.id)));

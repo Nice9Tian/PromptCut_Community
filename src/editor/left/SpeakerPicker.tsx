@@ -20,12 +20,16 @@ function fmtDuration(sec?: number): string {
 }
 
 /**
- * 口播视频选择器弹窗:
- * 支持从现有素材库选取视频，或直接从本地上传并写入 clip 参数。
+ * Narration video picker dialog:
+ * supports choosing a video from the existing media library, or uploading directly from local and
+ * writing it into the clip parameters.
  *
- * 交出去的是素材的身份 `m.url`(`/@media/<hash>`,项目数据),不是取字节的地址:在线页面也照旧交它,
- * 不能换成带票据的远程地址写进项目(票据会过期、别的成员用不了)。取字节时由消费方按档换地址。
- * 在线浏览器模式没有页面侧上传(C10 契约第 10 节),「从本地文件导入」置灰。
+ * What it hands out is the media identity `m.url` (`/@media/<hash>`, project data), not the
+ * address that fetches bytes: online pages hand it out the same way, and it must not be swapped
+ * for a remote address carrying a ticket and written into the project (tickets expire and other
+ * members cannot use them). When fetching bytes, the consumer swaps the address by tier.
+ * Online browser mode has no page-side upload (C10 contract, section 10), so "Import from local
+ * file" is greyed out.
  */
 export function SpeakerPicker({ open, onClose, onSelect }: SpeakerPickerProps) {
   const media = useStore((s) => s.project.media);
@@ -93,7 +97,7 @@ export function SpeakerPicker({ open, onClose, onSelect }: SpeakerPickerProps) {
           </button>
         </div>
 
-        {/* 来源一：已导入素材 */}
+        {/* Source 1: imported media */}
         <div className="flex flex-col gap-1.5 min-h-0">
           <div className="text-xs text-neutral-400 font-medium">{tr("Choose from project media library")}</div>
           <div className="max-h-48 overflow-y-auto pc-left-scrollborder border-neutral-800 rounded bg-neutral-950/60 p-1 flex flex-col gap-1">
@@ -122,7 +126,7 @@ export function SpeakerPicker({ open, onClose, onSelect }: SpeakerPickerProps) {
           </div>
         </div>
 
-        {/* 来源二：本地文件导入 */}
+        {/* Source 2: local file import */}
         <div className="flex flex-col gap-1.5 pt-2 border-t border-neutral-800">
           <div className="text-xs text-neutral-400 font-medium">{tr("Import from local file")}</div>
           <input

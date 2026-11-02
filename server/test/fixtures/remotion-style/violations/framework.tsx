@@ -1,4 +1,7 @@
-/** 违规样例（测试夹具，不进卡片库）：声明成 remotion 式，却没有引用框架。建卡时应当被拒绝并指到 frameMode 那一行。 */
+/**
+ * Violation example (test fixture, not added to the card library): declared as remotion-style but
+ * does not import framework. Should be rejected during card creation, pointing to the frameMode line.
+ */
 import type { CardDef, CardProps } from "../../kernel/types";
 interface Params { text: string }
 function C({ params, t = 0 }: CardProps<Params>) {

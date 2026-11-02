@@ -1,48 +1,65 @@
 /**
- * 云端分组的同步引擎(裁定 V22-05～09,设计见 `docs/archive/agent-reports/AGENT-claude-groups-local-cloud.md`「方案」)。
+ * Sync engine for cloud groups (ruling V22-05~09; design in `docs/archive/agent-reports/AGENT-claude-groups-local-cloud.md`, section "Plan").
  *
- * 云端存的是整份 `OrgState`(`realm: "cloud"`),按账号一份,接口是 `POST /hosted/shared/account/start-org` 的 `get` / `put`。
- * 本文件只管同步的逻辑,**不碰 React、不碰网络、不碰存储、不碰计时器**:这四样都由调用方注入,所以可以不起服务就单测
- * (`orgSync.test.mjs`)。React 一侧的薄壳在 `useCloudOrg.ts`,网络一侧是 `src/account/client.ts` 的 `getStartOrg` / `putStartOrg`。
+ * The cloud stores the whole `OrgState` (`realm: "cloud"`), one per account, through the `get` / `put` of
+ * `POST /hosted/shared/account/start-org`.
+ * This file only handles the sync logic and **touches no React, no network, no storage, no timers**: the caller
+ * injects all four, so it can be unit tested without starting a server
+ * (`orgSync.test.mjs`). The thin React shell is in `useCloudOrg.ts`, and the network side is `getStartOrg` /
+ * `putStartOrg` in `src/account/client.ts`.
  *
- * 流程:
- *   - **本机缓存优先**:界面一开就用 `loadOrg` 读到的那一份(它也是云端那份在这台浏览器里的缓存),不等网络。
- *   - **拉**(`refresh`:打开页面、登录、页面重新可见、网络恢复时):取云端当前那份。没有本机未传的改动就直接采用云端的;
- *     有就三方合并(`orgMerge.ts`)再传。云端什么都没存过(版本 0)而本机已经有内容(分组做在云端存储接上之前)就整份传上去。
- *   - **改动**(`changed`):先记「有没有传上去的改动」(`dirty`,存在本机),防抖约 1 秒后传。
- *   - **传**:带着上次拿到的版本号。成功:版本号更新。冲突(409,云端那份比我拿到的新):用带回来的那份三方合并,
- *     按它的版本号重传,最多重试几次。传的过程中又有新改动,传完仍标「有没传的」并再排一次。
- *   - **失败不弹窗**:服务端还没有这条路由(老服务端,404)→ `unsupported`:改动只留在本机,不报错、不重试,下次打开页面再探一次;
- *     连不上、5xx、令牌过期等 → `pending`:改动留着,隔一会儿再试,间隔逐次加倍到一分钟封顶,页面重新可见、网络恢复时也立刻试。
- *   - 同一时刻只跑一件事(串成一条链),不会两个请求互相抢着改本机的记录。
+ * Flow:
+ *   - **Local cache first**: as soon as the UI opens, use the copy read by `loadOrg` (it is also the cache of the
+ *     cloud copy in this browser), without waiting for the network.
+ *   - **Pull** (`refresh`: on page open, login, page becoming visible again, network recovery): fetch the current
+ *     cloud copy. If there are no local unuploaded changes, adopt the cloud copy directly;
+ *     if there are, do a three-way merge (`orgMerge.ts`) and then upload. If the cloud has never stored anything
+ *     (version 0) while the local side already has content (groups made before cloud storage was connected),
+ *     upload the whole copy.
+ *   - **Change** (`changed`): first record "whether there are unuploaded changes" (`dirty`, stored locally), then
+ *     upload after a debounce of about 1 second.
+ *   - **Upload**: carries the version last fetched. On success: the version is updated. On conflict (409, the
+ *     cloud copy is newer than the one I fetched): three-way merge with the returned copy,
+ *     re-upload with its version number, retrying a limited number of times. If new changes arrive during the
+ *     upload, it is still marked "has unuploaded changes" afterwards and another upload is scheduled.
+ *   - **Failures show no dialog**: the server doesn't have this route yet (old server, 404) → `unsupported`:
+ *     changes stay only local, no error and no retry, probing again the next time the page opens;
+ *     can't connect, 5xx, expired token, etc. → `pending`: changes are kept and retried after a while, with the
+ *     interval doubling each time up to a one-minute cap, and also retried immediately when the page becomes
+ *     visible again or the network recovers.
+ *   - Only one thing runs at a time (chained into a single sequence), so two requests never fight over editing
+ *     the local record.
  *
- * 本机的同步记录(`SyncMeta`)和整理信息本身分两个键存:`{ version: 上次拿到的云端版本, base: 当时那一份, dirty: 有没有没传上去的 }`。
- * `base` 就是三方合并的「共同出发点」;读不到(第一次、记录丢了)就是 null,合并时两边的内容都算新增,不丢东西。
+ * The local sync record (`SyncMeta`) and the organization data itself are stored under two separate keys:
+ * `{ version: last fetched cloud version, base: the copy at that time, dirty: whether anything is unuploaded }`.
+ * `base` is the "common starting point" of the three-way merge; if it can't be read (first time, record lost) it
+ * is null, and in the merge everything on both sides counts as an addition, so nothing is lost.
  */
 import { mergeOrg } from "./orgMerge.ts";
 import { emptyOrg, parseOrg, type OrgState } from "./vibeOrg.ts";
 import { tr } from "../i18n/index.ts";
 
-/** 云端回的一份:版本 0、org null 是没存过 */
+/** One copy returned by the cloud: version 0 with org null means nothing was ever stored */
 export interface RemoteOrg {
   version: number;
   org: unknown | null;
 }
 
-/** `put` 的结果:成功回写入后的版本与那一份;冲突带回云端当前的 */
+/** Result of `put`: on success it returns the written version and that copy; on conflict it brings back the current cloud copy */
 export type PutResult =
   | { conflict: false; version: number; org: unknown }
   | { conflict: true; version: number; org: unknown | null };
 
 /**
- * 网络一侧。要求:连不上、服务出错抛任意错误(引擎当 `pending`);服务端没有这条路由(老服务端)抛 `OrgUnsupportedError`。
+ * The network side. Requirement: throw any error when it can't connect or the service fails (the engine treats
+ * it as `pending`); throw `OrgUnsupportedError` when the server doesn't have this route (old server).
  */
 export interface OrgTransport {
   get(): Promise<RemoteOrg>;
   put(baseVersion: number, org: OrgState): Promise<PutResult>;
 }
 
-/** 服务端还没有云端分组这条路由(404 等):引擎标 `unsupported`,不报错 */
+/** The server doesn't have the cloud groups route yet (404, etc.): the engine marks `unsupported`, with no error */
 export class OrgUnsupportedError extends Error {
   constructor(message = tr("This cloud service doesn't support cloud groups yet")) {
     super(message);
@@ -51,40 +68,40 @@ export class OrgUnsupportedError extends Error {
 }
 
 export interface SyncMeta {
-  /** 上次拿到(或写入)的云端版本;0 是云端什么都没存过 */
+  /** The cloud version last fetched (or written); 0 means the cloud never stored anything */
   version: number;
-  /** 上次拿到(或写入)的那一份:三方合并的共同出发点 */
+  /** The copy last fetched (or written): the common starting point of the three-way merge */
   base: OrgState | null;
-  /** 本机有没有还没传上去的改动 */
+  /** Whether this machine has changes that haven't been uploaded yet */
   dirty: boolean;
 }
 
 /**
- * - `idle`        还没问过云端(刚打开)
- * - `syncing`     正在跟云端对
- * - `synced`      本机和云端一致
- * - `pending`     有改动没传上去(连不上等),隔一会儿会再试
- * - `unsupported` 云端服务还没有这条路由:只记在这台浏览器里,界面不报错
+ * - `idle`        the cloud hasn't been asked yet (just opened)
+ * - `syncing`     reconciling with the cloud
+ * - `synced`      this machine and the cloud agree
+ * - `pending`     there are changes not uploaded (can't connect, etc.), will be retried after a while
+ * - `unsupported` the cloud service doesn't have this route yet: kept only in this browser, the UI shows no error
  */
 export type SyncStatus = "idle" | "syncing" | "synced" | "pending" | "unsupported";
 
 export interface OrgSyncOptions {
   transport: OrgTransport;
-  /** 此刻界面上的整理信息(含没传上去的改动) */
+  /** The organization data currently in the UI (including changes not yet uploaded) */
   getOrg: () => OrgState;
-  /** 合并出新的整理信息:界面换成它并写本机缓存。**不要**再把它当成一次用户改动(不要再调 `changed`) */
+  /** Merged into new organization data: the UI switches to it and the local cache is written. **Do not** treat it as another user change (do not call `changed` again) */
   applyOrg: (org: OrgState) => void;
   loadMeta: () => SyncMeta | null;
   saveMeta: (meta: SyncMeta) => void;
   onStatus?: (status: SyncStatus) => void;
-  /** 排一个定时任务,回一个取消函数。缺省用 setTimeout */
+  /** Schedule a timer task and return a cancel function. Defaults to setTimeout */
   schedule?: (fn: () => void, ms: number) => () => void;
-  /** 改动之后等多久再传 */
+  /** How long to wait after a change before uploading */
   debounceMs?: number;
-  /** 失败重试的间隔:第一次这么久,之后逐次加倍,到 maxRetryMs 封顶 */
+  /** Retry interval after a failure: this long the first time, doubling each time after, capped at maxRetryMs */
   retryMs?: number;
   maxRetryMs?: number;
-  /** 一次同步里遇到冲突最多重合并几次 */
+  /** The maximum number of re-merges on conflict within one sync */
   maxConflicts?: number;
 }
 
@@ -93,19 +110,19 @@ export const SYNC_DEFAULTS = Object.freeze({ debounceMs: 1000, retryMs: 2000, ma
 const keyOf = (org: OrgState): string => JSON.stringify([org.groups, org.projects, org.chats]);
 const hasContent = (org: OrgState): boolean => org.groups.length + org.projects.length + org.chats.length > 0;
 
-/** 云端回的东西不可信(服务端检查过,这里再认一遍):认不出来当没有 */
+/** What the cloud returns is untrusted (the server checks it, and we recognize it again here): if it isn't recognized, treat it as absent */
 function readRemote(org: unknown): OrgState | null {
   if (org === null || org === undefined) return null;
   return parseOrg(JSON.stringify(org), "cloud");
 }
 
 export interface OrgSync {
-  /** 打开、登录、页面重新可见、网络恢复时调:跟云端对一次 */
+  /** Call on open, login, page becoming visible again, network recovery: reconcile with the cloud once */
   refresh(): Promise<void>;
-  /** 用户改了整理信息之后调(界面已经换成新的、本机缓存已经写了) */
+  /** Call after the user changes organization data (the UI has already switched to the new one, and the local cache has already been written) */
   changed(): void;
   status(): SyncStatus;
-  /** 不再排任何任务(换账号、卸载时调);正在跑的那一次跑完但不再回调 */
+  /** Schedule no more tasks (call on account switch and unmount); the one already running finishes but no longer calls back */
   stop(): void;
 }
 
@@ -122,15 +139,17 @@ export function createOrgSync(options: OrgSyncOptions): OrgSync {
   const loaded = loadMeta();
   let meta: SyncMeta = loaded ?? { version: 0, base: null, dirty: false };
   /**
-   * 这台设备从没跟云端对过(没有同步记录):它本机已有的整理信息(云端存储接上之前做的)是「没传上去的」,
-   * 不能因为云端已经有别的设备传的一份,就被直接顶掉;当成有未传改动、没有共同出发点,和云端的那份取并集。
+   * This device has never reconciled with the cloud (no sync record): the organization data it already has locally
+   * (made before cloud storage was connected) counts as "not uploaded",
+   * and must not be overwritten outright just because the cloud already has a copy uploaded by another device;
+   * treat it as having unuploaded changes and no common starting point, and take the union with the cloud copy.
    */
   let firstContact = loaded === null;
   let status: SyncStatus = "idle";
   let stopped = false;
   let cancelTimer: (() => void) | null = null;
   let failures = 0;
-  /** 串成一条链:同一时刻只跑一件事 */
+  /** Chain into a single sequence: only one thing runs at a time */
   let chain: Promise<void> = Promise.resolve();
 
   const setStatus = (s: SyncStatus) => {
@@ -146,7 +165,7 @@ export function createOrgSync(options: OrgSyncOptions): OrgSync {
     cancelTimer = schedule(() => { cancelTimer = null; void enqueue(); }, ms);
   };
 
-  /** 把没传上去的改动传上去(必要时先合并)。成功回 true;失败已经安排好重试、回 false */
+  /** Upload the unuploaded changes (merging first if necessary). Returns true on success; on failure a retry is already scheduled and it returns false */
   async function push(): Promise<boolean> {
     for (let conflicts = 0; ; ) {
       const mine = getOrg();
@@ -154,7 +173,7 @@ export function createOrgSync(options: OrgSyncOptions): OrgSync {
       const res = await transport.put(meta.version, mine);
       if (!res.conflict) {
         const stored = readRemote(res.org) ?? mine;
-        // 传的过程中用户又改了:这一份还没传完,版本号记新的,标记仍是「有没传的」
+        // The user changed things again during the upload: this copy hasn't finished uploading, so record the new version number, and the flag stays "has unuploaded changes"
         const moved = keyOf(getOrg()) !== sent;
         setMeta({ version: res.version, base: stored, dirty: moved });
         if (moved) later(opt.debounceMs);
@@ -163,7 +182,7 @@ export function createOrgSync(options: OrgSyncOptions): OrgSync {
       if (++conflicts > opt.maxConflicts) throw new Error(tr("Cloud groups kept changing, so this merge failed"));
       const theirs = readRemote(res.org) ?? emptyOrg("cloud");
       const merged = mergeOrg(meta.base, mine, theirs);
-      // 先落本机再重传:合并结果不能只在内存里
+      // Save locally first, then re-upload: the merge result cannot live only in memory
       applyOrg(merged);
       setMeta({ version: res.version, base: theirs, dirty: true });
     }
@@ -175,11 +194,12 @@ export function createOrgSync(options: OrgSyncOptions): OrgSync {
     const mine = getOrg();
     if (firstContact && hasContent(mine) && !meta.dirty) setMeta({ ...meta, dirty: true });
     if (remote.version < meta.version) {
-      // 云端比我记的还旧(云端数据被重置过):以云端为出发点,把本机的整份再传上去
+      // The cloud is older than what I recorded (cloud data was reset): start from the cloud and upload the
+      // whole local copy again
       setMeta({ version: remote.version, base: theirs, dirty: hasContent(mine) || meta.dirty });
     } else if (remote.version > meta.version) {
       if (!meta.dirty) {
-        // 本机没有没传的改动:直接采用云端的
+        // No unsent local changes: just take the cloud version
         const adopted = theirs ?? emptyOrg("cloud");
         if (theirs && keyOf(adopted) !== keyOf(mine)) applyOrg(adopted);
         setMeta({ version: remote.version, base: theirs, dirty: false });
@@ -189,7 +209,8 @@ export function createOrgSync(options: OrgSyncOptions): OrgSync {
       applyOrg(merged);
       setMeta({ version: remote.version, base: theirs, dirty: true });
     } else if (remote.version === 0 && !meta.dirty && hasContent(mine)) {
-      // 云端什么都没存过、本机已经有内容(云端存储接上之前做的分组):整份传上去
+      // The cloud has never stored anything and this machine already has content (groups made before cloud
+      // storage was connected): upload the whole thing
       setMeta({ ...meta, dirty: true });
     }
     if (meta.dirty) await push();
@@ -205,14 +226,15 @@ export function createOrgSync(options: OrgSyncOptions): OrgSync {
       setStatus(meta.dirty ? "pending" : "synced");
     } catch (e) {
       if (e instanceof OrgUnsupportedError) {
-        // 老服务端:不报错、不重试(下次打开页面再探);改动留在本机
+        // Old server: no error, no retry (probe again the next time the page opens); changes stay local
         failures = 0;
         setStatus("unsupported");
         return;
       }
       failures += 1;
       setStatus("pending");
-      // 服务端说了多久以后再来(429 的 Retry-After,云端分组写入限流):不早于它;不丢改动,dirty 还在
+      // The server said how long to wait before retrying (429 Retry-After, cloud group write rate limit):
+      // not earlier than that; no changes are lost, dirty is still set
       const hint = (e as { retryAfterSec?: unknown } | null)?.retryAfterSec;
       const asked = typeof hint === "number" && hint > 0 ? hint * 1000 : 0;
       later(Math.max(asked, Math.min(opt.maxRetryMs, opt.retryMs * 2 ** (failures - 1))));
@@ -232,7 +254,8 @@ export function createOrgSync(options: OrgSyncOptions): OrgSync {
     changed() {
       if (stopped) return;
       if (!meta.dirty) setMeta({ ...meta, dirty: true });
-      // 已经确认云端不支持:不再排传输(下次 refresh 会再探一次)
+      // Already confirmed that the cloud does not support this: stop queueing transports (the next refresh
+      // will probe once more)
       if (status === "unsupported") return;
       setStatus(status === "synced" || status === "idle" ? "pending" : status);
       later(opt.debounceMs);
@@ -245,12 +268,14 @@ export function createOrgSync(options: OrgSyncOptions): OrgSync {
   };
 }
 
-/* ---------------- 同步记录存在本机 ---------------- */
+/* ---------------- Sync record is stored locally ---------------- */
 
-/** 同步记录的键:和整理信息本身(`orgKey("cloud", scope)`)分开存,一个是内容、一个是「内容和云端的关系」 */
+/** Key of the sync record: stored separately from the organization data itself (`orgKey("cloud", scope)`);
+ * one is the content, the other is "how the content relates to the cloud" */
 export const syncMetaKey = (scope: string): string => `pc.start.orgsync.cloud.${scope}`;
 
-/** 读回来的东西不可信:认不出就当没记过(第一次、记录丢了、被改坏) */
+/** Data read back is not trusted: if it is not recognized, treat it as never recorded (first run, record
+ * lost, corrupted) */
 export function parseSyncMeta(raw: string | null): SyncMeta | null {
   if (!raw) return null;
   try {
@@ -268,5 +293,5 @@ export function loadSyncMeta(scope: string): SyncMeta | null {
 }
 
 export function saveSyncMeta(scope: string, meta: SyncMeta): void {
-  try { localStorage.setItem(syncMetaKey(scope), JSON.stringify(meta)); } catch { /* 存不了就只在这次打开期间有效 */ }
+  try { localStorage.setItem(syncMetaKey(scope), JSON.stringify(meta)); } catch { /* If it cannot be saved, it is only valid for this session of the page */ }
 }

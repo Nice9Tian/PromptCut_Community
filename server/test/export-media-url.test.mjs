@@ -1,14 +1,21 @@
-// 导出页拿到的素材地址:有哈希按哈希、没哈希才按路径(`server/vite-plugin-export.ts` 的 normalizeExportMedia)。
-// 跑:node --test server/test/export-media-url.test.mjs
+// Media URLs obtained by the export page: by hash if hash exists, by path only if no hash
+// (`normalizeExportMedia` in `server/vite-plugin-export.ts`).
+// Run: node --test server/test/export-media-url.test.mjs
 //
-//   MP-E1  有合法哈希:一律 `/@media/<哈希>`,不看 path(换了机器,path 指着别人的目录)
-//   MP-E2  没有哈希:照旧按 path 走 `/api/media/file?path=…`(素材目录里、文件在的用解析后的绝对路径)
-//   MP-E3  没有哈希、没有 path、浏览器上传进暂存区的:换成这次导出目录里的地址;别的原样
-//   MP-E4  没有哈希、地址为空(已标「(缺失)」):地址留空、不按 path 读,回在 skipped 里;上传中的不算
-//   MP-E5  dropSkippedMediaClips:去掉引用缺失素材的片段,别的片段原样;只列真有片段被去掉的素材
-//   MP-E6  导出完成时的提示(exportSkippedMessage / parseExportSkipped):列出名字、去掉标记、去重、太多时截断
+//   MP-E1  Valid hash exists: always `/@media/<hash>`, ignore path (on a different machine,
+//          path points to someone else's directory)
+//   MP-E2  No hash: follow path via `/api/media/file?path=…` as before (for existing files in the
+//          asset catalog, use resolved absolute path)
+//   MP-E3  No hash, no path, uploaded via browser into staging area: replace with address in
+//          this export directory; others kept as is
+//   MP-E4  No hash, empty address (marked "(missing)"): leave address empty, do not read by path,
+//          return in skipped; uploading ones do not count
+//   MP-E5  dropSkippedMediaClips: remove clips referencing missing media, leave other clips as is;
+//          only list media that actually had clips removed
+//   MP-E6  Notice upon export completion (exportSkippedMessage / parseExportSkipped): list names,
+//          remove markers, deduplicate, truncate if too many
 //
-// 导出插件用 node 的类型剥离直接 import(同 c66-integ.test.mjs)。
+// The export plugin is imported directly using Node's type stripping (same as c66-integ.test.mjs).
 import '../../src/testing/registerTs.mjs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -128,7 +135,8 @@ test('MP-E7 media that has been marked "confirmed missing": the address is kept 
     { id: 'p', kind: 'audio', name: '(missing) voice.mp3', url: '/@media/voice.mp3', path: elsewhere },
     { id: 'n', kind: 'image', name: '(missing) cover.png', url: '/@media/__missing__' },
   ].map((m) => ({ ...m, missingMaterial: record(m) }));
-  // 记录与素材现状对不上的(地址被改过)不算认定过,照老规矩办
+  // Those where records do not match the current state of media (address was modified) are not
+  // considered confirmed; follow the old rules
   const stale = { id: 's', kind: 'video', name: '(missing) s.mp4', url: '', missingMaterial: { ...record({ id: 's', kind: 'video', name: '(missing) s.mp4', url: '/@media/x' }) } };
   const project = { media: [...media.map((m) => structuredClone(m)), stale], tracks: [{ id: 't', clips: [{ id: 'c1', mediaId: 'h', start: 0, end: 1 }, { id: 'c2', mediaId: 'p', start: 1, end: 2 }, { id: 'c3', mediaId: 'n', start: 2, end: 3 }, { id: 'c4', mediaId: 's', start: 3, end: 4 }] }] };
   let asked = 0;
@@ -153,7 +161,8 @@ test('MP-E8 export and the on-screen display use the same check: if any of the n
     assert.equal(confirmedMissing(media), confirmed, label);
     const project = { media: [structuredClone(media)] };
     await normalizeExportMedia(project, ROOT, 'job8', { roots: ROOTS, exists: async () => true });
-    // 确认缺失的:地址一个字不动(带扩展名的写法也留着);不算的:照「有哈希就按哈希」的老规矩办
+    // Confirmed missing: do not change a single character of the address (keep syntax with extension
+    // as well); those that do not count: follow the old rule of "by hash if hash exists"
     assert.equal(project.media[0].url === media.url, confirmed || media.hash === H('9'), label);
     assert.equal(confirmedMissing(project.media[0]), confirmed, `${label}: after the export rewrites the address, the check on the on-screen side agrees with the export side`);
   }

@@ -1,12 +1,17 @@
 /**
- * docsync(页面到文档服务的同步层)的测试。跑:node --test src/store/docsync.test.mjs
+ * Tests for docsync (sync layer from page to document service). Run:
+ * node --test src/store/docsync.test.mjs
  *
- * 用 src/testing/memDocService.mjs 的内存文档服务假件,消息随机交错投递。钉的是 c65-design.md:
- *   V2:两个页面各 200 次随机编辑交错提交,两边与文档服务三份逐字节相同;
- *   V5:撤销不盖别人(这一步之后被别的写入身份改过的实体不撤);
- *   V6:离线队列(按顺序落地;第一条被拒整批停下,「重放」「丢弃」);
- *   V7:.proc 只在所有本地操作确认后写(whenSettled);
- *   V8:1000 个片段的项目,提交一侧的差异计算 ≤ 5 ms。
+ * Using in-memory document service mock from src/testing/memDocService.mjs, messages delivered
+ * randomly interleaved. Pins c65-design.md:
+ *   V2: 200 random edits interleaved and committed from each of two pages; all three copies (both
+ *     sides and document service) byte-for-byte identical;
+ *   V5: Undo does not overwrite others (entities modified by other write identities after this step
+ *     are not undone);
+ *   V6: Offline queue (landed in order; entire batch stops if first item rejected, "Replay",
+ *     "Discard");
+ *   V7: .proc written only after all local operations are confirmed (whenSettled);
+ *   V8: Project with 1000 clips, diff computation on commit side ≤ 5 ms.
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import test from "node:test";
@@ -19,7 +24,7 @@ const { DocSync } = await import(srcUrl("store/docsync.ts"));
 
 const json = (v) => JSON.stringify(v);
 
-/** 一个页面:DocSync + 接到假件上的连接 */
+/** One page: DocSync + connection attached to the mock */
 function page(svc, session, initial, extra = {}) {
   const sent = [];
   const backups = [];
@@ -49,7 +54,10 @@ function page(svc, session, initial, extra = {}) {
   return { ds, sent, backups, notices, up, down, get conn() { return link?.conn; } };
 }
 
-/** 本地做一次随机修改,交给 docsync。chaos:整份深拷贝后在任意位置乱改(换类型、删键、重复 id…) */
+/**
+ * Make a random local modification and pass to docsync. chaos: deep copy the whole thing then
+ * arbitrarily mutate anywhere (change type, delete key, duplicate id…)
+ */
 function randomEdit(r, ds, chaos) {
   if (!chaos) return ds.commit(realisticEdit(r, ds.project));
   const next = structuredClone(ds.project);
@@ -91,7 +99,7 @@ for (const [seed, chaos] of [[1, false], [2, false], [3, false], [4, false], [5,
         const who = left.A && (!left.B || r.chance(0.5)) ? "A" : "B";
         const p = who === "A" ? A : B;
         left[who]--;
-        // 偶尔撤销 / 重做,撤销也是一次普通写入
+        // Occasionally undo / redo; undo is also a regular write
         if (roll === 9 && p.ds.canUndo()) { p.ds.undo(); undos++; }
         else if (roll === 8 && p.ds.canRedo()) p.ds.redo();
         else randomEdit(r, p.ds, chaos);
@@ -99,7 +107,8 @@ for (const [seed, chaos] of [[1, false], [2, false], [3, false], [4, false], [5,
     }
     svc.drain(r);
     assertSame(svc, A, B);
-    // 账对得上:每条发出去的提交要么落地、要么被拒并通知了页面,没有悄悄丢的;落地的没有重复
+    // Reconciled: every sent commit either landed or was rejected with page notified, none silently
+    // dropped; no duplicates among landed
     for (const p of [A, B]) {
       const sentIds = new Set(p.sent.filter((m) => m.type === "project.op").map((m) => m.opId));
       const landed = svc.log.filter((e) => e.session === p.ds.session).map((e) => e.opId);
@@ -136,10 +145,10 @@ test("V2-remote operation received while local operations are unconfirmed: roll 
   const b = structuredClone(B.ds.project);
   b.height = 222;
   B.ds.commit(b);
-  // B 的先落地;A 的还在路上时先收到 B 的
+  // B's lands first; while A's is still in flight, receives B's first
   svc.handle(B.conn, B.conn.up.shift());
   svc.handle(A.conn, A.conn.up.shift());
-  A.conn.onMessage(A.conn.down.shift()); // project.ops(B 的)
+  A.conn.onMessage(A.conn.down.shift()); // project.ops (B's)
   assert.equal(A.ds.project.width, 111);
   assert.equal(A.ds.project.height, 222);
   svc.drain();
@@ -182,12 +191,12 @@ test("V5-A edits clips 1 and 2, then B edits clip 2; A undoes: clip 1 reverts, c
   assert.equal(textOf(A.ds.project, "c2"), "B2");
   svc.drain();
   assertSame(svc, A, B);
-  // 撤销是一次新的写入,带 undoOf,别人照常收到
+  // Undo is a new write, with undoOf, received by others as usual
   const last = svc.log[svc.log.length - 1];
   assert.equal(last.session, "A");
   assert.equal(last.undoOf, svc.log[svc.log.length - 3].opId);
   assert.equal(textOf(B.ds.project, "c1"), "One");
-  // 重做:把撤掉的那一处(片段 1)再做回来
+  // Redo: apply back the undone change (clip 1)
   assert.equal(A.ds.canRedo(), true);
   const redo = A.ds.redo();
   assert.equal(redo.done, true);
@@ -216,17 +225,17 @@ test("V5-nothing could be undone: pop from the stack, but do not push onto the r
 
 test("V5-own later edits do not count as conflicts; edits by others still block, even if I undid an intermediate step", () => {
   const { svc, A, B } = setupClips();
-  A.ds.commit(withText(A.ds.project, "c2", "A2")); // 第 1 步
+  A.ds.commit(withText(A.ds.project, "c2", "A2")); // Step 1
   svc.drain();
   B.ds.commit(withText(B.ds.project, "c2", "B2"));
   svc.drain();
-  A.ds.commit(withText(A.ds.project, "c2", "A3")); // 第 2 步,盖掉 B 的
+  A.ds.commit(withText(A.ds.project, "c2", "A3")); // Step 2, overwrites B's
   svc.drain();
-  // 撤第 2 步:它之后没人改过 → 撤成,回到 B2
+  // Undo step 2: no one modified after it → undo succeeds, returns to B2
   assert.equal(A.ds.undo().done, true);
   svc.drain();
   assert.equal(textOf(A.ds.project, "c2"), "B2");
-  // 撤第 1 步:它之后 B 改过 → 不撤
+  // Undo step 1: B modified after it → do not undo
   const res = A.ds.undo();
   assert.equal(res.done, false);
   assert.equal(textOf(A.ds.project, "c2"), "B2");
@@ -247,7 +256,7 @@ test("V5-parent deleted by someone else: the spot that cannot be applied counts 
   A.ds.commit(a);
   svc.drain();
   const b = structuredClone(B.ds.project);
-  b.tracks.splice(1, 1); // B 删了序列 2(实体 /tracks/@t2,与片段 c9 不是同一个实体)
+  b.tracks.splice(1, 1); // B deleted track 2 (entity /tracks/@t2, not the same entity as clip c9)
   B.ds.commit(b);
   svc.drain();
   const res = A.ds.undo();
@@ -282,7 +291,7 @@ test("V5-consecutive input in a number field within 300 ms merges into one step;
   t += 400;
   A.ds.commit({ ...A.ds.project, width: 7 }, { mergeKey: "width" });
   svc.drain();
-  assert.equal(svc.log.filter((e) => e.session === "A").length, 6); // 每次输入照样各提交一次
+  assert.equal(svc.log.filter((e) => e.session === "A").length, 6); // Each input still commits once as usual
   A.ds.undo();
   assert.equal(A.ds.project.width, 1004);
   A.ds.undo();
@@ -290,7 +299,7 @@ test("V5-consecutive input in a number field within 300 ms merges into one step;
   assert.equal(A.ds.canUndo(), false);
   svc.drain();
   assertSame(svc, A);
-  // 上限
+  // Upper limit
   for (let i = 0; i < 130; i++) { t += 1000; A.ds.commit({ ...A.ds.project, fps: i + 1 }); }
   let n = 0;
   while (A.ds.canUndo()) { A.ds.undo(); n++; }
@@ -311,7 +320,7 @@ test("V5-someone else's undo: the picture changes directly, without entering my 
   assertSame(svc, A, B);
 });
 
-/* ---------------- 覆盖通知 ---------------- */
+/* ---------------- Overwrite notice ---------------- */
 
 test("Overwrite notice-the overwritten side first saves its own version as a local backup, the overwriting side receives overwrote", () => {
   const { svc, A, B } = setupClips({ overwriteWindowMs: 600_000 });
@@ -323,7 +332,7 @@ test("Overwrite notice-the overwritten side first saves its own version as a loc
   assert.equal(A.backups.length, 1);
   assert.equal(A.backups[0].kind, "overwritten");
   assert.equal(A.backups[0].entity, "/tracks/@t1/clips/@c1");
-  assert.equal(A.backups[0].value.params.text, "A1"); // 是 A 自己原来那一版
+  assert.equal(A.backups[0].value.params.text, "A1"); // It is A's own original version
   assert.equal(textOf(A.ds.project, "c1"), "B1");
   assertSame(svc, A, B);
 });
@@ -371,9 +380,9 @@ test("V6-others also edited during the offline period: the first is rejected, th
   assert.equal(info.queued, 20);
   assert.equal(info.since.length, 1);
   assert.equal(info.since[0].session, "B");
-  assert.equal(A.sent.filter((m) => m.type === "project.op").length, 1); // 其余 19 条没发
+  assert.equal(A.sent.filter((m) => m.type === "project.op").length, 1); // Remaining 19 items not sent
   assert.equal(svc.log.filter((e) => e.session === "A").length, 0);
-  assert.equal(textOf(A.ds.project, "c1"), "Offline 19"); // 本地仍是离线时的样子
+  assert.equal(textOf(A.ds.project, "c1"), "Offline 19"); // Local remains as it was when offline
 });
 
 test("V6-choose \"replay\": drop the expected revision and commit in order, all three copies match, others' changes are included too", async () => {
@@ -411,8 +420,8 @@ test("V6-choose \"discard\": first save this batch as a local backup, local reve
 test("V6-in-flight commit was actually applied but the ok was lost on disconnect: after reconnecting the original opId is resent, the document service dedupes it, no false conflict", () => {
   const { svc, A, B } = setupClips();
   A.ds.commit(withText(A.ds.project, "c1", "In flight"));
-  svc.handle(A.conn, A.conn.up.shift()); // 文档服务收到并落地
-  A.down(); // ok 还没投就断了
+  svc.handle(A.conn, A.conn.up.shift()); // Document service received and landed
+  A.down(); // Disconnected before ok was delivered
   A.ds.commit(withText(A.ds.project, "c2", "offline"));
   A.up();
   svc.drain();
@@ -424,7 +433,7 @@ test("V6-in-flight commit was actually applied but the ok was lost on disconnect
 test("V6-in-flight commit never reached the document service on disconnect: resent as usual after reconnecting", () => {
   const { svc, A, B } = setupClips();
   A.ds.commit(withText(A.ds.project, "c1", "In flight"));
-  A.down(); // 上行丢了
+  A.down(); // Upstream lost
   A.up();
   svc.drain();
   assert.equal(textOf(svc.project, "c1"), "In flight");
@@ -439,7 +448,7 @@ test("V7-clicking save with unconfirmed operations: wait until confirmed before 
   let written = null;
   const save = A.ds.whenSettled({ timeoutMs: 1000 }).then((s) => { written = { rev: s.rev, text: json(s.project) }; });
   await Promise.resolve();
-  assert.equal(written, null); // 还没确认,不写
+  assert.equal(written, null); // Not yet confirmed, do not write
   svc.drain();
   await save;
   assert.equal(written.rev, svc.rev);
@@ -460,7 +469,7 @@ test("V7-no unconfirmed operations: return the current version immediately", asy
   assert.equal(s.rev, svc.rev);
 });
 
-/* ---------------- 其它协议细节 ---------------- */
+/* ---------------- Other protocol details ---------------- */
 
 test("The document service does not have this project yet: write the local copy in with a root replace", () => {
   const svc = new MemDocService();
@@ -477,7 +486,8 @@ test("The document service does not have this project yet: write the local copy 
 
 test("A rejected (bad-path) commit is rolled back locally and its corresponding undo step is removed", () => {
   const { svc, A, B } = setupClips();
-  // B 删掉片段 1;A 还不知道,改了片段 1 的文字 —— A 的操作到文档服务时路径已不存在
+  // B deleted clip 1; A does not know yet and modified text of clip 1: when A's operation reaches
+  // document service, path no longer exists
   const b = structuredClone(B.ds.project);
   b.tracks[0].clips.splice(0, 1);
   B.ds.commit(b);
@@ -492,9 +502,12 @@ test("A rejected (bad-path) commit is rolled back locally and its corresponding 
 
 /* ---------------- V8 ---------------- */
 
-// 计时分批:每批 40 次提交,最多 8 批、批间隔 100 ms,任一批提交一侧的中位数 ≤ 5 ms 即停。机器忙(几份 npm test 并行)时
-// 某一批可能整体被拖慢;判据(某批中位数 ≤ 5 ms)不变,第一批就是原来那一批,代码真退化时每一批都超,照样拦得住。
-// 做法同 src/kernel/diffProject.test.mjs 的 timeIt。每次提交后都 drain,最后 A、B 与服务端一致照旧核对。
+// Timed batches: 40 commits per batch, at most 8 batches, 100 ms batch interval, stop as soon as
+// median on the commit side for any batch ≤ 5 ms. When machine is busy (several npm test running in
+// parallel), a batch might be slowed down as a whole; criterion (batch median ≤ 5 ms) unchanged,
+// the first batch is the original batch; if code truly regresses, every batch exceeds and is still
+// caught. Same approach as timeIt in src/kernel/diffProject.test.mjs. Drain after each commit,
+// finally verify consistency among A, B, and server as usual.
 test("V8-project with 1000 clips: the page-side commit (diff + local apply) takes ≤ 5 ms, and the change appears on the other page", async () => {
   const r = rng(8);
   const big = bigProject(r, 1000);
@@ -554,7 +567,7 @@ test("V5-each top-level field of the project settings counts as one entity (inte
   assertSame(svc, A, B);
 });
 
-/* ---------------- 与文档服务实现对齐的协议细节 ---------------- */
+/* ---------------- Protocol details aligned with document service implementation ---------------- */
 
 test("Protocol-project.state of a large project in chunks: project.ops arriving before reassembly completes are held back, then applied in order once complete", () => {
   const p0 = clipsProject();
@@ -597,9 +610,14 @@ test("Protocol-two people delete the same clip at the same time: the later one i
   assertSame(svc, A, B);
 });
 
-/* ---------------- 计划内换连接(handover;账号云端项目的连接到期前换到新会话上) ---------------- */
+/* ---------------- Planned connection handover (handover; switch to new session
+   before account cloud project connection expires) ---------------- */
 
-/** 能换连接的页面:`swap()` = 新连接已经建好,旧连接作废(旧连接上没处理的上行按 `dropUp` 丢或不丢、没投的下行一律丢) */
+/**
+ * Page capable of connection swap: `swap()` = new connection already established, old connection
+ * invalidated (unhandled upstream on old connection dropped or not per `dropUp`, undelivered
+ * downstream all dropped)
+ */
 function swappable(svc, session, initial) {
   const notices = [];
   const projects = [];
@@ -616,7 +634,10 @@ function swappable(svc, session, initial) {
     svc.disconnect(old.conn, opts);
     ds.handover();
   };
-  /** 换连接但旧连接留在服务端(调用方自己管它的上行、下行):模拟旧连接上在途的提交换完之后才落地 */
+  /**
+   * Swap connection but keep old connection on server (caller manages its upstream and downstream):
+   * simulate in-flight commits on old connection landing only after swap completes
+   */
   swap.keepOld = () => {
     link = svc.connect(session, (msg) => ds.receive(msg));
     ds.handover();
@@ -630,13 +651,14 @@ test("HO-01 commits unconfirmed during a connection switch (sent with no reply, 
   const B = page(svc, "B", clipsProject());
   svc.drain();
   const rev0 = svc.rev;
-  // A 发了一条,服务端还没处理(换连接时丢在旧连接上);B 同时改了另一个片段并已落地
+  // A sent one, server has not processed it yet (left on old connection during connection swap);
+  // B concurrently modified another clip and it has landed
   A.ds.commit(withText(A.ds.project, "c1", "A before the switch"));
   B.ds.commit(withText(B.ds.project, "c2", "B in the meantime"));
   while (svc.conns.size && [...svc.conns].find((c) => c.session === "B").up.length) svc.handle([...svc.conns].find((c) => c.session === "B"), [...svc.conns].find((c) => c.session === "B").up.shift());
   A.sent.length = 0;
   A.swap({ dropUp: true });
-  // 换的那一下(新连接还在等状态)又做了一条
+  // At the moment of swap (new connection still waiting for state), made another one
   A.ds.commit(withText(A.ds.project, "c1", "A during the switch"));
   assert.notEqual(A.ds.status, "offline", "A planned connection switch does not show offline");
   svc.drain();
@@ -659,7 +681,8 @@ test("HO-02 a commit already applied on the old connection whose confirmation wa
   svc.drain();
   const rev0 = svc.rev;
   A.ds.commit(withText(A.ds.project, "c1", "Already applied"));
-  // 旧连接上行照常处理(dropUp: false),确认丢在旧连接的下行里
+  // Old connection upstream processed as usual (dropUp: false), confirmation dropped in old
+  // connection's downstream
   A.swap({ dropUp: false });
   assert.equal(svc.rev, rev0 + 1);
   svc.drain();
@@ -680,7 +703,7 @@ test("HO-03 no new version from this switch: the project object in hand is kept 
   assert.equal(A.ds.project, before);
   assert.deepEqual(A.projects, []);
   assert.equal(A.ds.status, "online");
-  // 之后照常提交
+  // Commit as usual afterwards
   A.ds.commit(withText(A.ds.project, "c1", "After the switch"));
   svc.drain();
   assert.equal(textOf(svc.project, "c1"), "After the switch");
@@ -710,12 +733,14 @@ test("HO-05 two ops in flight on the old connection when switching: the first is
   A.ds.commit(withText(A.ds.project, "c1", "X"));
   A.ds.commit(withText(A.ds.project, "c2", "Y"));
   const old = connA()[0];
-  // X 在旧连接上先落地(确认留在旧连接的下行里,换完就丢)
+  // X lands first on old connection (confirmation remains in old connection's downstream, dropped
+  // after swap)
   svc.handle(old, old.up.shift());
   const yMsg = old.up.shift();
   A.swap({ dropUp: true });
   const fresh = connA()[0];
-  // 新连接先拿到状态(含 X);这时 Y 才经旧连接落地,回发给新连接;重发的 X、Y 的回音在后面
+  // New connection gets state first (including X); only then Y lands via old connection and is sent
+  // back to new connection; echoes of resent X and Y follow behind
   svc.handle(fresh, fresh.up.shift());
   fresh.onMessage(fresh.down.shift());
   svc.handle({ ...old, open: true, down: [] }, yMsg);
@@ -724,7 +749,8 @@ test("HO-05 two ops in flight on the old connection when switching: the first is
   assert.equal(A.ds.unconfirmed, 0);
   assert.equal(textOf(A.ds.project, "c1"), "X");
   assert.equal(textOf(A.ds.project, "c2"), "Y");
-  // 不去猜前一条落没落地:确认先后颠倒就整份重取(静默的,不给用户提示),只许这一种通知
+  // Do not guess whether previous one landed: if confirmation order is inverted, refetch the whole
+  // copy (silently, no user prompt); only this type of notification is allowed
   assert.deepEqual(A.notices.filter((n) => n.kind !== "remote").map((n) => n.kind), ["resync"]);
   assert.equal(JSON.stringify(A.ds.project), JSON.stringify(svc.project));
   assert.equal(JSON.stringify(A.ds.confirmedProject), JSON.stringify(svc.project));
@@ -738,15 +764,15 @@ test("HO-06 review repro: the first op did not land on the old connection (the g
   A.ds.commit({ ...A.ds.project, name: "X" });
   A.ds.commit({ ...A.ds.project, name: "Y" });
   const old = connA()[0];
-  old.up.shift();                 // X:旧连接上没落(闸回了不带提交号的错误)
-  const yMsg = old.up.shift();    // Y:还在路上
+  old.up.shift();                 // X: did not land on old connection (gate returned error without commit number)
+  const yMsg = old.up.shift();    // Y: still in flight
   A.swap({ dropUp: true });
   const fresh = connA()[0];
-  svc.handle(fresh, fresh.up.shift());                  // 新连接拿到状态(不含 X、Y)
+  svc.handle(fresh, fresh.up.shift());                  // New connection gets state (excluding X, Y)
   fresh.onMessage(fresh.down.shift());
-  svc.handle({ ...old, open: true, down: [] }, yMsg);   // Y 经旧连接落地,回发给新连接
+  svc.handle({ ...old, open: true, down: [] }, yMsg);   // Y lands via old connection, sent back to new connection
   svc.drain();
-  // 文档服务上是先 Y 后 X;页面必须也是
+  // On document service it is Y then X; page must be the same
   assert.equal(svc.project.name, "X");
   assert.equal(A.ds.project.name, "X");
   assert.equal(A.ds.confirmedProject.name, "X");
@@ -755,12 +781,19 @@ test("HO-06 review repro: the first op did not land on the old connection (the g
 });
 
 /**
- * 穷举:换连接的那一刻旧连接上有 2～3 条在途的提交(都改同一个字段,另各带一个自己的字段),每条枚举三种去向 ——
- *   gate   旧连接上被闸拒了(回的是不带提交号的错误,页面不知道),没落地;
- *   before 在新连接拿到状态之前就经旧连接落地了(回音丢在旧连接上);
- *   after  换完之后才经旧连接落地(回音会从新连接回来,和重发的那一条、别的回音先后不定)。
- * 再叠上:换的那一下又做了一条没有、别的成员同时改没改;每种组合用若干个随机种子打乱投递顺序。
- * 安静下来之后只许两种结局:页面本地副本、已确认副本与文档服务内容相同且没有未确认的(中途整份重取过不算错);不许「不一致且没有任何动静」。
+ * Exhaustive test: at the moment of connection swap, 2–3 in-flight commits on old connection (all
+ * modifying the same field, plus each with its own field), enumerating three destinations for each:
+ *   gate   Rejected by gate on old connection (returned error without commit number, page
+ *     unaware), did not land;
+ *   before Landed via old connection before new connection got state (echo dropped on old
+ *     connection);
+ *   after  Landed via old connection only after swap (echo returns via new connection,
+ *     indeterminate order with the resent one and other echoes).
+ * Layered with: whether another commit was made at the moment of swap, whether other members
+ * modified concurrently; delivery order scrambled for each combination using several random seeds.
+ * Once settled, only two outcomes permitted: page local replica and confirmed replica match
+ * document service content with no unconfirmed items (refetching the whole copy midway is not an
+ * error); never allow "inconsistent without any activity".
  */
 test("HO-07 exhaustively cover every outcome and echo order of in-flight commits when switching connections: once quiet, the page is consistent with the document service and unconfirmed is 0", () => {
   const FATES = ["gate", "before", "after"];
@@ -777,10 +810,11 @@ test("HO-07 exhaustively cover every outcome and echo order of in-flight commits
     const old = [...svc.conns].find((c) => c.session === "A");
     const msgs = old.up.splice(0);
     assert.equal(msgs.length, n, label);
-    // before:现在就落地(回音留在旧连接上,不投给页面)
+    // before: lands right now (echo remains on old connection, not delivered to page)
     msgs.forEach((m, i) => { if (fates[i] === "before") svc.handle(old, m); });
     old.down.length = 0;
-    // 换连接:旧连接留在服务端(不再往页面投),after 的那几条还在它的上行队列里,由随机投递决定什么时候落地
+    // Connection swap: old connection remains on server (no longer delivers to page); after items are
+    // still in its upstream queue, random delivery determines when they land
     const quiet = old.onMessage;
     old.onMessage = () => {};
     msgs.forEach((m, i) => { if (fates[i] === "after") old.up.push(m); });

@@ -1,15 +1,17 @@
 /**
- * 桌面版 AI 栏里哪一页选了「云端」(契约 9.5):只记在这个页签上,只放内存。
- * 「云端」从不被自动选中,也不记成全局缺省;刷新页面或重启软件之后每一页回到本机接入方式,
- * 云端对话在历史列表「云端」一组里找回(契约 7.4)。
+ * Which tab of the desktop app's AI panel has selected "Cloud" (contract 9.5): recorded only on
+ * this tab, in memory only.
+ * "Cloud" is never selected automatically and is not recorded as a global default; after a page
+ * refresh or an app restart each tab returns to the local connection type, and cloud chats are
+ * found again in the "Cloud" group of the history list (contract 7.4).
  *
- * （原在 `src/ai/cloud/tabMode.ts`，上移至公开侧 `src/ai/tabMode.ts`）
+ * (Originally in `src/ai/cloud/tabMode.ts`, moved up to the public side `src/ai/tabMode.ts`)
  */
 import { useSyncExternalStore } from "react";
 
 export interface CloudTabMode {
   selected: boolean;
-  /** 从历史列表点进来的云端对话;进云端页之后用一次 */
+  /** A cloud chat entered from the history list; used once after entering the cloud tab */
   conversationId: string | null;
 }
 

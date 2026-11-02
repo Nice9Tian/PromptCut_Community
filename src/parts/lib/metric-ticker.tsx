@@ -4,8 +4,8 @@ import { accentOf } from "../../cards/native/hud";
 import { fitOr } from "../fit";
 
 /**
- * 数字滚动:从 mu-number-ticker 拆出。
- * 数字翻牌滚动动画，自带单位和底部说明。
+ * Number ticker: extracted from mu-number-ticker.
+ * Number rolling animation, with built-in units and bottom description.
  */
 interface Params {
   value: number;

@@ -1,11 +1,14 @@
 /**
- * c65-integ2:既读页面状态又写项目的 5 个工具(set_project_meta、switch_cut、add_cut、remove_cut、attach_clip_motion)
- * 改为写入在 Agent 服务端以 agent 身份执行,所需的页面状态向页面要一次(主会话裁定,D1 判据);
- * 以及同一批落实的:Agent 侧超过 256 KiB 的写走 project.upload、事件带 callId、远端改动后的页面状态(页面侧纯函数)。
+ * c65-integ2: The 5 tools that both read page state and write to the project (set_project_meta,
+ * switch_cut, add_cut, remove_cut, attach_clip_motion) now execute writes on the Agent server
+ * with agent identity, requesting required page state from the page once (lead session ruling,
+ * D1 criterion); and implemented in the same batch: Agent-side writes exceeding 256 KiB go through
+ * project.upload, events carry callId, and page state after remote changes (page-side pure function).
  *
- * 用例 AP-1～AP-9。真的 src/mcp/handlers(vite ssrLoadModule)+ server/agent/agent-side.mjs(与 vite-plugin-ai 同一份组装)
- * + 真的文档服务(WebSocket);页面通道(SSE)由 callPage 假件代替,记下每次调用。
- * 跑:node --test server/test/agent-c65-pagestate.test.mjs
+ * Test cases AP-1-AP-9. Real src/mcp/handlers (vite ssrLoadModule) + server/agent/agent-side.mjs
+ * (same assembly as vite-plugin-ai) + real document service (WebSocket); page channel (SSE) is
+ * replaced by callPage mock, recording each call.
+ * Run: node --test server/test/agent-c65-pagestate.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -39,7 +42,7 @@ async function startEnv(t) {
   });
   const load = (id) => vite.ssrLoadModule(id);
 
-  /** 页面:回环、什么都不带 = 本机页面身份;打开项目收广播 */
+  /** Page: loopback, nothing passed = local page identity; open project to receive broadcasts */
   async function page(projectId, session = 'page-1') {
     const c = wsClient(url);
     clients.push(c);
@@ -62,7 +65,10 @@ async function startEnv(t) {
     return api;
   }
 
-  /** 读文档服务当前的 { rev, project };大项目的 project.state 是分片发的(parts → part… → end),拼起来 */
+  /**
+   * Read document service's current { rev, project }; large project project.state is sent in chunks
+   * (parts → part… → end), assemble them
+   */
   async function stateOf(projectId) {
     const p = await page(projectId, 'reader');
     const st = await p.open();
@@ -76,8 +82,8 @@ async function startEnv(t) {
   }
 
   /**
-   * Agent 服务端:callPage 假件记下调用;`pageState` 是页面对 __page_state 的回答(函数或值),
-   * `pageDown` 为真时页面通道不通(模拟编辑台没打开)。
+   * Agent server: callPage mock records calls; `pageState` is page response to __page_state
+   * (function or value), when `pageDown` is true, page channel is disconnected (simulating editor not open).
    */
   function agent(projectId, { pageState = null, pageDown = false, pageResult, onPage = null } = {}) {
     const pageCalls = [];
@@ -114,7 +120,7 @@ async function startEnv(t) {
   return { url, load, page, stateOf, agent };
 }
 
-/** 带剪辑的小项目:激活剪辑 k1 上有一张卡(0～12 s),另有两条停放的剪辑 k2(停放播放头 7)、k3 */
+/** Small project with cuts: active cut k1 has a card (0-12 s), plus two parked cuts k2 (parked playhead 7) and k3 */
 function cutsProject() {
   return {
     version: 1, id: 'p-ps', name: 'Cut', width: 1920, height: 1080, fps: 30, duration: 12, themeId: 'midnight', media: [],
@@ -129,7 +135,7 @@ function cutsProject() {
   };
 }
 
-/** 带素材与卡的小项目(追踪绑定用):素材段 v1 0～10 s,卡 c1 在 2～4 s */
+/** Small project with media and cards (for tracking binding): media clip v1 0-10 s, card c1 at 2-4 s */
 function motionProject() {
   return {
     version: 1, id: 'p-mo', name: 'Tracking', width: 1920, height: 1080, fps: 30, duration: 10, themeId: 'midnight',
@@ -141,7 +147,7 @@ function motionProject() {
   };
 }
 
-/** 100 帧轨迹:从 (100,100) 匀速走到 (298,199) */
+/** 100-frame trajectory: moves at constant speed from (100,100) to (298,199) */
 function trackResult() {
   const xy = Array.from({ length: 100 }, (_, i) => [100 + i * 2, 100 + i]);
   return { engine: 'template', createdAt: '2026-09-26T00:00:00Z', width: 1280, height: 720, frames: 100, points: [{ xy, visible: xy.map(() => true) }] };
@@ -157,18 +163,19 @@ async function seeded(env, projectId, project) {
 
 const pageStateCalls = (a) => a.pageCalls.filter((c) => c.tool === PAGE_STATE_TOOL);
 
-// ------------------------------------------------------------------ 工具表
+// ------------------------------------------------------------------ Tool table
 
 test('AP-1 tool table: all five tools are on the Agent server side (side agent); only the two cut-switching ones (playhead) and attach_clip_motion (trajectory) need page state', () => {
   const side = (n) => tools.find((t) => t.name === n)?.side;
   for (const n of ['set_project_meta', 'user_interface_switch_cut', 'add_cut', 'remove_cut', 'attach_clip_motion']) assert.equal(side(n), 'agent', n);
-  // add_cut 2026-10-21 起只建不切,不再要播放头;切剪辑改名 user_interface_switch_cut
+  // Starting 2026-10-21, add_cut only creates without switching, no longer requires playhead;
+  // switch cut renamed to user_interface_switch_cut
   assert.deepEqual(Object.fromEntries(Object.entries(PAGE_STATE_TOOLS).map(([k, v]) => [k, [...v]])), {
     user_interface_switch_cut: ['t'], remove_cut: ['t'], attach_clip_motion: ['track'],
   });
 });
 
-// ------------------------------------------------------------------ 切剪辑
+// ------------------------------------------------------------------ Switch cut
 
 test('AP-2 switch_cut: asks the page for the playhead once; the write goes into the document service as the agent; the cut being left parks the page\'s playhead; it is not executed through the page', async (t) => {
   const env = await startEnv(t);
@@ -179,7 +186,7 @@ test('AP-2 switch_cut: asks the page for the playhead once; the write goes into 
   assert.equal(r.value.activeCutId, 'k2');
   assert.deepEqual(pageStateCalls(a), [{ tool: PAGE_STATE_TOOL, args: { tool: 'user_interface_switch_cut', args: { cutId: 'k2' }, keys: ['t'] } }], 'page state is requested only once, and only the playhead');
   assert.ok(!a.pageCalls.some((c) => c.tool === 'switch_cut' || c.tool === 'user_interface_switch_cut'), 'the write does not go through the page');
-  // 旧名照常认(老对话的历史里还是旧名)
+  // Old name recognized as usual (history in old chats still uses old name)
   const back = await a.call('switch_cut', { cutId: 'k1' });
   assert.ok(back.ok, String(back.error?.message ?? ''));
   assert.equal(back.value.activeCutId, 'k1');
@@ -269,7 +276,7 @@ test('AP-5 attach_clip_motion: asks the page once for the trajectory of that med
   assert.equal((await env.stateOf('p-ps-5')).rev, rev, 'none of the three failures committed');
 });
 
-// ------------------------------------------------------------------ 大的写入走 project.upload
+// ------------------------------------------------------------------ Large writes go through project.upload
 
 test('AP-6 an Agent write over 256 KiB: switched to a root replacement uploaded in chunks via project.upload; the document service lands it, other pages receive resync; the replica matches the authoritative copy; the completion event still carries opId', async (t) => {
   const env = await startEnv(t);
@@ -305,12 +312,13 @@ test('AP-7 events carry callId: the model-side id of this tool call goes unchang
   assert.ok(listing.items.some((it) => it.callId === 'toolu_01ABC' && it.opId === complete.opId));
 });
 
-// ------------------------------------------------------------------ 页面侧工具的 opIds
+// ------------------------------------------------------------------ opIds of page-side tools
 
 test('AP-8 tools that stay on the page: when the page\'s reply carries opIds (wrapped), the version this chat has read is advanced, and the write that follows is not blocked by the changes it had the page make itself', async (t) => {
   const env = await startEnv(t);
   const pg = await seeded(env, 'p-ps-8', cutsProject());
-  // 页面替 Agent 执行一个留在页面的工具(import_media 之类),期间自己提交了一次;真实页面在 /api/mcp/result 里带 opIds
+  // Page executes a page-retained tool (e.g. import_media) on behalf of Agent, during which it
+  // committed once itself; real page includes opIds in /api/mcp/result
   const a = env.agent('p-ps-8', {
     pageResult: 'wrapped',
     onPage: async (tool) => {
@@ -329,28 +337,28 @@ test('AP-8 tools that stay on the page: when the page\'s reply carries opIds (wr
   assert.equal(st.project.tracks[0].clips[0].opacity, 0.5);
 });
 
-// ------------------------------------------------------------------ 页面侧:远端改动后的页面状态(纯函数)
+// ------------------------------------------------------------------ Page side: page state after remote changes (pure function)
 
 test('AP-9 page-side pageStateAfterRemote: someone else switched the cut → the playhead takes the parked value, playback stops, the selection is cleared, the manual duration is cleared; someone else truncated the total duration → record the manual value; clips deleted from the selection are removed', async () => {
   await import(pathToFileURL(path.join(ROOT, 'src/testing/registerTs.mjs')).href);
   const { pageStateAfterRemote } = await import(pathToFileURL(path.join(ROOT, 'src/store/remotePageState.ts')).href);
   const prev = cutsProject();
   const st = { t: 3, selection: ['c1'], durationManual: null, playToken: 5 };
-  // 切剪辑:目标 k2 在切之前的版本里停放着播放头 7
+  // Switch cut: target k2 has parked playhead 7 in the version before switching
   const switched = { ...prev, activeCutId: 'k2', tracks: prev.cuts[1].tracks, duration: 20 };
   assert.deepEqual(pageStateAfterRemote(prev, switched, st), { t: 7, playing: false, selection: [], playToken: 6, durationManual: null });
-  // 截断:内容末尾 12,总时长改成 5 → 手动值 5
+  // Truncation: content end 12, total duration changed to 5 → manual value 5
   assert.deepEqual(pageStateAfterRemote(prev, { ...prev, duration: 5 }, st), { durationManual: 5 });
-  // 跟内容走:总时长改回内容末尾 → 手动值清掉
+  // Follow content: total duration changed back to content end → manual value cleared
   assert.deepEqual(pageStateAfterRemote({ ...prev, duration: 5 }, prev, { ...st, durationManual: 5 }), { durationManual: null });
-  // 选区里的片段被删了
+  // Clip in selection was deleted
   const removed = { ...prev, tracks: [{ ...prev.tracks[0], clips: [] }, prev.tracks[1]] };
   assert.deepEqual(pageStateAfterRemote(prev, removed, st), { selection: [] });
-  // 无关改动不动页面状态
+  // Unrelated changes do not touch page state
   assert.equal(pageStateAfterRemote(prev, { ...prev, name: 'Other' }, st), null);
 });
 
-// ------------------------------------------------------------------ 页面侧:这次调用期间本页面发出的提交
+// ------------------------------------------------------------------ Page side: commits issued by this page during this call
 
 test('AP-10 page-side DocSync.opMark / opIdsSince: take the commits sent by this page after a given position (loads included)', async () => {
   await import(pathToFileURL(path.join(ROOT, 'src/testing/registerTs.mjs')).href);

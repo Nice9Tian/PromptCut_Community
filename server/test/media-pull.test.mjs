@@ -1,9 +1,13 @@
-// C6.6 第 4 节:本地素材服务读路由的按需拉取(边落盘边按 Range 服务)、预取队列、导出前的素材原尺寸检查。
-// 实现在 server/media-pull.mjs,接在 server/vite-plugin-media.ts 的 `/@media/<hash>` 未命中那一支上。
-// 跑法:node --test server/test/media-pull.test.mjs
+// C6.6 section 4: on-demand pulling for local asset service read routes (serving Range while saving
+// to disk), prefetch queue, original-size asset check before export.
+// Implemented in server/media-pull.mjs, attached to the `/@media/<hash>` miss branch in
+// server/vite-plugin-media.ts.
+// How to run: node --test server/test/media-pull.test.mjs
 //
-// 插件是 .ts,和 asset-service.test 一样用 typescript 转译到临时目录再 import;惰性 import 的拉取模块路径改成仓库里的绝对地址。
-// 「远程素材服务」是本文件里起的一台小 HTTP 服务:只实现 `GET media/<hash>`(可限速、可给错字节)与 `GET media/<hash>/chunks`。
+// Plugin is .ts, transpiled with typescript to a temp directory before import like asset-service.test;
+// lazy-imported pull module paths are changed to absolute paths in the repository.
+// "Remote asset service" is a small HTTP service started in this file: only implements
+// `GET media/<hash>` (can rate-limit, can return wrong bytes) and `GET media/<hash>/chunks`.
 import fs from 'node:fs';
 import os from 'node:os';
 import http from 'node:http';
@@ -51,12 +55,12 @@ function bytesOf(size, seed) {
   return out;
 }
 
-/* ---------------- 本地素材服务(被测) ---------------- */
+/* ---------------- Local asset service (under test) ---------------- */
 const local = await listen((req, res) => {
   void media.mediaMiddleware(projectRoot)(req, res, () => { res.statusCode = 404; res.end('no route'); });
 });
 
-/* ---------------- 「远程素材服务」 ---------------- */
+/* ---------------- "Remote asset service" ---------------- */
 /** hash → { bytes, type, complete, wrong?: Buffer, throttle?: { chunk, ms } } */
 const remoteFiles = new Map();
 const remoteHits = [];
@@ -95,8 +99,10 @@ function addRemote(size, seed, extra = {}) {
 }
 const localFile = (hash) => media.resolveHashFile(projectRoot, hash);
 /**
- * 等后台拉取把这个哈希收进本地内容库，按截止时间等（缺省 10 s），回文件路径；到时仍没有回 null（由调用方断言）。
- * 原来是「最多 50 / 200 次 × 20 ms」的步数上限，机器忙时（几份 npm test 并行）后台收尾可能超过 1～4 s 而误判。
+ * Wait for background pull to store this hash into local content store, wait until deadline
+ * (default 10 s), return file path; if still missing when expired, return null (asserted by caller).
+ * Previously a step limit of "at most 50 / 200 times × 20 ms"; when the machine is busy (several npm
+ * tests in parallel), background finalization may exceed 1-4 s and cause false negatives.
  */
 async function waitLocal(hash, ms = 10_000) {
   const deadline = Date.now() + ms;
@@ -125,7 +131,7 @@ test('T5-pull-2: remote connected → the same request gets all the bytes of the
   assert.equal(r.headers.get('content-type'), 'video/mp4');
   const got = Buffer.from(await r.arrayBuffer());
   assert.equal(sha256(got), hash);
-  // 拉取在后台收尾(校验、改名):等它进库
+  // Pull finalization (verification, renaming) runs in background: wait for it to be stored
   await waitLocal(hash);
   const file = await localFile(hash);
   assert.ok(file && file.endsWith(`${hash}.mp4`), `It entered the local content store, with the extension taken from the remote Content-Type: ${file}`);
@@ -143,7 +149,7 @@ test('T5-pull-2: remote connected → the same request gets all the bytes of the
 
 test('T5-pull-3: serve by Range while writing to disk; while the remote is still transferring slowly, a Range request for the part already on disk is answered first', async () => {
   const size = 2_000_000;
-  const { hash, bytes } = addRemote(size, 3, { throttle: { chunk: 64 * 1024, ms: 40 } }); // 全件约 1.3 s
+  const { hash, bytes } = addRemote(size, 3, { throttle: { chunk: 64 * 1024, ms: 40 } }); // Whole file is about 1.3 s
   await setRemote({ base: REMOTE_BASE });
   const t0 = Date.now();
   const r = await fetch(`${local}/@media/${hash}`, { headers: { Range: 'bytes=1000-50999' } });
@@ -152,10 +158,13 @@ test('T5-pull-3: serve by Range while writing to disk; while the remote is still
   const got = Buffer.from(await r.arrayBuffer());
   const ms = Date.now() - t0;
   assert.deepEqual(got, bytes.subarray(1000, 51000));
-  // 墙钟判据改成相对整件的：原来是 ms < 800（全件约 1.3 s，即约六成）。机器忙时两者一起变慢，按比例判；
-  // 再加上「这时整件还没进库」这条不看时间的证据。真退化成「等整件下完才答」时 ms ≥ fullMs，照样拦得住。
+  // Wall-clock criterion changed to relative to whole file: previously ms < 800 (whole file ~1.3 s,
+  // i.e. ~60%). When the machine is busy, both slow down together, evaluated by ratio;
+  // plus the time-independent evidence that "at this point the whole file is not yet stored".
+  // If it really degenerates into "only answer after whole file is downloaded" with ms ≥ fullMs,
+  // it will still be blocked.
   assert.equal(await localFile(hash), null, 'At this point the whole file is not yet in the store');
-  // 同一个哈希的第二个请求挂在同一个拉取任务上,不再开一条
+  // Second request for the same hash attaches to the same pull task, without starting a new one
   const r2 = await fetch(`${local}/@media/${hash}`, { headers: { Range: 'bytes=0-99' } });
   assert.deepEqual(Buffer.from(await r2.arrayBuffer()), bytes.subarray(0, 100));
   assert.equal(remoteHits.filter((h) => h.url.endsWith(hash) && !h.range).length, 1, 'The same hash is pulled only once');
@@ -195,13 +204,13 @@ test('T5-pull-6: when the Range start is far beyond the position already on disk
   assert.equal(r.status, 206);
   assert.deepEqual(Buffer.from(await r.arrayBuffer()), bytes.subarray(size - 100));
   assert.ok(remoteHits.some((h) => h.range === `bytes=${size - 100}-`), 'The tail part went to the remote with its Range');
-  pull.setRemoteAssetService(null); // 中止慢速拉取
+  pull.setRemoteAssetService(null); // Abort slow pull
 });
 
 test('T5-prefetch-1: prefetch pulls one at a time in the given order and skips what is already local; clearing the remote cancels it', async () => {
   const a = addRemote(50_000, 71), b = addRemote(50_000, 72), c = addRemote(50_000, 73), d = addRemote(50_000, 74);
   await setRemote({ base: REMOTE_BASE });
-  // b 先按需拉进来:预取时跳过
+  // b is pulled on demand first: skip during prefetch
   await (await fetch(`${local}/@media/${b.hash}`)).arrayBuffer();
   await waitLocal(b.hash);
   const r = await fetch(`${local}/api/media/prefetch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ hash: c.hash }, { hash: b.hash }, { hash: a.hash }, { hash: d.hash }] }) });
@@ -222,7 +231,8 @@ test('T5-prefetch-2: prefetch does nothing when no remote asset service is conne
 test('T7-originals-1: the pre-export check of asset original sizes asks only the currently connected asset service (remote: complete of chunks; the local cache does not count)', async () => {
   const ready = addRemote(10_000, 81);
   const notYet = addRemote(10_000, 82, { complete: false });
-  // notYet 在本机缓存里已经有了(比如别的路径拷过来),但远程没 complete:照样算没到齐
+  // notYet is already in local cache (e.g. copied from another path), but remote is not complete:
+  // still counted as not all arrived
   fs.writeFileSync(path.join(media.mediaDir(projectRoot), `${notYet.hash}.mp4`), notYet.bytes);
   await setRemote({ base: REMOTE_BASE, ticket: 'tkt-2' });
   const r = await fetch(`${local}/api/media/originals`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hashes: [ready.hash, notYet.hash] }) });

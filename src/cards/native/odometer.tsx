@@ -66,7 +66,8 @@ export const odometer: CardDef<Params> = {
   useWhen: "Large cumulative integer counts (views, users, followers) as a mechanical rolling-wheel hero visual, with a small kicker and a one-line caption. Only non-negative integers are supported, decimals are truncated, and there is no up/down sign. For signed changes (+80%, -30%) or Chinese/English footnote endorsements, use stat-proof; for percentage progress, use ring-metric.",
   tags: ["number","growth","flip","change"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,

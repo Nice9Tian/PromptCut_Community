@@ -1,9 +1,13 @@
 /**
- * 感知工具(镜头识别、运动追踪、主体检测)发给服务端的素材标识。
+ * The asset identifiers that perception tools (shot detection, motion tracking, subject detection)
+ * send to the server.
  *
- * 服务端经素材服务的接口取字节(`server/perception-source.mjs`;语义 `docs/semantics/product/agent.md`「素材与产物」),
- * 所以这里**只发标识**:id、名字、种类、url(`/@media/<hash>` 或迁移期的 `/@media/<文件名>`)、内容哈希。
- * 不发 `path` —— 那是某一台机器上的磁盘路径,共享项目里别的设备没有它,服务端也不再按它读盘。
+ * The server fetches the bytes through the asset service's interface (`server/perception-source.mjs`;
+ * semantics `docs/semantics/product/agent.md` "Media and outputs"), so here **only identifiers are
+ * sent**: id, name, kind, url (`/@media/<hash>` or, during the migration period,
+ * `/@media/<file name>`), and content hash.
+ * `path` is not sent: it is a disk path on one particular machine, other devices in a shared
+ * project do not have it, and the server no longer reads from disk by it.
  */
 import type { MediaAsset } from "../kernel/project";
 
@@ -26,8 +30,9 @@ export function perceptionMediaRef(m: Pick<MediaAsset, "id" | "name" | "kind" | 
 }
 
 /**
- * 服务端能不能经素材服务找到这份素材:入库完了(不在 pending),且有内容哈希或一个素材服务认得的地址。
- * `blob:` / `data:` 是这个页面私有的,素材服务上没有。
+ * Whether the server can find this asset through the asset service: it has finished being stored
+ * (not pending), and has a content hash or an address the asset service recognizes.
+ * `blob:` / `data:` are private to this page and do not exist on the asset service.
  */
 export function mediaReadyForServer(m: Pick<MediaAsset, "url" | "hash" | "pending">): boolean {
   if (m.pending) return false;

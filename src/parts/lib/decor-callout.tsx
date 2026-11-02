@@ -4,9 +4,9 @@ import { easeExpoOut, accentOf } from "../../cards/native/hud";
 import { fitOr } from "../fit";
 
 /**
- * 界面标注。
- * 从 ui-callout 拆出的装饰部件。包含一个发光的圈和引出来的标签。
- * 进场: 圈子放大出现，接着引线划出，最后标签滑入。
+ * UI callout.
+ * Decorative part extracted from ui-callout. Contains a glowing circle and an extended label.
+ * Entrance: circle scales up to appear, followed by leader line drawing out, and finally label slides in.
  */
 interface Params {
   label: string;

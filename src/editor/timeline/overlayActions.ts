@@ -1,37 +1,40 @@
 /**
- * 对一张叠加卡动手:停用 / 启用、摘掉。
+ * Act on an overlay card: disable / enable, remove.
  *
- * 桌面的时间轴菜单和手机版「调整」表单都用这一份 —— 两边各写一遍的话,
- * 「启用时把 `off` 整个去掉而不是写 `off: false`」这种细节必然有一边漏掉,
- * 而漏掉的后果是没动过停用的项目在同步里多出一条假改动。
+ * The desktop timeline menu and the mobile app "Adjust" form both use this one piece of code: if each
+ * side wrote it separately, a detail like "on enable, drop `off` entirely instead of writing `off: false`"
+ * would inevitably be missed on one side, and the consequence of missing it is that a project that never
+ * had anything disabled shows a spurious change in sync.
  *
- * 素材效果卡的**停用**不给:绕过一个节点要在图上改,这一版不做(清单里 `canToggle` 为假)。
- * **摘掉**给:它走 `kernel/cardAuthoring.mjs` 的 `detachCardNode` —— 把这一个节点从链上取下来、
- * 下游接到它的上游,而不是把一个字段置空。
+ * **Disable** is not offered for media effect cards: bypassing a node has to be done on the graph, which
+ * this version does not do (`canToggle` is false in the manifest).
+ * **Remove** is offered: it goes through `detachCardNode` in `kernel/cardAuthoring.mjs`, which takes this
+ * one node off the chain and connects the downstream to its upstream, rather than setting a field to empty.
  */
 import type { Project, TrackClip } from "../../kernel/project";
 import { detachCardNode } from "../../kernel/cardAuthoring.mjs";
 import type { OverlayItem } from "./overlays";
 
-/** 只用到这几个 action;单测给假的 */
+/** Only these actions are used; unit tests supply fakes */
 export interface OverlayStore {
   setClipFilter(clipId: string, filter: { id: string } | null): boolean;
   setClipPixelMap(clipId: string, pixelMap: { id: string } | null): boolean;
   setClipAudioFx(clipId: string, fx: { id: string } | null): boolean;
-  /** 素材效果卡要重接节点图,整份换一次(store 的 `editCardProject`) */
+  /** A media effect card needs its node graph rewired, replaced as a whole (the store's `editCardProject`) */
   editCardProject?(edit: (project: Project) => Project): void;
 }
 
 /**
- * 停用 / 启用这一张。挂载和这一段上的参数都留着,只翻 `off`。
+ * Disable / enable this card. The mount and the parameters on this clip are kept, only `off` is flipped.
  *
- * **启用时把 `off` 整个去掉**,不写 `off: false`:没动过停用的项目逐字节不变,
- * 协作同步和冲突合并里也不会多出一条「off 从没有变成 false」的假改动。
+ * **On enable, drop `off` entirely**, do not write `off: false`: a project that never had anything
+ * disabled stays byte-for-byte unchanged, and collaboration sync and conflict merging will not show a
+ * spurious change of "off went from absent to false".
  */
 export function setOverlayOff(store: OverlayStore, clip: TrackClip, item: OverlayItem, off: boolean): boolean {
   if (!item.canToggle) return false;
-  // 启用:把键整个删掉,不是留一个 `off: undefined` —— 留着的话那个键还在对象上,
-  // 文档服务的逐字段比对会看见它
+  // Enable: delete the key entirely, rather than leaving an `off: undefined` behind: if left, the key is still
+  // on the object, and the document service's field-by-field comparison would see it
   const flip = <T extends { off?: boolean }>(cur: T) => {
     if (off) return { ...cur, off: true };
     const { off: _dropped, ...rest } = cur;
@@ -44,11 +47,13 @@ export function setOverlayOff(store: OverlayStore, clip: TrackClip, item: Overla
 }
 
 /**
- * 摘掉这一张。前三样把片段上那个字段置空,库里的定义不动、挂着它的别的片段照常生效;
- * 素材效果卡走 `detachCardNode` 重接节点图。
+ * Remove this card. For the first three kinds, the field on the clip is set to empty, the definition in the
+ * library is untouched, and other clips that mount it keep working as usual;
+ * media effect cards go through `detachCardNode` to rewire the node graph.
  *
- * 接不回去时(转场的 A/B、无输入的卡)`detachCardNode` 会抛出写明原因的错,原样往上传 ——
- * 调用方拿那句话给用户看,别在这儿吞掉。
+ * When it cannot be reconnected (transition A/B, a card with no input), `detachCardNode` throws an error
+ * stating the reason, which is passed up as is:
+ * the caller shows that sentence to the user, so do not swallow it here.
  */
 export function detachOverlay(
   store: OverlayStore,
@@ -67,7 +72,7 @@ export function detachOverlay(
   return false;
 }
 
-/** 这一张的引用块怎么写:`@叠加卡 名字(片段id#种类:定义id)` */
+/** How to write the quote block for this one: `@overlay card name(clip id#kind:definition id)` */
 export function overlayQuoteId(clip: TrackClip, item: OverlayItem): string {
   return `${clip.id}#${item.kind}:${item.refId}`;
 }

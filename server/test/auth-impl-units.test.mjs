@@ -1,7 +1,9 @@
 /**
- * `server/auth/` 的服务端部件（实现方自测；契约 `docs/plan/auth-contract.md` 第 3、4、5、8、9 节）：
- * 凭证存储、挑战、限速、票据、握手鉴权（不起服务，用假请求）。
- * 跑：node --test server/test/auth-impl-units.test.mjs
+ * Server-side parts of `server/auth/` (implementer self-test; contract `docs/plan/auth-contract.md`
+ * sections 3, 4, 5, 8, 9):
+ * Credential storage, challenge, rate limiting, tickets, handshake authentication (without starting
+ * service, using fake requests).
+ * Run: node --test server/test/auth-impl-units.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,7 +25,7 @@ function freshStore(now) {
   return openCredentialStore({ dir: path.join(tempDir('pc-au-'), 'auth'), now });
 }
 
-// ------------------------------------------------------------------ 存储
+// ------------------------------------------------------------------ Storage
 
 test('store: first open generates server.json; create, look up, update, delete; records survive a reopen; names are unique by NFC + lowercase', () => {
   const dir = path.join(tempDir('pc-au-'), 'auth');
@@ -62,7 +64,7 @@ test('store: first open generates server.json; create, look up, update, delete; 
   assert.equal(st.remove(rec.projectId), false);
   assert.equal(fs.existsSync(file), false);
   assert.equal(st.nameTaken('café'), false, 'deleting releases the name');
-  // 返回的是副本：改它不影响存储
+  // Returns a replica: modifying it does not affect storage
   const copy = st.get(r2.projectId);
   copy.generation = 99;
   assert.equal(st.get(r2.projectId).generation, 1);
@@ -104,7 +106,7 @@ test('store: projectId is sp_ plus 26 lowercase base32 characters, all distinct'
   assert.equal(seen.size, 500);
 });
 
-// ------------------------------------------------------------------ 挑战
+// ------------------------------------------------------------------ Challenge
 
 test('challenges: single use, expire after 60 s, binding must match; a used one presented again returns used, one never seen returns unknown', () => {
   const now = clock();
@@ -138,7 +140,7 @@ test('challenges: the number of outstanding entries is capped, the earliest issu
   assert.equal(ch.consume(ns[3], ['x', 4]), true);
 });
 
-// ------------------------------------------------------------------ 限速
+// ------------------------------------------------------------------ Rate limiting
 
 test('rate-limit: the 5th failure within 1 minute enters a 60 s cooldown; further failures during the cooldown do not extend it; the count resets afterwards; other sources are unaffected', () => {
   const now = clock();
@@ -155,13 +157,13 @@ test('rate-limit: the 5th failure within 1 minute enters a 60 s cooldown; furthe
   now.add(2);
   assert.equal(rl.blocked('1.1.1.1'), false, 'recovers after 60 s');
   assert.equal(rl.fail('1.1.1.1'), false, 'counting restarts from zero after cooldown');
-  // 失败分散在一分钟以外不累计
+  // Failures spread outside of one minute do not accumulate
   const rl2 = createRateLimiter({ now });
   for (let i = 0; i < 10; i++) { rl2.fail('3.3.3.3'); now.add(15_000); }
   assert.equal(rl2.blocked('3.3.3.3'), false);
 });
 
-// ------------------------------------------------------------------ 票据
+// ------------------------------------------------------------------ Ticket
 
 function ticketFixture() {
   const now = clock(Date.UTC(2026, 8, 26));
@@ -185,23 +187,24 @@ test('tickets: issued shape and fields; verification passes; the expiry, generat
   assert.equal(verifyTicket(ticket, { lookup, now: now() }).ok, true);
   assert.equal(verifyTicket(ticket, { lookup, now: now(), kind: 'conn' }).reason, 'kind');
 
-  // 时钟：过期后 30 s 内照认，再往后不认；签发时刻在未来超过 30 s 不认
+  // Clock: recognized within 30 s after expiration, rejected beyond that; rejected if issued more
+  // than 30 s in the future
   assert.equal(verifyTicket(ticket, { lookup, now: exp + 30_000 }).ok, true);
   assert.equal(verifyTicket(ticket, { lookup, now: exp + 30_001 }).reason, 'expired');
   assert.equal(verifyTicket(ticket, { lookup, now: now() - 30_001 }).reason, 'expired');
 
-  // 签名：改负载一个字、改签名、换密钥
+  // Signature: modify one character in payload, modify signature, switch key
   const tampered = `v1.${Buffer.from(JSON.stringify({ ...payload, r: 'rw', u: 'mallory@dev-000000000001' })).toString('base64url')}.${sig}`;
   assert.equal(verifyTicket(tampered, { lookup, now: now() }).reason, 'signature');
   const flip = sig[0] === 'A' ? 'B' : 'A';
   assert.equal(verifyTicket(`v1.${seg}.${flip}${sig.slice(1)}`, { lookup, now: now() }).reason, 'signature');
-  // 负载里的 exp - iat 超过有效期：签名对也不认
+  // exp - iat in payload exceeds validity period: rejected even if signature is valid
   const long = { ...payload, exp: payload.iat + 16 * 60_000 };
   const longSeg = Buffer.from(JSON.stringify(long)).toString('base64url');
   const longSig = crypto.createHmac('sha256', Buffer.from(rec.ticketKey, 'base64url')).update(`v1.${longSeg}`).digest('base64url');
   assert.equal(verifyTicket(`v1.${longSeg}.${longSig}`, { lookup, now: now() }).reason, 'format');
 
-  // 代数：项目代数、用户代数变了都不认
+  // Generation: rejected if project generation or user generation changes
   st.update(rec.projectId, (d) => { d.generation += 1; });
   assert.equal(verifyTicket(ticket, { lookup, now: now() }).reason, 'generation');
   const t2 = signTicket(st.peek(rec.projectId), { k: 'asset', u, r: 'r' }, now()).ticket;
@@ -211,11 +214,11 @@ test('tickets: issued shape and fields; verification passes; the expiry, generat
   const other = signTicket(st.peek(rec.projectId), { k: 'asset', u: 'carol@dev-000000000002', r: 'r' }, now()).ticket;
   assert.equal(verifyTicket(other, { lookup, now: now() }).ok, true, 'other users are unaffected');
 
-  // 格式
+  // Format
   for (const bad of ['', 'v1', 'v1.a.b', `v2.${seg}.${sig}`, `v1.${seg}`, 'x'.repeat(2049), `v1.${seg}.${sig}.x`]) {
     assert.equal(verifyTicket(bad, { lookup, now: now() }).ok, false, bad.slice(0, 20));
   }
-  // 项目不在了
+  // Project no longer exists
   st.remove(rec.projectId);
   assert.equal(verifyTicket(other, { lookup, now: now() }).reason, 'no-project');
 });
@@ -243,7 +246,7 @@ test('tickets: connection ticket lasts 2 minutes and carries role / chat number 
   assert.equal(verifyTicket(fresh, { lookup, now: now() }).ok, true);
 });
 
-// ------------------------------------------------------------------ 握手鉴权（假请求）
+// ------------------------------------------------------------------ Handshake authentication (fake request)
 
 function handshakeFixture({ loopback = false, token } = {}) {
   const now = clock(Date.UTC(2026, 8, 26));

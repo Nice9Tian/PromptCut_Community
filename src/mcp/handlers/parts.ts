@@ -11,7 +11,8 @@ import { timelineDigest, lookHint } from "../tools/toolEcho";
 import { stageSize, withParts, clipGuard } from "../common";
 
 export const partsHandlers = {
-  // 部件库 + 组合卡:Agent 用部件搭卡,操作的仍然是封装(clip.parts 那棵实例树)
+  // Parts library + composite card: Agent builds cards with parts, still operating on the wrapper
+  // (the clip.parts instance tree)
   listParts: (args) => {
     const wanted = args?.partId ? [getPart(args.partId)].filter(Boolean) : allParts();
     if (args?.partId && wanted.length === 0) throw new Error(`No part with id "${args.partId}". Available: ${allParts().map((p) => p.id).join(", ")}`);
@@ -28,13 +29,14 @@ export const partsHandlers = {
   addComposite: (args) => {
     if (typeof args.start !== "number" || !Number.isFinite(args.start)) throw new Error("start must be a number of seconds");
     if (args.parts !== undefined && !Array.isArray(args.parts)) throw new Error("parts must be an array, each item { partId, params?, frame?, enterMs?, children? }");
-    // 没给 id 的实例补一个;validatePartTree 要求有 id,所以先补再校验
+    // Add an id for instances without one; validatePartTree requires an id, so fill first before
+    // validating
     const withIds = (list: unknown[]): unknown[] => list.map((raw) => {
       const r = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>;
       return { ...r, id: r.id ?? ("p" + Math.random().toString(36).slice(2, 8)), ...(Array.isArray(r.children) ? { children: withIds(r.children) } : {}) };
     });
     const parts = args.parts !== undefined ? validatePartTree(withIds(args.parts as unknown[]), getPart) : [];
-    // 没给 frame 的实例用部件的 defaultFrame
+    // Instances without a frame use the part's defaultFrame
     const fillFrames = (list: PartInstance[]): PartInstance[] => list.map((n) => ({
       ...n,
       ...(!n.frame && getPart(n.partId)?.defaultFrame ? { frame: { ...getPart(n.partId)!.defaultFrame! } } : {}),
@@ -48,7 +50,8 @@ export const partsHandlers = {
   },
   addPart: (args) => withParts(args.clipId, (tree) => addPartToTree(tree, { partId: args.partId, params: args.params, frame: args.frame as any, enterMs: args.enterMs, label: args.label }, getPart, { parentId: args.parentId ?? null, index: args.index }), (r) => ({ partInstanceId: r.node.id })),
   setPart: (args) => {
-    // schema 里 type 只能是单一字符串(Gemini 不认数组 type),所以「清掉框」用 { clear: true } 表示,这里翻成 null
+    // In schema, type can only be a single string (Gemini does not recognize array types), so "clear
+    // box" is represented by { clear: true }, translated to null here
     const frame = args.frame && typeof args.frame === "object" && (args.frame as { clear?: boolean }).clear === true ? null : (args.frame as any);
     return withParts(args.clipId, (tree) => updatePartInTree(tree, args.partInstanceId, { params: args.params, frame, enterMs: args.enterMs, label: args.label }, getPart));
   },

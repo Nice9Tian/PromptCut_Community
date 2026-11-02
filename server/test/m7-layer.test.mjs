@@ -1,8 +1,11 @@
 /**
- * M7-T：D12 层表 v3（每层带候选：切分方自己的、浏览器的；页面按 task.done 与清单认定哪一份活着）与读旧 v2 的兼容。
- * 依据：`docs/plan/m7-contract.md` 第 13 节 D12 裁定「层表 v 2 升 v 3；读旧 v 2 的页面当『一个候选』处理」。
- * 假设见 `m7-kit.mjs` 的 K9。v2 兼容那一条现在就跑（守回归）；v3 的在门后面。
- * 跑：node --experimental-test-module-mocks --test server/test/m7-layer.test.mjs
+ * M7-T: D12 layer table v3 (each layer carries candidates: splitter's own, browser's; page
+ * determines which copy is alive per task.done and manifest) and compatibility with reading old v2.
+ * Basis: Section 13 D12 ruling in `docs/plan/m7-contract.md`, "layer table v2 upgraded to v3; pages
+ * reading old v2 treated as 'one candidate'".
+ * Assumptions in K9 of `m7-kit.mjs`. The v2 compatibility test runs now (guards against
+ * regressions); v3 tests are behind gates.
+ * Run: node --experimental-test-module-mocks --test server/test/m7-layer.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +18,7 @@ const CK = 'ck-m1';
 const snapshotSource = () => importRepo('src/render/snapshotSource.ts');
 
 const candidate = (fp) => ({ resultKey: rk(CK, fp), envFingerprint: fp, key: `wire-${fp.slice(0, 4)}` });
-/** v3 的一层：层上的 resultKey / envFingerprint / key 等于第一个候选（K9） */
+/** One layer in v3: resultKey / envFingerprint / key on layer equal first candidate (K9) */
 function v3Layer(candidates, clipId = 'clip-m1') {
   const first = candidates[0];
   return { clipId, kind: 'html', key: first.key, tier: 'shared', resultKey: first.resultKey, dirKey: first.resultKey, entryKey: null,
@@ -25,7 +28,7 @@ const table = (v, layers) => ({ v, kind: 'layer-map', projectId: 'p1', entryKey:
 const v2Layer = (clipId = 'clip-m1') => ({ clipId, kind: 'html', key: 'wire-v2', tier: 'shared', resultKey: rk(CK, OWN), dirKey: rk(CK, OWN), entryKey: null,
   firstFrame: 0, count: 120, contentKey: CK, envFingerprint: OWN });
 
-/** 回的这一层的 (resultKey, envFingerprint, key) 必须同出一个候选（不混） */
+/** (resultKey, envFingerprint, key) of returned layer must originate from same candidate (not mixed) */
 function assertWholeCandidate(ref, candidates) {
   const hit = candidates.find((c) => c.resultKey === ref.resultKey);
   assert.ok(hit, `The returned resultKey matches no candidate: ${JSON.stringify(ref)}`);
@@ -69,7 +72,8 @@ test('D12 v3: when the splitter\'s copy is determined to be alive, use the split
     const ref = layerRefOf(t, 'clip-m1', opts);
     if (ref !== null && ref !== undefined) assertWholeCandidate(ref, cands);
   }
-  // 候选顺序反过来（层上字段等于浏览器那份），认定切分方活着，也要整份切到切分方
+  // If candidate order is reversed (fields on layer equal browser copy) and splitter is considered
+  // alive, switch in its entirety to splitter
   const rev = table(3, [v3Layer([candidate(BR), candidate(OWN)])]);
   const r2 = layerRefOf(rev, 'clip-m1', { alive: new Set([rk(CK, OWN)]) });
   assert.equal(r2?.resultKey, rk(CK, OWN));
@@ -82,7 +86,7 @@ test('D12 v3: with only one candidate it is treated as v2 (no need to wait for t
   const ref = layerRefOf(single, 'clip-m1');
   assert.equal(ref?.resultKey, rk(CK, OWN));
   assert.equal(ref.envFingerprint, OWN);
-  // 候选缺指纹：普通档不能用（与 v2 缺指纹同一口径）
+  // Candidate missing fingerprint: cannot be used in standard tier (same criterion as v2 missing fingerprint)
   const broken = table(3, [v3Layer([{ resultKey: rk(CK, OWN), envFingerprint: null, key: 'w' }])]);
   const b = layerRefOf(broken, 'clip-m1', { alive: new Set([rk(CK, OWN)]) });
   assert.ok(b === null || b === undefined, `A candidate missing its fingerprint should not be returned: ${JSON.stringify(b)}`);

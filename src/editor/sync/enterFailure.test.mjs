@@ -1,9 +1,11 @@
 /**
- * 进入共享项目时 WebSocket 没建成的判定（`enterFailure.ts`，`claude/join-error`）。跑：
+ * Determining WebSocket failure upon entering a shared project (`enterFailure.ts`,
+ * `claude/join-error`). Run:
  *   node --test src/editor/sync/enterFailure.test.mjs
  *
- * 修前 `enterShared` 把「打开前就断」一律判成 auth（页面说「用户名或密码不对」）；修后先问 `shared/verify`：
- * 服务端认这份证明 → 连不上；服务端明确 401 → 仍是 auth。
+ * Before the fix, `enterShared` treated all "disconnected before open" as auth (page says
+ * "Incorrect username or password"); after the fix, it checks `shared/verify` first:
+ * server recognizes proof → unreachable; server explicitly returns 401 → still auth.
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import { test } from "node:test";
@@ -11,7 +13,7 @@ import assert from "node:assert/strict";
 
 const { classifyEnterFailure, classifyProtocolError } = await import(srcUrl("editor/sync/enterFailure.ts"));
 
-/** 浏览器里握手被拒、证书不对、代理挡了升级、网络不通,看到的都是这个 */
+/** Handshake rejected in browser, bad certificate, proxy blocked upgrade, or network down: all see this */
 const NEVER_OPENED = { code: 1006, reason: "", fatal: false, neverOpened: true };
 const httpErr = (status, extra = {}) => Object.assign(new Error(`Responded ${status}`), { status, ...extra });
 

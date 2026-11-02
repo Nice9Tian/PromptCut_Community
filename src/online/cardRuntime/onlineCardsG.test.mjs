@@ -1,18 +1,36 @@
 /**
- * 在线浏览器执行用户卡与素材效果卡:合流接线与块 G(素材效果卡在线执行)的纯逻辑(`docs/plan/online-card-exec-contract.md` 第 3.4、4.3、8 节)。
- * 跑:node --experimental-test-module-mocks --test src/online/cardRuntime/onlineCardsG.test.mjs
+ * Online browser execution of user cards and media effect cards: merge wiring and pure logic of
+ * block G (online execution of media effect cards) (`docs/plan/online-card-exec-contract.md`
+ * sections 3.4, 4.3, 8).
+ * Run: node --experimental-test-module-mocks --test src/online/cardRuntime/onlineCardsG.test.mjs
  *
- *   OCE-G-01 图形能力判定:拿不到 WebGL2、软件渲染、最大纹理小于画幅长边、丢过上下文各判各的;够就是 ok;面板细节
- *   OCE-G-02 素材效果卡在哪份文档里能跑:缺省不能(编辑页面、同源单舞台、桌面仿在线);舞台写了「能跑素材效果卡」之后才能(2026-10-21 起不按档另挡);
- *            出过事的卡(`setLocalCardExec` 的 blocked)在舞台里按运行不了处理;桌面运行环境恒不算
- *   OCE-G-03 出事登记:素材解不了一次就算 `media`;求值错连着两次才算 `runtime-error`,中间成功过清零;渲染错一次就算;换代清掉
- *   OCE-G-04 画面那一半的闸门(页面一侧):隔离就绪且出口由浏览器拦才执行画面;只靠脚本加固时本页仍「能执行」(声音),画面不执行并给出原因
- *   OCE-G-05 画面那一半的闸门(舞台一侧):闸门开着且自检的出口是 allowlist 才执行画面;script 时闸门仍开(声音线程用)、画面不执行
- *   OCE-G-06 两台舞台都报了能运行才算能运行;有一台说运行不了就按运行不了;画面不执行时是 not-isolated 并带原因
- *   OCE-G-07 舞台 RPC:新增的两个方法在方法表里、有时限;两种新事件在事件表里、不分角色
- *   OCE-G-08 接线(按源码核):舞台执行前问自己的闸门、画面另问出口;加载器与声音宿主按需载入且桌面构建剪得掉;声音线程从 blob 引导并先建
- *            Trusted Types 缺省策略;编辑页面发包时不带票据、把舞台报的状态交给 `editorRunStates`、图形能力交给节点登记处;
- *            编辑页面与导出页不引舞台接线
+ *   OCE-G-01 Graphics capability check: evaluate WebGL2 unavailable, software rendering, max
+ *     texture smaller than aspect ratio's long edge, and lost context separately; sufficient is
+ *     ok; panel details
+ *   OCE-G-02 Which documents can run media effect cards: cannot by default (editor page,
+ *     same-origin single stage, desktop mock-online); allowed only after stage declares "can run
+ *     media effect cards" (no longer blocked separately by tier starting 2026-10-21); cards that
+ *     encountered errors (`setLocalCardExec` blocked) are treated as unable to run in stage;
+ *     desktop runtime environment never counts
+ *   OCE-G-03 Incident registration: a single asset decoding failure counts as `media`; evaluation
+ *     errors count as `runtime-error` only after two consecutive times, reset by any intervening
+ *     success; a single render error counts; cleared on generation switch
+ *   OCE-G-04 Visual half gate (page side): execute visual only when isolation is ready and egress
+ *     is blocked by browser; with script hardening alone, this page can still "execute" (sound),
+ *     while visual does not execute and gives reason
+ *   OCE-G-05 Visual half gate (stage side): execute visual only when gate is open and self-check
+ *     egress is allowlist; with script, gate remains open (used by sound thread), while visual does
+ *     not execute
+ *   OCE-G-06 Counted as runnable only when both stages report runnable; if either reports unable to
+ *     run, treat as unable to run; when visual does not execute, status is not-isolated with reason
+ *   OCE-G-07 Stage RPC: two newly added methods are in method table with timeouts; two new events
+ *     are in event table regardless of role
+ *   OCE-G-08 Wiring (verified against source): before execution, stage queries its own gate, and
+ *     visual queries egress separately; loader and sound host are loaded on demand and tree-shaken
+ *     in desktop builds; sound thread bootstraps from blob and creates Trusted Types default
+ *     policy first; editor page sends packets without tickets, passes stage-reported states to
+ *     `editorRunStates`, and passes graphics capabilities to node registry; editor page and
+ *     export page do not import stage wiring
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import { test, mock } from "node:test";
@@ -61,14 +79,15 @@ test("OCE-G-02 In which document a media effect card can run: by default it cann
   R.setSyncedUserCards([{ id: "g-synced", name: "Synced media effect card" }, { id: "u-synced", name: "Synced user card" }]);
   H.setOnlineBrowserMode(true);
   try {
-    // 编辑页面:没有定义,只看运行状态
+    // Editor page: no definition, only check run state
     assert.equal(local("g-synced"), true);
     R.setCardRunStates([["g-synced", { state: "gpu" }]]);
     assert.equal(local("g-synced"), true);
     R.setCardRunStates([["g-synced", { state: "ready" }]]);
     assert.equal(local("g-synced"), false, "Editor page: does not count if the stage says it can run");
     R.setCardRunStates([]);
-    // 舞台:载入成功(运行时注册表里有定义)。素材效果卡还要这份文档「能跑素材效果卡」
+    // Stage: loaded successfully (defined in runtime registry). Media effect cards also require this
+    // document to declare "can run media effect cards"
     R.setRuntimeCards([graphDef("g-synced"), dom("u-synced")]);
     assert.equal(R.graphCardsRunnableHere(), false);
     assert.equal(local("u-synced"), false, "User card: can run once loaded successfully");
@@ -78,9 +97,10 @@ test("OCE-G-02 In which document a media effect card can run: by default it cann
     assert.ok(R.cardsRegistryGen() > gen, "A change must make places that memoize by generation recompute");
     assert.equal(R.setLocalCardExec({ graph: true }), false, "No notification when nothing changed");
     assert.equal(local("g-synced"), false, "Stage that can run media effect cards: the media effect card can run");
-    // 2026-10-21 起不按档另挡:舞台里载入成功、能跑素材效果卡的照常运行(停下追精确帧)
+    // Starting 2026-10-21, no longer blocked separately by tier: cards loaded successfully in stage and
+    // capable of running media effect cards run as usual (pause for exact frame catch-up)
     assert.equal(local("u-synced"), false);
-    // 出过事的卡:撤下
+    // Cards that encountered errors: tear down
     R.setLocalCardExec({ graph: true, blocked: ["g-synced", "u-synced"] });
     assert.equal(local("g-synced"), true);
     assert.equal(local("u-synced"), true);
@@ -88,10 +108,11 @@ test("OCE-G-02 In which document a media effect card can run: by default it cann
     assert.equal(local("builtin"), false, "built-in cards are unaffected");
     R.setLocalCardExec({ graph: false });
     assert.equal(local("g-synced"), true);
-    // 桌面运行环境:模式关着恒不算
+    // Desktop runtime environment: never counts when mode is off
     H.setOnlineBrowserMode(false);
     assert.equal(local("g-synced"), false);
-    // 直接问 needsLocalPc(桌面仿在线模式的调用方):素材效果卡在没说「能跑素材效果卡」的文档里照旧算
+    // Direct query to needsLocalPc (caller of desktop mock-online mode): media effect cards still
+    // count in documents that do not declare "can run media effect cards"
     assert.equal(H.needsLocalPc("x", graphDef("x"), () => false), true);
     assert.equal(H.needsLocalPc("x", graphDef("x"), () => false, () => true, () => true), false);
   } finally {
@@ -154,7 +175,7 @@ test("OCE-G-06 Counts only when both stages report they can run; if one says it 
   assert.ok(run([new Map([["a", { state: "ready" }]]), new Map([["a", { state: "ready" }]])]).version, "Ones that can run carry this generation's signature");
   assert.equal(run([new Map([["a", { state: "gpu", detail: "Only software rendering is available" }]]), undefined]).state, "gpu", "If one says no, there is no need to wait for the other");
   assert.equal(run([new Map([["a", { state: "ready" }]]), new Map([["a", { state: "media" }]])]).state, "media");
-  // 缺省(不给 stageCount)与原来相同:一台报了就算
+  // Default (without stageCount) same as before: counts once one stage reports
   assert.equal(ERS.editorRunStates({ cards, available: true, bundles, stages: [new Map([["a", { state: "ready" }]])] }).get("a").state, "ready");
   const blocked = run([], { available: false, blockedDetail: "Isolation is not ready yet" });
   assert.equal(blocked.state, "not-isolated");
@@ -178,35 +199,41 @@ test("OCE-G-07 Stage RPC: the two new methods have timeouts; the two new events 
 
 test("OCE-G-08 Wiring (checked against source)", () => {
   const stage = read("StageView.tsx");
-  // 舞台执行前问自己的闸门;画面另问出口;不是舞台入口的文档不记、不执行
+  // Before execution, stage queries its own gate; visual queries egress separately; documents that
+  // are not stage entry points are not recorded or executed
   assert.match(stage, /if \(!stageExecGate\(\)\.allowed \|\| !bundles\) \{/);
   assert.match(stage, /if \(cardVisualExecAllowed\(\)\) \{\s+if \(!cardExec\.runtime\) \{\s+const m = await import\("\.\/online\/cardRuntime\/stageRuntime"\);/);
   assert.match(stage, /if \(gate\.reason === "not-stage"\) return \{ ok: false, reason: "unsupported" as const \};/);
   assert.match(stage, /subscribeStageExecGate\(\(\) => \{ void applyCardBundles\(\); \}\)/);
-  // 按需载入、桌面构建剪得掉:三处 import() 都在编译期常量把关的函数里,文件里没有静态引入
+  // Loaded on demand and tree-shaken in desktop builds: all three import() calls are inside
+  // functions guarded by compile-time constants, with no static imports in file
   assert.match(stage, /const applyCardBundles = async \(\): Promise<void> => \{\s+if \(import\.meta\.env\.VITE_PC_ONLINE !== "1" \|\| cardExec\.stopped\) return;/);
   for (const mod of ["stageRuntime", "stageSound", "soundSpawn", "loader", "hostModules"]) {
     assert.doesNotMatch(stage, new RegExp(`^import (?!type )[^\\n]*cardRuntime/${mod}`, "m"), `StageView must not statically import ${mod}`);
   }
-  // 声音线程:经 spawnRuntimeWorker 从 blob 引导(守卫把全局 Worker 锁成抛错的构造函数,这里用的是它装上之前留在模块闭包里的原生构造函数),先建 Trusted Types 缺省策略
+  // Sound thread: bootstrapped from blob via spawnRuntimeWorker (the guard locks global Worker into
+  // an error-throwing constructor; here it uses the native constructor preserved in the module
+  // closure before installation), and creates Trusted Types default policy first
   const spawn = read("online/cardRuntime/soundSpawn.ts");
   assert.match(spawn, /spawnRuntimeWorker\(`\$\{trustedTypesPrelude\(\)\}importScripts\(\$\{JSON\.stringify\(abs\)\}\);`/);
   assert.match(spawn, /spawnRuntimeWorker\(`import \$\{JSON\.stringify\(abs\)\};`/);
   assert.doesNotMatch(spawn, /new Worker\(/, "Do not call the global Worker to start threads yourself (the guard has locked it into a constructor that throws; the bootstrap URL is always a blob built by this module, worker-src blob:)");
-  // 声音线程的模块表不引汇总文件(它们把样式带进线程,线程起不来)
+  // Sound thread module table does not import aggregate files (they bring styles into the thread,
+  // preventing it from starting)
   assert.match(read("online/cardRuntime/soundModules.ts"), /"!\/src\/cards\/\*\*\/index\.ts", "!\/src\/parts\/\*\*\/index\.ts"/);
-  // 编辑页面:发包、收状态、接声音、立闸门
+  // Editor page: send packets, receive states, connect sound, set up gates
   const preview = read("editor/Preview.tsx");
   assert.match(preview, /c\.loadUserCards\(list, \{ sound: id === soundStageId\(\) \}\)/);
   assert.match(preview, /function soundStageId\(\): StageId \{\s*return ONLINE && !dualStage\(\) \? "A" : "B";/, "Sound thread: with dual stages it is on instance B, with a single stage on A");
   assert.match(preview, /setCardExecGate\(\{ site: onlineStageState\(\)\.cardExec, isolated: s\.enabled, reason: s\.enabled \? null : s\.reason, visual: true \}\)/);
-  // 挂着的舞台都报了能运行才算能运行:双舞台两台、单舞台(舞台闸门第一级)一台
+  // Counted as runnable only when all attached stages report runnable: two for dual stage, one for
+  // single stage (first tier of stage gate)
   assert.match(preview, /stages: mountedStageIds\(\)\.map\(\(id\) => stageCardStatesRef\.current\[id\]\), stageCount: Math\.max\(1, mountedStageIds\(\)\.length\),/);
   assert.match(preview, /setNodeGraphCapable\(STAGE_IDS\.every\(\(s\) => stageGraphRef\.current\[s\] === "ok"\)\)/);
   assert.match(preview, /createIsolatedSoundLink\(\{/);
   const push = preview.slice(preview.indexOf("const pushCardBundles = useCallback"), preview.indexOf("const pushCardBundlesRef"));
   assert.ok(push.length > 100 && !/ticket|Ticket|password|credential/.test(push), "The bundle sent to the stage contains no ticket or credentials");
-  // 编辑页面与导出页不引舞台接线、加载器(类型除外)
+  // Editor page and export page do not import stage wiring or loader (except types)
   for (const dir of ["editor", "export"]) {
     const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
     for (const file of walk(path.join(SRC, dir)).filter((f) => /\.(ts|tsx)$/.test(f) && !/\.test\./.test(f))) {
@@ -214,6 +241,6 @@ test("OCE-G-08 Wiring (checked against source)", () => {
       assert.doesNotMatch(text, /^import (?!type )[^\n]*cardRuntime\/(loader|stageRuntime|hostModules|soundThread|soundWorker|soundHost|soundSpawn|stageSound|gpuCapability)/m, file);
     }
   }
-  // 错误边界只包运行时载入的卡
+  // Error boundary wraps only cards loaded at runtime
   assert.match(read("render/Stage.tsx"), /return cardId && isRuntimeCard\(cardId\) \? <RuntimeCardBoundary cardId=\{cardId\}>\{body\}<\/RuntimeCardBoundary> : body;/);
 });

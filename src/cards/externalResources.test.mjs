@@ -1,5 +1,6 @@
-/** 外链资源回归：内置卡在线与桌面允许同样URL，不因出口政策删除资源。
- * 已知NASA URL仍引用远端，不随构建分发徽标；新增外链不因本测试被禁止。 */
+/** External resource regression: built-in cards allow the same URLs online and on desktop,
+ * not deleting resources due to export policies. Known NASA URLs still reference remote endpoints,
+ * without distributing logos with the build; new external links are not banned by this test. */
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -7,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-/** 已知的外链(文件 → 出现几处、怎么处理的) */
+/** Known external links (file → occurrence count, how handled) */
 const KNOWN = {
   "server/catalog/particles/nasa.json": { count: 1, handled: "Online and desktop use the same external link, and the logo is not bundled with the build" },
 };
@@ -19,7 +20,10 @@ function walk(dir, out = []) {
   }
   return out;
 }
-/** 去掉注释(来源说明里的网址不算资源);字符串里的 `//` 不动 */
+/**
+ * Strip comments (URLs in source attributions do not count as resources); leave `//` inside
+ * strings untouched
+ */
 function stripComments(src) {
   let out = "", i = 0, quote = null;
   while (i < src.length) {
@@ -33,14 +37,14 @@ function stripComments(src) {
   return out;
 }
 const EXTERNAL = /(?:https?:)?\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)+[^\s"'`)]*/gi;
-/** 不是要加载的资源:XML 命名空间 */
+/** Not a resource to load: XML namespace */
 const HARMLESS = /^https?:\/\/www\.w3\.org\//i;
 
 function externalsIn(file) {
   const rel = path.relative(ROOT, file).split(path.sep).join("/");
   let text = fs.readFileSync(file, "utf8");
   if (/\.(tsx?|mjs|js|css)$/.test(file)) text = stripComments(text);
-  if (/\/index\.json$/.test(rel)) { try { const j = JSON.parse(text); delete j.source; text = JSON.stringify(j); } catch { /* 原样 */ } }
+  if (/\/index\.json$/.test(rel)) { try { const j = JSON.parse(text); delete j.source; text = JSON.stringify(j); } catch { /* As is */ } }
   return (text.match(EXTERNAL) ?? []).filter((u) => !HARMLESS.test(u)).map((u) => ({ rel, url: u }));
 }
 
@@ -54,7 +58,7 @@ test("EXT-01 Known external link sources are still registered and not replaced b
   const found = new Map();
   for (const f of files) for (const hit of externalsIn(f)) found.set(hit.rel, [...(found.get(hit.rel) ?? []), hit.url]);
   for (const [rel, urls] of found) {
-    if (!KNOWN[rel]) continue; // 其它外链允许，不设置新增外链禁令。
+    if (!KNOWN[rel]) continue; // Other external links are allowed; no ban is imposed on newly added external links.
     assert.equal(urls.length, KNOWN[rel].count, `The number of external links in ${rel} changed: ${urls.join(" ")}`);
   }
   for (const rel of Object.keys(KNOWN)) assert.ok(found.has(rel), `${rel} no longer has any external links, remove it from KNOWN`);

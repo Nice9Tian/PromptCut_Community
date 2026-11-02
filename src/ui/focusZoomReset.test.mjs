@@ -1,5 +1,5 @@
 /**
- * 手机浏览器输入框失焦后把页面缩放拉回 100% 的纯逻辑(`focusZoomReset.ts`)。
+ * Pure logic resetting page zoom back to 100% after mobile browser input box blurs (`focusZoomReset.ts`).
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

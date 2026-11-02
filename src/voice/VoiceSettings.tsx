@@ -7,7 +7,7 @@ import {
 } from "../ai/voice";
 import { tr } from "../i18n/index.ts";
 
-/** 界面上改着的那部分;API Key 单独放,保存时才带上 */
+/** The part currently being edited in the UI; the API key is kept separate and only included when saving */
 type Draft = Pick<VoiceConfig, "baseUrl" | "provider" | "minimax" | "kling" | "vidu">;
 
 const pick = (c: VoiceConfig): Draft => ({
@@ -22,10 +22,10 @@ const KIND_LABEL: Record<CustomVoice["kind"], string> = { clone: tr("Clone"), de
 const FEE_NOTE = tr("The first time each new voice is used for synthesis, MiniMax charges an extra ¥9.9; a voice not used within 7 days of creation is deleted.");
 
 /**
- * 开始页的「配音」:agent 的 voice_generate 默认用这里的服务、音色和参数。
+ * "Voiceover" on the start page: the agent voice_generate uses the service, voice, and parameters here by default.
  *
- * 改完要点「保存」才生效(试听会先替你保存)。新建音色会花钱,每一步都先确认。
- * 住在「配音设置」子窗口里(bare:去掉自己的边框和标题,由窗口给)。
+ * Click "Save" after editing to take effect (audition saves for you first). Creating a new voice costs money, so confirm every step first.
+ * Lives inside the "Voiceover settings" subwindow (bare: removes its own border and title, provided by the window).
  */
 export function VoiceSettings(props: { bare?: boolean; onDirtyChange?: (dirty: boolean) => void }): JSX.Element {
   const { bare, onDirtyChange } = props;
@@ -45,7 +45,7 @@ export function VoiceSettings(props: { bare?: boolean; onDirtyChange?: (dirty: b
       .catch((e) => setMsg({ tone: "err", text: tr("Can't read voiceover settings: {0}", errText(e)) }));
   }, []);
 
-  // 新的试听一到就放
+  // Play as soon as a new audition arrives
   useEffect(() => { if (audioUrl) void audioRef.current?.play().catch(() => {}); }, [audioUrl]);
 
   const dirty = !!cfg && !!draft && (JSON.stringify(pick(cfg)) !== JSON.stringify(draft) || !!keyInput.trim());

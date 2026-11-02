@@ -1,9 +1,13 @@
 /**
- * 共享项目里导入的素材要传到文档服务(C6.6 T9 暴露的缺陷)。跑:node --test src/editor/io/mediaSharedSync.test.mjs
+ * Assets imported in shared projects must be transmitted to document service (defect exposed by
+ * C6.6 T9). Run: node --test src/editor/io/mediaSharedSync.test.mjs
  *
- * 钉的是:store 接在 docsync 上时,入库回包写回素材表(hash / url / ext / size / tiers、清掉 pending)
- * 以及素材小尺寸后到时补写 tiers.small,都要变成 project.op 传到文档服务,另一个页面会话(观察端)看得到;
- * 并且不许原地改 store 里的旧对象(docsync 的本地副本与 store 是同一份,原地改了 diffProject 就看不出变化)。
+ * Pins down that: when store is connected to docsync, store responses written back to asset table
+ * (hash / url / ext / size / tiers, clearing pending) and backfilling tiers.small when small-size
+ * asset arrives later must all become project.op sent to document service, visible to another page
+ * session (observer side); and mutating existing objects in store in-place is not allowed
+ * (docsync's local replica and store are the same instance; mutating in-place prevents diffProject
+ * from detecting changes).
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test from "node:test";
@@ -20,7 +24,7 @@ const SMALL = "d".repeat(64);
 const ORIG2 = "e".repeat(64);
 const SMALL2 = "f".repeat(64);
 
-/** 创建方 A 接 store,观察方 B 只是另一个 DocSync;回 { svc, A, B, unbind } */
+/** Creator A connects to store, observer B is just another DocSync; returns { svc, A, B, unbind } */
 function share(name) {
   actions.newProject(name);
   const p0 = getState().project;
@@ -66,7 +70,7 @@ test("Shared project: both the store response and a later-arriving small-size as
       hash: ORIG, ext: "mp4", name: "clip.mp4", path: "C:/lib/clip.mp4", url: `/@media/${ORIG}`, bytes: 123,
       tiers: { original: ORIG, small: null }, smallState: "pending",
     });
-    // 旧对象、旧数组原样不动
+    // Existing objects and existing arrays left untouched as-is
     assert.equal(before.pending, true);
     assert.equal(before.hash, undefined);
     assert.equal(before.tiers, undefined);
@@ -84,7 +88,7 @@ test("Shared project: both the store response and a later-arriving small-size as
       assert.equal(got.pending, undefined, `${where} pending`);
     }
 
-    // 素材小尺寸后到(watchSmallTier 每 2 s 问一次)
+    // Small-size asset arrives later (watchSmallTier polls every 2 s)
     const beforeSmall = mediaOf(getState().project, m.id);
     await waitFor(() => !!mediaOf(getState().project, m.id)?.tiers?.small);
     assert.deepEqual(beforeSmall.tiers, { original: ORIG }, "Backfilling the small-size asset does not modify the old object in place");

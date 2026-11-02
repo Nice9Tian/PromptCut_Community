@@ -10,23 +10,25 @@ import type { GroupData, GroupItem } from "./groups";
 import { tr as trText } from "../../../i18n/index.ts";
 
 /**
- * 特效 → 强调组:给片段加「阴影」或「描边」。
+ * Effects → emphasis group: add a "shadow" or "outline" to a clip.
  *
- * 两种都**沿着画面里不透明部分的边缘**走(CSS drop-shadow 按 alpha 算),所以描的是
- * 文字、图形、抠像的边,不是那个方框 —— 透明底的卡片描出来才好看(kernel/emphasis.ts)。
+ * Both **follow the edge of the opaque part of the picture** (CSS drop-shadow works on alpha), so
+ * what gets outlined is the edge of text, shapes and cutouts, not the bounding box: cards with a
+ * transparent background look good when outlined (kernel/emphasis.ts).
  *
- * 用法两条:把卡拖到时间轴上某一段上,或者选中片段后点一下。下面列出已经加了强调的片段,
- * 每条都能去掉。粗细和颜色在上面选,选完再拖 / 再点。
+ * Two ways to use it: drag a card onto a segment on the timeline, or select a clip and click once.
+ * Below, the clips that already have emphasis are listed, and each can be removed. Thickness and
+ * color are chosen above, then drag / click after choosing.
  */
 
-/** 粗细:三档就够了,真要精确数值让 Agent 或参数页去调 */
+/** Thickness: three tiers are enough; for exact values, have the Agent or the parameters page adjust them */
 const SIZES: { key: string; label: string; shadow: number; outline: number }[] = [
   { key: "s", label: trText("Thin"), shadow: 10, outline: 3 },
   { key: "m", label: trText("Medium"), shadow: 18, outline: 6 },
   { key: "l", label: trText("Thick"), shadow: 30, outline: 12 },
 ];
 
-/** 颜色:黑白之外给一个主题强调色,描边用它做「发光边」很常用 */
+/** Color: besides black and white, one theme accent color; using it for a "glow edge" outline is very common */
 const COLORS: { key: string; label: string; css: string }[] = [
   { key: "black", label: trText("Black"), css: "#000000" },
   { key: "white", label: trText("White"), css: "#ffffff" },
@@ -34,12 +36,12 @@ const COLORS: { key: string; label: string; css: string }[] = [
 ];
 
 const KINDS = ["shadow", "outline"] as const;
-/** 示意图卡的高宽比 */
+/** Height-to-width ratio of the schematic card */
 const GLYPH_ASPECT = 0.75;
 
-/** 卡面上的示意图:一块透明底上的图形 + 该有的阴影 / 描边,一眼看出两者的区别 */
+/** Schematic on the card face: a shape on a transparent background plus the shadow / outline it should have, so the difference between the two is clear at a glance */
 function EmphasisGlyph({ kind, color, size }: { kind: EmphasisKind; color: string; size: number }) {
-  // 示意图是 100×100 的坐标系,舞台像素换算过来大约除以 12
+  // The schematic uses a 100×100 coordinate system; converting from stage pixels, divide by about 12
   const px = Math.max(1.5, size / 12);
   const filter =
     kind === "shadow"
@@ -52,7 +54,7 @@ function EmphasisGlyph({ kind, color, size }: { kind: EmphasisKind; color: strin
           .join(" ");
   return (
     <svg viewBox="0 0 100 100" style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} aria-hidden="true">
-      {/* 透明底:格子隐约透出来,说明「底是透的,描的是图形的边」 */}
+      {/* Transparent background: the checkerboard faintly shows through, indicating "the background is transparent, what is outlined is the edge of the shape" */}
       <g style={{ filter }}>
         <text x="50" y="46" textAnchor="middle" fontSize="30" fontWeight="700" fill="var(--ui-fg, #fff)">A a</text>
         <circle cx="50" cy="70" r="11" fill="var(--ui-track-video, #4FB3C9)" />
@@ -61,7 +63,7 @@ function EmphasisGlyph({ kind, color, size }: { kind: EmphasisKind; color: strin
   );
 }
 
-/** 时间轴上已经加了强调的片段 */
+/** Clips on the timeline that already have emphasis */
 function withEmphasis(p: Project): Array<{ clip: TrackClip; trackName: string }> {
   const out: Array<{ clip: TrackClip; trackName: string }> = [];
   for (const tr of p.tracks) {
@@ -71,7 +73,7 @@ function withEmphasis(p: Project): Array<{ clip: TrackClip; trackName: string }>
 }
 
 export function useEmphasisGroup(q: string, flash: (text: string, ms?: number) => void): GroupData {
-  // 这个项目只给了只读权限(游客):加强调 / 去掉强调都是写
+  // This project grants only read-only access (guest): adding emphasis / removing emphasis are both writes
   const ro = useReadOnly();
   const project = useStore((s) => s.project);
   const selection = useStore((s) => s.selection);

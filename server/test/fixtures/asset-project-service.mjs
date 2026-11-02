@@ -1,4 +1,4 @@
-/** 独立素材 HTTP 测试夹具：实际素材模块，合成 opaque 权威；不冒称生产doc已接线。 */
+/** Standalone asset HTTP test fixture: real asset module, synthesizes opaque authority; does not claim production doc is wired. */
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';

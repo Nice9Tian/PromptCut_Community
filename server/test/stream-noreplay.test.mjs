@@ -1,11 +1,13 @@
 /**
- * 产流时 remotion 式的卡不从挂载帧回放(`docs/plan/prerender-products-contract.md` 第 4.2 节)的服务端一半:
- * `planStreams` 带「要不要回放」,`StreamProducer.runSegment` 对不要回放的流不传 `mountFrame`、预热帧数传 0。
- * 跑:node --experimental-test-module-mocks --test server/test/stream-noreplay.test.mjs
+ * Server-side half of remotion-style cards not replaying from mount frame during stream generation
+ * (`docs/plan/prerender-products-contract.md` section 4.2): `planStreams` carries "whether to replay",
+ * `StreamProducer.runSegment` passes no `mountFrame` and 0 warmup frames for streams that do not replay.
+ * Run: node --experimental-test-module-mocks --test server/test/stream-noreplay.test.mjs
  *
- * 不用 Chrome、不用 ffmpeg,假的预渲染间 / `bakeStream` / 编码器同 `stream-queue.test.mjs`;
- * 这里的假 `bakeStream` 把收到的选项原样记下,并照真的那样算 `replayed`:接不上租约时从
- * `min(fromFrame, mountFrame)` 起挂载(没给 `mountFrame` 就是 `fromFrame`),`replayed = fromFrame - 起点`。
+ * No Chrome, no ffmpeg; mock prerender room / `bakeStream` / encoder same as `stream-queue.test.mjs`;
+ * mock `bakeStream` here records options as received, and calculates `replayed` like the real one:
+ * when lease cannot be resumed, mounts from `min(fromFrame, mountFrame)` (defaults to `fromFrame`
+ * if `mountFrame` omitted), `replayed = fromFrame - startPoint`.
  */
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -47,7 +49,7 @@ mock.module(new URL('../bakery/bake.mjs', import.meta.url).href, {
       const stride = Math.max(1, Math.round(Number(opts.stride) || 1));
       const lease = bakery.streamLease;
       const continues = !!lease && !lease.dirty && lease.page === bakery.page && lease.streamSignature === streamSignature && fromFrame === lease.lastFrame + 1;
-      // 真的 `bakeStream` 接不上租约时的挂载起点
+      // Mount start point when real `bakeStream` cannot resume lease
       const startFrame = continues ? lease.lastFrame + 1 : Math.max(0, Math.min(fromFrame, Number.isInteger(opts.mountFrame) ? opts.mountFrame : fromFrame));
       const replayed = continues ? 0 : fromFrame - startFrame;
       bakes.push({ streamSignature, fromFrame, toFrame, stride, continues, hasMountFrame: Object.hasOwn(opts, 'mountFrame'), mountFrame: opts.mountFrame, warm: opts.warm, replayed });
@@ -113,11 +115,13 @@ const PID = 'stream-noreplay';
 const REV = 3;
 
 /**
- * 三个片段(0.5 秒入点到 6 秒:第 15～179 帧,165 帧):clip-d 独立卡 remotion 式,clip-s 独立卡 motion 式,clip-x 独立卡但写法没带。
- * 分段从每条流自己的第一帧(第 15 帧)起数:第 n 段是第 `15 + n × 15` 帧起的 15 帧,分段 0～10。
+ * Three clips (0.5 s in point to 6 s: frames 15-179, 165 frames): clip-d standalone card
+ * remotion-style, clip-s standalone card motion-style, clip-x standalone card without specified style.
+ * Segments count from each stream's own first frame (frame 15): segment n is 15 frames starting from
+ * frame `15 + n × 15`, segments 0-10.
  */
 const ORIGIN = 15;
-/** 第 n 段的第一帧(项目帧号) */
+/** First frame of segment n (project frame number) */
 const segStart = (n) => ORIGIN + n * 15;
 const CLIPS = ['clip-d', 'clip-s', 'clip-x'];
 const START = { 'clip-d': 0.5, 'clip-s': 0.5, 'clip-x': 0.5 };
@@ -157,7 +161,8 @@ async function streamPipeline() {
   roots.push(root);
   const pipeline = new FramePipeline({ root, origin: () => 'http://127.0.0.1:1', environment: OWN_ENV, dataRoot: root, interactive: true });
   pipes.push(pipeline);
-  // remotion 式的卡声明上是轻卡、不进预渲染集合;这里把它钉成重卡,让它有流可产
+  // remotion-style cards are declared as light cards and do not enter the prerender set; here it is
+  // pinned as a heavy card so that it has streams to produce
   pipeline.streamPicked = () => true;
   const producer = pipeline.streamProducer();
   producer.encoderName = 'libx264';
@@ -186,7 +191,8 @@ test('noreplay: when producing streams segment by segment, remotion-style stream
     assert.ok(task, `${clipId} has a stream task covering segment ${n}`);
     return task;
   };
-  // 分段不按顺序产:先 7、再 3、再 9、再 10(接得上 9 的租约),每次只产这一段
+  // Segments are produced out of order: 7 first, then 3, then 9, then 10 (can resume 9's lease),
+  // producing only this segment each time
   const order = [7, 3, 9, 10];
   const done = Object.fromEntries(CLIPS.map((c) => [c, []]));
   for (const clipId of CLIPS) {
@@ -199,16 +205,19 @@ test('noreplay: when producing streams segment by segment, remotion-style stream
       done[clipId].push(mine[0]);
     }
   }
-  // remotion 式:从不传 mountFrame、预热传 0,哪怕接不上租约(7、3、9 都是跳段)也不回放
+  // remotion-style: never passes mountFrame and passes 0 warmup; does not replay even when lease
+  // cannot be resumed (7, 3, 9 are all segment skips)
   for (const b of done['clip-d']) {
     assert.equal(b.hasMountFrame, false, `clip-d#${(b.fromFrame - ORIGIN) / SEGMENT_FRAMES}: does not pass mountFrame`);
     assert.equal(b.warm, 0, 'clip-d: warm-up 0');
     assert.equal(b.replayed, 0, 'clip-d: replayed is 0');
   }
   assert.deepEqual(done['clip-d'].map((b) => b.continues), [false, false, false, true], '7, 3, 9 are segment jumps (the page is reset once), 10 continues the lease of 9');
-  // 每一段从这条流自己的第一帧起数:第 7 段是第 120～134 帧(不是按项目帧号的 105～119)
+  // Each segment counts from this stream's own first frame: segment 7 is frames 120-134 (not 105-119
+  // by project frame number)
   assert.deepEqual(done['clip-d'].map((b) => [b.fromFrame, b.toFrame]), order.map((n) => [segStart(n), segStart(n) + 14]), 'The frames a segment covers are counted from the stream\'s first frame');
-  // motion 式 / 写法没带:照旧传挂载帧,预热用缺省(不传),跳段时回放
+  // motion-style / style omitted: passes mount frame as usual, default warmup (omitted), replays on
+  // segment skip
   for (const clipId of ['clip-s', 'clip-x']) {
     for (const b of done[clipId]) {
       assert.equal(b.hasMountFrame, true, `${clipId}: passes mountFrame`);
@@ -217,7 +226,7 @@ test('noreplay: when producing streams segment by segment, remotion-style stream
     }
     assert.deepEqual(done[clipId].map((b) => b.replayed), [segStart(7) - 14, segStart(3) - 14, segStart(9) - 14, 0], `${clipId}: a jump replays from the mount frame, one that can continue the lease does not replay`);
   }
-  // 诊断:每条流的 replay 与累计回放帧数
+  // Diagnostics: replay and cumulative replayed frames for each stream
   const status = A.streamProducer().status();
   const row = (clipId) => status.streams.find((s) => s.clipIds[0] === clipId);
   assert.equal(row('clip-d').replay, false);

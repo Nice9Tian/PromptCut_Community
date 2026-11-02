@@ -5,8 +5,9 @@ import "../../cards/native/hud.css";
 import { fitOr } from "../fit";
 
 /**
- * 金句引言:多行金句伴随左侧主色竖线逐行揭示。从 quote-lockup 拆出。
- * 不含署名，署名单独作为 text-author 部件。
+ * Punchline quote: multi-line punchline revealed line by line alongside a left vertical bar in
+ * primary color. Extracted from quote-lockup.
+ * Does not include attribution; attribution is separate as the text-author part.
  */
 interface Params {
   quote: string;

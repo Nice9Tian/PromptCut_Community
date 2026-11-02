@@ -1,8 +1,12 @@
 /**
- * AI 栏 Agent 标签按项目分开(2026-10-22 用户定,原话:「不同项目的不共用一份，用户界面看到的是Agent1，Agent2.。。
- * 实际上代码标记的是"项目ID_AgentID"。」)。跑:node --test src/ai/agentTabsProjects.test.mjs
- * 用例 AT-P1～AT-P6:每个项目一份清单、分页 id 与存储键是「项目ID_AgentID」、编号在本项目内取最小空号、
- * 「手动关光过」按项目记、旧的全局清单不读不动、老项目自带的对话补一个页接住、开始页上设的创造力等级点发送时带过去。
+ * Agent tabs in the AI panel are split by project (user decision, 2026-10-22, verbatim: "Different
+ * projects do not share one; the user interface shows Agent1, Agent2... while code actually tags
+ * \"ProjectID_AgentID\"."). Run: node --test src/ai/agentTabsProjects.test.mjs
+ * Test cases AT-P1~AT-P6: one manifest per project, tab id and storage key are "ProjectID_AgentID",
+ * numbering takes the lowest unused number within the project, "manually closed all" tracked per
+ * project, legacy global manifest is untouched and unread, chats bundled with legacy projects are
+ * assigned a tab to catch them, creativity level configured on start page carried over upon
+ * clicking send.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -37,7 +41,7 @@ test("AT-P1 One manifest per project: project A opens two tabs, project B sees i
   t.setAgentProject("projA");
   assert.deepEqual(t.getTabs().map((x) => x.id), [a1.id, a2.id]);
   assert.equal(t.getActiveTabId(), a2.id, "Each project remembers its own active tab");
-  // 存储:每个项目一个键,里面的页 id 都带着项目 id
+  // Storage: one key per project, tab ids inside all carry project id
   assert.deepEqual(JSON.parse(store.get("pc.agentTabs:projA")).tabs.map((x) => x.id), [a1.id, a2.id]);
   assert.deepEqual(JSON.parse(store.get("pc.agentTabs:projB")).tabs.map((x) => x.id), [b1.id]);
 });
@@ -52,7 +56,7 @@ test("AT-P2 \"Manually closed all\" is recorded per project: A had everything cl
   assert.equal(t.isCleared(), false, "B was just entered, and its start page has the onboarding animation");
   t.setAgentProject("projA");
   assert.equal(t.isCleared(), true);
-  // B 点发送建了第一个会话之后再关光,也算手动关光
+  // Closing all after B clicks send to create the first session also counts as manually closing all
   t.setAgentProject("projB");
   const b = send(t);
   assert.equal(t.isCleared(), false, "Creating a session does not count as closing everything");
@@ -76,11 +80,11 @@ test("AT-P4 The project comes with a chat (ai.messages in .proc) but has no mani
   t.setAgentProject("projA");
   assert.deepEqual(t.getTabs().map((x) => [x.id, x.title, !!x.draft]), [["projA_main", "Agent 1", false]]);
   assert.equal(store.get("pcChatId:projA_main"), "chat-old", "The old main chat's archive id is carried over, so the part in the archive can be linked up");
-  // 对话为空的项目:开始页
+  // Projects with empty chats: start page
   t.noteProjectChatApplied(false);
   t.setAgentProject("projB");
   assert.equal(t.hasRealTabs(), false);
-  // 已有清单的项目(用户关光过)不补
+  // Projects with existing manifests (user previously closed all) are not backfilled
   t.setAgentProject("projC");
   const x = send(t);
   t.closeTab(x.id);
@@ -88,7 +92,7 @@ test("AT-P4 The project comes with a chat (ai.messages in .proc) but has no mani
   t.noteProjectChatApplied(true);
   t.setAgentProject("projC");
   assert.equal(t.hasRealTabs(), false, "A project where everything was closed has a manifest and is not patched again");
-  // 标记只管紧接着的一次切换
+  // Flag only applies to the immediately following switch
   t.noteProjectChatApplied(true);
   t.setAgentProject("projD");
   assert.equal(t.getTabs()[0].id, "projD_main");

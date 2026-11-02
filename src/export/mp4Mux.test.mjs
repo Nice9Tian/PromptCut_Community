@@ -1,9 +1,11 @@
 /**
- * 自写 MP4 封装器(`docs/plan/c10a-contract.md` 第 11 节〔裁〕):ffprobe 读得出,帧数、时长、编码正确。
- * 跑:node --test src/export/mp4Mux.test.mjs
+ * Custom MP4 muxer (`docs/plan/c10a-contract.md` Section 11 [ruling]): readable by ffprobe, with
+ * correct frame count, duration, and codec.
+ * Run: node --test src/export/mp4Mux.test.mjs
  *
- * 样本用 ffmpeg 造(H.264 Annex B、AAC ADTS),拆成 WebCodecs 会给的形状(AVCC 长度前缀的访问单元 + avcC;
- * 裸 AAC 帧 + AudioSpecificConfig),交给封装器,再用 ffprobe 读回来。没有 ffmpeg 的机器跳过(报原因)。
+ * Samples are created with ffmpeg (H.264 Annex B, AAC ADTS), unpacked into the shape WebCodecs
+ * would give (AVCC length-prefixed access units + avcC; raw AAC frames + AudioSpecificConfig),
+ * handed to the muxer, and read back with ffprobe. Machines without ffmpeg skip (reporting reason).
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -29,7 +31,7 @@ function probe(file) {
   return JSON.parse(String(out));
 }
 
-/** Annex B → NAL 单元 */
+/** Annex B → NAL units */
 function nals(buf) {
   const out = [];
   let i = 0, start = -1;
@@ -45,11 +47,11 @@ function nals(buf) {
     i++;
   }
   if (start >= 0) out.push(buf.subarray(start));
-  // 去掉尾随的零(下一个起始码的前导零)
+  // Strip trailing zeros (leading zeros of the next start code)
   return out.map((n) => { let e = n.length; while (e > 0 && n[e - 1] === 0) e--; return n.subarray(0, e); }).filter((n) => n.length);
 }
 
-/** 造一段 H.264(带 AUD 分帧),拆成访问单元与 avcC */
+/** Generate an H.264 segment (with AUD framing), unpack into access units and avcC */
 function makeH264({ w, h, fps, frames, gop }) {
   const file = path.join(TMP, `v-${w}x${h}-${fps}.h264`);
   run(ffmpeg, ['-y', '-v', 'error', '-f', 'lavfi', '-i', `testsrc=size=${w}x${h}:rate=${fps}`, '-frames:v', String(frames),
@@ -65,7 +67,7 @@ function makeH264({ w, h, fps, frames, gop }) {
     if (type === 8) { pps ??= n; continue; }
     if (!cur) { cur = { nals: [], key: false }; aus.push(cur); }
     if (type === 5) cur.key = true;
-    if (type === 6) continue; // SEI 不要
+    if (type === 6) continue; // Discard SEI
     cur.nals.push(n);
   }
   const avcC = Uint8Array.from([1, sps[1], sps[2], sps[3], 0xff, 0xe1, sps.length >> 8, sps.length & 0xff, ...sps, 1, pps.length >> 8, pps.length & 0xff, ...pps]);
@@ -83,7 +85,7 @@ function makeH264({ w, h, fps, frames, gop }) {
   return { avcC, samples };
 }
 
-/** 造一段 AAC(ADTS),拆成裸帧与 AudioSpecificConfig */
+/** Generate an AAC segment (ADTS), unpack into raw frames and AudioSpecificConfig */
 function makeAac({ sampleRate, channels, seconds }) {
   const file = path.join(TMP, `a-${sampleRate}-${channels}.aac`);
   run(ffmpeg, ['-y', '-v', 'error', '-f', 'lavfi', '-i', `sine=frequency=440:sample_rate=${sampleRate}`, '-t', String(seconds),
@@ -111,7 +113,8 @@ function mux({ video, audio, fps, w, h }) {
   const m = new Mp4Muxer({ sink,
     video: { codec: 'avc1.640028', width: w, height: h, fps, avcC: video.avcC },
     audio: audio ? { codec: 'mp4a.40.2', sampleRate: audio.sampleRate, channels: audio.channels, asc: audio.asc } : null });
-  // 按显示时间交错:一帧视频、再把到这一刻为止的音频帧写进去(和导出时两路编码器交替吐块一样)
+  // Interleave by presentation time: one video frame, then write audio frames up to this point
+  // (same as the two encoders alternately emitting chunks during export)
   let ai = 0;
   video.samples.forEach((s, i) => {
     m.addVideoChunk(s.data, { timestampUs: Math.round((i * 1e6) / fps), key: s.key });
@@ -146,7 +149,7 @@ test('MX1 Video track only: ffprobe can read h264, and the frame count, duration
   assert.ok(Math.abs(Number(v.duration) - 3) < 1e-3, `Duration ${v.duration}`);
   assert.ok(Math.abs(Number(info.format.duration) - 3) < 1e-3);
   assert.equal(info.streams.length, 1);
-  // 解码一遍,确认数据本身没坏(ffmpeg 解到 null 不报错)
+  // Decode once to confirm data itself is not corrupted (ffmpeg decoding to null does not error)
   run(ffmpeg, ['-v', 'error', '-i', file, '-f', 'null', '-']);
 });
 

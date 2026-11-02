@@ -5,10 +5,12 @@ import { createPreloadScheduler, type PreloadScheduler, type PreloadStatus } fro
 import { onProbeProgress, probeSettledFor, syncProbeRun } from "../probeRunner";
 
 /**
- * 页面触发预渲染的公共 hook(调度见 `prerenderPreload.ts`):编辑推送成功、空闲时防抖发 `preload`,没就绪就接着问。
+ * Shared hook for pages to trigger prerendering (scheduling in `prerenderPreload.ts`): after an
+ * edit push succeeds, send `preload` debounced when idle, and keep asking if not ready.
  *
- * - 双舞台预览(`Preview.tsx`):`idle` = 不在播放、不在拖动;
- * - legacy 预览(`UnifiedPreview`):沿用以前的行为,`idle` 恒为 true,`onStatus` 归档采样帧。
+ * - Dual-stage preview (`Preview.tsx`): `idle` = not playing and not dragging;
+ * - Legacy preview (`UnifiedPreview`): keeps the old behavior, `idle` is always true, and
+ *   `onStatus` archives the sampled frames.
  */
 export function usePrerenderPreload(project: Project, opts: { enabled: boolean; idle: boolean; waitForProbe?: boolean; onStatus?: (status: PreloadStatus, project: Project) => void }): void {
   const projectRef = useRef(project);
@@ -43,7 +45,7 @@ export function usePrerenderPreload(project: Project, opts: { enabled: boolean; 
     };
   }, [opts.enabled]);
 
-  // 空闲状态先于编辑通知送进去:同一次渲染里两样都变时,编辑那一下才按新的空闲状态排
+  // Feed the idle state in before the edit notification: when both change in the same render, the edit is scheduled with the new idle state
   useEffect(() => { schedulerRef.current?.setIdle(opts.idle && (!opts.waitForProbe || probeSettledFor(project))); }, [opts.enabled, opts.idle, opts.waitForProbe, project]);
   useEffect(() => {
     if (opts.waitForProbe) syncProbeRun(project);

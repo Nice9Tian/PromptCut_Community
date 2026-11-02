@@ -1,20 +1,25 @@
 /**
- * 给素材目录(server/catalog/{lottie,particles})生成「模型看图写的说明」的两步工具。
+ * Two-step tool to generate "descriptions written by vision models" for the asset catalog
+ * (server/catalog/{lottie,particles}).
  *
- * 流程一共三步,中间那步靠外部模型,不在这个脚本里:
- *   1. node scripts/catalog-notes.mjs sheets --url http://127.0.0.1:<自己起的 dev server 端口>/?export=1 [--out <dir>] [--only lottie:gatin,particles:snow]
- *      每个素材在导出管线上预渲染一段(Lottie 3 秒、粒子 2 秒),按时间顺序抽 6 帧,横排拼成一张
- *      带序号和时间戳的长图(深底,粒子的白点看得见),写到 <out>/<kind>__<name>.png。
- *   2. 把 <out> 交给会看图的模型(用 subagent-agy 技能派 manager 跑 gemini-3.8-flash),
- *      让它对每张写 note(6 帧里发生了什么,≤40 字)、use(适合什么场合)、3 个 tags,
- *      汇总成 <out>/notes.json:{ "<kind>__<name>": { note, use, tags } }。
+ * Workflow has three steps in total; the middle step relies on an external model and is not in this script:
+ *   1. node scripts/catalog-notes.mjs sheets --url http://127.0.0.1:<self-started dev server port>/?export=1 [--out <dir>] [--only lottie:gatin,particles:snow]
+ *      Prerenders a segment for each asset on the export pipeline (Lottie 3s, particles 2s),
+ *      samples 6 frames chronologically, stitches them horizontally into a strip image with index
+ *      numbers and timestamps (dark background so white particles are visible), written to
+ *      <out>/<kind>__<name>.png.
+ *   2. Hand <out> to a vision model (dispatch manager running gemini-3.8-flash via subagent-agy skill),
+ *      have it write note (what happens in the 6 frames, ≤40 words), use (suitable occasions), and
+ *      3 tags for each image, summarized into <out>/notes.json: { "<kind>__<name>": { note, use, tags } }.
  *   3. node scripts/catalog-notes.mjs merge --notes <out>/notes.json
- *      把 note / use / tags 合并进两个 index.json;人写的 description 保留作兜底。
- *      card_authoring_guide 末尾的目录优先显示 note(见 server/vite-plugin-cards.ts 的 renderAssets)。
+ *      Merges note / use / tags into both index.json files; human-written description is kept as
+ *      fallback. The catalog at the end of card_authoring_guide prioritizes note (see renderAssets
+ *      in server/vite-plugin-cards.ts).
  *
- * 为什么是 6 帧拼图而不是整段视频:模型看一张图比看视频便宜得多,6 帧带时间戳足够说清
- * 「什么东西、怎么动」;首次跑 58 个素材时 manager 抽 3 张人工对照,2 条属实、1 条运动方向
- * 写反(已返工),说明这个粒度够用但要抽查。
+ * Why a 6-frame strip instead of full video: model image inspection is far cheaper than video, and
+ * 6 frames with timestamps are enough to explain "what it is and how it moves"; during the first
+ * run of 58 assets, manager sampled 3 for manual comparison: 2 were correct and 1 had motion
+ * direction reversed (reworked), showing this granularity is sufficient but requires spot checks.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -43,7 +48,8 @@ function parseArgs(argv) {
 }
 
 async function sheets(o) {
-  // 地址必须显式给(--url 或环境变量 PROMPTCUT_BASE),不缺省连用户常驻的编辑器(5190～5192)
+  // Address must be provided explicitly (--url or env var PROMPTCUT_BASE); does not default to
+  // connecting to the user's resident editor (5190-5192)
   const base = process.env.PROMPTCUT_BASE ? `${process.env.PROMPTCUT_BASE.replace(/\/+$/, '')}/?export=1` : '';
   const url = typeof o.url === 'string' ? o.url : base;
   if (!url) {
@@ -92,7 +98,7 @@ async function sheets(o) {
       );
       const file = path.join(out, `${it.kind}__${it.name}.png`);
       await page.screenshot({ path: file, clip: { x: 0, y: 0, width: 2900, height: 320 } });
-      fs.rmSync(dir, { recursive: true, force: true });   // 帧只为拼图,拼完就删
+      fs.rmSync(dir, { recursive: true, force: true });   // Frames are only for stitching, deleted once stitched
       console.log(`  ✓ ${it.kind}__${it.name}`);
     }
   } finally {

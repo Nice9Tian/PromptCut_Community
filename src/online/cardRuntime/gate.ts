@@ -1,22 +1,30 @@
 import { tr } from "../../i18n/index.ts";
 /**
- * 本页能不能执行同步来的用户卡与素材效果卡(`docs/plan/online-card-exec-contract.md` 3.1 的前提)。
+ * Whether this page can execute synced user cards and media effect cards (prerequisite of
+ * `docs/plan/online-card-exec-contract.md` 3.1).
  *
- * 缺一条就不执行,整体退回原做法:
- *   - `site`:站点的总开关没关(运行配置 `runtime-config.json` 的 `onlineCardExec`,缺省开);
- *   - `isolated`:本页是双舞台且握手成功、舞台源与编辑页面不同源、舞台自检确认内容安全策略生效、素材票据交接成功。
- * 这两项由安全隔离那一块(舞台握手与自检)写进来;在它写之前本页**不执行**(缺省 `isolated: false`)——
- * 没有 nginx 的摆法(本机开发服务器、桌面版自己提供的页面)自检不过,就一直停在这个缺省上。
- * 单舞台、双舞台都一样判:舞台一律跨源隔离(2026-10-14 用户定),隔离会话按此刻挂着的舞台立起来(`online/stageIsolation.ts`)。
+ * If any condition is missing, do not execute and fall back entirely to the original approach:
+ *   - `site`: The site master switch is not off (`onlineCardExec` in runtime configuration
+ *     `runtime-config.json`, defaults to on);
+ *   - `isolated`: This page has dual stages with successful handshake, stage origin and editor page
+ *     have different origins, stage self-check confirms Content Security Policy is effective, and
+ *     asset ticket handover succeeded.
+ * These two items are written by security isolation (stage handshake and self-check); before it
+ * writes them, this page **does not execute** (default `isolated: false`): setups without nginx
+ * (local dev server, pages served by the desktop app itself) fail self-check and stay on this
+ * default indefinitely. Single stage and dual stage are evaluated the same way: stages are always
+ * cross-origin isolated (user decision, 2026-10-14), and the isolated session is established based
+ * on the currently mounted stage (`online/stageIsolation.ts`).
  *
- * 转译(`onlineCardSources.ts`)只在这里说「能」的时候才做,所以不能执行的页面不会去载入转译器那一块。
+ * Transpilation (`onlineCardSources.ts`) is only performed when this check says "yes", so pages
+ * that cannot execute will not load the transpiler.
  */
 export interface CardExecGate {
-  /** 站点运行开关，尚未读取按开启，但隔离尚未就绪仍不执行。 */
+  /** Site runtime switch; treated as on before reading, but still does not execute if isolation is not ready. */
   site: boolean | null;
   isolated: boolean;
   reason: string | null;
-  /** 兼容调用者的画面状态字段；出口能力不作为执行条件。 */
+  /** Compatible with caller's visual status field; egress capability is not an execution condition. */
   visual: boolean;
 }
 
@@ -27,12 +35,12 @@ export function cardExecGate(): Readonly<CardExecGate> {
   return gate;
 }
 
-/** 本页此刻能不能执行同步来的卡 */
+/** Whether this page can execute synced cards at this moment */
 export function cardExecAvailable(): boolean {
   return gate.site !== false && gate.isolated;
 }
 
-/** 本页此刻能不能执行同步来的卡的**画面**(声音线程只看 `cardExecAvailable`) */
+/** Whether this page can execute synced cards' **visuals** right now (sound thread only checks `cardExecAvailable`) */
 export function cardVisualExecAvailable(): boolean {
   return cardExecAvailable();
 }
@@ -40,7 +48,7 @@ export function cardVisualExecAvailable(): boolean {
 
 
 
-/** 不能执行时,卡片该报哪一句(参数面板):站点关了与没有隔离环境是两句话,状态都是 `not-isolated` */
+/** Message reported when execution is unavailable (parameters panel): site disabled vs. unisolated are distinct messages, both with status `not-isolated` */
 export function cardExecBlockedDetail(): string | null {
   if (gate.site === false) return tr("This site does not have online running of user cards and media effect cards enabled");
   if (!gate.isolated) return null;
@@ -52,7 +60,7 @@ export function setCardExecGate(patch: Partial<CardExecGate>): void {
   if (next.isolated) next.reason = null;
   if (next.site === gate.site && next.isolated === gate.isolated && next.reason === gate.reason && next.visual === gate.visual) return;
   gate = next;
-  for (const l of [...listeners]) { try { l(); } catch { /* 订阅方坏了 */ } }
+  for (const l of [...listeners]) { try { l(); } catch { /* The subscriber is broken */ } }
 }
 
 export function subscribeCardExecGate(cb: () => void): () => void {
@@ -60,14 +68,14 @@ export function subscribeCardExecGate(cb: () => void): () => void {
   return () => { listeners.delete(cb); };
 }
 
-/** 运行配置(`runtime-config.json` 解析后的对象或文本)里的总开关:只有明写 `false` 才是关 */
+/** Master switch in runtime config (`runtime-config.json` object or text): only explicit `false` is off */
 export function siteCardExecOf(config: unknown): boolean {
   let c: unknown = config;
   if (typeof c === "string") { try { c = JSON.parse(c); } catch { return true; } }
   return !(c && typeof c === "object" && (c as { onlineCardExec?: unknown }).onlineCardExec === false);
 }
 
-/** 单测用 */
+/** For unit tests */
 export function resetCardExecGateForTest(): void {
   gate = { site: null, isolated: false, reason: "No verdict on the isolated environment yet", visual: true };
   listeners.clear();

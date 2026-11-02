@@ -118,14 +118,19 @@ export function openOperationHistory(file, { failpoint = () => {}, maxBytes = 25
       const current = get(op.projectId, op.opId); verifyPrepared(current);
       if (['accepted', 'materialized'].includes(current.state)) { if (canonical(current.witness) !== canonical(witness)) throw historyError('accepted-witness-mismatch'); return current; }
       if (current.state === 'cancelled' || witness.state !== 'sealed') throw historyError('not-accepted');
-      // 顺序号按见证的签发方（域）各自单调：账号服务的一条序列，游客见证（文档服务自己签，`password-order.mjs` 的 GUEST_ORDER_DOMAIN）另一条
+      // Sequence numbers are monotonically increasing per witness issuer (domain): one sequence for the
+      // account service, and another for guest witnesses (signed by docservice itself, GUEST_ORDER_DOMAIN
+      // in `password-order.mjs`)
       const last = lastOrderSeq(op.projectId, witness.domain);
       if (last >= witness.orderSeq) throw historyError('order-regression');
       q("UPDATE operations SET state='accepted',witness=? WHERE project_id=? AND op_id=?").run(canonical(witness), op.projectId, op.opId);
       append(op.projectId, 'accepted-op', { opId: op.opId, witness }); failpoint('accepted-before-commit'); return get(op.projectId, op.opId);
     });
   }
-  /** 这个项目里这个域的见证最后一个被接受的顺序号；没有回 0。没写域的老见证（只在测试里）按同一条算 */
+  /**
+   * Last accepted sequence number for witnesses of this domain in this project; returns 0 if none.
+   * Legacy witnesses without a domain (tests only) count toward the same sequence.
+   */
   function lastOrderSeq(projectId, domain = null) {
     const row = q("SELECT witness FROM operations WHERE project_id=? AND state IN ('accepted','materialized') AND json_extract(witness,'$.domain') IS ? ORDER BY json_extract(prepared,'$.projectRev') DESC LIMIT 1").get(projectId, domain ?? null);
     return row ? JSON.parse(row.witness).orderSeq : 0;
@@ -202,7 +207,10 @@ export function openOperationHistory(file, { failpoint = () => {}, maxBytes = 25
     }); },
     pending: (projectId) => q("SELECT * FROM operations WHERE project_id=? AND state IN ('prepared','reserved','accepted')").all(projectId).map(decode),
     accepted: (projectId) => q("SELECT * FROM operations WHERE project_id=? AND state IN ('accepted','materialized') ORDER BY json_extract(prepared,'$.projectRev')").all(projectId).map(decode),
-    /** 这些登录在所有项目里留下的操作(只读):退出确认用它判「旧登录有没有还没定序的操作」并取各项目的结束位置。 */
+    /**
+     * Operations left by these logins across all projects (read-only): logout confirmation uses it to
+     * check "whether old logins have unsequenced operations" and retrieve end positions for each project.
+     */
     byLogins(loginIds) {
       const ids = new Set(loginIds);
       if (!ids.size) return [];

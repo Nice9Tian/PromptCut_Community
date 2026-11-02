@@ -3,8 +3,8 @@ import { TypingAnimation } from "../../cards/magicui/vendor/typing-animation";
 import { fitOr } from "../fit";
 
 /**
- * 打字机文字:从 mu-typing 拆出。
- * 逐字打印的动画效果。
+ * Typewriter text: extracted from mu-typing.
+ * Character-by-character typing animation effect.
  */
 interface Params {
   text: string;

@@ -1,31 +1,40 @@
 /**
- * 纯浏览器节点执行用户卡与素材效果卡时,本页「能运行什么」的登记处(块 N,`docs/plan/online-card-exec-contract.md` 第 7 节第 1、3 条)。
+ * Registry of "what can run" on this page when a pure browser node executes user cards and
+ * media effect cards (Block N, `docs/plan/online-card-exec-contract.md` Section 7 items 1 and 3).
  *
- * 三方用它:
- *   - 写:`src/editor/nodeCardInfoLive.ts` 按注册表里每张同步卡的运行状态与代码身份算出来写进来(`setNodeCardInfo`),
- *     节点报到后文档服务回的 `cardEnvFingerprint` 也记在这里(`setNodeCardEnvFingerprint`);
- *   - 读:`browserNode.ts`(`node.hello` 报运行时版本;能力位与 `cardSourceVersions` 给节点侧过滤用)、
- *     `planPublisher.ts`(清单计划的 `input.browser`,切分方据此决定给浏览器出不出用户卡、素材效果卡的那一份)。
+ * Three parties use it:
+ *   - Write: `src/editor/nodeCardInfoLive.ts` calculates and writes values based on the run state
+ *     and code identity of each synced card in the registry (`setNodeCardInfo`);
+ *     `cardEnvFingerprint` returned by the document service after node check-in is also recorded
+ *     here (`setNodeCardEnvFingerprint`);
+ *   - Read: `browserNode.ts` (`node.hello` reports runtime version; capability bits and
+ *     `cardSourceVersions` are used for node-side filtering), `planPublisher.ts` (`input.browser`
+ *     in manifest plan, based on which the splitter decides whether to emit user cards and
+ *     media effect cards for the browser).
  *
- * 只在内存里,不读环境、不碰舞台:纯数据加订阅,Node 单测直接载它。属于 render 这一层(`src/online/`)。
+ * In-memory only, does not inspect environment or touch stage: pure data plus subscriptions,
+ * loaded directly by Node unit tests. Belongs to the render layer (`src/online/`).
  *
- * # 「换代后一小段时间不报」
+ * # "Do not report for a short period after generation change"
  *
- * 同步来的卡换了一版(哪个文件变了),它的代码身份在 `NODE_CARD_SETTLE_MS` 之内不算数(沿用桌面 `CARD_CODE_SETTLE_MS` 的意思:
- * 作者连着存盘时,别在中间态上认领),过了才报。读的时候按此刻的时间过滤;有没定下来的就起一个计时器,到点再通知订阅方。
+ * When a synced card updates a version (a file changed), its code identity does not count within
+ * `NODE_CARD_SETTLE_MS` (following the rationale of desktop `CARD_CODE_SETTLE_MS`: when an author
+ * saves repeatedly, avoid claiming on intermediate states); it is reported only after that delay.
+ * Reads filter by current time; if any card has not settled, a timer is started to notify
+ * subscribers when it matures.
  */
 
-/** 新出现或换了身份的卡,过这么久才报(与 `server/card-code.mjs` 的 `CARD_CODE_SETTLE_MS` 同值;三级数字) */
+/** New or identity-changed cards report after this delay (same value as `CARD_CODE_SETTLE_MS` in `server/card-code.mjs`; tier-3 number) */
 export const NODE_CARD_SETTLE_MS = 1500;
 
 export interface NodeCardInfo {
-  /** 在线卡片运行时版本(`cardRuntime/version.ts`);本页不能执行用户卡与素材效果卡时为 null */
+  /** Online card runtime version (`cardRuntime/version.ts`); null if this page cannot execute user cards and media effect cards */
   cardRuntime: string | null;
   userCards: boolean;
   graphCards: boolean;
-  /** 卡片 id → 代码身份(本页已载入成功、且身份已定下来的卡) */
+  /** Card id → code identity (cards loaded successfully on this page with settled identities) */
   cardSources: Record<string, string>;
-  /** 文档服务按运行时版本算给本节点的环境指纹(`node.welcome.cardEnvFingerprint`);没报到或没有为 null */
+  /** Environment fingerprint calculated for this node by document service based on runtime version (`node.welcome.cardEnvFingerprint`); null if not checked in or absent */
   cardEnvFingerprint: string | null;
 }
 
@@ -36,19 +45,19 @@ export interface NodeCardInfoInput {
   cardSources: Readonly<Record<string, string>>;
 }
 
-/** 本页能运行的卡 → 登记的内容(纯函数,`nodeCardInfoLive.ts` 与单测用) */
+/** Cards runnable on this page → registered content (pure function, used by `nodeCardInfoLive.ts` and unit tests) */
 export function computeNodeCardInfo(input: {
-  /** 在线卡片运行时版本 */
+  /** Online card runtime version */
   runtime: string;
-  /** 本页此刻能不能执行同步来的卡(`cardRuntime/gate.ts` 的 `cardExecAvailable()`) */
+  /** Whether this page can execute synced cards right now (`cardExecAvailable()` in `cardRuntime/gate.ts`) */
   available: boolean;
-  /** 这台设备的图形能力够不够跑素材效果卡(块 G 判;没判过当不够) */
+  /** Whether this device has sufficient graphics capability to run media effect cards (judged by Block G; treated as insufficient if not judged) */
   graphCapable: boolean;
-  /** 同步来的卡(`syncedUserCards()`):id 与入口文件的键 */
+  /** Synced cards (`syncedUserCards()`): id and entry file key */
   cards: Iterable<{ id: string; source?: string }>;
-  /** 卡片 id → 运行状态名(`registry.cardRunState(id)?.state`) */
+  /** Card id → run state name (`registry.cardRunState(id)?.state`) */
   stateOf: (id: string) => string | undefined;
-  /** 入口文件的键 → 代码身份(`transpile.browser.codeIdentities`) */
+  /** Entry file key → code identity (`transpile.browser.codeIdentities`) */
   identities: Readonly<Record<string, string>>;
 }): NodeCardInfoInput {
   if (!input.available || !input.runtime) return { cardRuntime: null, userCards: false, graphCards: false, cardSources: {} };
@@ -66,7 +75,7 @@ type Listener = () => void;
 const listeners = new Set<Listener>();
 let current: NodeCardInfoInput = { cardRuntime: null, userCards: false, graphCards: false, cardSources: {} };
 let cardEnvFingerprint: string | null = null;
-/** 卡片 id → 当前身份第一次出现的时刻 */
+/** Card id → timestamp when current identity first appeared */
 const since = new Map<string, { identity: string; at: number }>();
 let timer: ReturnType<typeof setTimeout> | null = null;
 let timerImpl: { set: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>; clear: (t: ReturnType<typeof setTimeout>) => void } = {
@@ -80,7 +89,7 @@ const sameSources = (a: Readonly<Record<string, string>>, b: Readonly<Record<str
 };
 
 function notify() {
-  for (const l of [...listeners]) { try { l(); } catch { /* 订阅方坏了 */ } }
+  for (const l of [...listeners]) { try { l(); } catch { /* The subscriber is broken */ } }
 }
 
 function armTimer(now: number) {
@@ -94,7 +103,7 @@ function armTimer(now: number) {
   timer = timerImpl.set(() => { timer = null; notify(); }, wait + 5);
 }
 
-/** 整份换掉登记的内容(`nodeCardInfoLive.ts` 在注册表、闸门、代码身份任一变了时调);没变不通知 */
+/** Replaces entire registered content (called by `nodeCardInfoLive.ts` when registry, gate, or code identity changes); no notification if unchanged */
 export function setNodeCardInfo(next: NodeCardInfoInput, now: number = Date.now()): boolean {
   const same = next.cardRuntime === current.cardRuntime && next.userCards === current.userCards && next.graphCards === current.graphCards
     && sameSources(next.cardSources, current.cardSources);
@@ -110,7 +119,7 @@ export function setNodeCardInfo(next: NodeCardInfoInput, now: number = Date.now(
   return true;
 }
 
-/** 节点报到后文档服务回的 `cardEnvFingerprint`(没有传 null:下线、会话结束时清掉);没变不通知 */
+/** `cardEnvFingerprint` returned by document service after node check-in (pass null if absent: cleared on offline or session end); no notification if unchanged */
 export function setNodeCardEnvFingerprint(fp: string | null): boolean {
   const next = typeof fp === "string" && fp ? fp : null;
   if (next === cardEnvFingerprint) return false;
@@ -119,7 +128,7 @@ export function setNodeCardEnvFingerprint(fp: string | null): boolean {
   return true;
 }
 
-/** 此刻登记的内容;身份还没定下来的卡(换代不到 `NODE_CARD_SETTLE_MS`)不在 `cardSources` 里 */
+/** Currently registered content; cards without settled identities (new generation for less than `NODE_CARD_SETTLE_MS`) are not in `cardSources` */
 export function getNodeCardInfo(now: number = Date.now()): NodeCardInfo {
   const cardSources: Record<string, string> = {};
   for (const [id, identity] of Object.entries(current.cardSources)) {
@@ -134,7 +143,7 @@ export function subscribeNodeCardInfo(cb: Listener): () => void {
   return () => { listeners.delete(cb); };
 }
 
-/** 清空(下线、换项目、单测) */
+/** Clear (offline, project switch, unit test) */
 export function resetNodeCardInfo(): void {
   current = { cardRuntime: null, userCards: false, graphCards: false, cardSources: {} };
   cardEnvFingerprint = null;
@@ -142,7 +151,7 @@ export function resetNodeCardInfo(): void {
   if (timer !== null) { timerImpl.clear(timer); timer = null; }
 }
 
-/** 仅供测试:换掉计时器 */
+/** Test only: replace timer */
 export function __setNodeCardInfoTimers(impl: typeof timerImpl | null): void {
   timerImpl = impl ?? {
     set: (fn, ms) => { const t = setTimeout(fn, ms); (t as { unref?: () => void }).unref?.(); return t; },
@@ -150,12 +159,15 @@ export function __setNodeCardInfoTimers(impl: typeof timerImpl | null): void {
   };
 }
 
-/* ------------------------------------------------------------------ 这台设备的图形能力 */
+/* ------------------------------------------------------------------ Graphics capability of this device */
 
 let graphCapable = false;
 /**
- * 这台设备的图形能力够不够跑素材效果卡(契约 4.3,块 G 判:WebGL2 可用、不是软件渲染、最大纹理够大、没丢过上下文)。
- * 缺省「不够」:判过之前不报 `graphCards`,素材效果卡的任务不会认领到这台设备。变了通知订阅方。
+ * Whether this device has sufficient graphics capability to run media effect cards (contract 4.3,
+ * judged by Block G: WebGL2 available, not software rendering, max texture large enough, context
+ * never lost).
+ * Defaults to "insufficient": does not report `graphCards` before judgment, so media effect card
+ * tasks will not be claimed by this device. Notifies subscribers on change.
  */
 export function setNodeGraphCapable(ok: boolean): boolean {
   const next = ok === true;

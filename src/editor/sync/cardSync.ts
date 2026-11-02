@@ -1,19 +1,29 @@
 /**
- * 卡片源码同步的页面一侧(C6.6 设计稿第 5 节;编辑器进程一侧在 `server/vite-plugin-cards.ts` 与 `server/card-sync.mjs`)。
+ * The page side of card source sync (C6.6 design draft, section 5; the editor process side is in
+ * `server/vite-plugin-cards.ts` and `server/card-sync.mjs`).
  *
- * 同步本身在编辑器进程里做(它有文件、有改动层、有自己的一条文档服务连接),页面只做三件事:
- * - **绑定**:页面接上文档服务时(`syncManager.ts` 的 `bind`)告诉编辑器进程「我在哪个空间、项目用到哪些卡」
- *   (`POST /api/cards/sync/bind`);项目用到的卡变了(时间轴上添了卡)再报一次,新的用户卡 / 改过的内置卡会传上去;
- * - **票据**:共享项目里编辑器进程要一张 page 角色的连接票据(经 HMR 的 `pc:card-sync` `{ type: 'ticket' }`),
- *   页面在自己那条共享项目连接上签(`auth.ticket`),交回 `POST /api/cards/sync/ticket`;
- * - **提示**:装上了别人的版本、自己那份被覆盖(已备份)、覆盖了别人、装不上,都给气泡。
+ * The sync itself runs in the editor process (it has the files, the change layer, and its own connection
+ * to the document service). The page only does three things:
+ * - **Binding**: when the page connects to the document service (`bind` in `syncManager.ts`), it tells the
+ *   editor process "which space I am in and which cards the project uses" (`POST /api/cards/sync/bind`);
+ *   when the cards the project uses change (a card is added on the timeline) it reports again, and new
+ *   user cards / modified built-in cards are uploaded;
+ * - **Ticket**: in a shared project the editor process needs a connection ticket with the page role (via
+ *   HMR `pc:card-sync` `{ type: 'ticket' }`); the page signs it on its own shared-project connection
+ *   (`auth.ticket`) and hands it back to `POST /api/cards/sync/ticket`;
+ * - **Notices**: someone else's version was installed, your own copy was overwritten (and backed up), you
+ *   overwrote someone else's, or installing failed: each gives a bubble.
  *
- * 装上之后:编辑器进程照 edit_card 的做法热更新(页面换上新代码);热更新落地后本模块发页面事件 `pc-cards-synced`,
- * `ProbeGate.tsx` 收到后按当前项目重排一轮探针(身份键里的源码版本变了的卡补测,分派表跟着重算)——
- * 热更新虽然沿导入链重跑了探针模块,实测并不重排,所以要这一下。
- * **本模块不能静态引入那条链上的任何模块**(`probeRunner`、`costIdentity` 引了 `cardSourceFiles.mjs`,
- * 它把 `src/cards/**` 的源码全 glob 进来):一旦引了,`syncManager` 也成了每张卡的热更新祖先,
- * 改一张卡它就被重跑,页面的共享项目连接随之丢掉、退回本机空间(实测)。
+ * After installing: the editor process hot-updates the same way edit_card does (the page swaps in the new
+ * code); once the hot update lands, this module emits the page event `pc-cards-synced`, and `ProbeGate.tsx`,
+ * on receiving it, re-schedules a round of probes for the current project (cards whose source version in
+ * the identity key changed are re-measured, and the dispatch table is recomputed accordingly) —
+ * although the hot update re-runs the probe modules along the import chain, in practice it does not
+ * re-schedule, so this extra step is needed.
+ * **This module must not statically import any module on that chain** (`probeRunner`, and `costIdentity`
+ * which imports `cardSourceFiles.mjs`, which globs in all the source of `src/cards/**`): once it does,
+ * `syncManager` also becomes a hot-update ancestor of every card, so editing one card re-runs it, the
+ * page's shared-project connection is dropped as a result, and it falls back to the local space (observed).
  */
 import type { Project } from "../../kernel/project";
 import { usedCardIds, peekScopes } from "../cardScope";
@@ -23,17 +33,20 @@ const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.V
 
 export interface CardSyncHooks {
   /**
-   * 给一张 page 角色的连接票据(共享项目才会被要);拿不到就抛。
-   * 账号云端项目的票据带到期时刻(连接只能用到那时,编辑器进程据此提前换会话)。
+   * Gets a connection ticket with the page role (only requested for shared projects); throws if it cannot be obtained.
+   * The ticket of an account cloud project carries an expiry time (the connection is only usable until then,
+   * and the editor process uses it to renew the session ahead of time).
    */
   ticket: (projectId: string) => Promise<string | { ticket: string; expiresAt: number }>;
-  /** 气泡 */
+  /** Bubble */
   toast: (text: string, tone: "info" | "warn", ms?: number) => void;
-  /** 写入身份 → 显示名(「你」「Agent 对话 2」「bob」) */
+  /** Write identity → display name ("You", "Agent chat 2", "bob") */
   who: (actor: Record<string, unknown> | null | undefined) => string;
   /**
-   * 断网期间改过、云端也被别人改过的一张卡(编辑器进程的同步在重连对账时交过来):放进「冲突合并」(`syncManager.ts`)。
-   * 回 false 表示没放进去(没有待合并表),退回原来的覆盖提示。
+   * A card that was changed during the disconnection and was also changed by someone else in the cloud (the
+   * editor process's sync hands it over when reconciling on reconnect): put it into "Merge conflicts"
+   * (`syncManager.ts`). Returns false if it was not put in (there is no pending-merge table), falling back to
+   * the original overwrite notice.
    */
   conflict?: (c: { key: string; mine: string; cloud: string; rev: number; backup?: string }) => boolean;
 }
@@ -43,8 +56,9 @@ interface Binding {
   projectId: string;
   url: string;
   /**
-   * 账号云端项目:票据是页面凭登录向账号会话接口取的那种(`accountCardSync.ts`),编辑器进程用账号办法的子协议连。
-   * 其余(绑定时机、项目用到的卡、提示)与旧共享项目相同。
+   * Account cloud project: the ticket is the kind the page fetches from the account session API using its
+   * login (`accountCardSync.ts`), and the editor process connects with the account method's subprotocol.
+   * The rest (binding timing, the cards the project uses, notices) is the same as for the old shared project.
    */
   account?: boolean;
 }
@@ -60,7 +74,7 @@ export function detachCardSync(): void {
   bindingWrite = bindingWrite.catch(() => undefined).then(() => post("/api/cards/sync/unbind", {}));
 }
 
-/** 项目要带上的卡:时间轴上用到的(含卡片图里的节点)+ 归属表记在本项目名下的 */
+/** Cards the project must carry: those used on the timeline (including nodes in the card graph) + those the ownership table records under this project's name */
 export function projectCardIds(p: Project, projectId?: string | null): string[] {
   const ids = usedCardIds(p);
   const nodes = (p as { cardNodes?: unknown }).cardNodes;
@@ -101,7 +115,7 @@ async function send(b: Binding, cardIds: string[]) {
   }
 }
 
-/** 页面换了空间(本机项目 / 共享项目):告诉编辑器进程 */
+/** The page changed space (local project / shared project): tell the editor process */
 export function bindCardSync(b: Binding, project: Project, h: CardSyncHooks): void {
   hooks = h;
   current = b;
@@ -110,9 +124,9 @@ export function bindCardSync(b: Binding, project: Project, h: CardSyncHooks): vo
   void send(b, ids);
 }
 
-/** 项目变了:用到的卡有变化才再报一次(只在共享项目里有意义) */
+/** The project changed: report again only if the cards it uses changed (only meaningful in a shared project) */
 export function noteProjectForCardSync(project: Project): void {
-  // 在线页面不绑(`syncManager.ts`),current 恒为空;在线构建里连同 /api/cards/sync/bind 剪掉(M8 遗留 L24,写法见 `src/online/pageFlag.ts`)
+  // Online pages do not bind (`syncManager.ts`), so current is always empty; in the online build it is pruned together with /api/cards/sync/bind (M8 leftover L24, see `src/online/pageFlag.ts` for how it is written)
   if (ONLINE_BUILD) return;
   const b = current;
   if (!b || b.kind !== "shared") return;
@@ -123,7 +137,7 @@ export function noteProjectForCardSync(project: Project): void {
   void send(b, ids);
 }
 
-/** 装上之后等这次热更新落地(HMR 的 `vite:afterUpdate`,最多等 3 s)再请探针重排 */
+/** After installing, wait for this hot update to land (HMR `vite:afterUpdate`, up to 3 s) before asking the probes to re-schedule */
 let settleTimer: ReturnType<typeof setTimeout> | null = null;
 let waitingUpdate = false;
 function afterSyncedInstall() {
@@ -144,7 +158,7 @@ const nameOf = (key: unknown) => {
   return s.replace(/^src\//, "");
 };
 
-/** 编辑器进程送来的一条提示(HMR `pc:card-sync` 的 notice);开发模式的验收钩子也走这里 */
+/** A notice sent by the editor process (the notice of HMR `pc:card-sync`); the dev-mode acceptance-check hook also goes through here */
 export function receiveCardSyncNotice(d: Record<string, unknown>): void {
   onNotice(d);
 }
@@ -183,8 +197,10 @@ function onNotice(d: Record<string, unknown>) {
 }
 
 /**
- * 「冲突合并」里对一张卡点了「合并」:交给编辑器进程照我这边的源码装回本机并传上去(`server/card-sync.mjs` 的 takeMine)。
- * 在线构建里没有编辑器进程,回不支持(在线页面里不会出现卡片的冲突项:卡片源码同步只在桌面版跑)。
+ * Clicking "Merge" on a card in "Merge conflicts": hands it to the editor process to install back locally
+ * from my side's source and upload it (takeMine in `server/card-sync.mjs`).
+ * The online build has no editor process, so it returns unsupported (no card conflict items appear on
+ * online pages: card source sync only runs in the desktop app).
  */
 export async function takeMineCard(key: string, source: string): Promise<{ ok: boolean; error?: string }> {
   if (ONLINE_BUILD) return { ok: false, error: tr("The online page cannot edit card source") };
@@ -195,7 +211,7 @@ export async function takeMineCard(key: string, source: string): Promise<{ ok: b
 async function onTicket(d: Record<string, unknown>) {
   const reqId = typeof d.reqId === "string" ? d.reqId : null;
   const b = current;
-  // 不是本页面连着的共享项目:让别的页面答(多个页面时第一个交回的算数)
+  // Not the shared project this page is connected to: let other pages answer (with several pages, the first one to respond counts)
   if (!reqId || !b || b.kind !== "shared" || b.projectId !== d.projectId || !hooks) return;
   let reply: Record<string, unknown>;
   try {
@@ -207,14 +223,14 @@ async function onTicket(d: Record<string, unknown>) {
   await post("/api/cards/sync/ticket", reply);
 }
 
-/* HMR 通道:编辑器进程经它要票据、送提示。只在开发服务器给的页面里有 */
+/* HMR channel: the editor process uses it to request tickets and send notices. Only present in pages served by the dev server */
 if (typeof window !== "undefined" && import.meta.hot) {
   import.meta.hot.on("pc:card-sync", (d: Record<string, unknown>) => {
     if (d?.type === "ticket") void onTicket(d);
     else if (d?.type === "notice" && d.notice && typeof d.notice === "object") onNotice(d.notice as Record<string, unknown>);
     else if (d?.type === "changed") afterSyncedInstall();
   });
-  // 热更新的模块刚换上,注册表里的源码随之更新;下一拍再发,免得探针读到半截
+  // The hot-updated module was just swapped in and the source in the registry updates with it; send on the next tick so the probes do not read a half-updated state
   import.meta.hot.on("vite:afterUpdate", () => {
     if (waitingUpdate) setTimeout(fireSynced, 50);
   });

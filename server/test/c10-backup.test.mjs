@@ -1,15 +1,18 @@
 /**
- * C10 离线备份（`docs/plan/c10-contract.md` 第 10 节「本地备份」；语义 `product/platforms.md`「在线浏览器模式」：
- * 浏览器本地只放能重新拉回的缓存）。
- * 跑：node --test server/test/c10-backup.test.mjs
+ * C10 offline backup (`docs/plan/c10-contract.md` section 10 "Local backup"; semantics
+ * `product/platforms.md` "Online browser mode": browser locally only stores caches that can be
+ * refetched).
+ * Run: node --test server/test/c10-backup.test.mjs
  *
- *   C10-BK-01 在线页面收到备份（被丢弃的离线批次、被覆盖的实体）时不写浏览器存储：localStorage、sessionStorage、
- *             IndexedDB 一样都不碰，也不向编辑器进程 `POST /api/project-backups`；
- *   C10-BK-02 备份留在本页内存里，按收到的顺序列得出来；
- *   C10-BK-03 「丢弃」后给下载：下载的是 `.json` 文件，内容是那一份备份（kind、projectId、离线批次都在）；
- *   C10-BK-04 备份模块的源码里不出现 localStorage、sessionStorage、indexedDB。
+ *   C10-BK-01 Online page does not write to browser storage when receiving backups (discarded
+ *             offline batches, overwritten entities): does not touch localStorage, sessionStorage,
+ *             or IndexedDB at all, nor `POST /api/project-backups` to editor process;
+ *   C10-BK-02 Backups remain in memory on this page, listable in order received;
+ *   C10-BK-03 Offered for download after "discard": downloads a `.json` file containing that backup
+ *             (kind, projectId, offline batches all present);
+ *   C10-BK-04 Backup module source code contains no localStorage, sessionStorage, or indexedDB.
  *
- * 假设见 `c10-kit.mjs` 的 K10。实现不在时整组 skip。
+ * See K10 in `c10-kit.mjs` for assumptions. Skip the entire suite when implementation is missing.
  */
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -35,7 +38,7 @@ function spyStorage(name, writes) {
   };
 }
 
-/** 装上存储、fetch、DOM 下载的桩；回观测 */
+/** Install stubs for storage, fetch, and DOM download; return observations */
 function installSpies() {
   const writes = [];
   const fetches = [];
@@ -86,13 +89,13 @@ async function makeSink(spies) {
     const v = typeof sink[m.list] === 'function' ? sink[m.list]() : sink[m.list];
     return [...v];
   };
-  /** 下载第 i 份，回 `{ filename, text }`（回调或 DOM 两条路都认） */
+  /** Download the i-th copy, returning `{ filename, text }` (accepts both callback and DOM paths) */
   const download = async (i) => {
     const before = optionDownloads.length + spies.downloads.length;
     await sink[m.download](i);
     await new Promise((r) => setImmediate(r));
     if (optionDownloads.length + spies.downloads.length === before) {
-      // 也许按备份本身而不是下标
+      // Perhaps by backup itself rather than index
       await sink[m.download](list()[i]);
       await new Promise((r) => setImmediate(r));
     }

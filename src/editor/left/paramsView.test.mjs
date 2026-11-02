@@ -1,12 +1,15 @@
 /**
- * 参数面板与时间轴副标题看的参数视图(`paramsView.ts`)。跑:
+ * Parameter view seen by parameters panel and timeline subtitle (`paramsView.ts`). Run:
  *   node --test src/editor/left/paramsView.test.mjs
  *
- *   PV-01 先查能跑的定义,没有再用同步来的用户卡的只读视图;两边都没有回 undefined
- *   PV-02 画不出控件时的文案:同步卡源码里有控件却一个都没认出来 → 「在线浏览器模式暂不支持修改这张卡的参数…」;
- *         真没有控件 →「这张卡没有可调参数」;有控件 → null
- *   PV-03 副标题:第一个文字控件的当前值 → 默认值 → 说明
- *   PV-04 只认出一部分控件:认出的照常画,下面一行「在线浏览器模式暂不支持修改这张卡的其余参数…」
+ *   PV-01 First check runnable definitions; if none, use read-only view of synced user card;
+ *         return undefined if neither has it
+ *   PV-02 Copy when controls cannot be rendered: synced card source has controls but none were
+ *         recognized → "Parameters for this card cannot be modified in online browser mode yet…";
+ *         truly no controls → "This card has no adjustable parameters"; has controls → null
+ *   PV-03 Subtitle: current value of the first text control → default value → description
+ *   PV-04 Only some controls recognized: render recognized ones as usual, with a line below:
+ *         "Other parameters for this card cannot be modified in online browser mode yet…"
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test from "node:test";
@@ -28,7 +31,7 @@ test("PV-01 Look up the definition first, and fall back to the synced view if th
 
 test("PV-02 Text shown when controls cannot be drawn", () => {
   const unsupported = PU.onlineUnsupported("changing this card's parameters");
-  assert.ok(unsupported.includes("changing this card's parameters"), unsupported); // 前后缀来自 src/online/pageFlag.ts(还是中文)
+  assert.ok(unsupported.includes("changing this card's parameters"), unsupported); // Prefix and suffix come from src/online/pageFlag.ts (still in Chinese)
   assert.equal(V.paramsEmptyText({ name: "s", defaults: {}, controls: [], controlsIncomplete: true }), unsupported, "The source has controls but none were recognized");
   assert.equal(V.paramsEmptyText({ name: "s", defaults: {}, controls: [], controlsIncomplete: false }), V.NO_PARAMS_TEXT);
   assert.equal(V.paramsEmptyText({ name: "b", defaults: {}, controls: [] }), "This card has no adjustable parameters", "A runnable definition with no controls");
@@ -67,6 +70,7 @@ test("PV-05 unrecognized controls are explained one by one: which one and why; o
   const many = V.paramsSkippedText({ ...base, skippedControls: Array.from({ length: 7 }, (_, i) => ({ key: `k${i}`, reason: "r" })) });
   assert.match(many, /k4:r; 7 in total$/);
   assert.ok(!many.includes("k5"));
-  // 一个都没认出时,空白文案照旧,逐条说明另起一行(ParamsForm 画在它下面)
+  // When none are recognized, blank copy as before, item-by-item descriptions on a new line
+  // (ParamsForm renders below it)
   assert.equal(V.paramsEmptyText({ ...base, controls: [], skippedControls: [{ reason: "r" }] }), PU.onlineUnsupported("changing this card's parameters"));
 });

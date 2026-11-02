@@ -1,9 +1,11 @@
-// Agent 读 / 改卡片源码(0.4 起内置卡也能改)和只读 DOM 树用到的纯函数。
-// 转译 server/vite-plugin-cards.ts 后直接跑,不需要浏览器或 dev server。
-// 跑法:node --test server/test/card-source.test.mjs
+// Pure functions used by the Agent to read / edit card source code (built-in cards can also be
+// edited since 0.4) and read-only DOM trees.
+// Runs directly after transpiling server/vite-plugin-cards.ts, without a browser or dev server.
+// How to run: node --test server/test/card-source.test.mjs
 //
-// 这些函数错了都不会报错:找错文件就改错卡,闭包漏了范围就开出去一个改内核的口子,
-// 行号换算错了模型就对着别的行改。所以把几条钉死。
+// None of these functions will throw an error when wrong: finding the wrong file edits the wrong
+// card, leaking scope in a closure opens an exploit to modify the core, and wrong line number
+// conversion makes the model edit the wrong lines. Therefore, lock down several rules.
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -19,8 +21,9 @@ const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-card-source-test-'));
 
 let src = fs.readFileSync(path.join(ROOT, 'server/vite-plugin-cards.ts'), 'utf8');
 src = src.split("from 'typescript'").join(`from '${pathToFileURL(require_.resolve('typescript')).href}'`);
-// 插件里同目录的 .mjs(http-guard、card-overrides、prerender-client……)转译到临时目录后要指回 server/ 下的原文件
-// (子目录里的也一样:`./hosted-render/source-gate.mjs`)
+// The .mjs files in the same plugin directory (http-guard, card-overrides, prerender-client...) must
+// point back to original files under server/ after transpiling to the temporary directory
+// (same for subdirectories: `./hosted-render/source-gate.mjs`)
 src = src.replace(/from '\.\/([\w/-]+\.mjs)'/g, (_m, f) => `from '${pathToFileURL(path.join(ROOT, 'server', f)).href}'`);
 src = src.replace(/from '(\.\.\/src\/[^']+\.mjs)'/g, (_m, f) => `from '${pathToFileURL(path.resolve(ROOT, 'server', f)).href}'`);
 const js = ts.transpileModule(src, { compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext } }).outputText;
@@ -30,7 +33,7 @@ const {
   decodeMappings, originalPosition, formatDomTree, isolateClipForDom,
 } = await import(pathToFileURL(path.join(OUT, 'plugin.mjs')).href);
 
-// ── 找文件 ────────────────────────────────────────────────────────
+// ── Find files ──────────────────────────────────────────────────────
 test('a built-in card finds its definition file by id', () => {
   assert.equal(findCardFile(ROOT, 'rank-bars'), 'src/cards/native/rank-bars.tsx');
   assert.equal(findCardFile(ROOT, 'mu-number-ticker'), 'src/cards/magicui/number-ticker.card.tsx');
@@ -41,7 +44,7 @@ test('ids that do not exist and ids with paths are never found', () => {
   assert.equal(findCardFile(ROOT, '../render/Stage'), null);
 });
 
-// ── 能改的范围 ────────────────────────────────────────────────────
+// ── Editable scope ──────────────────────────────────────────────────
 test('only the card directory and the parts library are opened; the kernel / tests / out-of-bounds paths are never opened', () => {
   assert.equal(isEditablePath('src/cards/native/hud.css'), true);
   assert.equal(isEditablePath('src/parts/lib/chart-rank.tsx'), true);
@@ -64,7 +67,7 @@ test('sharing count: the definition file of each card is counted at least once, 
   assert.ok((counts.get('src/cards/native/rank-bars.tsx') || 0) >= 1);
 });
 
-// ── 编辑校验 ──────────────────────────────────────────────────────
+// ── Edit validation ────────────────────────────────────────────────
 test('syntax errors are rejected, with line numbers', () => {
   const r = checkSourceEdit('src/parts/lib/x.tsx', 'const a = 1;\n', 'const a = 1;\nconst b = ;\n');
   assert.equal(r.ok, false);
@@ -95,7 +98,7 @@ test('style files get no syntax check, but still block things other than newly a
 
 // ── source map ───────────────────────────────────────────────────
 test('VLQ decoding + position conversion (a segment worked out by hand)', () => {
-  // 第 1 行两段:[0,0,0,0] 和 [2,0,0,2];第 2 行一段:原行 +1 → [0,0,1,2]
+  // Line 1 has two fragments: [0,0,0,0] and [2,0,0,2]; line 2 has one fragment: original line +1 → [0,0,1,2]
   const dec = decodeMappings('AAAA,EAAE;AACA');
   assert.deepEqual(dec, [[[0, 0, 0, 0], [2, 0, 0, 2]], [[0, 0, 1, 2]]]);
   assert.deepEqual(originalPosition(dec, 1, 3), { line: 1, col: 3 });
@@ -104,7 +107,7 @@ test('VLQ decoding + position conversion (a segment worked out by hand)', () => 
   assert.equal(originalPosition(dec, 9, 1), null);
 });
 
-// ── DOM 树格式化 ──────────────────────────────────────────────────
+// ── DOM tree formatting ────────────────────────────────────────────
 const node = (ref, parent, extra = {}) => ({
   ref, parent, tag: 'div', cls: '', text: '', owner: 'Card', site: null, rect: [0, 0, 10, 10], wrap: 0, desc: 0, children: [], ...extra,
 });
@@ -124,7 +127,7 @@ test('list items mark "the same source line generated N sibling nodes", and thos
   assert.match(formatDomTree(nodes, 1, 1), /^\[ref_1\][\s\S]*\n  \[ref_3\]/, 'look further down from a ref');
 });
 
-// ── 片段隔离 ──────────────────────────────────────────────────────
+// ── Fragment isolation ────────────────────────────────────────────
 test('keep only the clip to inspect and the media it uses', () => {
   const project = {
     fps: 30, media: [{ id: 'm1' }, { id: 'm2' }],

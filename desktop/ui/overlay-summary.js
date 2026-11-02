@@ -1,11 +1,13 @@
 /*
- * 悬浮窗上那两行字怎么写。单独成一个文件,是为了能在 desktop/test 里用 node 测
- * (overlay.html 用 <script src> 引进来,挂在 window.pcOverlay 上;node 里用 vm 跑同一份)。
+ * How to format the two lines of text on the overlay. Kept in a separate file so it can be tested
+ * with node in desktop/test (overlay.html imports it via <script src> and mounts it on
+ * window.pcOverlay; node runs the same file via vm).
  *
- * 输入是外壳推来的 pc-overlay-state(desktop/src-tauri/src/skill_shell.rs 的 OverlayState):
+ * Input is pc-overlay-state pushed by the shell (OverlayState in desktop/src-tauri/src/skill_shell.rs):
  *   { skill, since, editor_up, sessions: [{ id, vendor, label, current: { tool, since } | null,
  *     last: { tool, ok, at } | null, lastSeen }] }
- * sessions 来自编辑器进程的 GET /api/agent/desktop(A4 的桌面会话分组),只在 SKILL 下有。
+ * sessions comes from GET /api/agent/desktop of the editor process (A4 desktop session groups),
+ * only present under SKILL.
  */
 (function (root) {
   'use strict';
@@ -46,7 +48,7 @@
     return out;
   }
 
-  // 工具名 → 人话。没列到的照原名显示。
+  // Tool name → plain words; a name not listed is shown as it is.
   // i18n-allow-start
   // [English, Chinese, Japanese] by tool name
   var TOOL_NAMES = {
@@ -78,7 +80,8 @@
     switch_cut: ['Switch cut', '切换剪辑', 'カットを切り替え'],
     add_cut: ['New cut', '新建剪辑', 'カットを新規作成'],
     set_theme: ['Change theme', '换主题', 'テーマを変更'],
-    // 会动用户界面的工具 2026-10-21 起名字带 user_interface_ 前缀;旧名(上面的 switch_cut 等)留着,老会话报上来的还是旧名
+    // Tools that modify the UI carry the user_interface_ prefix since 2026-10-21; legacy names
+    // (switch_cut etc. above) are kept because older sessions still report legacy names
     user_interface_switch_cut: ['Switch cut', '切换剪辑', 'カットを切り替え'],
     user_interface_seek: ['Seek playhead', '跳播放头', '再生ヘッドを移動'],
     user_interface_play: ['Play', '播放', '再生'],
@@ -125,7 +128,8 @@
     if (running.length > 1) {
       return { title: title, sub: t('{0} and others: {1} sessions working', who(running[0]), running.length), busy: true, skill: true };
     }
-    // 都没在跑:显示最近动过的那个会话的上一步(服务端给的顺序就是最近动过的在前)
+    // None are running: show the last step of the most recently active session (the server already
+    // orders them with the most recently active first)
     var recent = list.filter(function (s) { return s && s.last && s.last.tool; });
     if (!recent.length) {
       return { title: title, sub: t('{0} connected', who(list[0])), busy: false, skill: true };
@@ -140,7 +144,7 @@
     };
   }
 
-  /** 预览图下面那一行:「上一步 改卡片 · 3.2s · 12:03:04」 */
+  /** The line below the preview: "Last step Edit card · 3.2s · 12:03:04" */
   function previewCaption(d, fmtTime) {
     var p = d || {};
     var at = typeof p.t === 'number' ? ' · ' + p.t.toFixed(1) + 's' : '';

@@ -1,4 +1,4 @@
-/** 按附件种类返回展示图标。输入区里待发的附件卡片和用户气泡里已发出的文件胶囊用同一套 */
+/** Returns the display icon by attachment kind. The pending attachment cards in the input area and the sent file capsules in the user bubble use the same set */
 export function attachIcon(kind?: string): string {
   switch (kind) {
     case "image": return "🖼";

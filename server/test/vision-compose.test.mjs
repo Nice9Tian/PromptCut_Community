@@ -1,5 +1,6 @@
 // node --test server/test/vision-compose.test.mjs
-// see_frames 的合成:卡片层只进页面、素材层由 ffmpeg 抽帧,这里验纯函数那部分。
+// Composition of see_frames: card layer only enters the page, media layer frames extracted
+// by ffmpeg; tests the pure function part here.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PNG } from "pngjs";
@@ -23,17 +24,18 @@ test("cardsOnly: all media clips and the media list are removed, card clips are 
   const p = cardsOnly(project);
   assert.deepEqual(p.media, []);
   assert.deepEqual(p.tracks.map((t) => t.clips.map((c) => c.id)), [["c1"], [], []]);
-  // 原对象不动
+  // Original object remains untouched
   assert.equal(project.tracks[0].clips.length, 2);
 });
 
 test("mediaLayersAt: at second 12 there are two layers, video and image, ordered bottom to top; audio and hidden tracks do not count", () => {
   const layers = mediaLayersAt(project, 12);
-  // 数组从下到上:最后一个盖在最上面。时间轴上靠上的序列在上层,所以序列 2 的图片在下、序列 1 的视频在上
+  // Array from bottom to top: the last one covers the top. Tracks positioned higher on the
+  // timeline are on upper layers, so track 2 image is below, track 1 video is above
   assert.deepEqual(layers.map((l) => l.media.id), ["m2", "m1"]);
-  // 图片段 10 秒进、淡入 2 秒:第 12 秒刚好淡完
+  // Image clip enters at 10s with 2s fade-in: fade finishes exactly at 12s
   assert.equal(layers[0].opacity, 1);
-  // 视频段从素材第 1.5 秒起播,第 12 秒对应素材的 1.5 + (12 - 2.68)
+  // Video clip plays from 1.5s of the asset; 12s corresponds to 1.5 + (12 - 2.68) of the asset
   assert.ok(Math.abs(layers[1].mediaTime - (1.5 + 12 - 2.68)) < 1e-9);
   assert.equal(layers[1].opacity, 1);
   assert.equal(opacityAt(project.tracks[1].clips[0], 11), 0.5);
@@ -61,8 +63,8 @@ function solid(w, h, [r, g, b, a]) {
 test("alphaOver / composeFrame: cards sit on top of the media, transparent areas show the media through, and where there is no media it stays transparent", () => {
   const video = solid(4, 4, [0, 0, 255, 255]);
   const cards = solid(4, 4, [0, 0, 0, 0]);
-  cards.data.set([255, 0, 0, 255], 0); // 左上角一个不透明红点
-  cards.data.set([255, 0, 0, 128], 4); // 旁边一个半透明红点
+  cards.data.set([255, 0, 0, 255], 0); // An opaque red dot in the top-left corner
+  cards.data.set([255, 0, 0, 128], 4); // A translucent red dot next to it
   const out = composeFrame(4, 4, [video], cards);
   assert.deepEqual([...out.data.subarray(0, 4)], [255, 0, 0, 255], "The red dot covers the video");
   const mixed = [...out.data.subarray(4, 8)];
@@ -71,7 +73,7 @@ test("alphaOver / composeFrame: cards sit on top of the media, transparent areas
 
   const none = composeFrame(4, 4, [], cards);
   assert.equal(none.data[11], 0, "Where there is no media layer it stays transparent, leaving shrink to lay down the background color");
-  // 两层素材:上面那层半透明,能看见下面那层
+  // Two asset layers: top layer is translucent, allowing lower layer to be seen
   const top = solid(4, 4, [255, 255, 255, 128]);
   const two = composeFrame(4, 4, [video, top], null);
   const px = [...two.data.subarray(8, 12)];

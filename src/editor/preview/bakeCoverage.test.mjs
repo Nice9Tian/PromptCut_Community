@@ -1,26 +1,28 @@
 /**
- * 绿条覆盖范围的单测。跑:node --test src/editor/preview/bakeCoverage.test.mjs
+ * Unit tests for green bar coverage. Run: node --test src/editor/preview/bakeCoverage.test.mjs
  *
- * 这条绿条要么是可信的,要么就该拆掉:它承诺的是「绿的地方拖过去立刻有画面」。
- * 画多了就是骗人(拖过去还要等五秒,条却是绿的),画少了就白等。所以把意图钉死:
- *   - 一个预渲染好的时刻覆盖到**同一张卡的下一个时刻**为止,最后一个管到卡结束;
- *   - 没渲的时刻不产生任何绿色;
- *   - 相邻的段要合并,不能画成一排带缝的小块;
- *   - 覆盖范围不能超出这张卡自己的区间。
+ * This green bar must either be trustworthy or removed: it promises that "scrubbing to green areas
+ * immediately shows video". Drawing too much is misleading (scrubbing there still waits five seconds
+ * while the bar is green); drawing too little causes pointless waiting. So lock down the intent:
+ *   - A prerendered time covers until **the next time of the same card**, and the last covers until
+ *     card end;
+ *   - Unrendered times produce no green;
+ *   - Adjacent segments must be merged, not drawn as a row of small chunks with seams;
+ *   - Coverage range must not exceed the interval of the card itself.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import { coverageSegments } from "./bakeCoverage.ts";
 
-/** 造一张卡的若干时刻 */
+/** Create several sample times for a card */
 const spread = (clipId, start, end, ts) => ts.map((t) => ({ clipId, t, start, end }));
 const all = () => true;
 const none = () => false;
 
 test("A prerendered moment covers up to the next moment of the same card", () => {
   const m = spread("a", 0, 4, [0, 1, 2]);
-  // 只有 t=1 渲好了 → 覆盖 [1,2),不该蔓延到 0 或 2 之后
+  // Only t=1 is rendered → covers [1,2), should not bleed into 0 or past 2
   const segs = coverageSegments(m, (x) => x.t === 1);
   assert.deepEqual(segs, [{ start: 1, end: 2 }]);
 });
@@ -48,13 +50,13 @@ test("Prerendered halfway: the first half is green, the second half is not; pain
 
 test("Two segments with a gap between them cannot be merged", () => {
   const m = spread("a", 0, 5, [0, 1, 2, 3, 4]);
-  // 渲了 0 和 3,中间 1、2 没渲
+  // Rendered 0 and 3; 1 and 2 in between are unrendered
   const segs = coverageSegments(m, (x) => x.t === 0 || x.t === 3);
   assert.deepEqual(segs, [{ start: 0, end: 1 }, { start: 3, end: 4 }]);
 });
 
 test("A moment covers up to the next moment, and **never searches across cards**", () => {
-  // 两张卡首尾相接:a 的最后一个时刻只能管到 a 结束,不能借用 b 的时刻
+  // Two cards end-to-end: the last time of a can only cover until a ends, cannot borrow times from b
   const m = [...spread("a", 0, 2, [0, 1]), ...spread("b", 2, 4, [2, 3])];
   const segs = coverageSegments(m, (x) => x.clipId === "a");
   assert.deepEqual(segs, [{ start: 0, end: 2 }], "Covers only the two seconds of a itself");
@@ -71,7 +73,8 @@ test("Two cards with a gap between them: the green bar must break there too", ()
 });
 
 test("The coverage never goes beyond the interval of the card itself", () => {
-  // 构造一个越界的时刻表(理论上不该出现,但越界的绿条是会骗人的,得兜住)
+  // Construct an out-of-bounds timetable (should not occur in theory, but out-of-bounds green bars are
+  // misleading and must be handled)
   const m = [{ clipId: "a", t: 3, start: 0, end: 2 }];
   assert.deepEqual(coverageSegments(m, all), [], "A moment that is already after the card ends produces no green");
 });
@@ -87,7 +90,7 @@ test("Overlapping cards (stacked on different tracks) merge into one bar and are
 });
 
 test("The floating-point error accumulated by stepping 0.25 s at a time does not draw a pile of tiny gaps", () => {
-  // 模拟 sampleTimesFor 的累加:0, 0.25, 0.5, ... 末位有误差
+  // Simulate accumulation in sampleTimesFor: 0, 0.25, 0.5, ... with precision error in the last digit
   const ts = [];
   for (let i = 0, v = 0; i < 8; i++, v += 0.25) ts.push(v);
   const m = spread("a", 0, 2, ts);
@@ -101,13 +104,14 @@ test("Empty input does not crash", () => {
   assert.deepEqual(coverageSegments([], all), []);
 });
 
-/* ── 改一张卡:只有这一张的覆盖作废,而且是当帧作废 ─────────────── */
+/* ── Modify a card: only its coverage is invalidated, and invalidated on the current frame ──── */
 
 const { visibleCoverage, clipFingerprint, momentId } = await import("./bakeCoverage.ts");
 
 /**
- * 造一张卡的覆盖:[a,b) 里按 step 铺时刻。覆盖表存的是**事实**(有哪些时刻),
- * 段落由 visibleCoverage 现算 —— 这样前台渲完只要往 baked 里加一个 id 就行。
+ * Create coverage for a card: lay out times in [a,b) by step. Coverage table stores **facts** (which
+ * times exist); segments are computed on the fly by visibleCoverage: so when foreground finishes
+ * rendering, it only needs to add an id to baked.
  */
 const CC = (clipId, fp, a, b, step = 1) => {
   const moments = [];
@@ -116,13 +120,13 @@ const CC = (clipId, fp, a, b, step = 1) => {
   }
   return { clipId, fp, start: a, moments };
 };
-/** 把这几张卡的所有时刻都标成已渲 */
+/** Mark all sample times for these cards as rendered */
 const allBaked = (clips) => new Set(clips.flatMap((c) => c.moments.map((m) => m.id)));
 const COV = (clips, baked) => ({ clips, baked: baked ?? allBaked(clips), bakingAt: null, bytes: 0 });
 
 test("A changed: only the segment of A disappears, B is not affected at all", () => {
   const cov = COV([CC("a", "fpA", 0, 2), CC("b", "fpB", 10, 12)]);
-  // 用户改了 A 的参数 → A 的指纹变了,B 没变
+  // User modified parameters of A → fingerprint of A changed, B unchanged
   const v = visibleCoverage(cov, new Map([["fpA-changed", 0], ["fpB", 10]]));
   assert.deepEqual(v.coarse, [{ start: 10, end: 12 }], "Only the segment of B should remain");
   assert.equal(v.stale, 1, "The coverage of 1 card has been invalidated");
@@ -154,12 +158,12 @@ test("Everything changed: the whole bar is empty, not stale ones left behind to 
 });
 
 test("A moment that is not prerendered produces no color, and prerendering one adds a segment: segments are computed on demand, not stored statically", () => {
-  const a = CC("a", "fpA", 0, 3);           // 三个时刻:0 / 1 / 2
-  const cov = COV([a], new Set());           // 一个都没渲
+  const a = CC("a", "fpA", 0, 3);           // Three sample times: 0 / 1 / 2
+  const cov = COV([a], new Set());           // None rendered
   const live = new Map([["fpA", 0]]);
   assert.deepEqual(visibleCoverage(cov, live).coarse, [], "With nothing prerendered there is no color");
 
-  // 只渲中间那一刻 → 只覆盖 [1,2)
+  // Only render the middle time → covers only [1,2)
   const one = { ...cov, baked: new Set([momentId("a", 1)]) };
   assert.deepEqual(visibleCoverage(one, live).coarse, [{ start: 1, end: 2 }]);
   assert.equal(visibleCoverage(one, live).coarseBaked, 1);
@@ -175,7 +179,7 @@ test("The fingerprint only considers things that \"determine pixels\": changing 
   assert.notEqual(clipFingerprint(edited), clipFingerprint(base), "Changing parameters must invalidate");
 });
 
-/* ── 前台现场渲染完也要记账,否则条子慢半拍 ─────────────────────── */
+/* ── Foreground live render must also be recorded, otherwise the bar lags behind ─────────────── */
 
 test("markBaked makes \"the moment that was just prerendered\" count toward the coverage immediately", async () => {
   const m = await import("./bakeCoverage.ts");
@@ -184,7 +188,7 @@ test("markBaked makes \"the moment that was just prerendered\" count toward the 
   const live = new Map([["fpA", 0]]);
   assert.deepEqual(m.visibleCoverage(m.getCoverage(), live).coarse, [], "Not prerendered yet, no color");
 
-  // 前台现场渲染完了那一刻 —— 只给一个 id,不用重新盘点、不用重算段
+  // Foreground live-rendered that time: only give an id, no need to re-inventory or recompute segments
   m.markBaked([momentId("a", 1)]);
   assert.deepEqual(m.visibleCoverage(m.getCoverage(), live).coarse, [{ start: 1, end: 2 }],
     "The picture has appeared, so the bar must update at the same instant");
@@ -197,23 +201,26 @@ test("markBaked notifies subscribers (the bar repaints based on this)", async ()
   const off = m.subscribeCoverage(() => { hits++; });
   m.markBaked([momentId("a", 0)]);
   assert.equal(hits, 1, "Must notify after marking, otherwise the UI does not repaint");
-  // 同一个 id 再标一次不该白通知一遍(条子没变化,重画是浪费)
+  // Marking the same id again should not trigger a redundant notification (bar unchanged, redraw is
+  // wasteful)
   m.markBaked([momentId("a", 0)]);
   assert.equal(hits, 1, "Marking again should not notify again");
   off();
 });
 
-/* ── 挪一下位置 / 剪短一点:条子必须当帧说实话 ─────────────────────
+/* ── Move position / trim shorter: bar must reflect reality on the same frame ─────────────────────
  *
- * 这两条是从一次实测来的:项目里六张卡全部渲好、条子全绿,把 [20,24] 那张挪到 27 秒,
- * 条子**仍然在 [20,24] 上画着绿**,而那块时间轴已经空了,`stale` 还报 0。
- * 指纹里故意不带时间轴位置(挪一下像素不变),所以光看指纹看不出卡挪没挪;
- * 而每个时刻记的都是绝对秒,卡走了它们还留在原地。
+ * These two come from an actual test: all six cards in the project were rendered and the bar was
+ * completely green; moving the card at [20,24] to 27s, the bar **still painted green over [20,24]**,
+ * even though that part of the timeline was already empty, and `stale` still reported 0.
+ * Timeline position is deliberately omitted from fingerprints (moving does not change pixels), so
+ * fingerprint alone cannot tell whether a card moved; whereas each time records absolute seconds, so
+ * when the card moves away, they remain in place.
  */
 
 test("Card moved elsewhere: the green segment moves with it, instead of staying in place and misleading", () => {
   const cov = COV([CC("a", "fpA", 20, 24)]);
-  // 指纹没变(挪位置不改像素),但起点从 20 变成 27
+  // Fingerprint unchanged (moving position does not change pixels), but start changed from 20 to 27
   const v = visibleCoverage(cov, new Map([["fpA", 27]]));
   assert.deepEqual(v.coarse, [{ start: 27, end: 31 }], "The green should be where the card is now");
   assert.equal(v.stale, 0, "Moving does not invalidate: the prerendered image is still usable");
@@ -237,7 +244,8 @@ test("Trimming a bit should change the fingerprint: the length is part of the ca
 
 test("The fingerprint is a denylist: changing any field on a clip other than the position must invalidate", () => {
   const base = { id: "c1", cardId: "odometer", params: { to: 1 }, start: 0, end: 4 };
-  // 这几样都进了服务端的缓存键(bakeTarget 只摘掉 frame),漏一个就是「改完还是绿的」
+  // All of these enter the server cache key (bakeTarget only strips frame); missing any causes
+  // "still green after modification"
   for (const [fieldName, editedClip] of [
     ["emphasis", { ...base, emphasis: { kind: "shadow" } }],
     ["motion", { ...base, motion: { pathId: "p1" } }],
@@ -249,11 +257,12 @@ test("The fingerprint is a denylist: changing any field on a clip other than the
   }
 });
 
-/* ── 本来就没东西要渲的那几段,也该是有色的 ──────────────────────
+/* ── Segments that originally have nothing to render should also be colored ──────────────────────
  *
- * 用户报的现象:「有时候某一段时间没有素材,时间条那里永远不会变绿」。
- * 那几秒拖过去立刻就是它该有的样子(空的),按条子的契约就该有色;
- * 一直留白的话,用户分不清「还没渲」和「本来就没东西」,看上去像预渲染卡死了。
+ * User-reported issue: "Sometimes there is no media for a period of time, and the time bar never turns
+ * green there". Scrubbing to those seconds immediately shows what it should be (empty), so by the
+ * bar's contract it should be colored; if left blank, users cannot distinguish between "not yet rendered"
+ * and "inherently empty", making prerender look stuck.
  */
 const { idleSpans } = await import("./bakeCoverage.ts");
 

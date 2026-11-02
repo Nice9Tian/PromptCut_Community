@@ -1,18 +1,21 @@
 /**
- * 队列节点与文档服务的依赖守门。跑:node --test server/test/render-node-deps.test.mjs
+ * Dependency gatekeeper for queue nodes and document service.
+ * Run: node --test server/test/render-node-deps.test.mjs
  *
- * `server/render-node/` 要在没有 node_modules 的机器上跑(契约 A.1 / B 节),文档
- * 服务部署时也只拷 `server/docservice/`、`server/render-queue/`、`server/render-node/`
- * 这几个目录。所以从这些目录出发的整棵依赖树里只许出现两种说明符:
- *   - `node:` 前缀的 Node 内置模块;
- *   - 仓库内的相对路径(`./`、`../`),并递归检查被引的文件。
- * 任何裸包名(`pngjs`、`puppeteer`、`ws`……)都不行 —— 在没装依赖的机器上启动
- * 就会 ERR_MODULE_NOT_FOUND。曾经的实例:split.mjs → snapshot-store.mjs →
- * frame-mov.mjs → pngjs(现在 split.mjs 改从 snapshot-tier.mjs 取 snapshotTier)。
+ * `server/render-node/` needs to run on machines without node_modules (contract section A.1 / B),
+ * and deployment of document service only copies `server/docservice/`, `server/render-queue/`,
+ * and `server/render-node/`. Therefore, only two kinds of specifiers may appear in the entire
+ * dependency tree originating from these directories:
+ *   - Node built-in modules prefixed with `node:`;
+ *   - Relative paths within the repository (`./`, `../`), recursively checking referenced files.
+ * Any bare package name (`pngjs`, `puppeteer`, `ws`…) is forbidden: starting on a machine without
+ * installed dependencies causes ERR_MODULE_NOT_FOUND. A previous example: split.mjs →
+ * snapshot-store.mjs → frame-mov.mjs → pngjs (split.mjs now takes snapshotTier from
+ * snapshot-tier.mjs instead).
  *
- * 静态解析:`import … from '…'`、`export … from '…'`、`import '…'`、
- * `import('…')`、`require('…')`。只扫字面量说明符;注释里的同形文字也会被扫到,
- * 那是有意的保守。
+ * Static parsing: `import … from '…'`, `export … from '…'`, `import '…'`, `import('…')`,
+ * `require('…')`. Only scans literal specifiers; matching text in comments is also scanned,
+ * which is intentionally conservative.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -44,7 +47,7 @@ const listEntries = dir => fs.readdirSync(dir, { withFileTypes: true }).flatMap(
   return /\.(mjs|cjs|js)$/.test(entry.name) ? [full] : [];
 });
 
-/** 从入口出发静态遍历;回 { files, violations }。 */
+/** Statically traverse starting from entry; returns { files, violations }. */
 function walk(entries) {
   const seen = new Set();
   const violations = [];
@@ -90,7 +93,7 @@ test('D1 the whole dependency tree of server/render-node/ has only node: built-i
   assert.ok(entries.length > 0, 'No files under render-node');
   const { files, violations } = walk(entries);
   assert.deepEqual(violations, [], `Dependency tree:\n${files.join('\n')}`);
-  // 回归点:不再经 snapshot-store.mjs(它引 frame-mov.mjs → pngjs)
+  // Regression point: no longer goes through snapshot-store.mjs (it imports frame-mov.mjs → pngjs)
   assert.ok(!files.includes('server/snapshot-store.mjs'), 'render-node pulled in snapshot-store.mjs again');
   assert.ok(files.includes('server/snapshot-tier.mjs'));
 });

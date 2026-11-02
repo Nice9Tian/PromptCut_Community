@@ -7,15 +7,15 @@ import { useRailLayout } from "./railStore";
 import "./dock.css";
 
 /**
- * 一侧的抽屉 / 面板卡片 = reverse portal 的宿主。它自己**不渲染任何 React 子节点**,
- * 里面的页面节点全由 pageNodes.placePages() 挪进挪出(React 不认识这些子节点,也就不会去动它们)。
+ * The drawer / panel card on one side = the host of the reverse portal. It **renders no React children** itself;
+ * the page nodes inside are all moved in and out by pageNodes.placePages() (React does not know about these children, so it will not touch them).
  *
- * 宽度按侧走,不按项走:左侧仍是 .pc-left-drawer(--pc-left-drawer-w,pc.left.drawerW),右侧仍是 .pc-right-card
- * (--pc-right-panel-w,pc.right.panelW);收起 / 展开的淡入淡出也还是 left.css / chat.css 那两套。
- * 这一侧一个看得见的页面项都没有(被拖空,或者只剩剪辑组)时强制收起。
+ * Width follows the side, not the item: the left is still .pc-left-drawer (--pc-left-drawer-w, pc.left.drawerW), the right is still .pc-right-card
+ * (--pc-right-panel-w, pc.right.panelW); the collapse / expand fade is also still the two sets in left.css / chat.css.
+ * When this side has no visible page item at all (dragged empty, or only the cut group remains) it is forced to collapse.
  *
- * 选中项换了(点 rail、拖进来一项)而抽屉本来就开着:新露出来的那一页淡入、上浮一点(enterMotion);
- * 收起着切、或者同时展开了,交给卡片自己的展开动画,不叠两层。
+ * When the selected item changes (click on the rail, an item dragged in) while the drawer is already open: the newly revealed page fades in and floats up a little (enterMotion);
+ * if it was collapsed when switching, or expanded at the same time, leave it to the card's own expand animation and do not stack two.
  */
 export function DockHost({ side }: { side: Side }) {
   const layout = useRailLayout();
@@ -24,7 +24,7 @@ export function DockHost({ side }: { side: Side }) {
   const active = effectiveActive(layout, side);
   const ref = useRef<HTMLDivElement>(null);
 
-  // 登记宿主;卸载时注销并再放一次,把这一侧的节点收回停车位(否则节点会跟着宿主一起脱离文档)
+  // Register the host; on unmount unregister and place once more, to take this side's nodes back to the parking slot (otherwise the nodes would leave the document together with the host)
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -36,7 +36,7 @@ export function DockHost({ side }: { side: Side }) {
     };
   }, [side]);
 
-  // 布局、模式、收起状态任何一样变了都会重渲到这里:把节点摆到位、只显示选中页。幂等,多跑一次没关系
+  // A change in layout, mode, or collapsed state re-renders down to here: put the nodes in place and show only the selected page. Idempotent, running it once more does no harm
   useLayoutEffect(() => {
     placePages();
   });

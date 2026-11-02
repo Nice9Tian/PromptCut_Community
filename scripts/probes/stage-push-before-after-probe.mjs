@@ -1,31 +1,45 @@
 /**
- * 改舞台推帧的公共代码(`src/render/pinAnimations.ts`、`src/render/stageClock.ts`)前后,舞台各条路逐帧生成的快照变没变。
- * 出处:渲染重构「推帧一致性」(`docs/archive/agent-reports/AGENT-rr-push-exact.md`):这两处是可见舞台、测量、后台生成快照共用的,
- * 改了以后各条路受多大影响要量出来,不靠读代码推断。
+ * Whether snapshots generated frame by frame along each stage path changed before and after modifying
+ * common stage frame push code (`src/render/pinAnimations.ts`, `src/render/stageClock.ts`).
+ * Origin: render refactor "Frame Push Consistency" (`docs/archive/agent-reports/AGENT-rr-push-exact.md`):
+ * these two locations are shared across visible stage, measurement, and background snapshot generation;
+ * how much each path is affected after changes must be measured, not deduced by reading code.
  *
- *   node scripts/probes/stage-push-before-after-probe.mjs --before <改之前的在线构建> --after <改之后的在线构建>
- *        [--port-base 27590]                  用 +0(父页的源)、+2(舞台的源);两份构建先后用同一对端口
- *        [--cards <卡片 id,逗号分隔>]         缺省是那 14 张有状态的内置卡加 `terminal-3d`
- *        [--last 150] [--fps 30] [--seconds 20]   每条路从第 0 帧逐帧做到第几帧
- *        [--paths front,measure,bake]         要走哪几条路(另有 booleans,见下)
- *        [--json <文件>] [--out <目录>]        --out 把改前改后不相同的快照存下来
+ *   node scripts/probes/stage-push-before-after-probe.mjs --before <online build before> --after <online build after>
+ *        [--port-base 27590]                  uses +0 (parent page origin), +2 (stage origin); both builds use same ports in succession
+ *        [--cards <card ids, comma-separated>] default is those 14 stateful built-in cards plus `terminal-3d`
+ *        [--last 150] [--fps 30] [--seconds 20]   up to which frame each path processes frame by frame from frame 0
+ *        [--paths front,measure,bake]         which paths to run (booleans also available, see below)
+ *        [--json <file>] [--out <dir>]        --out saves snapshots that differ before and after changes
  *
- * 在线构建:`npx vite build --mode online --outDir <目录> --emptyOutDir`(改之前的那一份在改之前的树里构建)。
+ * Online build: `npx vite build --mode online --outDir <dir> --emptyOutDir` (build the pre-change copy in the pre-change tree).
  *
- * 三条路,每张卡每条路重新载入一次舞台,工程是只有这一张卡的 20 秒片段:
+ * Three paths; each card reloads the stage once per path; project is a 20-second clip with only this card:
  *
- *   front    可见舞台逐帧走:角色切成可见(`setRole('front')`),`setTime(帧号 / 帧率)` 一帧一帧往后拨(每次不到一秒,
- *            走的是舞台里「连续播放」那一支:`clock.advanceTo` 同步推一步、钉动画),等舞台自己的补拍做完(真实的一帧),
- *            再在舞台文档里调 `__pcCreateSnapshot()`。这是用户暂停着一帧一帧走时可见舞台的活渲画面。
- *   measure  测量的快照趟:后台舞台 `render(t, { jump: true, probe: 'snapshot' })`,从挂载帧逐帧推、每帧生成快照发回来
- *            (`probe-frame` 事件)。产品里这一趟按一拍预算截断,所以只有头几帧;两份构建取到的帧数不一样时只比都有的。
- *   bake     后台舞台为浏览器节点逐帧生成快照(`bakeFrame`,顺着做)。
- *   booleans 测量的两趟布尔探针(`render(t, { jump: true, probe: 'booleans' })`):这张卡判没判成「只推自己子树的时间就行」(`vtOk`)、
- *            「可定位」(`seekOk`)。缺省不走,`--paths` 里写上才走;只报改前改后各是什么。
+ *   front    Visible stage advances frame by frame: role switched to visible (`setRole('front')`),
+ *            scrubbing forward frame by frame with `setTime(frame / fps)` (under one second each time,
+ *            taking the "continuous playback" branch in stage: `clock.advanceTo` synchronously pushes
+ *            one step, pinning animations); wait for stage's own catch-up tick to finish (a real frame),
+ *            then call `__pcCreateSnapshot()` in the stage document. This is the live render frame
+ *            of the visible stage when user scrubs frame by frame while paused.
+ *   measure  Measurement snapshot pass: background stage `render(t, { jump: true, probe: 'snapshot' })`,
+ *            advancing frame by frame from mount frame, generating snapshots each frame and sending them
+ *            back (`probe-frame` event). In production, this pass is truncated by a one-tick budget, so
+ *            only the first few frames exist; when the two builds yield different frame counts, compare
+ *            only common frames.
+ *   bake     Background stage generates snapshots frame by frame for browser nodes (`bakeFrame`, sequentially).
+ *   booleans Two boolean probe passes for measurement (`render(t, { jump: true, probe: 'booleans' })`):
+ *            whether this card is classified as "only advancing its own subtree time is sufficient"
+ *            (`vtOk`) and "seekable" (`seekOk`). Not run by default, runs only when specified in `--paths`;
+ *            only reports values before and after.
  *
- * 报告:每张卡每条路,改前改后逐帧比(口径同 `snapshotCompare.mjs`:标签、属性、文本逐字比,样式数值 1e-6 容差),
- * 写出相同几帧、不同几帧、哪些帧不同、第一处差在哪;另报每份构建里 front 与 bake 两条路对不对得上(同一帧两条路的快照比)。
- * 这个探针只量、不判:改前改后不同不算失败(改的就是它)。退出码:页面报错或某条路没跑出来退出 1;没有构建退出 2;其余 0。
+ * Report: for each card and each path, compare frame by frame before and after (matching the criteria
+ * of `snapshotCompare.mjs`: compare tags, attributes, text verbatim, style values with 1e-6 tolerance),
+ * reporting count of identical frames, count of differing frames, which frames differ, and where the first
+ * difference is; also reports whether front and bake paths match in each build (snapshot comparison of
+ * the same frame across both paths). This probe only measures and does not judge: differences before and
+ * after changes are not considered failures (that is what was changed). Exit code: page error or a path
+ * failed to run exits 1; missing build exits 2; otherwise 0.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -50,7 +64,7 @@ for (const [name, dir] of [['--before', BEFORE], ['--after', AFTER]]) {
   if (!dir || !fs.existsSync(path.join(dir, 'stage.html'))) { console.error(`${name} needs the directory of an online build (containing stage.html): ${dir}`); process.exit(2); }
 }
 
-/** React 自动生成的元素编号:每重新挂载一次就换一个号,按出现顺序重排以后再比(同 `stateful-seq-vs-jump-probe.mjs`) */
+/** React auto-generated element IDs: changes on each remount, reordered by appearance order before comparison (same as `stateful-seq-vs-jump-probe.mjs`) */
 const REACT_ID = /_r_[0-9a-z]+_|:r[0-9a-z]+:|«r[0-9a-z]+»/g;
 const renumberIds = (html) => { const seen = new Map(); return html.replace(REACT_ID, (m) => { if (!seen.has(m)) seen.set(m, `_r_#${seen.size}_`); return seen.get(m); }); };
 const sameHtml = (a, b) => {
@@ -66,7 +80,7 @@ const projectOf = (cardId) => ({
   tracks: [{ id: 'tr', name: cardId, hidden: false, clips: [{ id: 'clip', kind: 'card', cardId, start: 0, end: SECONDS, params: {} }] }],
 });
 
-/** 父页:舞台 iframe 铺在原位、看得见(可见舞台那条路要真实的帧);收 `bake-frame`、`probe-frame` */
+/** Parent page: stage iframe placed in original position and visible (visible stage path requires real frames); receives `bake-frame` and `probe-frame` */
 const PARENT_HTML = `<!doctype html><meta charset=utf-8><title>before-after parent</title>
 <body style="margin:0"><iframe id=st style="position:absolute;left:0;top:0;width:960px;height:540px;border:0"></iframe>
 <script>
@@ -107,7 +121,7 @@ const handlerFor = (dist) => (req, res) => {
 const failures = [];
 const guard = (what, job) => { let timer; return Promise.race([job, new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`${what} produced no result in 5 minutes`)), 300000); })]).finally(() => clearTimeout(timer)); };
 
-/** 在一份构建上把每张卡的几条路各走一遍;回 { 卡: { 路: Map(帧 → HTML) } } */
+/** Run each path for every card on a single build; return { card: { path: Map(frame → HTML) } } */
 async function runBuild(label, dist) {
   const servers = await Promise.all([serve(BASE, handlerFor(path.resolve(dist)), '127.0.0.1'), serve(BASE + 2, handlerFor(path.resolve(dist)), '127.0.0.1')]);
   const out = {};
@@ -140,7 +154,8 @@ async function runBuild(label, dist) {
             await rpc('setProject', projectOf(cardId), { reset: true });
             for (let n = 0; n <= LAST; n++) {
               await rpc('setTime', n / FPS);
-              // 舞台的补拍排在微任务里;再等真实的一帧,让这一帧排下的提交和动画事件都落地
+              // Stage catch-up ticks are queued in a microtask; then wait for a real frame so that commits
+              // and animation events scheduled in this frame both settle
               const html = await guard('Get snapshot', stageFrame().evaluate(async (clipId) => {
                 const raf = window.__pcRealRaf || window.requestAnimationFrame.bind(window);
                 const wait = window.__pcRealSetTimeout || window.setTimeout.bind(window);
@@ -189,7 +204,7 @@ const before = await runBuild('Before', BEFORE);
 const after = await runBuild('After', AFTER);
 if (OUT) fs.mkdirSync(OUT, { recursive: true });
 
-/** 两组「帧 → HTML」逐帧比(只比两边都有的帧) */
+/** Compare two sets of "frame → HTML" frame by frame (only comparing frames present on both sides) */
 const compare = (a, b, label) => {
   const frames = [...a.keys()].filter((n) => b.has(n)).sort((x, y) => x - y);
   const differ = [];

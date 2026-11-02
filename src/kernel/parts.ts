@@ -3,14 +3,18 @@ import type { PartDef } from "./partTypes";
 import { frameBox, resolveFrame, type Box, type Size } from "./layout.ts";
 
 /**
- * 组合卡的部件实例树:纯函数,不碰 store。
+ * Part instance tree for composite cards: pure functions, does not touch the store.
  *
- *   - 增删改移都返回**新树**(原树不动),store 拿到直接存;
- *   - 校验和写入分开:先 validatePartTree 把整棵树看一遍,一处不合法整棵不写;
- *   - 世界坐标由父框逐级合成(partWorldBox),**只存局部框**,和卡片级 frame 一个原则;
- *   - 时序(partsTiming)按每个实例的 enterMs + 部件自己的 settleMs 算,给封装和代码页显示。
+ *   - Add, delete, edit, and move all return a **new tree** (original tree unchanged); the store
+ *     saves it directly;
+ *   - Validation and writing are separate: validatePartTree inspects the entire tree first; if any
+ *     part is invalid, the tree is not written;
+ *   - World coordinates are composed level-by-level from parent boxes (partWorldBox), **storing
+ *     only local boxes**, following the same principle as card-level frames;
+ *   - Timing (partsTiming) is calculated from each instance's enterMs + the part's own settleMs,
+ *     for envelope and code page display.
  *
- * 部件的注册表由调用方传进来(lookup),这样 node 里能单测,不用拉起 React。
+ * The parts registry is passed in by the caller (lookup) for unit testing in Node without React.
  */
 
 export type PartLookup = (id: string) => PartDef<any> | undefined;
@@ -19,7 +23,7 @@ export function newPartInstanceId(): string {
   return "p" + Math.random().toString(36).slice(2, 8);
 }
 
-/** 树里找一个实例,顺带给出它的父数组和下标(增删移都要) */
+/** Find an instance in the tree, along with its parent array and index (needed for add/delete/move) */
 export function findPart(tree: PartInstance[], id: string): { node: PartInstance; parent: PartInstance[]; index: number; parentId: string | null } | null {
   const walk = (list: PartInstance[], parentId: string | null): ReturnType<typeof findPart> => {
     for (let i = 0; i < list.length; i++) {
@@ -47,30 +51,35 @@ export function flattenParts(tree: PartInstance[]): PartInstance[] {
   return out;
 }
 
-/* ---------------- 校验 ---------------- */
+/* ---------------- Validation ---------------- */
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 /**
- * 部件的 frame 允许哪些键。
+ * Allowed keys for a part's frame.
  *
- * **故意不含 rotateX / rotateY / translateZ** —— 部件级三维现在渲染接不住,放行等于给一个
- * 假的能力。CSS 的 `perspective` 只作用于直接子元素,链路是
- * `AnimClock(perspective) → 卡片 div → 部件 div`,要传到部件那一层得靠卡片 div 的 preserve-3d,
- * 而那个只在**卡片自己的 frame** 是三维时才写。实测部件 rotateY(40°) 的外接框高度:
- *   卡片 div 无 preserve-3d(卡片是二维时的常态) 300.00 —— 纯仿射斜切,没有近大远小
- *   卡片 div 有 preserve-3d                      336.44 —— 才是真透视
- * 而且就算卡片也摆进了空间,只要这张卡带了淡入淡出 / 强调,Stage 会把 opacity / filter
- * 写在同一个 div 上,透视又归零(实测同样回到 300.00)。
+ * **Deliberately excludes rotateX / rotateY / translateZ**: part-level 3D cannot be handled by
+ * rendering right now; allowing them grants a fake capability. CSS `perspective` only affects
+ * direct children; the chain is `AnimClock(perspective) → card div → part div`. Passing it down
+ * to the part layer relies on the card div's preserve-3d, which is only written when the **card's
+ * own frame** is 3D. Measured bounding box height for a part with rotateY(40°):
+ *   card div without preserve-3d (normal when card is 2D) 300.00: pure affine skew, no foreshortening
+ *   card div with preserve-3d                             336.44: true perspective
+ * And even if the card is placed in space, if this card has fade in/out / emphasis, Stage writes
+ * opacity / filter onto the same div, resetting perspective to zero (measured returning to 300.00).
  *
- * 三种情况给三个结果,和素材层被 reject3dOnMedia 拒掉是同一个理由:
- * 宁可当场说不行,也别让 Agent 设了以为成了。要三维就整张卡摆(set_position 的三维参数)。
- * kernel/envelope.ts 里 clip 级那份清单是**含**三维的,那一层渲染是对的。
+ * Three situations yield three results, for the same reason the media layer is rejected by
+ * reject3dOnMedia: better to fail immediately than let the Agent think it worked. If 3D is needed,
+ * position the entire card (3D parameters of set_position). The clip-level list in
+ * kernel/envelope.ts **includes** 3D; rendering at that level is correct.
  */
 const FRAME_KEYS = new Set(["x", "y", "w", "h", "anchor", "scale", "rotate"]);
 const PART_3D_KEYS = ["rotateX", "rotateY", "translateZ"];
 
-/** 一棵树最多多少个实例。MCP 传进来的是任意 JSON,没上限的话一次就能塞进几万个节点 */
+/**
+ * Maximum instances per tree. MCP passes arbitrary JSON; without a limit, tens of thousands of
+ * nodes could be inserted at once.
+ */
 export const MAX_PART_NODES = 200;
 
 export function validatePartFrame(raw: unknown, where: string): ClipFrame | undefined {
@@ -94,7 +103,8 @@ export function validatePartFrame(raw: unknown, where: string): ClipFrame | unde
     const a = raw.anchor;
     if (!Array.isArray(a) || a.length !== 2 || !isNum(a[0]) || !isNum(a[1])) throw new Error(`frame.anchor of ${where} must be two numbers [ax, ay], 0~1`);
   }
-  // 重建对象:键序固定、不带多余字段,原样写回的比较才不会因为键序不同判成改了
+  // Reconstruct object: fixed key order without extra fields, so write-back comparisons won't treat
+  // different key ordering as a mutation
   const f = raw as Record<string, unknown>;
   return {
     x: f.x as number,
@@ -104,8 +114,9 @@ export function validatePartFrame(raw: unknown, where: string): ClipFrame | unde
     ...(f.anchor !== undefined ? { anchor: [(f.anchor as number[])[0], (f.anchor as number[])[1]] as [number, number] } : {}),
     ...(f.scale !== undefined ? { scale: f.scale as number } : {}),
     ...(f.rotate !== undefined ? { rotate: f.rotate as number } : {}),
-    // 这里是**显式重建**:上面放行了什么,这里就要有什么,否则会出现「校验通过、值被悄悄丢掉」。
-    // 三维那三项上面直接拒了,所以这里也不该有 —— 两处一起看才说得清。
+    // This is **explicit reconstruction**: whatever is allowed above must be kept here, otherwise
+    // "validation passes, value silently dropped" occurs. The three 3D items were rejected above, so
+    // they shouldn't be here either: viewing both places together makes this clear.
   };
 }
 
@@ -116,7 +127,10 @@ function describeControl(c: Control): string {
   return bits.join(",") + ")";
 }
 
-/** 部件参数:键名要真有、select 在选项里、number 是数字、必填不能空。返回和 defaults 合并后的全量 */
+/**
+ * Part parameters: key must exist, select must be in options, number must be numeric, required
+ * cannot be empty. Returns full parameters merged with defaults.
+ */
 export function validatePartParams(def: PartDef<any>, patch: Record<string, unknown> | undefined, existing?: Record<string, unknown>): Record<string, unknown> {
   const known = new Map(def.controls.map((c) => [c.key, c]));
   const problems: string[] = [];
@@ -139,7 +153,10 @@ export function validatePartParams(def: PartDef<any>, patch: Record<string, unkn
   return merged;
 }
 
-/** 整棵树:实例 id 唯一、partId 存在、参数合法、frame 合法、enterMs 非负、嵌套不超过 4 层 */
+/**
+ * Entire tree: unique instance ids, partId exists, valid params, valid frame, non-negative enterMs,
+ * and nesting depth at most 4 levels.
+ */
 export function validatePartTree(tree: unknown, lookup: PartLookup): PartInstance[] {
   if (!Array.isArray(tree)) throw new Error("parts must be an array");
   const ids = new Set<string>();
@@ -177,7 +194,7 @@ export function validatePartTree(tree: unknown, lookup: PartLookup): PartInstanc
   return walk(tree, 0, "parts");
 }
 
-/* ---------------- 增删改移(返回新树) ---------------- */
+/* ---------------- Add, delete, edit, move (returns new tree) ---------------- */
 
 function cloneTree(tree: PartInstance[]): PartInstance[] {
   return JSON.parse(JSON.stringify(tree));
@@ -192,7 +209,10 @@ export interface NewPartSpec {
   id?: string;
 }
 
-/** 加一个实例。parentId 省略 = 加在根;index 省略 = 追加到末尾。frame 省略 = 部件的 defaultFrame */
+/**
+ * Add an instance. Omitted parentId = add to root; omitted index = append to end; omitted frame =
+ * part's defaultFrame.
+ */
 export function addPart(tree: PartInstance[], spec: NewPartSpec, lookup: PartLookup, at?: { parentId?: string | null; index?: number }): { tree: PartInstance[]; node: PartInstance } {
   const def = lookup(spec.partId);
   if (!def) throw new Error(`No part with id "${spec.partId}", see list_parts for the available ones`);
@@ -233,13 +253,16 @@ export function removePart(tree: PartInstance[], id: string): PartInstance[] {
 
 export interface PartPatch {
   params?: Record<string, unknown>;
-  /** null = 清掉框(铺满父框) */
+  /** null = clear frame (fills parent box) */
   frame?: ClipFrame | null;
   enterMs?: number;
   label?: string;
 }
 
-/** 改参数 / 框 / 时序。参数是稀疏合并;frame 传了就整个替换(传 null 清掉) */
+/**
+ * Update params / frame / timing. Params are sparsely merged; provided frame replaces entirely
+ * (pass null to clear).
+ */
 export function updatePart(tree: PartInstance[], id: string, patch: PartPatch, lookup: PartLookup): { tree: PartInstance[]; node: PartInstance } {
   const next = cloneTree(tree);
   const hit = findPart(next, id);
@@ -267,7 +290,7 @@ export function updatePart(tree: PartInstance[], id: string, patch: PartPatch, l
   return { tree: next, node: hit.node };
 }
 
-/** 挪到别的父节点 / 别的位置。parentId null = 根;不能挪进自己的子树 */
+/** Move to another parent / position. parentId null = root; cannot move into its own subtree */
 export function movePart(tree: PartInstance[], id: string, to: { parentId?: string | null; index?: number }): PartInstance[] {
   const next = cloneTree(tree);
   const hit = findPart(next, id);
@@ -286,20 +309,25 @@ export function movePart(tree: PartInstance[], id: string, to: { parentId?: stri
   return next;
 }
 
-/* ---------------- 坐标与时序 ---------------- */
+/* ---------------- Coordinates and timing ---------------- */
 
 export interface PartPlacement {
-  /** 实例的框在父坐标系里的矩形(缩放前) */
+  /** Instance box rectangle in parent coordinate space (before scaling) */
   local: Box;
-  /** 画面绝对矩形(父级的框和缩放逐级合成;旋转不参与,文档里说明) */
+  /**
+   * Absolute frame rectangle (composed level-by-level from parent boxes and scales; rotation
+   * excluded, as documented).
+   */
   world: Box;
-  /** 累计缩放 */
+  /** Cumulative scale */
   scale: number;
 }
 
 /**
- * 逐级合成每个实例的画面位置。parent 是组合卡画布在画面上的矩形(clip 的 world box)和它的累计缩放。
- * 每个实例的框相对它的父框(根实例的父框就是画布),子实例的父框是父实例的框。
+ * Compose each instance's screen position level by level. parent is the composite card canvas
+ * rectangle on screen (the clip's world box) and its cumulative scale. Each instance's box is
+ * relative to its parent box (the root instance's parent box is the canvas); a child instance's
+ * parent box is its parent instance's box.
  */
 export function placeParts(tree: PartInstance[], canvas: { box: Box; scale: number }): Map<string, PartPlacement> {
   const out = new Map<string, PartPlacement>();
@@ -315,7 +343,7 @@ export function placeParts(tree: PartInstance[], canvas: { box: Box; scale: numb
         width: local.width * scale,
         height: local.height * scale,
       };
-      // 缩放绕锚点:把因缩放多出 / 少掉的部分按锚点分摊
+      // Scale around anchor: distribute the gain / loss from scaling across the anchor point
       if (f.scale !== 1) {
         const dw = local.width * parentScale * (f.scale - 1);
         const dh = local.height * parentScale * (f.scale - 1);
@@ -336,7 +364,7 @@ export interface PartTimingEntry {
   after: "hold" | "loop" | "evolve";
 }
 
-/** 每个实例的进场 / 落定(相对 clip 起点),以及整棵树的落定和「之后」 */
+/** Each instance's entrance / settle (relative to clip start), plus whole-tree settle and "after" */
 export function partsTiming(tree: PartInstance[], lookup: PartLookup): { settleMs: number; after: "hold" | "loop" | "evolve"; parts: Map<string, PartTimingEntry> } {
   const parts = new Map<string, PartTimingEntry>();
   let settleMs = 0;

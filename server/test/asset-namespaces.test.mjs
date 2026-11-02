@@ -1,14 +1,17 @@
 /**
- * 素材服务的三个命名空间 `media` / `snap` / `px`（契约 `docs/plan/artifact-transfer-contract.md` 第 1 节，
- * 第 7 节用例 S1～S4）。
- * 跑：node --test server/test/asset-namespaces.test.mjs
+ * Three namespaces of the asset service: `media` / `snap` / `px` (contract
+ * `docs/plan/artifact-transfer-contract.md` section 1, section 7 test cases S1-S4).
+ * Run: node --test server/test/asset-namespaces.test.mjs
  *
- * 只照契约写，不看实现。`asset-service.ts` 照 C5 的办法转译后 import（`fake-asset-service.mjs`），
- * 三个命名空间都注入 memory 实现（`assetServiceMiddleware(root, { stores: { media, snap, px } })`），
- * 分片调小到 1 KiB，免得每条用例都传几十 MB。
+ * Written strictly against the contract, ignoring implementation. `asset-service.ts` is imported
+ * after transpilation following C5 (`fake-asset-service.mjs`), all three namespaces are injected
+ * with memory implementations (`assetServiceMiddleware(root, { stores: { media, snap, px } })`),
+ * and chunk size is reduced to 1 KiB to avoid transferring tens of MB in each test case.
  *
- * S3（`media` 的全部行为不变）的主体由 `npm test` 覆盖：`asset-service.test.mjs`、`asset-store-http.test.mjs`
- * 两个文件本分支不改、照旧全过。这里另补契约第 1 节末条：旧写法 `opts.store` 仍然认，当作 `stores.media`。
+ * The bulk of S3 (all `media` behaviors unchanged) is covered by `npm test`: the two files
+ * `asset-service.test.mjs` and `asset-store-http.test.mjs` are not modified in this branch and pass
+ * as usual. Here we supplement the last clause of contract section 1: legacy `opts.store` syntax
+ * is still recognized as `stores.media`.
  */
 import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
@@ -21,8 +24,9 @@ after(() => harness.cleanup());
 
 const NS = ['media', 'snap', 'px'];
 const CHUNK = 1024;
-// M6a：非本机来源读写都凭素材票据（auth-contract 第 8 节）。原来这里是集群令牌，只管写；
-// 现在 TOKEN 是一张 rw 素材票据，剧本里的读也带上它，另加一步「读不带票据 401」
+// M6a: non-local origins require asset tickets for reads and writes (auth-contract section 8).
+// Previously this was a cluster token, covering only writes; now TOKEN is an rw asset ticket,
+// reads in the script also include it, plus an added step: "read without ticket returns 401"
 const { assetTicketKit } = await import('./fake-shared-env.mjs');
 const KIT = await assetTicketKit();
 const TOKEN = KIT.issue('rw');
@@ -44,7 +48,7 @@ const put = (base, ns, hash, n, body, headers = {}) => fetch(`${base}/${ns}/${ha
 const complete = (base, ns, hash, headers = {}) => fetch(`${base}/${ns}/${hash}/complete`, { method: 'POST', headers });
 const chunks = async (base, ns, hash) => (await fetch(`${base}/${ns}/${hash}/chunks`)).json();
 
-/** 一次回包的快照：状态码、一组响应头、回包体（JSON 解析；二进制取 sha256 和长度） */
+/** Snapshot of a response: status code, response headers, response body (JSON parsed; binary gets sha256 and length) */
 const HEADERS = [
   'content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control',
   'access-control-allow-origin', 'access-control-expose-headers', 'access-control-allow-methods',
@@ -66,14 +70,16 @@ async function snap(resPromise) {
 }
 
 /**
- * S2 的剧本：分片、对账、收尾、Range、HEAD、CORS、401。对一个命名空间跑一遍，
- * 返回 [步骤名, 快照] 列表。服务配了票据核对器、`isTrusted` 恒假：读写都要带票据（M6a；原来只有写要令牌）。
+ * S2 script: chunks, reconcile, finalize, Range, HEAD, CORS, 401. Run once for a namespace,
+ * returning a list of [step name, snapshot]. Server is configured with a ticket verifier,
+ * and `isTrusted` is always false: both reads and writes must bring a ticket (M6a;
+ * previously only writes required a token).
  */
 async function script(base, ns) {
   const out = [];
   const step = async (name, p) => { out.push([name, await snap(p)]); };
 
-  const size = CHUNK * 2 + 321; // 3 片
+  const size = CHUNK * 2 + 321; // 3 chunks
   const buf = bytesOf(size, 11);
   const hash = sha256(buf);
   const h = { 'X-Media-Size': String(size), 'X-Media-Ext': 'bin', ...AUTH };
@@ -115,7 +121,7 @@ async function script(base, ns) {
   await step('GET query-string read-only ticket', fetch(`${base}/${ns}/${hash}?t=${encodeURIComponent(KIT.issue('r'))}`));
   await step('PUT read-only ticket 403', put(base, ns, hash, 0, sliceOf(buf, 0), { ...h, Authorization: `Bearer ${KIT.issue('r')}` }));
 
-  // 409：全件哈希不符
+  // 409: whole file hash mismatch
   const small = bytesOf(300, 12);
   const claimed = sha256(Buffer.from('not the same bytes'));
   await step('PUT (content that does not match the hash)', put(base, ns, claimed, 0, small, { 'X-Media-Size': '300', ...AUTH }));
@@ -124,7 +130,7 @@ async function script(base, ns) {
   await step('finalize: after discard it is never seen', complete(base, ns, claimed, AUTH));
   await step('GET not stored', fetch(`${base}/${ns}/${claimed}`, { headers: AUTH }));
 
-  // 分片校验
+  // Chunk verification
   const s2 = CHUNK + 10;
   const b2 = bytesOf(s2, 13);
   const h2 = sha256(b2);
@@ -188,13 +194,14 @@ test('S1 the same bytes are uploaded into media, snap and px separately: the thr
   await upload('px');
   await expectState(['media', 'snap', 'px']);
 
-  // 分片状态同样互不可见：只在 px 收了一片的另一份字节，media、snap 的对账是「没见过」
+  // Chunk statuses are likewise mutually invisible: for another set of bytes where only one chunk
+  // was received in px, reconciliation in media and snap reports "never seen"
   const other = bytesOf(CHUNK + 5, 2);
   const oh = sha256(other);
   assert.equal((await put(base, 'px', oh, 0, sliceOf(other, 0), { 'X-Media-Size': String(other.length) })).status, 200);
   assert.deepEqual(await chunks(base, 'px', oh), { size: other.length, chunkSize: CHUNK, received: [0], complete: false });
   for (const ns of ['media', 'snap']) assert.deepEqual(await chunks(base, ns, oh), { size: null, chunkSize: CHUNK, received: [], complete: false }, ns);
-  // 另一个命名空间登记了别的 size 也不冲突（各自一份登记）
+  // Registering another size in a different namespace does not conflict (each has its own registration)
   const r = await put(base, 'snap', oh, 0, Buffer.alloc(10), { 'X-Media-Size': '10' });
   assert.equal(r.status, 200, 'in snap the same hash is registered with its own size and does not conflict with px');
   await r.arrayBuffer();
@@ -205,13 +212,13 @@ test('S1 the same bytes are uploaded into media, snap and px separately: the thr
 test('S2 snap and px chunks, reconcile, finalize, Range, HEAD, CORS and 401 rules are the same as media, compared field by field', async () => {
   const runs = {};
   for (const ns of NS) {
-    // 每个命名空间一台新服务，剧本从同一个空状态起跑
+    // A new service for each namespace; scripts start from the same empty state
     const srv = await harness.serve({ chunkSize: CHUNK, tickets: KIT.tickets, isTrusted: () => false });
     runs[ns] = await script(srv.base, ns);
     await srv.close();
   }
   const ref = runs.media.out;
-  // media 自己先按 C5 契约核几处，免得三家一起错
+  // media first checks several places per C5 contract, to avoid all three failing together
   const get = (name) => ref.find(([n]) => n === name)[1];
   assert.deepEqual(get('reconcile: never seen').body, { size: null, chunkSize: CHUNK, received: [], complete: false });
   assert.deepEqual([get('PUT without token 401').status, get('PUT without token 401').body], [401, { ok: false, error: 'unauthorized' }]);
@@ -240,17 +247,18 @@ test('S2 snap and px chunks, reconcile, finalize, Range, HEAD, CORS and 401 rule
       const [name2, b] = got[i];
       assert.equal(name2, name);
       assert.equal(b.status, a.status, `${ns} "${name}" status code`);
-      // 带 url 的回包长度随 url 变，content-length 不比
+      // Response length with url varies with url; do not compare content-length
       const hasUrl = a.body && typeof a.body === 'object' && 'url' in a.body;
       for (const k of Object.keys(a.headers)) {
         if (hasUrl && k === 'content-length') continue;
         assert.equal(b.headers[k], a.headers[k], `${ns} "${name}" response header ${k}`);
       }
-      // 收尾回包里的 `url` 是取回地址，按命名空间不同，单独核（见下）；其余字段逐个比较
+      // `url` in finalize response is the retrieval address, checked separately by namespace (see below);
+      // remaining fields are compared one by one
       const strip = (body) => (body && typeof body === 'object' && 'url' in body ? { ...body, url: typeof body.url } : body);
       assert.deepEqual(strip(b.body), strip(a.body), `${ns} "${name}" response body`);
     }
-    // 契约第 10 节第 2 条：snap / px 的 url 是 `/api/asset/<ns>/<hash>`；media 照旧 `/@media/<hash>`
+    // Contract section 10 item 2: snap / px url is `/api/asset/<ns>/<hash>`; media remains `/@media/<hash>`
     const fin = got.find(([n]) => n === 'finalize: all chunks present')[1].body;
     assert.equal(fin.url, `/api/asset/${ns}/${runs[ns].hash}`, `${ns} url in the finalize response body`);
     const again = got.find(([n]) => n === 'finalize again after storing')[1].body;
@@ -281,14 +289,15 @@ test('S2b the MIME table dedicated to snap / px recognizes text/html → html an
     assert.equal(await one(ns, { 'X-Media-Ext': 'm4s' }), 'm4s', `${ns} extension given directly`);
     assert.equal(await one(ns, {}), '', `${ns} neither given`);
   }
-  // 契约第 10 节第 8、10 条：snap / px 只存候选扩展名（html、mp4、m4s、专用 MIME 表里的全部扩展名、htm、m4v、jpeg），
-  // 不在表里的一律存成不带扩展名；media 不受影响
+  // Contract section 10 items 8, 10: snap / px only stores candidate extensions (html, mp4, m4s,
+  // all extensions in the dedicated MIME table, htm, m4v, jpeg); anything not in the table is stored
+  // without an extension; media is unaffected
   for (const ns of ['snap', 'px']) {
     assert.equal(await one(ns, { 'X-Media-Ext': 'bin' }), '', `${ns} bin is not in the candidate list`);
     assert.equal(await one(ns, { 'X-Media-Ext': 'xyz' }), '', `${ns} xyz is not in the candidate list`);
     assert.equal(await one(ns, { 'X-Media-Ext': 'html' }), 'html', `${ns} html is in the candidate list`);
     for (const ext of ['htm', 'm4v', 'jpeg']) assert.equal(await one(ns, { 'X-Media-Ext': ext }), ext, `${ns} ${ext} is in the candidate list`);
-    // png 在专用 MIME 表里：存成 <hash>.png，按候选找得回来
+    // png is in dedicated MIME table: stored as <hash>.png, retrievable via candidate
     const png = bytesOf(200, ++seed);
     const ph = sha256(png);
     assert.equal((await put(base, ns, ph, 0, png, { 'X-Media-Size': '200', 'X-Media-Ext': 'png' })).status, 200);
@@ -302,7 +311,7 @@ test('S2b the MIME table dedicated to snap / px recognizes text/html → html an
   }
   assert.equal(await one('media', { 'X-Media-Ext': 'png' }), 'png', 'media still stores png as before');
   assert.equal(await one('media', { 'X-Media-Ext': 'bin' }), 'bin', 'media still stores bin as before');
-  // 契约第 10 节第 1 条：不改共享的 MIME_TO_EXT，media 落盘的文件名不变
+  // Contract section 10 item 1: do not modify shared MIME_TO_EXT; media filename written to disk is unchanged
   assert.equal(await one('media', { 'X-Media-Type': 'text/html' }), '', 'media does not recognize text/html');
   assert.equal(await one('media', { 'X-Media-Type': 'video/iso.segment' }), '', 'media does not recognize video/iso.segment');
   assert.equal(await one('media', { 'X-Media-Type': 'video/mp4' }), 'mp4', 'media\'s original table is unchanged');
@@ -349,12 +358,13 @@ test('S2c the default snap and px are the fs implementation, with the directory 
     }
     assert.equal((await fetch(`${base}/media/${hh}`)).status, 404, 'media has no snap chunk');
 
-    // 取回（Content-Type 契约没定，不比）
+    // Retrieval (Content-Type not defined in contract, do not compare)
     const g = await fetch(`${base}/snap/${hh}`);
     assert.equal(g.status, 200);
     assert.ok(Buffer.from(await g.arrayBuffer()).equals(html));
 
-    // 候选文件名：直接放进目录的 <hash>.mp4、无扩展名的 <hash> 都找得到，算已入库
+    // Candidate filenames: <hash>.mp4 placed directly into directory and <hash> without extension
+    // are both found, counted as stored
     const init = bytesOf(333, 42);
     const hi = sha256(init);
     await fsp.writeFile(path.join(pxDir, `${hi}.mp4`), init);
@@ -368,7 +378,7 @@ test('S2c the default snap and px are the fs implementation, with the directory 
     assert.equal((await chunks(base, 'snap', hb)).complete, true, 'an extensionless <hash> also counts as stored');
     assert.equal((await fetch(`${base}/snap/${hb}`)).status, 200);
 
-    // 第 8 条：不在候选表里的扩展名存成不带扩展名的 <hash>，之后照样找得到
+    // Item 8: extensions not in candidate table are stored as extensionless <hash>, still found afterwards
     const odd = bytesOf(444, 44);
     const ho = sha256(odd);
     assert.equal((await put(base, 'px', ho, 0, odd, { 'X-Media-Size': String(odd.length), 'X-Media-Ext': 'bin' })).status, 200);
@@ -381,7 +391,7 @@ test('S2c the default snap and px are the fs implementation, with the directory 
     assert.equal(go.headers.get('content-type'), 'application/octet-stream');
     assert.ok(Buffer.from(await go.arrayBuffer()).equals(odd));
 
-    // 第 10 条：png 在候选表里，存成 <hash>.png，按候选文件名找得回来
+    // Item 10: png is in candidate table, stored as <hash>.png, retrievable by candidate filename
     const pic = bytesOf(555, 45);
     const hp = sha256(pic);
     assert.equal((await put(base, 'snap', hp, 0, pic, { 'X-Media-Size': String(pic.length), 'X-Media-Ext': 'png' })).status, 200);
@@ -400,7 +410,7 @@ test('S2c the default snap and px are the fs implementation, with the directory 
 /* ------------------------------------------------------------------ S3 */
 
 test('S3 the old form opts.store is still accepted and treated as stores.media; when only stores.media is given, media behaves the same as C5', async () => {
-  // 旧写法：只传 opts.store
+  // Legacy syntax: only pass opts.store
   const legacy = await harness.serve({ chunkSize: CHUNK, isTrusted: () => true, token: null, legacyStore: true });
   const buf = bytesOf(CHUNK + 3, 21);
   const hash = sha256(buf);
@@ -414,7 +424,7 @@ test('S3 the old form opts.store is still accepted and treated as stores.media; 
   assert.ok(Buffer.from(await got.arrayBuffer()).equals(buf));
   assert.equal(got.headers.get('content-type'), 'image/png');
 
-  // 新写法：media 的回包与旧写法逐字段相同
+  // New syntax: media response is identical to legacy syntax field by field
   const a =await script((await harness.serve({ chunkSize: CHUNK, tickets: KIT.tickets, isTrusted: () => false, legacyStore: true })).base, 'media');
   const b = await script((await harness.serve({ chunkSize: CHUNK, tickets: KIT.tickets, isTrusted: () => false })).base, 'media');
   assert.deepEqual(b.out, a.out, 'stores.media and opts.store give the same media behavior');
@@ -431,7 +441,8 @@ test('S4 unknown namespace: the asset service does not handle it (hands off to n
   for (const ns of ['foo', 'snaps', 'pix', 'mediax', 'asset', 'png', 'x']) {
     const p = await put(base, ns, hash, 0, buf, { 'X-Media-Size': '100' });
     assert.ok(is4xx(p.status), `${ns} PUT returns ${p.status}`);
-    // 契约第 10 节第 3 条：中间件交给 next()，回包来自本测试的兜底（纯文本 no route），不是素材服务的 JSON，也不带跨源头
+    // Contract section 10 item 3: middleware passes to next(); response comes from fallback of this
+    // test (plain text no route), not JSON from asset service, and contains no cross-origin headers
     assert.equal(await p.text(), 'no route', `${ns} PUT should fall through to the fallback`);
     assert.equal(p.headers.get('access-control-allow-origin'), null, `${ns} the asset service did not take over, so it adds no CORS headers`);
     const c = await complete(base, ns, hash);

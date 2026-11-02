@@ -1,4 +1,7 @@
-/** 违规样例（测试夹具，不进卡片库）：引用了名单之外的模块。建卡时应当被拒绝并指出行号。 */
+/**
+ * Violation example (test fixture, not added to the card library): imports a module not on the
+ * list. Should be rejected during card creation, pointing to the line number.
+ */
 import lottie from "lottie-web";
 import type { CardDef, CardProps } from "../../kernel/types";
 import { tween } from "../../kernel/remotionStyle";

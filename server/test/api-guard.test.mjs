@@ -1,9 +1,11 @@
-// /api/** 同源守卫这一层的中间件本身。http-guard.test.mjs 测的是判据函数,
-// 这里测的是「哪些路由被放行、哪些被拒」—— 尤其是原始字节体的白名单。
+// The middleware itself for the /api/** same-origin guard layer. http-guard.test.mjs tests
+// predicate functions, while this tests "which routes are allowed and which are rejected":
+// especially the whitelist for raw byte bodies.
 //
-// 起因是一个真 bug:对话附件的「+」上传(/api/chats/attach/upload)把 File 原样当 body,
-// Content-Type 是 video/mp4,而白名单里只有素材上传和导出两条,于是附件一个都传不上去,
-// 界面只说「导入失败,点击重试」。跑法:node --test server/test/api-guard.test.mjs
+// The cause was a real bug: the "+" upload for chat attachments (/api/chats/attach/upload) used
+// File as-is for the body, with Content-Type video/mp4, whereas the whitelist only had two entries:
+// asset upload and export, so no attachments could be uploaded at all, and the UI only said
+// "Import failed, click to retry". Run: node --test server/test/api-guard.test.mjs
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -29,7 +31,7 @@ const file = path.join(OUT, 'api-guard.mjs');
 fs.writeFileSync(file, js);
 const { apiGuardPlugin } = await import(pathToFileURL(file).href);
 
-/** 把中间件拿出来 */
+/** Extract the middleware */
 function handlerOf() {
   let fn;
   apiGuardPlugin().configureServer({ middlewares: { use(f) { fn = f; } } });
@@ -37,7 +39,7 @@ function handlerOf() {
   return fn;
 }
 
-/** 发一个请求:返回 'next'(放行)或拒绝时的状态码 */
+/** Send a request: returns 'next' (allowed) or the status code when rejected */
 function pass(fn, { method = 'POST', url, headers = {} }) {
   return new Promise((resolve) => {
     const res = {
@@ -62,7 +64,7 @@ test('Chat attachment upload is a raw byte body and must be allowed through when
 
 test('The raw-body routes for media upload, export media and speech-to-text upload are also allowed through', async () => {
   const fn = handlerOf();
-  // 听写那条是诊断报告里抓到的:transcribe_media 上传素材被 403,整个转写起不来
+  // Transcription was caught in diagnostic report: transcribe_media asset upload got 403, failing to start transcription altogether
   for (const url of ['/api/media/upload/a.mp4', '/api/export/media/x', '/api/stt/upload/job1/a.mp4', '/api/export/audio-mix/test1']) {
     const r = await pass(fn, { url, headers: { ...SAME, 'content-type': 'application/octet-stream' } });
     assert.equal(r, 'next', url);
@@ -98,8 +100,9 @@ test('Paths that are not /api/ are allowed straight through', async () => {
   assert.equal(await pass(fn, { url: '/@media/x.mp4', headers: { 'content-type': 'text/plain' } }), 'next');
 });
 
-// 素材服务(第 5 步)按语义允许跨源:只有 /api/asset/media/<hash>[/chunks|/complete|/<n>] 豁免,
-// 其余 /api/** 照旧只认同源。见 http-guard.mjs 的 isAssetServicePath。
+// Asset service (step 5) allows cross-origin by semantics: only
+// /api/asset/media/<hash>[/chunks|/complete|/<n>] is exempt,
+// while remaining /api/** accepts same-origin only as usual. See isAssetServicePath in http-guard.mjs.
 const LAN = { origin: 'http://192.168.1.50:8080', host: '127.0.0.1:5190' };
 const H = 'ab'.repeat(32);
 
@@ -130,7 +133,7 @@ test('Cross-origin requests to /api/** outside the exemption still get 403 (incl
   }
 });
 
-// 局域网监听(npm run dev 绑 0.0.0.0)之后:除素材服务外的 /api/** 默认只答本机
+// After LAN listening (npm run dev binds 0.0.0.0): /api/** except asset service answers local only by default
 const LAN_CLIENT = { socket: { remoteAddress: '192.168.1.50' } };
 const LOCAL_CLIENT = { socket: { remoteAddress: '127.0.0.1' } };
 
@@ -160,7 +163,7 @@ test('A LAN device hitting a regular endpoint without Origin: 403 by default (ot
       assert.equal(r.status, 403, req.url);
       assert.match(r.body.error, /PROMPTCUT_LAN_API/);
     }
-    // 本机照旧放行
+    // Local allowed as usual
     assert.equal(await passFrom(fn, LOCAL_CLIENT, { url: '/api/ai/config' }), 'next');
   } finally {
     if (prev === undefined) delete process.env.PROMPTCUT_LAN_API; else process.env.PROMPTCUT_LAN_API = prev;

@@ -1,11 +1,14 @@
 /**
- * 三家云端语音合成 + MiniMax 的音色设计 / 复刻。全部走同一个 API(配音设置里的地址和 API Key),Bearer 鉴权。
+ * Three cloud voice synthesis providers + MiniMax voice design / clone. All go through the same
+ * API (endpoint and API Key in voiceover settings), with Bearer authentication.
  *
- * 纯逻辑:不碰磁盘、不读设置,fetch 可以注入(测试用假的)。
+ * Pure logic: does not touch disk, does not read settings; fetch can be injected (mocked for
+ * testing).
  *
- * 计费要点(MiniMax 按量计费页):音色设计、快速复刻各 ¥9.9 一个,**首次用这个音色合成时才扣**,
- * 所以 voice_clone / voice_design 那一步本身显示 0 元,第一次 t2a 会多出一笔。
- * 复刻出来的音色 7 天内没被正式调用会被系统删除。
+ * Billing key points (MiniMax pay-as-you-go page): voice design and fast clone are ¥9.9 each,
+ * **deducted only on first synthesis with this voice**, so the voice_clone / voice_design step
+ * itself shows ¥0, and the first t2a incurs an extra charge. Cloned voices not called formally
+ * within 7 days are deleted by the system.
  */
 import { TEXT_LIMITS, isCloneIdShape } from './presets.mjs';
 import { tr } from '../i18n.mjs';
@@ -20,7 +23,7 @@ export class VoiceError extends Error {
   }
 }
 
-/** API 报错翻成人话。额度用完是最常见的,单独说清楚 */
+/** Translate API errors into plain language. Exhausted quota is most common, explain it separately */
 function apiError(status, text) {
   const quotaGone = /quota exhausted|quota|额度/i.test(text); // i18n-allow: the provider's reply may be Chinese
   if (quotaGone) return new VoiceError(tr("The API key has run out of quota (API returned 401). Top up in the API console and try again."), { status, detail: text });
@@ -67,9 +70,9 @@ function minimaxOk(j, what) {
 }
 
 /**
- * 合成一段语音。opts 已经是合并好默认值的完整参数:
+ * Synthesize a voice clip. opts is already the complete parameters merged with default values:
  *   { provider, text, voiceId, model?, speed?, vol?, pitch?, emotion?, volume? }
- * 返回 { buf, ext, provider, model, voiceId, chars }。
+ * Returns { buf, ext, provider, model, voiceId, chars }.
  */
 export async function synthesize(ctx, opts) {
   const text = String(opts.text ?? '').trim();
@@ -103,7 +106,7 @@ export async function synthesize(ctx, opts) {
     return { buf: await download(ctx, url), ext: 'mp3', provider: 'kling', model: 'kling-audio', voiceId: opts.voiceId, chars: [...text].length };
   }
 
-  // vidu:接口参数全是字符串
+  // vidu: API parameters are all strings
   const body = { text, voice_setting_voice_id: opts.voiceId, voice_setting_speed: String(opts.speed ?? 1) };
   if (opts.volume) body.voice_setting_volume = String(opts.volume);
   if (opts.pitch) body.voice_setting_pitch = String(opts.pitch);
@@ -113,7 +116,7 @@ export async function synthesize(ctx, opts) {
   return { buf: await download(ctx, j.file_url), ext: 'mp3', provider: 'vidu', model: 'vidu-tts', voiceId: opts.voiceId, chars: [...text].length };
 }
 
-/** MiniMax 音色设计:一句话描述 → 新音色 id + 一段试听(试听按字数计费,音色费首次合成时扣) */
+/** MiniMax voice design: prompt → new voice id + preview (preview billed by chars, voice fee on 1st synthesis) */
 export async function designVoice(ctx, { prompt, previewText }) {
   const p = String(prompt ?? '').trim();
   const t = String(previewText ?? '').trim();
@@ -126,8 +129,8 @@ export async function designVoice(ctx, { prompt, previewText }) {
 }
 
 /**
- * MiniMax 快速复刻:先按 purpose=voice_clone 上传音频(mp3/m4a/wav,10 秒~5 分钟,<20MB),
- * 再用拿到的 file_id 建音色。voiceId 是自己起的名字(见 isCloneIdShape)。
+ * MiniMax fast clone: first upload audio with purpose=voice_clone (mp3/m4a/wav, 10s~5 min, <20MB),
+ * then create the voice with the resulting file_id. voiceId is a custom name (see isCloneIdShape).
  */
 export async function cloneVoice(ctx, { audio, filename, voiceId, previewText, model = 'speech-2.8-hd' }) {
   if (!isCloneIdShape(voiceId)) throw new VoiceError(tr("Voice id must be 8~256 characters, start with a letter, contain only letters, digits, - and _, and must not end with - or _."));

@@ -2,25 +2,29 @@ import { mountFrameOf } from './frameWindow.mjs';
 import { clipFrameSpan } from './shardPlan.mjs';
 
 /**
- * C4 的选帧规则,做成纯函数:浏览器(父页按层选快照)和 Node(预渲染进程排优先级、
- * 端到端探针)共用同一份,两端选出来的一定是同一帧。
+ * C4 frame picking rules as a pure function: shared between the browser (parent page picking
+ * snapshots by layer) and Node (prerender process prioritizing, end-to-end probes); both sides are
+ * guaranteed to pick the exact same frame.
  *
- * 规则三句话:
+ * The three rules:
  *
- * 1. **按层各自回溯**:每一层(片段 × 档位)查自己那张区间表,选 ≤ 目标本地帧的
- *    最大就绪帧;
- * 2. **同区间内回溯,不跨区间**:这里的「区间」是**锚帧切出的段**
- *    (C1 末句:锚帧集合 = 每个片段的 `mountFrameOf`、`clipFrameSpan` 的 `last + 1`、
- *    第 0 帧),不是就绪表里的闭区间。跨过一个锚帧去拿更早的快照,画面会突然
- *    回到上一段的状态 —— 宁可这一层透明;
- * 3. **不等待**:选不出来就回 null,那一层这一拍透明,播放头不停(总规则)。
+ * 1. **Backtrack independently per layer**: each layer (clip × tier) looks up its own interval
+ *    table and selects the maximum ready frame ≤ target local frame;
+ * 2. **Backtrack within the same interval, never cross intervals**: an "interval" here is a
+ *    **segment cut out by anchor frames** (C1 final sentence: anchor frame set = each clip's
+ *    `mountFrameOf`, `clipFrameSpan`'s `last + 1`, frame 0), not a closed interval in the ready
+ *    table. Crossing an anchor frame to fetch an earlier snapshot causes the visual to suddenly
+ *    revert to the previous segment's state: better for this layer to be transparent;
+ * 3. **Never wait**: if no frame can be picked, return null; that layer is transparent for this
+ *    tick, and the playhead does not stop (general rule).
  *
- * 冷缓存的表现就是由第 2 条决定的:C2 先产锚帧,所以拖到第 1000 帧时该层就绪的
- * 往往只有段起点那一帧 —— 选出来的正是**区间起点快照**,而不是一张更早的、
- * 属于上一段的快照,也不是空白。
+ * Cold cache behavior is determined by rule 2: C2 produces anchor frames first, so when scrubbing
+ * to frame 1000, often only the segment start frame is ready for that layer: what gets selected is
+ * precisely the **interval start snapshot**, rather than an earlier snapshot from the previous
+ * segment, nor a blank.
  */
 
-/** 就绪表(闭区间、已合并有序)里 ≤ frame 的最大就绪帧;没有就 null。二分。 */
+/** Max ready frame ≤ frame in the ready table (closed intervals, merged and sorted); null if none. Binary search. */
 export function latestReadyAtOrBefore(ranges, frame) {
   if (!Array.isArray(ranges) || !ranges.length || !Number.isInteger(frame) || frame < 0) return null;
   let lo = 0, hi = ranges.length - 1, found = null;
@@ -28,7 +32,8 @@ export function latestReadyAtOrBefore(ranges, frame) {
     const mid = (lo + hi) >> 1;
     const [from, to] = ranges[mid];
     if (from > frame) { hi = mid - 1; continue; }
-    // 落在这一段里就是它本身;整段都在左边就记下段尾,继续往右找更近的
+    // If it falls within this segment, it's itself; if the whole segment is to the left,
+    // record the segment end and continue searching right for a closer one
     found = frame <= to ? frame : to;
     lo = mid + 1;
   }
@@ -36,11 +41,12 @@ export function latestReadyAtOrBefore(ranges, frame) {
 }
 
 /**
- * 锚帧集合(全局帧号,升序去重)。C1 末句的三项:
- * 每个片段的 `mountFrameOf`、`clipFrameSpan` 的 `last + 1`、第 0 帧。
+ * Set of anchor frames (global frame numbers, sorted ascending and deduplicated). Three items from
+ * C1 final sentence: each clip's `mountFrameOf`, `clipFrameSpan`'s `last + 1`, and frame 0.
  *
- * `clips` 是**全部**片段(不只这一层那一张卡):别的片段挂载 / 退场同样会让
- * 下层依赖卡的画面换一段,所以段边界是全局的。
+ * `clips` contains **all** clips (not just the card for this layer): other clips mounting /
+ * exiting also cause visuals of below-dependent cards to switch segments, so segment boundaries
+ * are global.
  */
 export function anchorFrames(clips, fps) {
   if (!(fps > 0)) return [0];
@@ -54,7 +60,7 @@ export function anchorFrames(clips, fps) {
   return [...anchors].filter(n => Number.isInteger(n) && n >= 0).sort((a, b) => a - b);
 }
 
-/** 锚帧切出的段里,`frame` 所在那一段的起点(≤ frame 的最大锚帧;一个都没有就 0)。 */
+/** Start of the segment cut by anchor frames containing `frame` (max anchor frame ≤ frame; 0 if none). */
 export function segmentStartOf(anchors, frame) {
   let start = 0;
   for (const anchor of anchors ?? []) {
@@ -65,22 +71,24 @@ export function segmentStartOf(anchors, frame) {
 }
 
 /**
- * 一层的选帧。全部用**本地帧**口径(`localFrame = globalFrame - firstFrame`);
- * `segmentStart` 也是本地帧,由调用方把全局段起点换算过来并夹到 0。
+ * Frame picking for a single layer. All in terms of **local frames**
+ * (`localFrame = globalFrame - firstFrame`); `segmentStart` is also a local frame, converted by
+ * the caller from the global segment start and clamped to 0.
  *
- * 返回选中的本地帧,或 null(这一层这一拍透明)。
+ * Returns the selected local frame, or null (this layer is transparent for this tick).
  */
 export function pickSnapshotFrame({ ranges, localFrame, segmentStart = 0 }) {
   if (!Number.isInteger(localFrame) || localFrame < 0) return null;
   const hit = latestReadyAtOrBefore(ranges, localFrame);
   if (hit === null) return null;
-  // 不跨区间:段起点之前的快照属于上一段,宁可透明
+  // Do not cross intervals: snapshots before segment start belong to previous segment; prefer transparency
   return hit >= Math.max(0, segmentStart) ? hit : null;
 }
 
 /**
- * 把一个全局帧换成某一层的本地帧,并算出该层这一段的起点(本地帧口径)。
- * `firstFrame` = `control.sampling.firstFrame`(`card-cache.mjs:109` 的现成公式)。
+ * Converts a global frame to a local frame for a layer, and calculates the layer's segment start
+ * (in local frames). `firstFrame` = `control.sampling.firstFrame` (existing formula from
+ * `card-cache.mjs:109`).
  */
 export function localWindowOf({ globalFrame, firstFrame = 0, count = Infinity, anchors = [] }) {
   const localFrame = globalFrame - firstFrame;
@@ -90,9 +98,10 @@ export function localWindowOf({ globalFrame, firstFrame = 0, count = Infinity, a
 }
 
 /**
- * 父页每帧对一层的完整查询:索引里这一层的 `{ key, ranges }` + 该层的采样信息
- * → `{ kind, key, localFrame }` 或 null。C4 的「换 DOM 有节流」「投递基线」
- * 都是消费方(R5)的事,这里只回答「此刻该贴哪一帧」。
+ * Full query by parent page for a layer on each frame: `{ key, ranges }` for this layer in the
+ * index + sampling info for the layer → `{ kind, key, localFrame }` or null. C4's "throttled DOM
+ * replacement" and "delivery baseline" belong to the consumer (R5); this only answers "which
+ * frame to apply right now".
  */
 export function pickLayerSnapshot({ layer, globalFrame, firstFrame = 0, count = Infinity, anchors = [] }) {
   if (!layer?.key) return null;

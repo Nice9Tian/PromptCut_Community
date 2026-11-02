@@ -1,32 +1,40 @@
 import { tr } from "../i18n/index.ts";
 /**
- * 最小的 MP4 封装器(`docs/plan/c10a-contract.md` 第 11 节〔裁〕、第 11.1 节):一条 H.264 视频轨,有音频时再加一条 AAC 轨。
- * 不引依赖(`mp4-muxer` 停维护;Mediabunny 是 MPL-2.0)。浏览器(WebCodecs 的输出)和 Node(单测)都能跑。
+ * Minimal MP4 muxer (`docs/plan/c10a-contract.md` Section 11 [ruling], Section 11.1): one H.264 video
+ * track, plus an AAC track when audio is present.
+ * Introduces no dependencies (`mp4-muxer` is unmaintained; Mediabunny is MPL-2.0). Runs in both
+ * browser (WebCodecs output) and Node (unit tests).
  *
- * # 布局
+ * # Layout
  *
- *   ftyp | mdat(64 位长度,样本按到达顺序追加)| moov(写在最后)
+ *   ftyp | mdat (64-bit length, samples appended in arrival order) | moov (written at the end)
  *
- * - 样本一到就写进 `mdat`,内存里只留每个样本的大小、偏移、时长这些小表(导出长片时不攒字节)。
- * - `finalize()` 写 `moov`,再回头把 `mdat` 头里的 64 位长度补上 —— 所以落点要能按位置写:
- *   `FileSystemWritableFileStream` 的 `write({ type: 'write', position, data })`,或者内存里的 `MemorySink`。
- * - 每个样本一个 chunk(`stsc` 一条:每 chunk 1 个样本),偏移一律 `co64`;视频的关键帧进 `stss`;
- *   解码顺序与显示顺序不同(有 B 帧)时写 `ctts`(版本 1,有符号偏移),没有就不写。
+ * - Samples are written to `mdat` upon arrival; memory keeps only small tables for each sample's
+ *   size, offset, and duration (avoids accumulating bytes when exporting long videos).
+ * - `finalize()` writes `moov`, then seeks back to patch the 64-bit length in the `mdat` header:
+ *   so the drop target must support positional writes:
+ *   `FileSystemWritableFileStream`'s `write({ type: 'write', position, data })`, or in-memory
+ *   `MemorySink`.
+ * - One chunk per sample (single entry in `stsc`: 1 sample per chunk), offsets are always `co64`;
+ *   video keyframes go into `stss`; writes `ctts` (version 1, signed offset) when decode order
+ *   differs from presentation order (with B-frames), omitted otherwise.
  *
- * # 时间
+ * # Timing
  *
- * - 视频轨的 timescale = fps × 1000,每帧 1000;样本的解码时间按到达序号排,显示时间按块的时间戳(微秒)换算。
- * - 音频轨的 timescale = 采样率;每个样本的时长按块的时长换算,没有就按 AAC 的 1024 个采样。
- * - 影片的 timescale 1000(毫秒)。
+ * - Video track timescale = fps × 1000, 1000 per frame; sample decode times follow arrival order,
+ *   presentation times are converted from chunk timestamps (microseconds).
+ * - Audio track timescale = sample rate; each sample duration is converted from chunk duration,
+ *   defaulting to 1024 samples for AAC when missing.
+ * - Movie timescale is 1000 (milliseconds).
  */
 
 export interface VideoTrackConfig {
-  /** `avc1.640028` 这样的编码串(只用来核对是 H.264) */
+  /** Codec string like `avc1.640028` (only used to verify it is H.264) */
   codec: string;
   width: number;
   height: number;
   fps: number;
-  /** `VideoEncoder` 输出的 `decoderConfig.description`:avcC 盒的内容(AVCDecoderConfigurationRecord) */
+  /** `decoderConfig.description` output by `VideoEncoder`: avcC box contents (AVCDecoderConfigurationRecord) */
   avcC: Uint8Array;
 }
 
@@ -35,11 +43,11 @@ export interface AudioTrackConfig {
   codec: string;
   sampleRate: number;
   channels: number;
-  /** `AudioEncoder` 输出的 `decoderConfig.description`:AudioSpecificConfig */
+  /** `decoderConfig.description` output by `AudioEncoder`: AudioSpecificConfig */
   asc: Uint8Array;
 }
 
-/** 落点:按位置写(写 `mdat` 长度时要回头改) */
+/** Drop target: positional writes (must seek back and update when writing `mdat` length) */
 export interface MuxSink {
   write(data: Uint8Array, position: number): void | Promise<void>;
 }
@@ -51,16 +59,16 @@ interface TrackState {
   sizes: number[];
   offsets: number[];
   durations: number[];
-  /** 显示时间 − 解码时间(timescale 单位) */
+  /** Presentation time - decode time (timescale units) */
   ctsOffsets: number[];
   sync: number[];
-  /** 下一个样本的解码时间 */
+  /** Decode time of the next sample */
   nextDts: number;
 }
 
 const enc = new TextEncoder();
 
-/** 大端写入的小缓冲 */
+/** Small buffer for big-endian writes */
 class W {
   private parts: number[] = [];
   u8(v: number) { this.parts.push(v & 0xff); return this; }
@@ -87,13 +95,13 @@ function concat(parts: Uint8Array[]): Uint8Array {
   return out;
 }
 
-/** 一个盒:4 字节长度 + 4 字节类型 + 内容 */
+/** A box: 4-byte length + 4-byte type + content */
 export function box(type: string, ...content: Uint8Array[]): Uint8Array {
   const body = concat(content);
   const head = new W().u32(8 + body.length).str(type).out();
   return concat([head, body]);
 }
-/** full box:再加 1 字节版本 + 3 字节标志 */
+/** full box: plus 1-byte version + 3-byte flags */
 function fullBox(type: string, version: number, flags: number, ...content: Uint8Array[]): Uint8Array {
   return box(type, new W().u8(version).u24(flags).out(), ...content);
 }
@@ -101,14 +109,14 @@ function fullBox(type: string, version: number, flags: number, ...content: Uint8
 const MATRIX = [0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000];
 const matrix = () => { const w = new W(); for (const v of MATRIX) w.u32(v); return w.out(); };
 
-/** MPEG-4 描述符的长度:4 字节变长编码(每字节 7 位,前三字节带续位) */
+/** MPEG-4 descriptor length: 4-byte variable-length encoding (7 bits per byte, continuation bit on first three bytes) */
 function descriptor(tag: number, body: Uint8Array): Uint8Array {
   const n = body.length;
   const len = new W().u8(0x80 | ((n >>> 21) & 0x7f)).u8(0x80 | ((n >>> 14) & 0x7f)).u8(0x80 | ((n >>> 7) & 0x7f)).u8(n & 0x7f).out();
   return concat([new W().u8(tag).out(), len, body]);
 }
 
-/** 把一串等长的时长压成 stts 的 (count, delta) 条目 */
+/** Compresses a run of equal durations into stts (count, delta) entries */
 function runs(values: number[]): Array<[number, number]> {
   const out: Array<[number, number]> = [];
   for (const v of values) {
@@ -139,7 +147,7 @@ export class Mp4Muxer {
     this.tracks.push({ id: 1, kind: "video", timescale: Math.round(video.fps * 1000), sizes: [], offsets: [], durations: [], ctsOffsets: [], sync: [], nextDts: 0 });
     if (audio) this.tracks.push({ id: 2, kind: "audio", timescale: audio.sampleRate, sizes: [], offsets: [], durations: [], ctsOffsets: [], sync: [], nextDts: 0 });
     const ftyp = box("ftyp", new W().str("isom").u32(0x200).str("isom").str("iso2").str("avc1").str("mp41").out());
-    // mdat 头:长度字段写 1,真长度放在后面的 64 位里(finalize 时回头补)
+    // mdat header: write 1 in length field, true length is placed in subsequent 64 bits (patched later during finalize)
     const mdatHead = new W().u32(1).str("mdat").u64(0).out();
     this.enqueue(ftyp);
     this.mdatStart = this.position;
@@ -152,7 +160,7 @@ export class Mp4Muxer {
     this.chain = this.chain.then(() => this.sink.write(data, at));
   }
 
-  /** 已经写了多少字节(含还在排队的) */
+  /** Total bytes written so far (including those still queued) */
   get bytesWritten(): number { return this.position; }
 
   private sample(track: TrackState, data: Uint8Array, duration: number, cts: number, sync: boolean) {
@@ -167,8 +175,8 @@ export class Mp4Muxer {
   }
 
   /**
-   * 一个视频块(`EncodedVideoChunk` 拷出来的字节,AVCC 格式,长度前缀 4 字节)。
-   * `timestampUs` 是显示时间;解码时间按到达顺序每帧一格。
+   * A video chunk (bytes copied from `EncodedVideoChunk`, AVCC format with 4-byte length prefix).
+   * `timestampUs` is presentation time; decode time advances one frame per arrival order.
    */
   addVideoChunk(data: Uint8Array, { timestampUs, key }: { timestampUs: number; key: boolean }): void {
     const track = this.tracks[0];
@@ -177,7 +185,7 @@ export class Mp4Muxer {
     this.sample(track, data, Math.round(frame), pts - track.nextDts, key);
   }
 
-  /** 一个音频块(裸 AAC 帧,不带 ADTS 头)。时长缺省按 AAC 的 1024 个采样 */
+  /** An audio chunk (raw AAC frame, without ADTS header). Duration defaults to 1024 samples for AAC */
   addAudioChunk(data: Uint8Array, { durationUs }: { timestampUs?: number; durationUs?: number } = {}): void {
     const track = this.tracks[1];
     if (!track) throw new Error(tr("This muxer has no audio track"));
@@ -185,7 +193,7 @@ export class Mp4Muxer {
     this.sample(track, data, duration, 0, true);
   }
 
-  /** 写 moov、补 mdat 长度;回整个文件的字节数 */
+  /** Writes moov, patches mdat length; returns total byte count of the entire file */
   async finalize(): Promise<number> {
     if (this.finalized) return this.position;
     this.finalized = true;
@@ -279,7 +287,7 @@ export class Mp4Muxer {
   }
 }
 
-/** 内存里的落点:按位置写,最后拼成一整块(iOS 没有「另存为」时攒成 Blob 下载;单测也用它) */
+/** In-memory drop target: positional writes, assembled into a single chunk at the end (accumulated as a Blob download on iOS without "Save as"; also used by unit tests) */
 export class MemorySink implements MuxSink {
   private parts: { at: number; data: Uint8Array }[] = [];
   private end = 0;
@@ -290,7 +298,7 @@ export class MemorySink implements MuxSink {
       this.end = position + copy.length;
       return;
     }
-    // 回头改(mdat 长度):落在哪几段里就改哪几段
+    // Seek back and update (mdat length): update whichever segments it falls into
     for (const p of this.parts) {
       const lo = Math.max(position, p.at), hi = Math.min(position + copy.length, p.at + p.data.length);
       if (lo < hi) p.data.set(copy.subarray(lo - position, hi - position), lo - p.at);
@@ -302,7 +310,7 @@ export class MemorySink implements MuxSink {
     for (const p of this.parts) out.set(p.data, p.at);
     return out;
   }
-  /** 浏览器里:拼成 Blob(不先合成一整块 Uint8Array,省一份拷贝) */
+  /** In the browser: assemble into a Blob (avoids combining into a single Uint8Array first, saving a copy) */
   blob(type = "video/mp4"): Blob {
     return new Blob(this.parts.map((p) => p.data as BlobPart), { type });
   }

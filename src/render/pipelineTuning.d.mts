@@ -1,31 +1,32 @@
-/** K2 的三个可调系数（任务书 K2「可调系数」）。两端必须用同一份，否则算不出同一张表。 */
+/** Three tunable coefficients for K2 (task brief K2 "Tunable coefficients"). Both ends must use the same copy or they cannot compute the same table. */
 export interface PipelineTuning {
-  /** 乘在实测成本上（判重比较式和贪心权重都乘）。不改预算公式 B = 1000 / fps × 70%。 */
+  /** Multiplied into measured costs (both heavy classification comparisons and greedy weights). Does not change budget formula B = 1000 / fps × 70%. */
   COST_SCALE: number;
-  /** `stepMs` 取第几百分位。1 = 退回单次最大的旧口径。 */
+  /** Which percentile `stepMs` takes. 1 = fall back to the old standard of single maximum. */
   STEP_PERCENTILE: number;
-  /** 少于这么多样本时 `robustStep` 改取最大值。 */
+  /** When there are fewer samples than this, `robustStep` uses the maximum instead. */
   STEP_MIN_SAMPLES: number;
 }
 
-/** 覆盖值（`out/pipeline-tuning.json` 的形状）：三项都可选，缺的用缺省。 */
+/** Override values (shape of `out/pipeline-tuning.json`): all three items are optional; missing ones use defaults. */
 export type PipelineTuningOverrides = Partial<Record<keyof PipelineTuning, number>> | null | undefined;
 
 export const DEFAULT_TUNING: Readonly<PipelineTuning>;
 export const TUNING_RANGE: Readonly<Record<keyof PipelineTuning, Readonly<{ min: number; max: number }>>>;
 
-/** 探针计时趟的封顶（任务书 K1）：最多这么多帧 / 这么多毫秒，超出的按中位数外推。 */
+/** Cap on probe timing passes (task brief K1): at most this many frames / this many milliseconds; excess is extrapolated by median. */
 export const PROBE_MAX_FRAMES: number;
 export const PROBE_MAX_MS: number;
 
-/** 两趟布尔探针另算的上限（任务书 K1）：各 8 帧或 200 ms，超了记 `false` / `null`。 */
+/** Separate upper limit for the two boolean probe passes (task brief K1): 8 frames or 200 ms each; records `false` / `null` if exceeded. */
 export const PROBE_BOOL_FRAMES: number;
 export const PROBE_BOOL_MS: number;
 
 export function resolveTuning(overrides?: PipelineTuningOverrides): Readonly<PipelineTuning>;
 
 /**
- * 一张卡的 `stepMs`：每帧活渲耗时样本的第 `STEP_PERCENTILE` 百分位（最近秩，不插值）。
- * 样本不足 `STEP_MIN_SAMPLES` 时取最大值（保守侧）；没有样本回 0。
+ * A card's `stepMs`: `STEP_PERCENTILE` percentile of per-frame live render duration samples
+ * (nearest rank, no interpolation). Takes the maximum when samples are fewer than `STEP_MIN_SAMPLES`
+ * (conservative side); returns 0 if there are no samples.
  */
 export function robustStep(samples: readonly number[], tuning?: PipelineTuning | PipelineTuningOverrides): number;

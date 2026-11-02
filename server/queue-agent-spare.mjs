@@ -1,29 +1,44 @@
 /**
- * 本机队列节点的认领闸:Agent 专用实例开着且空闲时多认领一项(`docs/semantics/mechanism/rendering.md`「Agent 优先只是插队」;
- * 起因见 `docs/archive/agent-reports/AGENT-query-render.md` 第 7 节第 2 条)。
+ * Claim gate for local queue nodes: claims one extra item when the Agent dedicated instance is
+ * running and idle (`docs/semantics/mechanism/rendering.md` "Agent priority is only queue jumping";
+ * for the origin, see section 7, item 2 of `docs/archive/agent-reports/AGENT-query-render.md`).
  *
- * 本机节点 `maxConcurrent: 1`,`'queue'` lane 上同时排着两项的情况很少,Agent 专用实例空闲时从普通预渲染队列里接不到活。
- * 这里给节点会话一个 `claimLimit`:专用实例能接(`pipeline.agentSpareSlot()`)、`'queue'` 预渲染间手里正有一项时,
- * 上限多一格;多出的那一格只认领这样的任务:
+ * Local nodes have `maxConcurrent: 1`, and having two items queued simultaneously on the `'queue'`
+ * lane is rare, so the Agent dedicated instance cannot pick up work from the regular prerender
+ * queue when idle. Here we give the node session a `claimLimit`: when the dedicated instance can
+ * accept work (`pipeline.agentSpareSlot()`) and the `'queue'` prerender room currently holds an
+ * item, the limit is increased by one slot; that extra slot only claims tasks such as:
  *
- *   - 快照细任务(`kind: 'snapshot'`)。plan 与轨道流不接:流用流预渲染间池(多认领一项等于多开一个流 Chrome),
- *     plan 要发布、等回包,不是「一项普通预渲染」;
- *   - 和手里在做的快照不是同一张卡(共享档按 `contentKey`,本地档按 `entryKey`,和管线里 `runQueueTask` 的 `tag`
- *     同一个口径:同一张卡 / 同一版整场景不在两个实例上同时渲)。同卡的任务到手也只能等前一项,不如留给别的节点。
+ *   - Snapshot fine-grained tasks (`kind: 'snapshot'`). plan and track streams are not accepted:
+ *     streams use the stream prerender room pool (claiming one extra item equals opening one more
+ *     stream Chrome), and plan must be published and wait for responses, which is not "a regular
+ *     prerender";
+ *   - Not the same card as the snapshot currently in hand (shared tier by `contentKey`, local tier
+ *     by `entryKey`, using the same criteria as `tag` in `runQueueTask` within the pipeline: the
+ *     same card / the same version of the whole scene is not rendered concurrently on two
+ *     instances). Tasks for the same card can only wait for the previous item anyway once received,
+ *     so it is better to leave them to other nodes.
  *
- * 为什么这样认领不会拿到做不完的活(租约、锁、上报):
+ * Why claiming this way will not pick up work that cannot be finished (leases, locks, reporting):
  *
- *   - 多认领的那一项和普通认领一样由会话续约、由执行编排上报进度,管线里照旧经 `runQueueTask` 排进普通预渲染队列,
- *     由 `kickAgentIdle` 交给专用实例;专用实例在它到手前被 Agent 用上了,它就等 `'queue'` 预渲染间手里那一项做完
- *     (至多一项),不会无限挂着。
- *   - 不要求专用实例开着以外的任何实例:`'queue'` 预渲染间此刻就在做前一项(条件之一),所以这一项不会让管线新开 Chrome;
- *     专用实例没开时 `agentSpareSlot()` 为 false,不多认领 —— 不为接预渲染开新实例。
- *   - 卡片锁、结果上报走的都是原来那条执行路径,多认领只改「能持有几项」,不改任何一项怎么做。
+ *   - Just like regular claims, the extra claimed item is renewed by the session and its progress
+ *     is reported by the execution arrangement; it is queued into the regular prerender queue via
+ *     `runQueueTask` as usual in the pipeline, and handed to the dedicated instance by
+ *     `kickAgentIdle`. If the dedicated instance is taken by the Agent before it arrives, it
+ *     simply waits for the item in the `'queue'` prerender room to finish (at most one item) and
+ *     will not hang indefinitely.
+ *   - Does not require any instance other than the running dedicated instance: the `'queue'`
+ *     prerender room is currently working on the previous item (one of the conditions), so this
+ *     item will not cause the pipeline to launch a new Chrome; when the dedicated instance is not
+ *     running, `agentSpareSlot()` is false and no extra item is claimed: do not launch new
+ *     instances just to accept prerenders.
+ *   - Card locks and result reporting follow the original execution path; claiming extra only
+ *     changes "how many items can be held" and does not change how any item is executed.
  *
- * 纯逻辑,不开计时器。
+ * Pure logic, starts no timers.
  */
 
-/** 快照任务按哪张卡(或哪一版整场景)互斥:同 `FramePipeline` 的 `tag` 口径。不是快照任务回 null */
+/** Which card (or which version of the whole scene) the snapshot task is mutually exclusive by: same criteria as `FramePipeline`'s `tag`. Returns null if not a snapshot task */
 export function snapshotConflictKey(task) {
   if (task?.kind !== 'snapshot') return null;
   const input = task.input && typeof task.input === 'object' ? task.input : {};
@@ -34,20 +49,20 @@ export function snapshotConflictKey(task) {
 
 /**
  * @param {object} options
- * @param {any} options.pipeline  `FramePipeline`(只读 `agentSpareSlot()`、`queueRunning`)
- * @param {number} [options.base]  平时的上限(本机节点的 `maxConcurrent`),缺省 1
+ * @param {any} options.pipeline  `FramePipeline` (only reads `agentSpareSlot()`, `queueRunning`)
+ * @param {number} [options.base]  Normal upper limit (`maxConcurrent` of the local node), default 1
  */
 export function createAgentSpareGate({ pipeline, base = 1 }) {
-  /** 执行器手里正在做的快照任务:id → 互斥键 */
+  /** Snapshot tasks currently held by the executor: id → mutex key */
   const active = new Map();
-  /** 多出的那一格此刻开不开 */
+  /** Whether the extra slot is currently open */
   const spare = () => {
     try { return pipeline?.agentSpareSlot?.() === true && !!pipeline.queueRunning; } catch { return false; }
   };
   return {
-    /** 给节点会话的 `claimLimit` */
+    /** `claimLimit` for the node session */
     claimLimit: () => base + (spare() ? 1 : 0),
-    /** 给节点会话的 `canClaim`:平时的格子什么都接;多出的那一格只接上面说的那种快照任务 */
+    /** `canClaim` for the node session: regular slots accept anything; the extra slot only accepts the snapshot tasks described above */
     canClaim: (task, { held = 0 } = {}) => {
       if (held < base) return true;
       const key = snapshotConflictKey(task);
@@ -55,7 +70,7 @@ export function createAgentSpareGate({ pipeline, base = 1 }) {
       for (const other of active.values()) if (other === key) return false;
       return true;
     },
-    /** 包执行器:记下手里在做哪些快照任务(互斥键),做完摘掉 */
+    /** Wraps the executor: records which snapshot tasks (mutex keys) are currently in progress, and removes them when finished */
     wrap(executor) {
       return {
         ...executor,
@@ -68,7 +83,7 @@ export function createAgentSpareGate({ pipeline, base = 1 }) {
         },
       };
     },
-    /** 诊断 */
+    /** Diagnostics */
     describe: () => ({ spare: spare(), active: active.size }),
   };
 }

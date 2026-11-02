@@ -1,8 +1,10 @@
 import { useCallback, useState } from "react";
 
 /**
- * 左栏记在 localStorage 里的几样选择:当前分区(pc.left.section)、编辑分页(pc.left.editTab)、
- * 各分区打开的组(pc.left.group.<分区>)。读写都包一层 try —— 隐私模式、存储满了都不该让界面报错。
+ * A few choices the left sidebar remembers in localStorage: the current section (pc.left.section),
+ * the edit tab (pc.left.editTab), and the open group of each section
+ * (pc.left.group.<section>). Reads and writes are wrapped in try -- private mode or full storage
+ * should never make the UI report an error.
  */
 
 export function readStored<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
@@ -13,7 +15,7 @@ export function readStored<T extends string>(key: string, allowed: readonly T[],
   return fallback;
 }
 
-/** 写入;传 null 就删掉这个键 */
+/** Write; passing null deletes the key */
 export function writeStored(key: string, value: string | null): void {
   try {
     if (value === null) localStorage.removeItem(key);
@@ -22,9 +24,10 @@ export function writeStored(key: string, value: string | null): void {
 }
 
 /**
- * 某个分区当前打开的组(null = 总览)。
- * 状态在 React 里,localStorage 只是记住它 —— 外部(比如导入完成)要打开一个组,调返回的 setter 就行,
- * 不要只写 localStorage,那样界面不会跟着变。
+ * The group currently open in a section (null = overview).
+ * The state lives in React, and localStorage only remembers it -- when something outside (such as
+ * an import finishing) wants to open a group, call the returned setter. Do not write only to
+ * localStorage, or the UI will not follow.
  */
 export function useOpenGroup(section: string, allowed: readonly string[]): [string | null, (id: string | null) => void] {
   const key = `pc.left.group.${section}`;

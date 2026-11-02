@@ -1,28 +1,43 @@
 /**
- * 占位平面的**舞台一侧**(product/rendering.md「兜底顺序」;接口见 `placeholder/contract.ts`)。
+ * The **stage side** of the placeholder plane (product/rendering.md "Fallback order"; interface: see
+ * `placeholder/contract.ts`).
  *
- * 管四件事,都不碰 React、不 import 占位组件本身(组件由 `Stage.tsx` 引;B 交付后只换那一行 import):
+ * It does four things, none of which touches React or imports the placeholder component itself (the
+ * component is imported by `Stage.tsx`; once B is delivered, only that one import line is swapped):
  *
- *   1. **挂不挂**:只有人看的预览(舞台页、`front` 角色)挂。导出页、预渲染、Agent 的查询渲染从不调
- *      `setPlaceholdersEnabled(true)`;`StageView` 在 `setRole('back')` 时关掉。关着时 `Stage` 一个节点都不渲、
- *      样式表也不注入 —— 导出像素基线不受影响。
- *   2. **显示谁**(`placeholderWanted`,纯函数):T1 兜底链尽头(被抑制、这一拍流 blank、又没挂快照)、
- *      T2 `.pc-awaiting`(快照还没到、这一拍流也没在画)、T3 `.pc-settling` 且没挂快照(不可见地追帧)、
- *      T4 等后台补跑互换的轻卡(被抑制、分派表说它这一刻是轻卡);在线浏览器模式下这台设备跑不了的卡
- *      (用户卡、素材效果卡)没有可贴的快照 / 流时一律是沙漏 `awaiting`,等渲染节点的结果到了换上
- *      (2026-10-21 用户定:没有「本地 PC 辅助渲染」这种情况)。
- *   3. **显隐**:`StageView` 每拍 / 每次平面提交之后按上面的结果只用 contract 的 `setPlaceholderShown`
- *      切槽位的 `hidden`,不经 React 提交(`applyPlaceholders`)。满 120 ms 才可见由占位组件的 CSS 负责。
- *   4. **几何**(`geometryFor`):流清单的实体框(`tight ?? bound`)→ 这张卡上次活渲时量到的墨迹框 →
- *      都没有就在位置框中心只放一个小沙漏徽标(`badge`,不铺噪点)。坐标一律相对包裹层、舞台像素。
+ *   1. **Whether to mount**: only previews that a human watches (the stage page, the `front` role)
+ *      mount it. The export page, prerender and Agent query renders never call
+ *      `setPlaceholdersEnabled(true)`; `StageView` turns it off on `setRole('back')`. While it is off,
+ *      `Stage` renders no nodes at all and injects no stylesheet, so the export pixel baseline is
+ *      unaffected.
+ *   2. **Who is shown** (`placeholderWanted`, a pure function): T1 end of the fallback chain
+ *      (suppressed, the stream is blank this tick, and no snapshot is attached), T2 `.pc-awaiting`
+ *      (the snapshot has not arrived and the stream is not drawing this tick either), T3
+ *      `.pc-settling` with no snapshot attached (invisible frame catch-up), T4 light cards waiting for
+ *      the background catch-up run swap (suppressed, and the dispatch table says it is a light card at
+ *      this moment). In online browser mode, cards this device cannot run (user cards, media effect
+ *      cards) always get the hourglass `awaiting` when there is no snapshot / stream to paste, until
+ *      the render node's result arrives and replaces it (user decision, 2026-10-21: there is no
+ *      "local PC-assisted render" case).
+ *   3. **Show / hide**: after every tick / every plane commit, `StageView` uses the result above to
+ *      toggle the slot's `hidden` with only the contract's `setPlaceholderShown`, bypassing React
+ *      commits (`applyPlaceholders`). Becoming visible only after a full 120 ms is handled by the
+ *      placeholder component's CSS.
+ *   4. **Geometry** (`geometryFor`): the stream manifest's entity box (`tight ?? bound`) → the ink box
+ *      measured at this card's last live render → if neither exists, just a small hourglass badge at
+ *      the center of the position box (`badge`, no noise fill). Coordinates are always relative to the
+ *      wrapper layer, in stage pixels.
  *
- * # 槽位
+ * # Slot
  *
- * `Stage` 在每张卡的包裹层里挂一个 `[data-pc-placeholder-slot]`(和快照 / 流平面同级,`position:absolute;
- * inset:0`,默认 `hidden`),占位组件渲在槽位里面。显隐切的是槽位的 `hidden`:contract 没规定组件根元素的
- * 初始显隐,而组件又是无状态的纯渲染 —— 由槽位托着,React 每次提交都不会把手动切过的 `hidden` 冲掉
- * (prop 一直是 `true`,React 不会重写它)。截图、墨迹采样、像素扫描、命中测试对槽位和组件根元素
- * 一视同仁(`isPlaceholderNode`)。
+ * `Stage` mounts a `[data-pc-placeholder-slot]` in each card's wrapper layer (at the same level as the
+ * snapshot / stream planes, `position:absolute;
+ * inset:0`, `hidden` by default), and the placeholder component renders inside the slot. What gets
+ * toggled is the slot's `hidden`: the contract does not specify the initial visibility of the
+ * component's root element, and the component is stateless pure rendering, so the slot holds it, and
+ * no React commit wipes out a `hidden` that was toggled by hand (the prop is always `true`, so React
+ * never rewrites it). Screenshots, ink sampling, pixel scans and hit tests treat the slot and the
+ * component root element alike (`isPlaceholderNode`).
  */
 import {
   PLACEHOLDER_ATTR, PLACEHOLDER_SLOT_ATTR, PLACEHOLDER_STATIC_ATTR, setPlaceholderShown,
@@ -31,21 +46,27 @@ import {
 import { cardRunnableHere, getCard, graphCardsRunnableHere, isUserCardId } from "../kernel/registry.ts";
 import { hourglassFit, type PlaceholderFit } from "./placeholderFit.ts";
 
-/** 包裹层里托着占位组件的槽位(常量在 contract 里,这里转出去给已有的引用方) */
+/**
+ * The slot in the wrapper layer that holds the placeholder component (the constant lives in the
+ * contract; it is re-exported here for existing referrers)
+ */
 export { PLACEHOLDER_SLOT_ATTR };
-/** 槽位或组件根元素 —— 排除 / 命中都按它 */
+/** Slot or component root element: exclusion / hit testing both go by it */
 export const PLACEHOLDER_SELECTOR = `[${PLACEHOLDER_SLOT_ATTR}],[${PLACEHOLDER_ATTR}]`;
 
-/** 这个节点是不是占位符的一部分(槽位、组件根元素或它们里面的东西) */
+/** Whether this node is part of the placeholder (slot, component root element, or anything inside them) */
 export function isPlaceholderNode(el: Element | null | undefined): boolean {
   return !!el && typeof el.closest === "function" && !!el.closest(PLACEHOLDER_SELECTOR);
 }
 
-/* ------------------------------------------------------------------ 1. 挂不挂 */
+/* ------------------------------------------------------------------ 1. Whether to mount */
 
 let enabled = false;
 
-/** 只有 `StageView`(舞台页、`front` 角色)会打开。缺省关:导出页 / 预渲染 / 后台舞台一个节点都没有 */
+/**
+ * Only `StageView` (the stage page, the `front` role) turns it on. Off by default: the export page /
+ * prerender / background stage have no nodes at all
+ */
 export function setPlaceholdersEnabled(on: boolean): void {
   enabled = !!on;
 }
@@ -55,7 +76,7 @@ export function placeholdersEnabled(): boolean {
 }
 
 let styleEl: HTMLStyleElement | null = null;
-/** 占位组件的整张样式表,打开时注入一次(导出页永远走不到这里) */
+/** The placeholder component's whole stylesheet, injected once when enabled (the export page never gets here) */
 export function ensurePlaceholderStyle(css: string): void {
   if (styleEl || typeof document === "undefined" || !css) return;
   styleEl = document.createElement("style");
@@ -65,37 +86,48 @@ export function ensurePlaceholderStyle(css: string): void {
 }
 
 /**
- * 摘掉样式表(`setRole('back')`):K5 互换之后这一台成了后台舞台,
- * 「后台舞台不注入占位样式」要对它也成立。再转正时 `Stage` 会重新注入。
+ * Remove the stylesheet (`setRole('back')`): after the K5 swap this stage has become the background
+ * stage, so "the background stage does not inject placeholder styles" has to hold for it too. When it
+ * is promoted again, `Stage` injects the stylesheet anew.
  */
 export function removePlaceholderStyle(): void {
   styleEl?.remove();
   styleEl = null;
 }
 
-/* ------------------------------------------------------------------ 2. 显示谁 */
+/* ------------------------------------------------------------------ 2. Who is shown */
 
 export interface PlaceholderState {
-  /** 播放中被抑制的卡(判重 + K3(b) 的额外抑制) */
+  /** Cards suppressed during playback (classify as heavy, plus the extra suppression of K3(b)) */
   suppressed: ReadonlySet<string>;
-  /** 此刻挂着快照平面的卡 */
+  /** Cards that have a snapshot plane attached right now */
   snapshots: ReadonlyMap<string, unknown> | ReadonlySet<string>;
-  /** `.pc-awaiting`:这一帧的快照还没到 */
+  /** `.pc-awaiting`: the snapshot for this frame has not arrived yet */
   awaiting: ReadonlySet<string>;
-  /** `.pc-settling`:正在不可见地追帧 */
+  /** `.pc-settling`: frame catch-up is in progress, invisibly */
   settling: ReadonlyMap<string, unknown>;
-  /** 这一拍流画面在的卡(`StreamPlayer.showingClips()`) */
+  /** Cards whose stream picture is present this tick (`StreamPlayer.showingClips()`) */
   streamShowing: ReadonlySet<string>;
-  /** 被抑制但这一刻判轻的卡(K3(b) 的 `vtOk = false` 轻卡在等后台补跑);缺省看 `setCatchingUpClips` 那一份 */
+  /**
+   * Cards that are suppressed but classified as light at this moment (K3(b)'s `vtOk = false` light cards
+   * waiting for the background catch-up run); by default, the set from `setCatchingUpClips` is used
+   */
   isLight?: (clipId: string) => boolean;
   /**
-   * 此刻在场、这台设备跑不了的卡(在线浏览器模式下的用户卡、素材效果卡;`localOnlyClipIds`)。它们照兜底顺序贴快照 / 流;
-   * 什么都贴不上时显示沙漏 `awaiting`,暂停时也一样,渲染节点的结果到了自动换上。不管在不在抑制、等快照里。缺省空。
+   * Cards that are present right now and that this device cannot run (user cards and media effect cards
+   * in online browser mode; `localOnlyClipIds`). They paste a snapshot / stream following the fallback
+   * order; when nothing can be pasted they show the hourglass `awaiting`, also while paused, and the
+   * render node's result replaces it automatically once it arrives. Whether they are suppressed or
+   * waiting for a snapshot does not matter. Empty by default.
    */
   unsupported?: ReadonlySet<string>;
 }
 
-/** T4 的那几张(被抑制、这一刻判轻:等后台补跑互换)。`StageView` 收到 `setSuppressed` 时按分派表算好 */
+/**
+ * The cards of T4 (suppressed, classified as light at this moment: waiting for the swap after the
+ * background catch-up run). `StageView` works them out from the dispatch table when it receives
+ * `setSuppressed`
+ */
 let catchingUp: ReadonlySet<string> = new Set();
 export function setCatchingUpClips(ids: Iterable<string>): void {
   catchingUp = new Set(ids);
@@ -105,12 +137,14 @@ export function isCatchingUpClip(clipId: string): boolean {
 }
 
 /**
- * 这一拍哪几张卡要显示占位符、为什么(T1~T4;这台设备跑不了的卡在兜底顺序尽头是沙漏 `awaiting`:结果由渲染节点出)
+ * Which cards show a placeholder this tick, and why (T1~T4; cards this device cannot run get the
+ * hourglass `awaiting` at the end of the fallback order: the result is produced by the render node)
  */
 export function placeholderWanted(s: PlaceholderState): Map<string, PlaceholderReason> {
   const out = new Map<string, PlaceholderReason>();
   const unsupported = s.unsupported;
-  // 这台设备跑不了的卡:贴着快照或流就不显示;否则是沙漏(结果由渲染节点出,到了自动换上)
+  // Cards this device cannot run: not shown while a snapshot or stream is pasted on; otherwise the
+  // hourglass (the result comes from the render node and replaces it automatically on arrival)
   if (unsupported) {
     for (const id of unsupported) {
       if (s.snapshots.has(id) || s.streamShowing.has(id)) continue;
@@ -121,14 +155,19 @@ export function placeholderWanted(s: PlaceholderState): Map<string, PlaceholderR
   for (const id of s.suppressed) {
     if (skip(id)) continue;
     if (s.snapshots.has(id) || s.streamShowing.has(id)) continue;
-    // T4:等后台补跑后互换的轻卡;其余是 T1(兜底链尽头)
+    // T4: light cards waiting to swap after the background catch-up run; the rest are T1 (end of the
+    // fallback chain)
     out.set(id, (s.isLight ?? isCatchingUpClip)(id) ? "catching-up" : "no-data");
   }
-  // T2:快照还没到(`.pc-awaiting` 500 ms 兜底之后由舞台摘掉,占位符随之撤)
-  // 这张卡的流这一拍在画(单卡流、它所在的组流、依赖下层的流;留着上一张的那一段也算)就不显示:兜底顺序里流排在前面,
-  // 流在画就轮不到占位符。超出预算而不发流的层没有轨道、不在 `streamShowing` 里,照旧显示
+  // T2: the snapshot has not arrived (the stage removes `.pc-awaiting` after the 500 ms fallback, and
+  // the placeholder is withdrawn with it)
+  // Not shown if this card's stream is drawing this tick (single-card stream, the group stream it is in,
+  // a below-dependent stream; one still holding the previous card's segment also counts): the stream
+  // comes first in the fallback order, so when the stream is drawing the placeholder gets no turn. A layer
+  // that is over budget and emits no stream has no track and is not in `streamShowing`, so it is shown
+  // as before
   for (const id of s.awaiting) if (!skip(id) && !s.streamShowing.has(id)) out.set(id, "awaiting");
-  // T3:不可见地追帧,又没有快照垫着
+  // T3: invisible frame catch-up, with no snapshot underneath
   for (const id of s.settling.keys()) {
     if (skip(id)) continue;
     if (!s.snapshots.has(id) && !out.has(id)) out.set(id, "catching-up");
@@ -136,14 +175,19 @@ export function placeholderWanted(s: PlaceholderState): Map<string, PlaceholderR
   return out;
 }
 
-/* ------------------------------------------------------------------ 2b. 本机渲染不了的卡(unsupported) */
+/* ------------------------------------------------------------------ 2b. Cards this machine cannot render (unsupported) */
 
 /**
- * 在线浏览器模式(product/platforms.md「在线浏览器」):这台设备跑不了的用户卡、素材效果卡(转译失败、引用了页面里没有的模块、
- * 没有隔离环境、图形能力不够)有预渲染结果就照贴,与内置卡相同(一律按重卡:播放中抑制、不活渲,停下不追);
- * 什么都贴不上时在兜底顺序尽头显示沙漏,渲染节点的结果到了自动换上(2026-10-21 用户定:不存在「本地 PC 辅助渲染」)。
+ * Online browser mode (product/platforms.md "Online browser"): for user cards and media effect cards
+ * that this device cannot run (transpilation failed, they reference modules the page does not have,
+ * there is no isolated environment, or graphics capability is insufficient), a prerender output is
+ * pasted if one exists, the same as for built-in cards (always treated as heavy cards: suppressed during
+ * playback, no live render, no catch-up when stopped); when nothing can be pasted, the hourglass is
+ * shown at the end of the fallback order, and the render node's result replaces it automatically on
+ * arrival (user decision, 2026-10-21: there is no "local PC-assisted render").
  *
- * 开关:在线页面(`ONLINE`)与舞台地址上的 `platform=browser`(截图和探针用)。桌面、导出、预渲染、Agent 看到的画面恒为关。
+ * Switch: the online page (`ONLINE`) and `platform=browser` on the stage address (used by screenshots
+ * and probes). What the desktop, export, prerender and the Agent see is always off.
  */
 let onlineBrowser = false;
 export function setOnlineBrowserMode(on: boolean): void {
@@ -154,10 +198,14 @@ export function onlineBrowserMode(): boolean {
 }
 
 /*
- * 在线逐帧导出的导出页(与编辑页面同源的 `?export=1` 文档,`src/export/frameCompositor.ts` 开的 iframe)里同步来的用户卡:
- * 这个文档不执行卡片代码、也没有它们的定义,但导出要把每一帧里这些卡的包裹层换成预渲染原尺寸(契约第 8 节「在线导出」),
- * 所以包裹层得先挂出来。编辑页面经 `__pcSetSyncedUserCards` 把同步表交给导出页并打开这个开关;只对「没有定义的同步卡」生效,
- * 内置卡、素材效果卡与桌面的导出一个字不变(开关只有在线导出才会打开)。
+ * User cards synced into the export page of online frame-by-frame export (the `?export=1` document
+ * with the same origin as the editor page, in the iframe opened by `src/export/frameCompositor.ts`):
+ * this document does not execute card code and has no definitions for them, but export has to replace
+ * the wrapper layer of these cards in every frame with the original-size prerender (contract section 8,
+ * "Online export"), so the wrapper layers must be mounted first. The editor page hands the sync table
+ * to the export page via `__pcSetSyncedUserCards` and turns this switch on; it only takes effect for
+ * "synced cards without a definition". Built-in cards, media effect cards and desktop export stay
+ * exactly as they were (the switch is only turned on by online export).
  */
 let exportSyncedMount = false;
 export function setExportSyncedMount(on: boolean): void {
@@ -167,19 +215,26 @@ export function exportSyncedMountFor(cardId: string | undefined, def: unknown): 
   return exportSyncedMount && !def && !!cardId && isUserCardId(cardId);
 }
 
-/** 这份文档能不能跑素材效果卡:看注册表(`registry.graphCardsRunnableHere`,只有执行卡片的舞台为真) */
+/**
+ * Whether this document can run media effect cards: check the registry
+ * (`registry.graphCardsRunnableHere`, true only for a stage that executes cards)
+ */
 export function graphCardsHere(): boolean {
   return graphCardsRunnableHere();
 }
 
-/** 这张用户卡在本页能不能运行:看注册表(`registry.cardRunnableHere`;同步来的卡要两台舞台、单舞台时那一台报了 `ready` 才算) */
+/**
+ * Whether this user card can run on this page: check the registry (`registry.cardRunnableHere`; a synced
+ * card counts only when both stages, or the one stage when there is a single stage, have reported `ready`)
+ */
 export function userCardRunnableHere(cardId: string): boolean {
   return cardRunnableHere(cardId);
 }
 
 /**
- * 这张卡在此刻的平台上是不是渲染不了。`isUserCard` 缺省查注册表的 `isUserCardId`(构建时的定制卡登记,
- * 加上内容库同步来的用户卡);素材效果卡的判法见 `needsLocalPc`。
+ * Whether this card cannot be rendered on the current platform right now. `isUserCard` defaults to the
+ * registry's `isUserCardId` (the build-time custom card registration plus the user cards synced from the
+ * content store); for how media effect cards are judged, see `needsLocalPc`.
  */
 export function unsupportedHere(
   cardId: string | undefined,
@@ -191,16 +246,24 @@ export function unsupportedHere(
 }
 
 /**
- * 这张卡是不是本页运行不了、要靠渲染节点(`docs/plan/online-card-exec-contract.md` 第 6、8 节)。同步来的用户卡在编辑页面没有定义
- * (`def` 为 undefined),靠 `isUserCard` 认出来;两边都没有的 id(未知卡片)回 false。
+ * Whether this card cannot run on this page and has to rely on a render node
+ * (`docs/plan/online-card-exec-contract.md` sections 6 and 8). A synced user card has no definition on the
+ * editor page (`def` is undefined) and is recognized via `isUserCard`; an id that neither side knows (an
+ * unknown card) returns false.
  *
- * 用户卡:本页能运行的不算 —— 构建时就在包里的仓库用户卡(它是页面自己的代码);同步来的、运行状态是 `ready` 的
- * (编辑页面看舞台报回的状态,舞台看自己载入成功没有)。转译失败、引用了页面里没有的模块、没有隔离环境的照旧算。
+ * User cards: those that can run on this page do not count: repository user cards that are already in the
+ * bundle at build time (they are the page's own code), and synced ones whose run state is `ready` (the
+ * editor page looks at the state the stage reports back; the stage looks at whether it loaded the card
+ * successfully itself). Transpilation failures, references to modules the page does not have, and missing
+ * isolated environments still count as before.
  *
- * 素材效果卡 = 写了 `card()` 的(画面由宿主在 GPU 上执行),或只写了 `audio()`、没有画面组件的(音频素材效果卡)。
- * 有画面组件、同时带 `audio()` 的内置有声动效卡不是素材效果卡:它的画面就是一张普通的 DOM 卡,在线页面照常渲染
- * (声音另由宿主合成,`product/platforms.md`「卡片声音的平台边界」)。2026-10-06 之前这里把凡是写了 `audio()` 的都当素材效果卡,
- * 内置有声卡的画面在在线页面里因此成了「本机跑不了」、导出时一直等预渲染原尺寸。
+ * Media effect card = one that writes `card()` (the picture is executed by the host on the GPU), or one that
+ * writes only `audio()` and has no picture component (an audio media effect card). A built-in audio motion
+ * card that has a picture component and also carries `audio()` is not a media effect card: its picture is an
+ * ordinary DOM card that the online page renders as usual (the sound is composed separately by the host,
+ * `product/platforms.md` "Platform boundaries of card sound"). Before 2026-10-06 this code treated every card
+ * that wrote `audio()` as a media effect card, so the picture of a built-in audio card was counted as
+ * "cannot run on this machine" on the online page, and export kept waiting for the original-size prerender.
  */
 export function needsLocalPc(
   cardId: string | undefined,
@@ -211,22 +274,29 @@ export function needsLocalPc(
 ): boolean {
   if (!cardId) return false;
   /*
-   * 素材效果卡(画面由 card() 出,或只有 audio()):只在能跑素材效果卡的文档里运行 —— 跨源舞台、画面那一半允许执行、图形能力够
-   * (`registry.graphCardsRunnableHere`,由舞台写;契约 4.3)。编辑页面、同源单舞台、桌面仿在线模式里恒为运行不了。
-   * 能跑素材效果卡的文档里再看这张卡自己(下面用户卡那一支:载入成功、没出过事)。
+   * Media effect cards (the picture comes from card(), or there is only audio()): they run only in a
+   * document that can run media effect cards: a cross-origin stage whose picture half is allowed to execute
+   * and has enough graphics capability (`registry.graphCardsRunnableHere`, written by the stage; contract
+   * 4.3). On the editor page, on a same-origin single stage, and in desktop online-emulation mode they can
+   * never run. In a document that can run media effect cards, then look at the card itself (the user-card
+   * branch below: loaded successfully, nothing has gone wrong).
    */
   if (!!def && (typeof def.card === "function" || (typeof def.audio === "function" && !def.Component)) && !graphRunnable()) return true;
-  // 用户卡:本页能运行的不算(构建时就在包里的仓库用户卡;同步来的、载入成功的,`registry.cardRunnableHere`)
+  // User cards: those that can run on this page do not count (repository user cards already in the bundle at
+  // build time; synced ones that loaded successfully, `registry.cardRunnableHere`)
   if (isUserCard(cardId)) return !runnable(cardId);
   return false;
 }
 
 /*
- * 占位符在屏幕上的大小(`placeholderFit.ts`):舞台 iframe 被父页用 CSS `scale(预览缩放)` 缩进预览框,占位组件要按它补偿。
- * 父页经 `setViewScale` 发来预览缩放(桌面与在线都发),`Stage` 渲占位组件时按片段的框、这一层的缩放与它算出 `fit`。
+ * Size of the placeholder on screen (`placeholderFit.ts`): the parent page shrinks the stage iframe into the
+ * preview frame with CSS `scale(preview scale)`, and the placeholder component has to compensate for it.
+ * The parent page sends the preview scale via `setViewScale` (both desktop and online send it), and when
+ * `Stage` renders the placeholder component it computes `fit` from the clip's box, this layer's scale and
+ * that preview scale.
  */
 let viewScale = 1;
-/** 记下父页的预览缩放;变了回 true(`StageView` 据此重渲一次) */
+/** Records the parent page's preview scale; returns true if changed (`StageView` re-renders once on that) */
 export function setPlaceholderViewScale(scale: unknown): boolean {
   const s = Number(scale);
   const next = Number.isFinite(s) && s > 0 ? s : 1;
@@ -240,13 +310,15 @@ export function placeholderViewScale(): number {
 
 const fitCache = new Map<string, { key: string; fit: PlaceholderFit }>();
 /**
- * 这张卡的占位组件怎么放(包裹层本地像素):沙漏只抵消预览缩放。
- * 不超出框:徽标形态看位置框(`size`),铺满形态看实体框。同样的输入回同一个对象(占位组件是 `React.memo`)。
+ * How to place this card's placeholder component (wrapper-layer local pixels): the hourglass only
+ * cancels out the preview scale.
+ * It does not exceed the box: the badge form goes by the position box (`size`), the fill form by the
+ * entity box. The same input returns the same object (the placeholder component is `React.memo`).
  */
 export function placeholderFitFor(clipId: string, reason: PlaceholderReason, geometry: PlaceholderGeometry,
   size: { width: number; height: number }, layerScale: unknown): PlaceholderFit {
   const box = geometry.kind === "solid" ? { width: geometry.box.width, height: geometry.box.height } : { width: size.width, height: size.height };
-  void reason; // 各种原因都是沙漏,放法一样(参数留着:调用方与单测照旧传)
+  void reason; // Every reason shows the same hourglass, placed the same way (the parameters are kept: callers and unit tests still pass them as before)
   const fit = hourglassFit({ box, viewScale, layerScale });
   const key = String(fit.scale);
   const hit = fitCache.get(clipId);
@@ -257,8 +329,10 @@ export function placeholderFitFor(clipId: string, reason: PlaceholderReason, geo
 }
 
 /**
- * 在线浏览器模式下这台设备跑不了的片段(`unsupportedHere`,定义从注册表取)。模式关着回空集合。
- * 舞台据此不挂组件、照挂快照 / 流平面,占位符在兜底顺序尽头显示沙漏。
+ * Clips this device cannot run in online browser mode (`unsupportedHere`; the definition is taken from
+ * the registry). Returns an empty set while the mode is off.
+ * Based on this, the stage mounts no component but still mounts the snapshot / stream planes, and the
+ * placeholder shows the hourglass at the end of the fallback order.
  */
 export function localOnlyClipIds(clips: Iterable<{ id: string; cardId?: string }>): Set<string> {
   const out = new Set<string>();
@@ -267,28 +341,39 @@ export function localOnlyClipIds(clips: Iterable<{ id: string; cardId?: string }
   return out;
 }
 
-/* ------------------------------------------------------------------ 3. 显隐 */
+/* ------------------------------------------------------------------ 3. Show / hide */
 
-/** 同屏最多几个沙漏在转(占位组件的 `maxAnimated`,由 `Stage` 登记) */
+/**
+ * Maximum number of hourglasses spinning on screen at once (the placeholder component's
+ * `maxAnimated`, registered by `Stage`)
+ */
 let animatedLimit = Infinity;
 export function setMaxAnimated(n: number): void {
   animatedLimit = Number.isFinite(n) && n >= 0 ? n : Infinity;
 }
 
-/** 上一次显示着的那几张(下一次要能把它们关掉) */
+/** The cards that were shown last time (so that the next pass can turn them off) */
 let shown = new Set<string>();
-/** 每张从哪一刻起显示着(真墙钟;探针据此把 120 ms 延迟内的空档单列) */
+/**
+ * Since when each card has been shown (real wall clock; probes use it to list the gap within the
+ * 120 ms delay separately)
+ */
 const since = new Map<string, number>();
-/** 舞台页的 `performance.now` / `Date.now` 都被接管成舞台时间,量真实时间要用 `__pcRealNow` */
+/**
+ * On the stage page, `performance.now` / `Date.now` are both taken over as stage time; use
+ * `__pcRealNow` to measure real time
+ */
 const realNow = (): number => {
   const w = globalThis as unknown as { __pcRealNow?: () => number };
   return typeof w.__pcRealNow === "function" ? w.__pcRealNow() : Date.now();
 };
 
 /**
- * 按 `wanted` 切槽位的 `hidden`。只动这几张:这一拍要显示的 + 上一拍显示着的。
- * `slotOf` 找这张卡包裹层里的槽位(没挂着就跳过:卡刚下场、或者 `Stage` 还没提交)。
- * 回这一次显示着几个(诊断 / 探针用)。
+ * Toggles the slots' `hidden` according to `wanted`. Only these cards are touched: the ones to be shown
+ * this tick + the ones that were shown last tick.
+ * `slotOf` finds the slot in this card's wrapper layer (skipped if it is not mounted: the card has just
+ * exited, or `Stage` has not committed yet).
+ * Returns how many are shown this time (for diagnostics / probes).
  */
 export function applyPlaceholders(wanted: ReadonlyMap<string, PlaceholderReason>, slotOf: (clipId: string) => HTMLElement | null): number {
   let n = 0;
@@ -302,7 +387,8 @@ export function applyPlaceholders(wanted: ReadonlyMap<string, PlaceholderReason>
       const reason = wanted.get(id)!;
       if (slot.getAttribute("data-pc-placeholder-reason") !== reason) slot.setAttribute("data-pc-placeholder-reason", reason);
     }
-    // 同屏超过 `maxAnimated` 个时,多出来的沙漏静止(contract 的 `PLACEHOLDER_STATIC_ATTR`,只动槽位属性)
+    // When more than `maxAnimated` are on screen at once, the extra hourglasses stay still (the contract's
+    // `PLACEHOLDER_STATIC_ATTR`, which only touches the slot attribute)
     const still = on && n > animatedLimit;
     if (slot.hasAttribute(PLACEHOLDER_STATIC_ATTR) !== still) slot.toggleAttribute(PLACEHOLDER_STATIC_ATTR, still);
   }
@@ -313,12 +399,12 @@ export function applyPlaceholders(wanted: ReadonlyMap<string, PlaceholderReason>
   return n;
 }
 
-/** 这张从哪一刻起显示着(真墙钟毫秒);没显示回 undefined */
+/** Since when this card has been shown (real wall-clock milliseconds); undefined if not shown */
 export function shownSince(clipId: string): number | undefined {
   return since.get(clipId);
 }
 
-/** 全部撤下(`setRole('back')`、关掉时) */
+/** Withdraw all of them (on `setRole('back')`, when turned off) */
 export function hideAllPlaceholders(slotOf: (clipId: string) => HTMLElement | null): void {
   applyPlaceholders(new Map(), slotOf);
 }
@@ -327,18 +413,20 @@ export function shownPlaceholders(): ReadonlySet<string> {
   return shown;
 }
 
-/* ------------------------------------------------------------------ 4. 几何 */
+/* ------------------------------------------------------------------ 4. Geometry */
 
-/** 流清单的实体框(包裹层坐标)。由 `StageView` 接到 `StreamPlayer.boxOf` 上 */
+/** The stream manifest's entity box (wrapper-layer coordinates). `StageView` wires it to `StreamPlayer.boxOf` */
 let streamBoxOf: (clipId: string) => { x: number; y: number; w: number; h: number } | null = () => null;
 export function setStreamBoxSource(fn: typeof streamBoxOf): void {
   streamBoxOf = fn;
 }
 
 /**
- * 超出预算的组流:整组只有一个位置矩形(成员的并集),每个成员的占位符都会铺在它上面,N 个成员叠 N 块同样的框。
- * 每一组里只留这一拍要显示占位符的成员中最上面的那一张(`groups` 每项按画家顺序,最后一个在最上面),其余的从 `wanted` 里拿掉。
- * 原地改 `wanted` 并返回它。
+ * Group streams that are over budget: the whole group has only one position rectangle (the union of its
+ * members), and every member's placeholder is spread over it, so N members stack N identical boxes.
+ * In each group, keep only the topmost of the members that show a placeholder this tick (each item of
+ * `groups` is in painter's order, the last one is on top) and remove the rest from `wanted`.
+ * Modifies `wanted` in place and returns it.
  */
 export function keepTopOfGroups<T>(wanted: Map<string, T>, groups: readonly (readonly string[])[]): Map<string, T> {
   for (const members of groups) {
@@ -349,11 +437,16 @@ export function keepTopOfGroups<T>(wanted: Map<string, T>, groups: readonly (rea
 }
 
 /**
- * 舞台坐标里的一个矩形换到某一层包裹层自己的坐标(超出预算的组流、依赖下层的流的位置矩形是舞台坐标,占位符摆在包裹层里)。
+ * Converts a rectangle in stage coordinates into the coordinates of one layer's own wrapper layer (the
+ * position rectangles of over-budget group streams and below-dependent streams are in stage coordinates,
+ * while the placeholder sits inside the wrapper layer).
  *
- * 用屏幕上量到的两块矩形换:`ref` 是舞台坐标的原点所在的那个元素(包裹层的定位祖先,流的舞台平面也挂在它下面),`wrap` 是包裹层;
- * `*Width` 是它们各自布局里的宽(没算变形的)。只认平移加等比缩放的包裹层:转过、斜切过、带三维的(`transform` 不是这种矩阵)回 null,
- * 那一层照老办法定位。
+ * The conversion uses two rectangles measured on screen: `ref` is the element where the origin of the
+ * stage coordinates lives (the positioned ancestor of the wrapper layer, under which the stream's stage
+ * plane is also mounted), and `wrap` is the wrapper layer; `*Width` is each one's width in its own layout
+ * (without transforms). Only wrapper layers that are a translation plus a uniform scale are accepted:
+ * rotated, skewed or 3D ones (a `transform` that is not such a matrix) return null, and that layer is
+ * positioned the old way.
  */
 export function stageBoxToLocal(
   box: { x: number; y: number; w: number; h: number },
@@ -364,7 +457,8 @@ export function stageBoxToLocal(
     const m = /^matrix\(([^)]+)\)$/.exec(t.trim())?.[1].split(",").map(Number);
     if (!m || m.length !== 6 || Math.abs(m[1]) > 1e-6 || Math.abs(m[2]) > 1e-6 || Math.abs(m[0] - m[3]) > 1e-6 || !(m[0] > 0)) return null;
   }
-  // 舞台像素 → 屏幕像素(预览缩放);包裹层自己的像素 → 屏幕像素(预览缩放 × 这一层的缩放)
+  // Stage pixels → screen pixels (preview scale); the wrapper layer's own pixels → screen pixels
+  // (preview scale × this layer's scale)
   const view = at.ref.width / at.refWidth;
   const own = at.wrap.width / at.wrapWidth;
   if (!(view > 0) || !(own > 0) || !Number.isFinite(view) || !Number.isFinite(own)) return null;
@@ -373,28 +467,37 @@ export function stageBoxToLocal(
 }
 
 /**
- * 超出预算的层:流清单里这一帧所在分段的位置矩形(已经换到包裹层坐标)。由 `StageView` 接到 `StreamPlayer.overBoxOf` / `stageBoxOf` 上。
- * 它只管这一帧,**不记进 `streamBoxes`**:这一层之后换不出矩形(包裹层转了、下一段没量过)时照老办法定位,不沿用上一段的。
+ * Over-budget layers: the position rectangle of the segment this frame falls in, from the stream manifest
+ * (already converted to wrapper-layer coordinates). `StageView` wires it to `StreamPlayer.overBoxOf` /
+ * `stageBoxOf`.
+ * It only covers this frame and is **not recorded into `streamBoxes`**: when this layer later cannot be
+ * converted to a rectangle (the wrapper layer rotated, the next segment was not measured), it is
+ * positioned the old way and does not reuse the previous segment's rectangle.
  */
 let overBoxOf: (clipId: string) => { x: number; y: number; w: number; h: number } | null = () => null;
 export function setOverBoxSource(fn: typeof overBoxOf): void {
   overBoxOf = fn;
 }
 
-/** 预算以内的流:清单量到过的框,流停了也留着(下一次来不及时还用得上) */
+/**
+ * Streams within budget: boxes the manifest has measured, kept even after the stream stops (usable
+ * next time if the new one is not ready in time)
+ */
 const streamBoxes = new Map<string, PlaceholderBox>();
-/** 上次活渲时量到的墨迹框(包裹层坐标) */
+/** Ink boxes measured at the last live render (wrapper-layer coordinates) */
 const inkBoxes = new Map<string, PlaceholderBox>();
 
 /**
- * 真渲之后量到的墨迹框(`StageView` 暂停态防抖采样)。量不到(`null`:什么都没画,或内容铺满整张卡 ——
- * `measureContentBox` 两者不分)就不记:宁可退到徽标,也不在量不准的时候铺满噪点。
+ * The ink box measured after a real render (`StageView` debounced sampling in the paused state). If it
+ * cannot be measured (`null`: nothing was drawn, or the content fills the whole card, which
+ * `measureContentBox` does not tell apart), it is not recorded: better to fall back to the badge than to
+ * fill the card with noise when the measurement is unreliable.
  */
 export function noteInkBox(clipId: string, box: PlaceholderBox | null): void {
   if (box && box.width > 0 && box.height > 0) inkBoxes.set(clipId, box);
 }
 
-/** 换项目时清掉:clipId 会复用 */
+/** Cleared when the project changes: a clipId can be reused */
 export function resetPlaceholderGeometry(): void {
   streamBoxes.clear();
   inkBoxes.clear();
@@ -405,8 +508,10 @@ export function resetPlaceholderGeometry(): void {
 const geometryCache = new Map<string, { key: string; geometry: PlaceholderGeometry }>();
 
 /**
- * 这张卡的占位几何(相对包裹层、舞台像素)。`size` 是包裹层(= 位置框)的尺寸。
- * 同样的输入回同一个对象(占位组件是 `React.memo`,几何对象换了才重渲)。
+ * This card's placeholder geometry (relative to the wrapper layer, in stage pixels). `size` is the size of
+ * the wrapper layer (= the position box).
+ * The same input returns the same object (the placeholder component is `React.memo`, and it re-renders
+ * only when the geometry object changes).
  */
 export function geometryFor(clipId: string, size: { width: number; height: number }): PlaceholderGeometry {
   const fresh = streamBoxOf(clipId);

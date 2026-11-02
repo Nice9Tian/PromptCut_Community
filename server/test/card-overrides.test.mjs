@@ -1,4 +1,5 @@
-// 卡片改动层(server/card-overrides.mjs):装机版改卡写进数据目录,补丁覆盖 runtime/app 时改动不丢
+// Card overlay layer (server/card-overrides.mjs): card edits in installed version write to
+// data directory; patches overwriting runtime/app do not lose changes
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";

@@ -1,6 +1,8 @@
-// SKILL 悬浮窗预览的落盘路由:SKILL 模式开着时页面 POST /api/skill-mode/last-action(桌面会话上一步动作的画面,
-// 编辑器进程经 SSE 的 skill.preview 要的),写 skillRoot/last-action.{png,json};SKILL 模式关着时什么都不写。
-// 顺带锁住 close 路由的返回形状。跑法:node --test server/test/skill-last-action.test.mjs
+// Disk persistence route for SKILL floating preview: when SKILL mode is on, page sends POST
+// /api/skill-mode/last-action (frame of previous action in desktop session, requested by editor
+// process via SSE skill.preview), writing skillRoot/last-action.{png,json}; writes nothing when
+// SKILL mode is off. Also locks in return shape of close route.
+// Run: node --test server/test/skill-last-action.test.mjs
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,7 +19,8 @@ const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-skill-last-action-'));
 const SKILL_DIR = path.join(OUT, 'skill');
 process.env.PROMPTCUT_SKILL_DIR = SKILL_DIR;
 
-// 转译到临时目录:插件里两处动态 import 用的是相对 import.meta.url 的路径,改成仓库里的绝对地址
+// Transpile to temporary directory: two dynamic imports in plugin use paths relative to
+// import.meta.url; rewrite them to absolute paths in repository
 const gateUrl = pathToFileURL(path.join(ROOT, 'server', 'skill-gate.mjs')).href;
 const projectsUrl = pathToFileURL(path.join(ROOT, 'server', 'vite-plugin-projects.ts')).href;
 let src = fs.readFileSync(path.join(ROOT, 'server', 'vite-plugin-skill-state.ts'), 'utf8');
@@ -30,7 +33,7 @@ const file = path.join(OUT, 'skill-state.mjs');
 fs.writeFileSync(file, js);
 const { skillStatePlugin } = await import(pathToFileURL(file).href);
 
-/** 把挂在 /api/skill-mode 上的那个中间件拿出来(插件用的是 use(路径, 函数) 的形式) */
+/** Extract middleware mounted on /api/skill-mode (plugin uses use(path, fn) form) */
 function handlerOf() {
   const handlers = new Map();
   skillStatePlugin().configureServer({
@@ -42,7 +45,7 @@ function handlerOf() {
   return fn;
 }
 
-/** connect 会把挂载前缀剥掉,所以这里 url 直接给剥掉之后的部分 */
+/** connect strips mount prefix, so url here is directly passed the stripped portion */
 function call(fn, method, url, body) {
   const req = Readable.from(body == null ? [] : [Buffer.from(JSON.stringify(body))]);
   req.url = url;
@@ -58,7 +61,7 @@ function call(fn, method, url, body) {
   });
 }
 
-// 一张最小的合法 png(1×1,pngjs 不需要,只要文件头对)
+// Minimal valid png (1×1, pngjs not needed as long as file header is valid)
 const PNG_1x1 = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
   'base64',
@@ -84,7 +87,7 @@ test('SKILL-LA-1 report while SKILL mode is on: both the png and the json land i
     assert.equal(meta.clipId, 'c-1');
     assert.equal(meta.t, 3.5);
     assert.ok(Date.parse(meta.at) > 0);
-    // 临时文件不能留下来
+    // Temporary files must not be left behind
     assert.ok(!fs.existsSync(path.join(SKILL_DIR, 'last-action.png.tmp')));
     assert.ok(!fs.existsSync(path.join(SKILL_DIR, 'last-action.json.tmp')));
   } finally {

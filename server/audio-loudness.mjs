@@ -1,9 +1,12 @@
 /**
- * `POST /api/audio/measure` 的主体(测响度 `measure_audio`)。原来写在 `vite-plugin-audio.ts` 里,搬出来是为了
- * 不依赖 vite 就能测(`server/test/audio-asset-path.test.mjs`)。回包的形状、状态码、报错文字与搬之前一致,
- * 只多了一种:素材服务不可达或拒绝读取(`AssetSourceError`)回 502 与写明原因的错。
+ * Main body of `POST /api/audio/measure` (loudness measurement `measure_audio`). Originally
+ * written in `vite-plugin-audio.ts`, moved out so it can be tested without depending on vite
+ * (`server/test/audio-asset-path.test.mjs`). Response shape, status code, and error text remain
+ * identical to before the move, with one addition: returns 502 and an error stating the reason
+ * when the asset service is unreachable or refuses to read (`AssetSourceError`).
  *
- * 素材从哪儿读由调用方注入(`resolveSource`,见 `audio-source.mjs`):素材服务上的 HTTP 地址,ffmpeg 自己按 Range 取。
+ * Where to read assets is injected by the caller (`resolveSource`, see `audio-source.mjs`): an
+ * HTTP URL on the asset service, from which ffmpeg fetches via Range requests on its own.
  */
 import { spawn } from "node:child_process";
 import { measureArgs, timelineMeasureArgs, parseEbur128 } from "./audio-measure.mjs";
@@ -13,7 +16,9 @@ import { tr } from "./i18n.mjs";
 /**
  * @param {object} p
  * @param {any} p.body
- * @param {(media: any) => (string | null | Promise<string | null>)} p.resolveSource 素材 → ffmpeg 的输入;没有这份素材回 null;素材服务不可达抛 AssetSourceError
+ * @param {(media: any) => (string | null | Promise<string | null>)} p.resolveSource asset →
+ *   ffmpeg input; returns null if this asset is missing; throws AssetSourceError if asset service
+ *   is unreachable
  * @param {string} p.ffmpeg
  * @param {string} p.ffprobe
  * @param {(src: string, ffprobe: string) => (boolean | Promise<boolean>)} [p.hasAudio]

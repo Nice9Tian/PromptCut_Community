@@ -1,10 +1,14 @@
 /**
- * C6.5 撤销 / 重做（设计稿 `docs/plan/c65-design.md` 第 8 节；验收 V5）。
- * 跑：node --test server/test/c65-undo.test.mjs
+ * C6.5 undo / redo (design doc `docs/plan/c65-design.md` Section 8; acceptance check V5).
+ * Run: node --test server/test/c65-undo.test.mjs
  *
- * 只照设计稿写，不看实现。撤销栈按写入身份分开：每个页面会话一个栈；撤销就是提交 inverse（带 undoOf）；
- * inverse 涉及的实体若在这一步之后被别的写入身份改过，这些实体不撤、其余照撤，并告诉用户谁改的。
- * 页面同步实例的撤销接口见 `c65-kit.mjs` 假设 A7：`undo()` / `redo()` → `{ skipped: [{ entity, by }] }`。
+ * Written only against the design doc without looking at the implementation. Undo stacks are
+ * separated by write identity: one stack per page session; undo is committing inverse (with
+ * undoOf); if entities touched by inverse were modified by another write identity after this
+ * step, those entities are not undone while the rest are undone as usual, and tell the user who
+ * modified them.
+ * Undo interface of page sync instances: see `c65-kit.mjs` assumption A7:
+ * `undo()` / `redo()` → `{ skipped: [{ entity, by }] }`.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,7 +25,7 @@ async function setup(t) {
   const env = await startProjectService();
   t.after(env.cleanup);
   env.clock.t -= 60 * MIN;
-  await seedProject(env, PID, fixedProject({ clips: 4 })); // c1..c4，frame.x = 10、20、30、40
+  await seedProject(env, PID, fixedProject({ clips: 4 })); // c1..c4, frame.x = 10, 20, 30, 40
   env.clock.t += 60 * MIN;
   const pages = [];
   const open = async (opts) => {
@@ -29,7 +33,7 @@ async function setup(t) {
     pages.push(p);
     return p;
   };
-  t.after(() => { for (const p of pages) { try { p.close(); } catch { /* 已关 */ } } });
+  t.after(() => { for (const p of pages) { try { p.close(); } catch { /* Closed */ } } });
   return { env, open };
 }
 
@@ -41,7 +45,7 @@ test('C65-V5-01 A edits clips 1 and 2, B then edits clip 2, A undoes: clip 1 goe
   const B = await open({ user: 'bob', session: 'page-b' });
   const w = await observer(env, PID);
 
-  A.edit((p) => { clipOf(p, 'c1').frame.x = 111; clipOf(p, 'c2').frame.x = 222; }); // 一步
+  A.edit((p) => { clipOf(p, 'c1').frame.x = 111; clipOf(p, 'c2').frame.x = 222; }); // One step
   await A.settled();
   const stepA = w.ops().find((m) => byIs(m.actor, { user: 'alice', session: 'page-a' }));
   await waitFor(() => clipOf(B.project, 'c2').frame.x === 222, 5000, 'B receives A\'s change');
@@ -62,7 +66,7 @@ test('C65-V5-01 A edits clips 1 and 2, B then edits clip 2, A undoes: clip 1 goe
   assertSameBytes(A.project, st.project, 'page A and the document service');
   await waitFor(() => clipOf(B.project, 'c1').frame.x === 10, 5000, 'B receives this undo as usual');
 
-  // 撤销是一次新的写入：带 undoOf 指向被撤的那次提交，版本照常加一
+  // Undo is a new write: with undoOf pointing to that undone commit, version increments by one as usual
   const undoMsg = w.ops().find((m) => m.undoOf !== undefined && m.undoOf !== null);
   assert.ok(undoMsg, 'the undo commit that others receive carries undoOf');
   assert.equal(undoMsg.undoOf, stepA.opId, 'undoOf points to the opId of A\'s step');
@@ -75,8 +79,8 @@ test('C65-V5-02 a step where nothing could be undone: it is popped and does not 
   const A = await open({ user: 'alice', session: 'page-a' });
   const B = await open({ user: 'bob', session: 'page-b' });
 
-  A.edit((p) => { clipOf(p, 'c3').frame.x = 333; }); // 第 1 步
-  A.edit((p) => { clipOf(p, 'c2').frame.x = 222; }); // 第 2 步
+  A.edit((p) => { clipOf(p, 'c3').frame.x = 333; }); // Step 1
+  A.edit((p) => { clipOf(p, 'c2').frame.x = 222; }); // Step 2
   await A.settled();
   await waitFor(() => clipOf(B.project, 'c2').frame.x === 222, 5000);
   B.edit((p) => { clipOf(p, 'c2').frame.x = 500; });
@@ -105,7 +109,7 @@ test('C65-V5-02 a step where nothing could be undone: it is popped and does not 
 test('C65-V5-03 undo stacks are separate per writer identity: others\' changes do not enter my stack; my own later changes do not block undo', async (t) => {
   const { env, open } = await setup(t);
   const A = await open({ user: 'alice', session: 'page-a' });
-  const A2 = await open({ user: 'alice', session: 'page-a2' }); // 同一用户的另一个页面：另一个写入身份
+  const A2 = await open({ user: 'alice', session: 'page-a2' }); // Another page of the same user: another write identity
   A2.edit((p) => { clipOf(p, 'c4').frame.x = 44; });
   await A2.settled();
   await waitFor(() => clipOf(A.project, 'c4').frame.x === 44, 5000);
@@ -151,9 +155,9 @@ test('C65-V5-05 consecutive input in a number box within 300 ms is merged into o
   clock.t += 100;
   A.edit((p) => { clipOf(p, 'c1').frame.x = 12; }, key);
   clock.t += 100;
-  A.edit((p) => { clipOf(p, 'c1').frame.x = 123; }, key); // 前三次两两相隔 100 ms：同一步
+  A.edit((p) => { clipOf(p, 'c1').frame.x = 123; }, key); // First three are 100 ms apart each: same step
   clock.t += 600;
-  A.edit((p) => { clipOf(p, 'c1').frame.x = 1234; }, key); // 隔了 600 ms：新的一步
+  A.edit((p) => { clipOf(p, 'c1').frame.x = 1234; }, key); // 600 ms apart: a new step
   await A.settled();
   assert.equal(clipOf((await serverState(env, PID)).project, 'c1').frame.x, 1234);
 

@@ -1,11 +1,15 @@
 /**
- * 卡片三档可见性的单测。跑:node --test src/editor/cardScope.test.mjs
+ * Unit test for three-tier card visibility. Run: node --test src/editor/cardScope.test.mjs
  *
- * 这段逻辑是「定制卡从上个项目串过来」那个 bug 的唯一修复点,而它错了**不报错** ——
- * 只是 Agent 的 list_cards 里多出或少了几张卡,要等成片做错了才发现。所以钉死:
- *   - 项目素材只在建它的那个项目里出现;
- *   - 老卡(表里没条目)**不许消失**,悄悄少几张比泄露更难查;
- *   - 拿不到归属表时一律放行,一次网络抖动不该让 Agent 突然无卡可用。
+ * This logic is the sole fix for the bug where "custom cards leaked over from the previous project",
+ * and when it breaks it **throws no errors**:
+ * only extra or missing cards appear in Agent's list_cards, discovered only when final video is made
+ * incorrectly. So lock down:
+ *   - Project assets only appear in the project where they were created;
+ *   - Old cards (no entry in table) **must not disappear**; silently missing cards is harder to debug
+ *     than a leak;
+ *   - Allow all when ownership table is unavailable; single network jitter should not suddenly leave
+ *     Agent with no cards available.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -55,7 +59,7 @@ test("Turning off the project assets tier also hides this project's custom cards
 test("Old cards (no entry in the table) must not disappear: a few cards silently missing is harder to track down than a leak", () => {
   const old = card("vertical-trend", "user");
   assert.equal(isCardVisible(old, V, {}, "Any project"), true);
-  // 但它按「自定义」处理,所以关掉自定义那一档就能一次性清干净
+  // But it is treated as "custom", so turning off the custom tier cleans it up completely
   assert.equal(isCardVisible(old, { ...V, custom: false }, {}, "Any project"), false);
 });
 
@@ -70,7 +74,7 @@ test("Old data that recorded the tier but not the project id counts as this proj
 });
 
 test("A custom card in use on the timeline counts as this project's, whatever project id the ownership table records", () => {
-  // 东京七日那份 .proc:卡记在草稿 20260910-wu2hng 名下,从桌面打开时根本没有草稿 id
+  // The "Seven Days in Tokyo" .proc: card is recorded under draft 20260910-wu2hng; opened from desktop has no draft id at all
   const map = card("tokyo7-map", "user");
   const scopes = { "tokyo7-map": { scope: "project", projectId: "20260910-wu2hng" } };
   const used = new Set(["tokyo7-map"]);

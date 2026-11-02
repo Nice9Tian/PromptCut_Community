@@ -1,14 +1,22 @@
 /**
- * 账号云端项目里卡片源码同步的端点(`server/account-card-link.mjs`):只在建新会话时出示票据、按票据到期换会话。
- * 会话端点用替身(真的在 `account-card-sync.test.mjs` 里对着真服务跑)。报告 `docs/reports/AGENT-v18-cardsync.md`。
+ * Card source sync endpoint in account cloud projects (`server/account-card-link.mjs`): only
+ * presents ticket when creating new sessions, and switches sessions upon ticket expiration.
+ * Session endpoint uses a mock (real one runs against real service in `account-card-sync.test.mjs`).
+ * Report `docs/reports/AGENT-v18-cardsync.md`.
  *
- *   ACL-01 子协议:`promptcut.v1` + `promptcut.account.<票据>`;票据不合法就抛;不给接续用的子协议(接续不带票据)
- *   ACL-02 建成会话后按票据的 expiresAt 提前换:关旧的(上层收到 close)、凭新票据起新的(上层收到 open)
- *   ACL-03 票据只剩几秒:至少用满 minSessionMs;没有 expiresAt 按 fallbackLifeMs
- *   ACL-04 收到 credential-revoked / authorization-expired 的 error:消息照交上层,然后立刻换;别的 error 不换
- *   ACL-05 会话被服务端结束:定时撤掉,close 交上层;端点自己重建成后重新定时
- *   ACL-06 close 之后不再换、不再定时
- *   ACL-07 cardSyncConnect:账号项目用本端点,别的与缺省相同(原样的 protocols,日志加 doc. 前缀)
+ *   ACL-01 Subprotocol: `promptcut.v1` + `promptcut.account.<ticket>`; throw if ticket is invalid;
+ *     do not supply subprotocol for resume (resume carries no ticket)
+ *   ACL-02 Switch ahead of time per ticket expiresAt after session established: close old (upper
+ *     layer receives close), start new with new ticket (upper layer receives open)
+ *   ACL-03 Ticket only has a few seconds left: use for at least minSessionMs; follow fallbackLifeMs
+ *     if no expiresAt
+ *   ACL-04 On receiving credential-revoked / authorization-expired error: pass message to upper
+ *     layer as usual, then switch immediately; do not switch for other errors
+ *   ACL-05 Session ended by server: cancel timer, pass close to upper layer; endpoint resets timer
+ *     after re-establishing itself
+ *   ACL-06 No more switches or timers after close
+ *   ACL-07 cardSyncConnect: account projects use this endpoint, others match defaults (unmodified
+ *     protocols, logs prefixed with doc.)
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -39,7 +47,7 @@ function harness({ tickets, ...options } = {}) {
         if (this.session) { this.session = false; for (const f of h.close) f({ code: 1000, reason: 'closed' }); }
       },
       stats: () => ({ transport: 'ws', resumes: 0 }),
-      /** 替身:走一遍「取子协议 → 建成会话」 */
+      /** Mock: runs through "fetch subprotocol → establish session" */
       async open() { this.protocolsSeen = await o.protocols(); this.session = true; for (const f of h.open) f(); },
       serverClose(code = 4003) { this.session = false; for (const f of h.close) f({ code, reason: 'access-revoked' }); },
       push(m) { for (const f of h.message) f(m); },
@@ -89,7 +97,7 @@ test('ACL-02 replace the session early based on the ticket\'s expiresAt: the upp
   assert.deepEqual(h.endpoints[1].protocolsSeen, ['promptcut.v1', `promptcut.account.${T(2)}`]);
   assert.deepEqual(h.events, ['open', 'close:1000', 'open']);
   assert.equal(h.link.stats().accountRenews, 1);
-  // 发送走当前的端点
+  // Send via the current endpoint
   h.link.send({ type: 'content.list' });
   assert.equal(h.endpoints[0].sent.length, 0);
   assert.equal(h.endpoints[1].sent.length, 1);
@@ -112,7 +120,7 @@ test('ACL-04 the gate replies credential-revoked / authorization-expired: the me
     assert.deepEqual(h.events, ['open', `msg:error:${reason}`, 'close:1000'], reason);
     assert.equal(h.endpoints.length, 2);
     assert.equal(h.live().length, 0, 'the old session\'s timer is cancelled');
-    // 同一条旧连接上迟到的第二个 error 不再触发
+    // A late second error on the same old connection will not trigger again
     h.endpoints[0].push({ type: 'error', reason });
     assert.equal(h.endpoints.length, 2);
   }
@@ -152,7 +160,7 @@ test('ACL-06 after close, no more replacement, no more timers, no more sends', a
 
 test('ACL-07 cardSyncConnect: account projects use this endpoint, everything else is handed unchanged to the default session endpoint', async () => {
   const logged = [];
-  /** 连不上的 WebSocket 替身(测试里没有网络) */
+  /** Unconnectable WebSocket mock (no network in tests) */
   class DeadSocket {
     constructor() { queueMicrotask(() => this.onerror?.({ message: 'no network in test' })); }
     addEventListener(type, fn) { this[`on${type}`] = fn; }
@@ -190,7 +198,8 @@ test('ACL-08 the bound address of an account project can only be the account clo
 
 test('ACL-09 requests arriving via the stage port are recognized (card code in a stage window must not touch the endpoints that fetch tickets or change bindings)', async () => {
   const { viaStagePort, STAGE_CLIENT_HEADER, originOk } = await import('../http-guard.mjs');
-  // 舞台窗口发的同源请求:Origin 与 Host 都是舞台端口,originOk 拦不住;代理写上的头认得出
+  // Same-origin request sent by stage window: Origin and Host are both stage ports, originOk cannot
+  // block it; identifiable by headers written by proxy
   const stage = { headers: { origin: 'http://127.0.0.1:5191', host: '127.0.0.1:5191', [STAGE_CLIENT_HEADER]: '127.0.0.1' } };
   assert.equal(originOk(stage), true);
   assert.equal(viaStagePort(stage), true);

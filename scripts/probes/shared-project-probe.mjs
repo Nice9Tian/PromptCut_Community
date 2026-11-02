@@ -1,95 +1,136 @@
 /**
- * 共享项目接入的探针（SP，契约 `docs/plan/shared-project-contract.md` 第 6 节、第 7 节 SP1 / SP7）。
- * 结果最后一行打一行 JSON；`ok` 为假时退出码 1，连不上或参数不对退出码 2。只用 Node 内置模块与仓库里的服务端模块。
+ * Shared project connection probe (SP, contract `docs/plan/shared-project-contract.md`
+ * section 6, section 7 SP1 / SP7).
+ * Prints a single JSON line on the last result line; exit code 1 when `ok` is false, exit code 2
+ * on connection failure or invalid arguments. Uses only Node built-in modules and server-side
+ * modules in the repository.
  *
- * `--mode internet` 的 creator / member、`--role migrate-check`、`--role coord` 在本文件；`--mode lan` 的全部逻辑在
- * `shared-project-lan.mjs`（本文件只分派，用法见那个文件头）。互联网模式新建走 `server/auth/route.mjs` 的
- * `createSharedProject({ where: 'hosted' })`。协调口是 `probe-coord.mjs`，与 `render-host-probe.mjs` 跨机模式同一个形状
- * （同一个口可以同时给两个探针用）。
+ * creator / member for `--mode internet`, `--role migrate-check`, and `--role coord` are in this
+ * file; all logic for `--mode lan` is in `shared-project-lan.mjs` (this file only dispatches; see
+ * that file header for usage). Creation in Internet mode uses `createSharedProject({ where: 'hosted' })`
+ * in `server/auth/route.mjs`. Coordination endpoint is `probe-coord.mjs`, matching the shape of
+ * cross-machine mode in `render-host-probe.mjs` (the same endpoint can be used by both probes at
+ * the same time).
  *
  * ## --mode internet --role creator --hosted <url>
  *
  *   node scripts/probes/shared-project-probe.mjs --mode internet --role creator --hosted http://127.0.0.1:8790
- *        (--coord-port 8799 [--coord-host 127.0.0.1] | --coord <url>) [--name <项目名>] [--tasks 6] [--task-ms 600]
+ *        (--coord-port 8799 [--coord-host 127.0.0.1] | --coord <url>) [--name <project-name>] [--tasks 6] [--task-ms 600]
  *        [--creator-delay-ms 1000] [--media-kb 256] [--timeout-ms 180000]
  *
- *   1. 在托管端建一个自由进入的共享项目（`POST shared/create`，口令随机生成）；
- *   2. 以创建者身份（`as: 'creator'`，`role: 'render'`，节点 profile `pc`）连文档服务：从 `service.endpoints` 拿素材服务地址，
- *      经 `auth.ticket` 取素材票据；把一份项目快照（`project.announce` + `project.snapshot.put`）、一条内容库条目、
- *      一个素材（`media`，带票据分片上传）传上去；
- *   3. 写出成员配置交给协调口（`member-config`），等成员报「起来了」（`member-ready`）；
- *   4. 以本机 PC 节点身份（节点自己就是发布方）发布 `--tasks` 个细任务（与 `render-queue-e2e.mjs` 相同的假细任务：
- *      kind snapshot、tier shared；真正的 plan 切分要编辑器，这里不跑），自己的节点晚 `--creator-delay-ms` 才开始认领，
- *      保证成员先认领到；产物（每段一个小文件）带票据写进 `px`；等全部 `task.done`；
- *   5. 写 `creator-done`，等成员的结果（`member-result`），一起输出。
+ *   1. Create an open-entry shared project on the hosted side (`POST shared/create`,
+ *      passphrase randomly generated);
+ *   2. Connect to document service as creator (`as: 'creator'`, `role: 'render'`, node profile `pc`):
+ *      get asset service address from `service.endpoints`, obtain asset ticket via `auth.ticket`;
+ *      upload a project snapshot (`project.announce` + `project.snapshot.put`), a content store entry,
+ *      and an asset (`media`, chunked upload with ticket);
+ *   3. Write member config to coordination endpoint (`member-config`), wait for member to report
+ *      "ready" (`member-ready`);
+ *   4. As the local PC node (the node itself is the publisher), publish `--tasks` fine-grained tasks
+ *      (same mock fine-grained tasks as `render-queue-e2e.mjs`: kind snapshot, tier shared;
+ *      real plan splitting requires the editor, not run here); local node delays claiming by
+ *      `--creator-delay-ms` to ensure member claims first; outputs (one small file per segment)
+ *      are written to `px` with ticket; wait for all `task.done`;
+ *   5. Write `creator-done`, wait for member results (`member-result`), and output together.
  *
  * ## --mode internet --role member --hosted <url> --coord <url>
  *
  *   node scripts/probes/shared-project-probe.mjs --mode internet --role member --hosted http://127.0.0.1:8790 --coord http://127.0.0.1:8799
- *        [--expect-tasks 1] [--task-ms 600] [--max-concurrent 2] [--timeout-ms 180000] [--assert-no-lan <PC 局域网地址>]
+ *        [--expect-tasks 1] [--task-ms 600] [--max-concurrent 2] [--timeout-ms 180000] [--assert-no-lan <PC-LAN-address>]
  *
- *   `--assert-no-lan`（M8「异地接入」，`m8-plan.md` 第 2.3 节）：从拿到配置到收尾，每 2 s 只读地跑一次 `netstat -an`，
- *   数本机到这个地址的 TCP 连接：开始时先记一次基线（上一项留下的 TIME_WAIT 等），之后新出现的不论状态都算，要全程 0；收尾前做一次 3 s 的局域网发现（要 0 条）。两项分开判，结果行 `noLan`。
- *   不改防火墙、代理、路由（约束「不动宿主机的网络」），公共件 `scripts/probes/m8/no-lan.mjs`。
+ *   `--assert-no-lan` (M8 "remote connection", `m8-plan.md` section 2.3): from obtaining config to
+ *   finalize, run `netstat -an` read-only every 2 s to count TCP connections from this machine to
+ *   that address: record a baseline at start (TIME_WAIT left by previous run, etc.), then count any
+ *   newly appeared connection regardless of state, requiring 0 throughout; run a 3 s LAN discovery
+ *   before finalize (requiring 0 items). The two items are evaluated separately, output in result
+ *   line as `noLan`. Does not modify firewall, proxy, or routes (constraint "do not touch host
+ *   machine network"), common utility `scripts/probes/m8/no-lan.mjs`.
  *
- *   不设集群令牌（设了就判失败），只凭协调口给的项目凭证进入（`role: 'render'`，节点 profile `host`）：
- *   从 `service.endpoints` 拿素材服务地址；读项目快照（逐片取回、核摘要）、内容库条目、带票据读素材
- *   （Bearer 与查询串只读票据各一次，Range）；不带票据读一次（回环被当自己人时记 `loopbackTrusted`，不判）；
- *   认领并完成至少 `--expect-tasks` 个任务（产物带 rw 票据写进 `px`）。`--expect-tasks 0` 只验进入与读取（迁移后抽查用）。
- *   `--hosted` 覆盖成员配置里的文档服务地址（迁移后连新地址）。
+ *   Do not set cluster token (fails if set), enter only with project credentials provided by
+ *   coordination endpoint (`role: 'render'`, node profile `host`): get asset service address from
+ *   `service.endpoints`; read project snapshot (retrieve chunk by chunk, verify digest), content
+ *   store entries, and read asset with ticket (once with Bearer and once with query string read-only
+ *   ticket, Range); read once without ticket (recorded as `loopbackTrusted` when loopback is
+ *   treated as internal, not evaluated); claim and complete at least `--expect-tasks` tasks
+ *   (outputs written to `px` with rw ticket). `--expect-tasks 0` only tests entry and read
+ *   (for spot checks after migration). `--hosted` overrides document service address in member
+ *   config (connecting to new address after migration).
  *
  * ## --role coord --port <n> [--host 127.0.0.1]
  *
- *   单独起协调口（creator 用 `--coord <url>` 指过来）。形状见 `probe-coord.mjs`：`PUT /kv/<键>`（JSON）、
- *   `GET /kv/<键>?wait=<毫秒>`（没有就等，等不到 404）。`render-host-probe.mjs` 跨机模式的协调口也答这两条，
- *   所以也可以直接用它的口（`--coord http://<creator IP>:5409`）。键：`member-config`、`member-ready`、`creator-done`、
- *   `member-result`（互联网模式），`lan-member`、`lan-member-result`（局域网模式）。
- *   成员配置里有项目口令（探针自建的一次性项目），协调口只该绑在可信的网段上。
+ *   Start coordination endpoint standalone (creator points here using `--coord <url>`).
+ *   See `probe-coord.mjs` for shape: `PUT /kv/<key>` (JSON), `GET /kv/<key>?wait=<ms>`
+ *   (wait if absent, 404 on timeout). The coordination endpoint in `render-host-probe.mjs`
+ *   cross-machine mode also responds to these two routes, so its endpoint can also be used directly
+ *   (`--coord http://<creator IP>:5409`). Keys: `member-config`, `member-ready`, `creator-done`,
+ *   `member-result` (Internet mode); `lan-member`, `lan-member-result` (LAN mode). Member config
+ *   contains project passphrase (disposable project created by probe), so the coordination
+ *   endpoint should only bind to trusted network segments.
  *
  * ## --role migrate-check --from <url> --to <url>
  *
  *   node scripts/probes/shared-project-probe.mjs --role migrate-check --from http://127.0.0.1:8790 --to http://127.0.0.1:8794
  *        [--from-asset <url>] [--to-asset <url>] [--sample 100]
  *
- *   `--from` / `--to` 是两份托管组合的文档服务 http 地址（契约第 11 节裁定；ws 也收）。素材服务地址不给时从各自的
- *   `service.endpoints` 取（顺带核对新实例已向文档服务登记了自己的地址）。项目数经管理接口（`GET /admin/inventory`、
- *   `/admin/blob/<ns>/<hash>`）列出，带集群令牌（管理用途）：先取环境变量 `PROMPTCUT_CLUSTER_TOKEN`，没有再读
- *   `<数据目录>/secrets/cluster-token`（数据目录取 `--data-dir`，否则环境变量 `PROMPTCUT_DATA_DIR`）；都没有时只能在
- *   服务器本机回环上跑。输出的 `admin` 是 `token` 或 `loopback`，`tokenFrom` 是 `env` / `file` / null。逐项核对（`hosting-migration.md` 第 6、7 步）：
- *   两边 `/healthz`；共享项目数与各项目的名字、模式；每个空间里每个项目的 `projectRev`、项目快照数、内容库条目数；
- *   三个命名空间的哈希集合与字节数；再从新实例按哈希抽取至多 `--sample` 个（缺省 100，不足就全部；`all` 全部），
- *   经管理接口取回、重算 sha256，相符比例必须 100%。`projectRev` 另分「相等 / 归零 / 落后 / 超前」计数（输出 `revs`）。
- *   全部通过才 `ok: true`。
+ *   `--from` / `--to` are the document service http addresses of the two hosted setups (contract
+ *   section 11 ruling; ws also accepted). When asset service address is omitted, it is retrieved
+ *   from their respective `service.endpoints` (also verifying that the new instance has registered
+ *   its address with document service). Project count is listed via admin interface
+ *   (`GET /admin/inventory`, `/admin/blob/<ns>/<hash>`) with cluster token (admin purposes):
+ *   first read environment variable `PROMPTCUT_CLUSTER_TOKEN`, if absent read
+ *   `<data-dir>/secrets/cluster-token` (data directory taken from `--data-dir`, otherwise
+ *   environment variable `PROMPTCUT_DATA_DIR`); if neither is present, it can only run on server
+ *   local loopback. Output `admin` is `token` or `loopback`, `tokenFrom` is `env` / `file` / null.
+ *   Check item by item (`hosting-migration.md` steps 6 and 7): `/healthz` on both sides; shared
+ *   project count and each project's name and mode; `projectRev`, project snapshot count, and
+ *   content store entry count for each project in each namespace; hash set and byte count of the
+ *   three namespaces; then sample up to `--sample` items by hash from the new instance (default 100,
+ *   or all if fewer; `all` for all), retrieve via admin interface, recompute sha256, match rate
+ *   must be 100%. `projectRev` counts are additionally categorized as "equal / zeroed / lagging / ahead"
+ *   (output `revs`). All must pass for `ok: true`.
  *
- *   `--from-inventory <库存文件>` 代替 `--from`（M8，`m8-plan.md` 第 2.5 节第 6、7 步）：旧实例已停写、不在线，
- *   旧的一边读 `--role inventory` 写下的文件；比法同上。另可给：
- *   - `--seed <种子文件>`（`m8-migrate-probe.mjs --step seed` 写的，含探针自建项目的口令）：以创建者身份进新实例上的
- *     每个种子项目，核 `projectRev` 与摘要和库存一致、两类清单（`snapshot-manifest` / `render-manifest`，含层表
- *     `layers:<项目 id>`）的键与哈希一致，清单引用的每个块经**数据面**（新实例登记的素材地址、带只读票据）取回、
- *     重算 sha256 全部相符；
- *   - `--scan-dir <新实例的数据目录>`：库存里带 `readyLayers`（盘点时给了 `--scan-dir`）时，逐空间逐键比就绪层；
- *   - `--to-asset <url>`：管理接口改走这个源（阿里云上经 SSH 转发的回环端口，令牌不上公网）。
+ *   `--from-inventory <inventory-file>` replaces `--from` (M8, `m8-plan.md` section 2.5 steps 6 and 7):
+ *   old instance has stopped writes and is offline, old side reads the file written by
+ *   `--role inventory`; comparison method is the same as above. Can also provide:
+ *   - `--seed <seed-file>` (written by `m8-migrate-probe.mjs --step seed`, containing passphrases for
+ *     probe-created projects): enter each seed project on the new instance as creator, verify that
+ *     `projectRev` and digest match the inventory, keys and hashes match for both manifest types
+ *     (`snapshot-manifest` / `render-manifest`, including layer table `layers:<project-id>`), and
+ *     each chunk referenced by manifests is retrieved via **data plane** (asset address registered by
+ *     new instance, with read-only ticket) and recomputed sha256 matches;
+ *   - `--scan-dir <new-instance-data-dir>`: when inventory contains `readyLayers` (`--scan-dir` was
+ *     provided during inventory), compare ready layers key-by-key across namespaces;
+ *   - `--to-asset <url>`: admin interface uses this origin instead (loopback port forwarded via SSH
+ *     on Alibaba Cloud; token is not exposed to public network).
  *
- * ## --role inventory --hosted <url> --out <库存文件>
+ * ## --role inventory --hosted <url> --out <inventory-file>
  *
  *   node scripts/probes/shared-project-probe.mjs --role inventory --hosted http://127.0.0.1:8790 --out inv.json
- *        [--asset <url>] [--seed <种子文件>] [--scan-dir <数据目录>] [--data-dir <目录>]
+ *        [--asset <url>] [--seed <seed-file>] [--scan-dir <data-dir>] [--data-dir <dir>]
  *
- *   迁移前的库存（`hosting-migration.md` 第 6 步「停写前记下的」）：两个 `/healthz`、`service.endpoints` 里登记的素材地址、
- *   管理盘点 `GET /admin/inventory` 原样（共享项目、各空间各项目的 `projectRev`、快照数、内容库条目数、三个命名空间的
- *   哈希清单与字节数）。给了 `--seed`：种子项目的 `projectRev`、摘要、两类清单的键与哈希，并经数据面把清单引用的块
- *   全部取回核一遍（源上本来就得是好的）。给了 `--scan-dir`：只读扫数据目录里各空间的就绪层（两类清单每个键最后一条的哈希），
- *   能覆盖探针进不去的项目（例如编辑器建的项目）；只给 `--scan-dir` 不给 `--hosted` 也行（停写后在服务器上扫）。
- *   令牌、口令不写进库存文件；有失败时不写文件。
+ *   Inventory before migration (`hosting-migration.md` step 6 "recorded before stopping writes"):
+ *   both `/healthz`, asset addresses registered in `service.endpoints`, raw admin inventory
+ *   `GET /admin/inventory` (shared projects, `projectRev`, snapshot counts, content store entry counts
+ *   for each project in each namespace, hash manifests and byte counts for the three namespaces).
+ *   When `--seed` is provided: seed project `projectRev`, digest, keys and hashes for both manifest
+ *   types, and verify all chunks referenced by manifests by retrieving them via data plane (source
+ *   must already be valid). When `--scan-dir` is provided: read-only scan of ready layers across
+ *   namespaces in the data directory (hash of the last entry for each key in both manifest types),
+ *   which can cover projects that probes cannot enter (such as projects created by the editor);
+ *   providing only `--scan-dir` without `--hosted` is also allowed (scanning on server after stopping
+ *   writes). Tokens and passphrases are not written to inventory file; file is not written if there
+ *   are failures.
  *
- * ## 传输（creator、member）
+ * ## Transport (creator, member)
  *
- *   到文档服务的连接是一个会话（`server/render-node/session-link.mjs` 的 `createDocEndpoint`，HT-a）。`--transport auto|ws`
- *   是开发者强制参数：缺省自动（先读环境变量 `PROMPTCUT_TRANSPORT`，再缺省自动；HT-a 的自动就是 WebSocket），`ws`
- *   只走 WebSocket，`http` 在 HT-a 未启用（退出码 2）。成员配置里没有传输字段。输出的 `session` 记实际用的传输、
- *   接续次数、是否对着没有会话层的旧服务端。
+ *   Connection to document service is a session (`createDocEndpoint` in
+ *   `server/render-node/session-link.mjs`, HT-a). `--transport auto|ws` is a developer override
+ *   argument: defaults to auto (reads environment variable `PROMPTCUT_TRANSPORT` first, then defaults
+ *   to auto; auto in HT-a means WebSocket), `ws` only uses WebSocket, and `http` is not enabled in
+ *   HT-a (exit code 2). Member config has no transport field. Output `session` records actual
+ *   transport used, resume count, and whether connecting to an older server without a session layer.
  *
- * 凭证（口令、K、票据）不打到输出里。
+ * Credentials (passphrase, K, ticket) are not printed to output.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -140,9 +181,9 @@ const check = (cond, label, extra) => {
   return !!cond;
 };
 
-/* ------------------------------------------------------------------ 共用小件 */
+/* ------------------------------------------------------------------ Shared helpers */
 
-/** 文档服务地址 → { http, ws }（`http://h:p` ↔ `ws://h:p`，路径保留） */
+/** Document service address → { http, ws } (`http://h:p` ↔ `ws://h:p`, path preserved) */
 function docUrls(url) {
   const u = new URL(url);
   const path = u.pathname.replace(/\/+$/, '');
@@ -158,7 +199,7 @@ async function getJson(url, { headers = {}, timeoutMs = 15_000 } = {}) {
   return { status: res.status, body };
 }
 
-/** 一条 WebSocket 端点上的请求 / 回包：按 reqId 配对；`until` 给了就收集到它为真的那条为止 */
+/** Requests / responses on a WebSocket endpoint: paired by reqId; if `until` is provided, collect until it returns true */
 function rpcOn(ep) {
   const waiting = new Map();
   let seq = 0;
@@ -188,9 +229,10 @@ function rpcOn(ep) {
 }
 
 /**
- * `--transport`（开发者强制，契约 `docs/plan/http-transport-contract.md` 第 4.3 节第 6 条）：不给就不传，由
- * `createDocEndpoint` 读 `PROMPTCUT_TRANSPORT`，再缺省自动；给了就照它（`ws` 只走 WebSocket；`http` 在 HT-a
- * 未启用，按参数不对退出 2）。
+ * `--transport` (developer override, contract `docs/plan/http-transport-contract.md` section 4.3
+ * item 6): if omitted, not passed, and `createDocEndpoint` reads `PROMPTCUT_TRANSPORT`, defaulting
+ * to auto; if provided, follow it (`ws` uses only WebSocket; `http` is not enabled in HT-a, exiting
+ * with code 2 for invalid argument).
  */
 function transportOption(transportOf) {
   const raw = arg('--transport', undefined);
@@ -203,7 +245,7 @@ function transportOption(transportOf) {
   }
 }
 
-/** 输出里的会话诊断：实际用的传输、接续次数、是否对着没有会话层的旧服务端（不含会话号） */
+/** Session diagnostics in output: actual transport used, resume count, whether connecting to an older server without session layer (excluding session id) */
 function sessionOf(ep) {
   if (!ep || typeof ep.stats !== 'function') return null;
   const s = ep.stats();
@@ -218,7 +260,7 @@ function waitOpen(ep, ms = 15_000) {
   });
 }
 
-/** 从 `service.endpoints` 取第一个素材服务地址 */
+/** Get first asset service address from `service.endpoints` */
 function waitAssetUrl(ep, watchServiceEndpoints, ms = 10_000) {
   return new Promise((resolve) => {
     const t = setTimeout(() => { stop(); resolve(null); }, ms);
@@ -229,20 +271,23 @@ function waitAssetUrl(ep, watchServiceEndpoints, ms = 10_000) {
   });
 }
 
-/** 关掉连接，等 onClose 最多 3 s（Windows 上关闭握手没完成就退出会崩，同 render-queue-e2e） */
+/** Close connection, wait up to 3 s for onClose (on Windows, exiting before close handshake completes crashes, same as render-queue-e2e) */
 async function closeAll(eps) {
   const waits = [];
   for (const ep of eps) {
     if (ep.connected) waits.push(new Promise((resolve) => ep.onClose(resolve)));
-    try { ep.close(); } catch { /* 已关 */ }
+    try { ep.close(); } catch { /* Closed */ }
   }
   await Promise.race([Promise.all(waits), new Promise((resolve) => setTimeout(resolve, 3000).unref())]);
 }
 
 /**
- * 打结果行、定退出码，然后让进程自然退出（不调 process.exit）：连接、协调口都已关，剩下的只有 fetch 的空闲长连接，
- * 到点自己关。Windows 上有句柄还在关闭中就 process.exit，libuv 会断言崩掉（退出码 0xC0000409 = 3221226505，
- * 同 render-queue-e2e.mjs 的注释）。万一 10 s 后还有东西挂着，才强制退出。
+ * Print result line, set exit code, then let the process exit naturally (without calling
+ * process.exit): connections and coordination port are closed, and the only remaining items
+ * are idle keep-alive connections from fetch, which close on their own when timed out. On
+ * Windows, calling process.exit while handles are still closing causes libuv to crash on an
+ * assertion (exit code 0xC0000409 = 3221226505, same as comments in render-queue-e2e.mjs).
+ * Force exit only if something is still hanging after 10 s.
  */
 function finish(result, code) {
   result.fails = fails;
@@ -254,9 +299,9 @@ function finish(result, code) {
   setTimeout(() => process.exit(code), 10_000).unref();
 }
 
-/* ------------------------------------------------------------------ 渲染节点的小件 */
+/* ------------------------------------------------------------------ Render node helpers */
 
-/** 假细任务（与 `render-queue-e2e.mjs` 用的相同形状，契约 A.4） */
+/** Mock fine-grained task (same shape as used by `render-queue-e2e.mjs`, contract A.4) */
 function fineTask({ resultKey, from, to, projectId, projectRev }) {
   return {
     id: `snapshot:${resultKey}:${from}-${to}`,
@@ -272,7 +317,7 @@ function fineTask({ resultKey, from, to, projectId, projectRev }) {
   };
 }
 
-/** 睡 taskMs 的执行器 */
+/** Executor that sleeps for taskMs */
 function sleepExecutor(taskMs) {
   return {
     plan: async () => { throw Object.assign(new Error('The probe does not compute plans'), { retryable: false }); },
@@ -285,10 +330,10 @@ function sleepExecutor(taskMs) {
   };
 }
 
-/** 每段一个小产物：内容由结果键与范围决定（按内容寻址，同一段再推一次是同一个哈希） */
+/** One small artifact per segment: content is determined by result key and range (content-addressed; pushing the same segment again yields the same hash) */
 const artifactBytes = (resultKey, range) => Buffer.from(`promptcut-sp-probe-artifact\n${resultKey}\n${range.from}-${range.to}\n`, 'utf8');
 
-/** 产物库：带票据推进素材服务的 `px` 命名空间 */
+/** Artifact store: push into the `px` namespace of asset service with ticket */
 function assetSink(client, counters) {
   return {
     async has({ resultKey, range }) {
@@ -338,7 +383,7 @@ async function runCreator() {
     finish(result, code);
   };
 
-  // 协调口
+  // Coordination port
   let coordUrl = coordArg;
   if (coordPort) {
     const host = arg('--coord-host', '127.0.0.1');
@@ -353,7 +398,7 @@ async function runCreator() {
   result.coord = coordUrl;
   const coord = coordClient(coordUrl);
 
-  // 1. 建项目
+  // 1. Create project
   const creator = { username: 'creator', password: randomBytes(12).toString('base64url') };
   const projectPassword = randomBytes(12).toString('base64url');
   let created;
@@ -366,7 +411,7 @@ async function runCreator() {
   result.projectId = created.projectId;
   log('creator.created', { projectId: created.projectId, name });
 
-  // 2. 以创建者身份连上
+  // 2. Connect as creator
   const deviceId = `probe-creator-${randomBytes(6).toString('hex')}`;
   let key = null;
   const protocols = () => buildAuthProtocols({
@@ -384,7 +429,7 @@ async function runCreator() {
   const ticket = createTicketSource(ep, { access: 'rw' });
   const client = createAssetClient({ base: assetUrl, ticket });
 
-  // 项目快照
+  // Project snapshot
   const localProjectId = 'sp-probe-project';
   const snapshotText = JSON.stringify({ id: localProjectId, name, runId, tracks: [], fps: 30, duration: 3, note: 'shared-project-probe' });
   const digest = sha256(snapshotText);
@@ -398,7 +443,7 @@ async function runCreator() {
   } catch (err) {
     fails.push(`Project snapshot: ${err.message}`);
   }
-  // 内容库条目
+  // Content store entries
   const contentKey = `sp-probe/${runId}`;
   const contentBody = { runId, note: 'shared-project-probe', at: Date.now() };
   try {
@@ -408,7 +453,7 @@ async function runCreator() {
   } catch (err) {
     fails.push(`Content store: ${err.message}`);
   }
-  // 素材
+  // Assets
   const media = randomBytes(mediaKb * 1024);
   try {
     const r = await client.put('media', media, { ext: 'bin' });
@@ -420,7 +465,7 @@ async function runCreator() {
   }
   if (fails.length) return done();
 
-  // 3. 成员配置交给协调口
+  // 3. Hand member configuration over to coordination port
   const memberConfig = {
     url: urls.ws, projectId: created.projectId, username: `member-${randomBytes(3).toString('hex')}`, password: projectPassword,
     as: 'member', role: 'render', deviceId: `probe-member-${randomBytes(6).toString('hex')}`, deviceName: 'sp-probe-member',
@@ -434,7 +479,7 @@ async function runCreator() {
   const ready = await coord.take('member-ready', deadline);
   if (!check(ready, 'Waited until the member reported member-ready')) return done();
 
-  // 4. 本机 PC 节点：发布细任务，晚一点才自己认领
+  // 4. Local PC node: publish fine-grained tasks, claim them itself a bit later
   const counters = { artifactsWritten: 0 };
   const nodeId = `sp-probe-pc-${runId}`;
   const claimAt = { at: Infinity };
@@ -482,7 +527,7 @@ async function runCreator() {
   check(result.tasks.duplicateDone === 0, 'No duplicate task.done', result.tasks.duplicateDone);
   result.artifactsWritten = counters.artifactsWritten;
 
-  // 5. 收尾：通知成员，等它的结果
+  // 5. Finalize: notify the member, wait for its result
   await coord.put('creator-done', { completed: doneIds.size, published: tasks.length });
   const memberResult = await coord.take('member-result', Math.min(deadline, Date.now() + 60_000));
   result.member = memberResult;
@@ -516,12 +561,14 @@ async function runMember() {
     result.session = sessionOf(eps[0]);
     await closeAll(eps);
     if (expectTasks > 0) {
-      try { await coord.put('member-result', { ...result, fails, ok: fails.length === 0 }); } catch { /* 协调口已关 */ }
+      try { await coord.put('member-result', { ...result, fails, ok: fails.length === 0 }); } catch { /* Coordinator port closed */ }
     }
     finish(result, code);
   };
   check(result.clusterToken === 'unset', 'Member sets no cluster token (PROMPTCUT_CLUSTER_TOKEN should be empty)');
-  // --assert-no-lan <PC 局域网地址>（m8-plan 第 2.3 节「异地接入」）：全程只读地数本机到这个地址、基线之外的 TCP 连接（不论状态），收尾前做一次 3 s 局域网发现
+  // --assert-no-lan <PC LAN address> (m8-plan Section 2.3 "Off-site connection"): throughout, read-only
+  // count TCP connections from this machine to this address beyond baseline (regardless of state);
+  // perform a 3 s LAN discovery before finalization
   const noLanIp = arg('--assert-no-lan', null);
   const noLan = noLanIp ? startNoLanWatch(noLanIp, { log }) : null;
 
@@ -535,7 +582,7 @@ async function runMember() {
   result.projectId = entry.projectId;
   const expect = handoff.expect;
 
-  // 进入：只凭项目凭证
+  // Entry: with project credentials only
   const enterStart = Date.now();
   const ep = createDocEndpoint({ url: entry.url, protocols: sharedProtocols(entry, { role: 'render' }), ...transportOption(transportOf), log: (event, fields) => log(`member.${event}`, fields) });
   eps.push(ep);
@@ -548,7 +595,7 @@ async function runMember() {
   result.assetUrl = assetUrl;
   if (!check(assetUrl, 'Got the asset service address from service.endpoints')) return done();
 
-  // 项目快照
+  // Project snapshot
   try {
     const got = await rpc({ type: 'project.snapshot.get', projectId: expect.snapshot.projectId, projectRev: expect.snapshot.projectRev }, {
       until: (m) => m.type === 'project.snapshot.end' || m.missing === true,
@@ -561,7 +608,7 @@ async function runMember() {
   } catch (err) {
     fails.push(`Project snapshot: ${err.message}`);
   }
-  // 内容库
+  // Content store
   try {
     const item = await rpc({ type: 'content.get', kind: expect.content.kind, key: expect.content.key });
     const ok = item.type === 'content.item' && !item.missing && sha256(JSON.stringify(item.body)) === expect.content.bodyHash;
@@ -571,7 +618,7 @@ async function runMember() {
     fails.push(`Content store: ${err.message}`);
   }
 
-  // 票据
+  // Tickets
   const rwTicket = createTicketSource(ep, { access: 'rw' });
   const rTicket = createTicketSource(ep, { access: 'r' });
   const [rw, r] = [await rwTicket(), await rTicket()];
@@ -598,7 +645,8 @@ async function runMember() {
   try {
     const res = await fetch(mediaUrl, { method: 'HEAD', signal: AbortSignal.timeout(15_000) });
     result.media.noTicket = res.status;
-    // 本机跑且回环被当自己人时，不带票据也能读，这一项不判（非回环来源才要票据，auth-contract 第 8 节）
+    // When running locally and loopback is treated as trusted, can read even without a ticket;
+    // skip checking this item (tickets are required only for non-loopback sources, auth-contract Section 8)
     result.media.loopbackTrusted = res.status === 200;
     if (res.status !== 200) check(res.status === 401, 'Reading an asset without a ticket returns 401', res.status);
   } catch (err) {
@@ -607,7 +655,7 @@ async function runMember() {
 
   if (expectTasks === 0) return done();
 
-  // 认领并完成任务
+  // Claim and complete task
   const counters = { artifactsWritten: 0 };
   const node = createLocalNode({
     nodeId: `sp-probe-member-${runId}`,
@@ -644,8 +692,9 @@ async function runMember() {
 /* ================================================================== inventory / migrate-check */
 
 /**
- * 管理用途的集群令牌（契约第 11 节裁定）：环境变量 `PROMPTCUT_CLUSTER_TOKEN` → `<数据目录>/secrets/cluster-token`
- * （`--data-dir` 或环境变量 `PROMPTCUT_DATA_DIR`）。令牌本身不打到输出里。
+ * Cluster token for management use (contract Section 11 ruling): environment variable
+ * `PROMPTCUT_CLUSTER_TOKEN` → `<data-dir>/secrets/cluster-token` (`--data-dir` or environment
+ * variable `PROMPTCUT_DATA_DIR`). The token itself is not printed to output.
  */
 function adminToken() {
   const env = (process.env.PROMPTCUT_CLUSTER_TOKEN || '').trim();
@@ -655,20 +704,20 @@ function adminToken() {
     try {
       const t = fs.readFileSync(path.join(path.resolve(dir), 'secrets', 'cluster-token'), 'utf8').trim();
       if (t) return { token: t, from: 'file' };
-    } catch { /* 没有这个文件 */ }
+    } catch { /* No such file */ }
   }
   return { token: null, from: null };
 }
 
-/** 库存文件的格式标记（`--role inventory` 写、`--from-inventory` 读） */
+/** Format marker of the inventory file (written by `--role inventory`, read by `--from-inventory`) */
 const INVENTORY_KIND = 'promptcut-hosted-inventory';
-/** 「已就绪的层」在内容库里的两类：段清单（快照 / 流）与层表（`layers:<项目 id>`，同在 `snapshot-manifest`） */
+/** Two kinds of "ready layers" in content store: segment manifests (snapshot / stream) and layer table (`layers:<project id>`, also under `snapshot-manifest`) */
 const READY_KINDS = Object.freeze(['snapshot-manifest', 'render-manifest']);
 const HEX64 = /^[0-9a-f]{64}$/;
-/** 清单正文里不是块哈希的字段（结果键、内容键、指纹可能也是 64 位十六进制） */
+/** Fields in manifest body that are not chunk hashes (result key, content key, fingerprint may also be 64-character hex) */
 const NOT_BLOB_FIELDS = new Set(['resultKey', 'key', 'contentKey', 'snapshotKey', 'envFingerprint', 'dirKey', 'entryKey', 'digest']);
 
-/** 清单正文引用的块哈希（快照的 frames / small、PNG 缓存、流的 segments / inits 里的 64 位十六进制串），去重、排序 */
+/** Chunk hashes referenced by manifest body (64-character hex strings in snapshot frames / small, PNG cache, stream segments / inits), deduplicated and sorted */
 function blobHashesOf(body) {
   const out = new Set();
   const walk = (v, field) => {
@@ -681,7 +730,7 @@ function blobHashesOf(body) {
   return [...out].sort();
 }
 
-/** `--sample`：`all` 表示全部；否则不小于 1 的整数，缺省 100 */
+/** `--sample`: `all` means all; otherwise an integer not less than 1, defaults to 100 */
 function sampleArg() {
   const raw = arg('--sample', undefined);
   if (raw === undefined) return 100;
@@ -692,9 +741,11 @@ function sampleArg() {
 }
 
 /**
- * 一份在线的托管组合：`/healthz` 两个、`service.endpoints` 里登记的素材服务地址、管理盘点。
- * `assetArg`（`--asset` / `--to-asset` / `--from-asset`）给了就用它的源调管理接口（阿里云上经 SSH 转发的回环端口），
- * 登记的地址仍从文档服务取（带令牌以管理身份握手；取不到只记 null）。
+ * An online hosted bundle: two `/healthz`, asset service address registered in
+ * `service.endpoints`, admin inventory. When `assetArg` (`--asset` / `--to-asset` / `--from-asset`)
+ * is provided, use its origin to call admin endpoints (loopback port forwarded via SSH on
+ * Alibaba Cloud); registered address is still retrieved from document service (handshake with
+ * token as admin identity; record null if unavailable).
  */
 async function liveSide(label, url, { assetArg, token, headers, eps, createWsEndpoint, watchServiceEndpoints }) {
   const u = docUrls(url);
@@ -720,22 +771,24 @@ async function liveSide(label, url, { assetArg, token, headers, eps, createWsEnd
 }
 
 /**
- * 读数据目录里各空间的「已就绪的层」（`--scan-dir`，只读）：`docservice/` 与 `docservice/tenants/<id>/` 下
- * `content/*.ndjson` 里 `snapshot-manifest` / `render-manifest` 两类，每个键取最后一条的 `hash`（后写的赢，同内容库回放）。
- * 回 `{ spaces: { <空间>: { <kind>: { <key>: <hash> } } }, count }`。
+ * Read "ready layers" across spaces in data directory (`--scan-dir`, read-only): under
+ * `docservice/` and `docservice/tenants/<id>/`, two kinds in `content/*.ndjson`:
+ * `snapshot-manifest` / `render-manifest`; for each key take the `hash` of the last entry
+ * (last-write-wins, same as content store replay). Returns
+ * `{ spaces: { <space>: { <kind>: { <key>: <hash> } } }, count }`.
  */
 function scanReadyLayers(dataDir) {
   const root = path.join(path.resolve(dataDir), 'docservice');
   const dirs = [['local', root]];
   let tenants = [];
-  try { tenants = fs.readdirSync(path.join(root, 'tenants'), { withFileTypes: true }); } catch { /* 没有租户 */ }
+  try { tenants = fs.readdirSync(path.join(root, 'tenants'), { withFileTypes: true }); } catch { /* No tenants */ }
   for (const ent of tenants) if (ent.isDirectory()) dirs.push([ent.name, path.join(root, 'tenants', ent.name)]);
   const spaces = {};
   let count = 0;
   for (const [name, dir] of dirs.sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
     const kinds = {};
     let files = [];
-    try { files = fs.readdirSync(path.join(dir, 'content')).filter((f) => f.endsWith('.ndjson')); } catch { /* 这个空间没有内容库 */ }
+    try { files = fs.readdirSync(path.join(dir, 'content')).filter((f) => f.endsWith('.ndjson')); } catch { /* This space has no content store */ }
     for (const f of files) {
       let text = '';
       try { text = fs.readFileSync(path.join(dir, 'content', f), 'utf8'); } catch { continue; }
@@ -757,7 +810,7 @@ function scanReadyLayers(dataDir) {
   return { spaces, count };
 }
 
-/** 读种子文件（`m8-migrate-probe.mjs --step seed` 写的，含探针自建项目的口令；不打印） */
+/** Read seed file (written by `m8-migrate-probe.mjs --step seed`, contains passphrases for probe self-created projects; do not print) */
 function readSeed(file) {
   const seed = JSON.parse(fs.readFileSync(path.resolve(file), 'utf8'));
   if (seed?.kind !== 'promptcut-m8-seed' || !Array.isArray(seed.projects)) throw new Error(`${file} is not a seed file`);
@@ -765,9 +818,11 @@ function readSeed(file) {
 }
 
 /**
- * 以创建者身份（渲染角色，不改项目）进种子里的每个项目，记下：当前 `projectRev` 与摘要（`project.open`）、
- * 内容库里两类清单的键与哈希（`content.list`）、每条段清单引用的块哈希。`verifyBlobs` 为真时另经数据面
- * （素材服务地址取自这个实例的 `service.endpoints`，带票据）逐个取回、重算 sha256。
+ * Enter each project in seed as creator (render role, do not modify project), recording:
+ * current `projectRev` and summary (`project.open`), keys and hashes of two kinds of manifests in
+ * content store (`content.list`), and chunk hashes referenced by each segment manifest. When
+ * `verifyBlobs` is true, also retrieve each chunk one by one via data plane (asset service
+ * address taken from this instance's `service.endpoints`, with ticket) and recalculate sha256.
  */
 async function seededLayers(docUrl, seed, { verifyBlobs = false, eps, labelPrefix }) {
   const [{ buildAuthProtocols }, { createDocEndpoint }, { watchServiceEndpoints }, { createTicketSource }, { createAssetClient }] = await Promise.all([
@@ -895,8 +950,10 @@ async function runInventory() {
 }
 
 /**
- * 两份盘点逐项比（`hosting-migration.md` 第 6、7 步）：共享项目、各空间 `projectRev` / 快照数 / 内容库条目数、
- * 三个命名空间的哈希集合与字节数。回 `{ projects, revs, all }`，`all` 是新实例上全部 `[ns, hash]`（抽查用）。
+ * Compare two inventories item by item (`hosting-migration.md` steps 6 and 7): shared projects,
+ * each space's `projectRev` / snapshot count / content store entry count, and hash sets and byte
+ * counts of three namespaces. Returns `{ projects, revs, all }`, where `all` is all `[ns, hash]`
+ * on the new instance (for spot-checking).
  */
 function compareInventories(a, b, result) {
   const shared = (inv) => JSON.stringify((inv.sharedProjects ?? []).map((p) => [p.projectId, p.name, p.mode]));
@@ -942,7 +999,7 @@ function compareInventories(a, b, result) {
   return { projects: revs.projects, all };
 }
 
-/** 从新实例按哈希取回（管理接口），重算 sha256；均匀取至多 `sample` 个（`Infinity` = 全部） */
+/** Retrieve from new instance by hash (admin API) and recalculate sha256; uniformly sample up to `sample` items (`Infinity` = all) */
 async function sampleBlobs(origin, headers, all, sample) {
   const step = all.length <= sample ? 1 : all.length / sample;
   const picked = [];
@@ -983,7 +1040,7 @@ async function runMigrateCheck() {
   const done = async (code) => { await closeAll(eps); finish(result, code); };
   const ctx = { token, headers, eps, createWsEndpoint, watchServiceEndpoints };
 
-  // 旧的一边：在线，或读库存文件
+  // Old side: online, or read inventory file
   let a = null;
   let file = null;
   if (inventoryFile) {
@@ -1020,7 +1077,8 @@ async function runMigrateCheck() {
   check(result.sample.bad.length === 0 && result.sample.ok === result.sample.checked, `Everything fetched by hash matches (${result.sample.ok}/${result.sample.checked})`, result.sample);
   check(all.length > 0 || projects > 0, 'There is data to compare (empty vs. empty does not count as a pass)');
 
-  // 种子项目：进新实例，清单的键与哈希、projectRev 与库存一致；清单引用的块经数据面全部取回
+  // Seed projects: enter new instance; manifest keys, hashes, and projectRev match inventory;
+  // chunks referenced by manifests are all retrieved via data plane
   const seedFile = arg('--seed', null);
   if (seedFile) {
     let seed = null;
@@ -1042,7 +1100,8 @@ async function runMigrateCheck() {
       });
     }
   }
-  // 数据目录里扫出来的就绪层：库存里有、且这次给了 --scan-dir（新实例的数据目录）时逐键比
+  // Ready layers scanned from data directory: compare key by key when present in inventory
+  // and --scan-dir (data directory of new instance) is provided this time
   const scanDir = arg('--scan-dir', null);
   if (scanDir) {
     const now = scanReadyLayers(scanDir);
@@ -1063,7 +1122,7 @@ async function runCoord() {
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { void coord.close().then(() => { process.exitCode = 0; }); });
 }
 
-/* ------------------------------------------------------------------ 主流程 */
+/* ------------------------------------------------------------------ Main flow */
 
 if (ROLE === 'migrate-check') await runMigrateCheck();
 else if (ROLE === 'inventory') await runInventory();

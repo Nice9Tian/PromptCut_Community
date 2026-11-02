@@ -13,7 +13,8 @@ import { tr } from '../i18n.mjs';
 export function authUrlFrom(text, provider) {
   const hosts = provider === 'codex' ? ['auth.openai.com', 'chatgpt.com'] : provider === 'agy'
     ? ['accounts.google.com', 'antigravity.google', 'www.antigravity.google']
-    // claude.com:Claude Code 2.1.x 起登录页在 claude.com/cai/oauth/authorize;少了它,「打开登录网页」的链接就不出现。
+    // claude.com: From Claude Code 2.1.x onward, the login page is at claude.com/cai/oauth/authorize;
+    // without it, the "Open login page" link will not appear.
     : ['claude.ai', 'claude.com', 'console.anthropic.com', 'platform.claude.com'];
   for (const candidate of text.match(/https:\/\/[^\s<>"\x1b]+/g) || []) {
     try {
@@ -23,9 +24,11 @@ export function authUrlFrom(text, provider) {
   }
 }
 
-// 授权码的形状:Claude Code 登录页给用户的那串码是 base64url 字符加 '#'(码与 state 之间)。
-// 只放这些字符、16～512 长:空白、引号、控制字符、换行一律不收,免得把任意字符串管道给子进程。
-// 出错信息里不带输入的任何内容。
+// Shape of authorization code: the string given to the user by the Claude Code login page is
+// base64url characters plus '#' (between code and state).
+// Only allow these characters, length 16-512: whitespace, quotes, control characters, and newlines
+// are rejected, avoiding piping arbitrary strings to the child process.
+// Error messages do not include any user input.
 const AUTH_CODE_SHAPE = /^[A-Za-z0-9._~+/=%#-]{16,512}$/;
 const MAX_CODE_SUBMITS = 5;
 export function normalizeAuthCode(input) {
@@ -54,7 +57,8 @@ export function createSetupService({ launch = spawn, verifyAuth = probeAuth, ver
   };
   const publicView = job => { const { output, ...result } = job; return { ...result, logs: [...result.logs] }; };
 
-  // acceptCode:这条任务的标准输入接成管道,留给用户粘贴的授权码(只有 Claude 的登录用)。其余任务标准输入照旧不接。
+  // acceptCode: pipes stdin for this task, reserved for the authorization code pasted by the user
+  // (used only for Claude login). Other tasks leave stdin disconnected as before.
   function run(job, command, args, { acceptCode = false, ...options } = {}) {
     return new Promise((resolve, reject) => {
       if (job.cancelRequested) { reject(new Error('Cancelled')); return; }
@@ -63,7 +67,8 @@ export function createSetupService({ launch = spawn, verifyAuth = probeAuth, ver
       catch (error) { reject(error); return; }
       children.add(child);
       if (acceptCode && child.stdin) {
-        // 子进程先退出时往管道写会 EPIPE;吞掉,以任务自己的结果为准。
+        // Writing to the pipe when the child process has already exited causes EPIPE; swallow it and rely
+        // on the task's own result.
         child.stdin.on('error', () => {});
         child.acceptsCode = true;
         job.acceptsCode = true;
@@ -84,7 +89,7 @@ export function createSetupService({ launch = spawn, verifyAuth = probeAuth, ver
         settled = true;
         clearTimeout(timer);
         children.delete(child);
-        // 任务一结束就关掉标准输入,不留着挂住进程。
+        // Close stdin as soon as the task finishes, rather than keeping it open and hanging the process.
         if (child.acceptsCode) { child.acceptsCode = false; job.acceptsCode = false; try { child.stdin?.destroy(); } catch {} }
         error ? reject(error) : resolve();
       };
@@ -161,7 +166,8 @@ export function createSetupService({ launch = spawn, verifyAuth = probeAuth, ver
     job.message = tr("Complete the login in your browser; if it does not open automatically, click the login link below.");
     const cwd = path.join(setupRoot(), 'login');
     fs.mkdirSync(cwd, { recursive: true });
-    // 浏览器拉不起来时,用户走登录链接授权后拿到一串码,要粘回命令行(「Paste code here if prompted」),所以 Claude 的登录接上标准输入。
+    // When the browser fails to launch, the user authorizes via the login link and receives a code to
+    // paste back into the command line ("Paste code here if prompted"), so Claude login connects to stdin.
     await run(job, invocation.command, invocation.args, { cwd, acceptCode: job.provider === 'claude' });
     const auth = await verifyAuth(job.provider, { refresh: true, raw: true });
     if (job.cancelRequested) throw new Error('Cancelled');
@@ -185,7 +191,8 @@ export function createSetupService({ launch = spawn, verifyAuth = probeAuth, ver
       // previous installer or a login callback listener still owning its port.
       job.message = tr("Canceling, please wait…");
     },
-    // 把用户粘贴的授权码写进这条登录任务的标准输入。码是凭证:不进日志、不进 job 字段、出错信息里也不带。
+    // Writes the authorization code pasted by the user to stdin of this login task. The code is a
+    // credential: it is not logged, not included in job fields, and omitted from error messages.
     submitCode(provider, code) {
       const job = jobs.get(provider);
       const child = job && job.kind === 'login' && job.state === 'running' && !job.cancelRequested

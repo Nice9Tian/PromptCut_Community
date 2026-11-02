@@ -1,34 +1,62 @@
 /**
- * 云端 Agent 的镜头识别(`detect_shots`、`list_shots`;拆包表 `docs/plan/cloud-agent-tools-implementation.md` 的 P1 里不含素材拼图的那一半)。
+ * Shot detection for Cloud Agent (`detect_shots`, `list_shots`; the half of P1 in the breakdown
+ * table `docs/plan/cloud-agent-tools-implementation.md` without asset collage).
  *
- * 桌面版里这两个工具打编辑器进程的 `/api/shots/*`(`server/vite-plugin-shots.ts`),作业放在 RAM 里,结果由页面写回项目。
- * 云节点上没有编辑器进程,这里照同一份做法起 ffmpeg 与(有依赖和权重时)同一个 Python 包(`promptcut_shots`,隔离模式起),规矩是:
+ * In desktop app, these two tools hit editor process's `/api/shots/*`
+ * (`server/vite-plugin-shots.ts`), jobs are kept in RAM, and results are written back to project
+ * by page. Cloud nodes have no editor process; here, following the same approach, ffmpeg and (when
+ * dependencies and weights exist) the same Python package (`promptcut_shots`, spawned in isolated
+ * mode) are spawned, following these rules:
  *
- *   - **两档,如实标**:有依赖和权重(`onnxruntime` + `transnetv2.onnx`)才用 TransNetV2(硬切和溶解都认,溶解还给跨度);
- *     没配 Python、依赖或权重不全、素材太长,就用 ffmpeg 的 `scdet` 滤镜(只认硬切、认不出溶解)。用的是哪一档记在 `engine` 里,
- *     `scdet` 档还带一句说明为什么没用模型。模型档中途失败(Python 崩了、返回的结果格式不对)时,退到 `scdet` 再跑一遍,
- *     并在作业索引里记 `fellBackFrom: 'transnetv2'` 与原因,`list_shots` 会说出来,不假称是模型识别的。
- *     连 ffmpeg 都没有就如实回「用不了」,不起一个注定失败的作业;镜头识别彻底失败时,错误里指向 see_frames 看真实画面自己定切点;
- *   - **上下文只来自 F0**:每个调用带的 `context` 是 `tool-context.mjs` 发的可信八字段;每次读素材、起进程、写项目之前,
- *     都用 `run-resources.mjs` 的 `authorize` 重验 doc 的当前 grant / fence(`detect_shots` 要 write,`list_shots` 要 read),
- *     不信工具参数里的任何项目或路径;
- *   - **素材只经 `project-assets.mjs` 的 `openRead`**(带哈希核对)取到这个对话的工作目录(`shots/<作业号>/`),跑完删;
- *     ffprobe / ffmpeg / Python 只读这份本地文件,输入前都带 `-protocol_whitelist file`(伪装成媒体的播放列表连不了网络);
- *   - **子进程只经工作区的受限子进程起**(`workspace.mjs` 的 `spawn`:环境变量白名单、不弹窗口、起成一棵杀得掉的进程树),
- *     并登记到 `run-resources.mjs`(kind `child`):这一轮被停、转私有、Agent 关闭、服务关闭时,进程树真被杀掉、`exit` 与 `close`
- *     都到了才算关(杀树、等收尾、登记用公共实现 `runner.mjs`)。Python 抽帧再起的 ffmpeg 是孙进程,一起被杀;
- *   - **Python 用隔离模式起**(`-I`,`runner.mjs` 的 `isolatedPythonArgs`):对话工作区里是成员和模型弄进来的文件,不让它排进模块搜索路径;
- *   - **作业记在 `tool-jobs.mjs` 的持久账本里**(`shots.detect`):服务重启后 `running` 变 `interrupted`,不是「找不到」;
- *     账本只存状态与进度,中文的失败原因、用的哪一档等放在对话工作区的 `shots/jobs.json`;
- *   - **结果写项目素材的当前版本**:`project.setMediaShots` 带上取字节时的 `mediaRev` 做版本预期,素材中途被换掉就丢弃这次结果,
- *     不写;写之前再验一次 write 权限(只读成员在起作业之前就被拒);
- *   - **`list_shots` 自己答**(不再借桌面版 handler):作业在跑 / 被中断 / 失败 / 被取消都说清;每个镜头带的主体情况照桌面版折叠,
- *     主体检测那一边的「在跑 / 失败」读 `perception/subject.mjs` 写在同一个对话工作区里的 `subject/jobs.json` 与账本。
+ *   - **Two tiers, labeled truthfully**: TransNetV2 is used only when dependencies and weights
+ *     (`onnxruntime` + `transnetv2.onnx`) are present (recognizes both hard cuts and crossfades,
+ *     providing spans for crossfades); if Python is not configured, dependencies/weights are
+ *     incomplete, or asset is too long, use ffmpeg's `scdet` filter (recognizes only hard cuts,
+ *     cannot recognize crossfades). Which tier was used is recorded in `engine`, and `scdet` tier
+ *     includes an explanation of why the model was not used. When model tier fails midway (Python
+ *     crashes, returned result format is invalid), fall back to `scdet` and rerun, recording
+ *     `fellBackFrom: 'transnetv2'` and reason in job index; `list_shots` will report this, without
+ *     falsely claiming model detection. If even ffmpeg is missing, truthfully return "unavailable"
+ *     instead of starting a doomed job; when shot detection fails completely, point to see_frames
+ *     in error to inspect actual frames and choose cut points manually;
+ *   - **Context comes only from F0**: `context` passed to each call contains trusted eight fields
+ *     emitted by `tool-context.mjs`; before reading assets, spawning processes, or writing
+ *     projects, always re-verify doc's current grant / fence using `run-resources.mjs`'s
+ *     `authorize` (`detect_shots` requires write, `list_shots` requires read), never trusting any
+ *     project or path in tool arguments;
+ *   - **Assets fetched only via `project-assets.mjs`'s `openRead`** (with hash verification) into
+ *     this chat's workspace directory (`shots/<jobId>/`), deleted after run; ffprobe / ffmpeg /
+ *     Python read only this local file, with `-protocol_whitelist file` prepended to inputs
+ *     (playlists disguised as media cannot connect to network);
+ *   - **Child processes spawned only via workspace restricted child processes**
+ *     (`workspace.mjs`'s `spawn`: environment variable allowlist, no popups, spawned as a
+ *     killable process tree), and registered with `run-resources.mjs` (kind `child`): when this
+ *     round is stopped, made private, Agent shut down, or service shut down, process tree is
+ *     actually killed, counting as closed only after both `exit` and `close` arrive (killing tree,
+ *     waiting for cleanup, and registration use common implementation `runner.mjs`). ffmpeg
+ *     spawned by Python frame extraction is a grandchild process and killed together;
+ *   - **Python spawned in isolated mode** (`-I`, `runner.mjs`'s `isolatedPythonArgs`): Chat
+ *     workspace contains files brought in by members and model; do not allow them into module
+ *     search paths;
+ *   - **Jobs recorded in `tool-jobs.mjs`'s persistent ledger** (`shots.detect`): `running` becomes
+ *     `interrupted` after service restart, not "not found"; ledger stores only status and progress;
+ *     Chinese failure reasons, tier used, etc. are placed in `shots/jobs.json` in chat workspace;
+ *   - **Results written to current version of project asset**: `project.setMediaShots` passes
+ *     `mediaRev` from byte retrieval as expected version; if asset was replaced midway, discard
+ *     this result without writing; re-verify write permission before writing (read-only members are
+ *     rejected before starting job);
+ *   - **`list_shots` answers directly** (no longer borrows desktop app handler): clearly states
+ *     whether job is running / interrupted / failed / canceled; collapses subject status for each
+ *     shot following desktop app; "running / failed" on subject detection side reads
+ *     `subject/jobs.json` and ledger written by `perception/subject.mjs` in same chat workspace.
  *
- * 缩略图(桌面版抓给时间轴画标记用的小图)云端不做:它是编辑界面的东西,云端项目没有对应的存放处;转场里不带 `thumbs`。
+ * Thumbnails (mini images captured in desktop app for timeline markers) are not generated on
+ * cloud: they belong to the editor and cloud projects have no corresponding storage; transitions
+ * omit `thumbs`.
  *
- * 工具总表(`cloud-tools.mjs`)的接线归 G 包,本文件不碰它。纯 Node,不引用浏览器;
- * 只在折叠主体情况时懒加载 `src/kernel/project.ts` 与 `src/kernel/layout.ts`(`kernel` 可注入)。
+ * Wiring for master tool table (`cloud-tools.mjs`) belongs to package G; this file does not touch
+ * it. Pure Node, no browser imports; only lazily loads `src/kernel/project.ts` and
+ * `src/kernel/layout.ts` (`kernel` is injectable) when collapsing subject status.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
@@ -38,29 +66,38 @@ import { isolatedPythonArgs, splitRoots, superviseChild } from './runner.mjs';
 export const SHOTS_TOOL_NAMES = Object.freeze(['detect_shots', 'list_shots']);
 
 export const SHOTS_DEFAULTS = Object.freeze({
-  /** `ffmpeg -version` / Python `status` 的时限(Python 要 import onnxruntime) */
+  /** Timeout for `ffmpeg -version` / Python `status` (Python needs to import onnxruntime) */
   versionMs: 20_000,
   statusMs: 45_000,
-  /** 状态结果缓存多久 */
+  /** How long status results are cached */
   statusCacheMs: 15_000,
-  /** ffprobe 的时限 */
+  /** Timeout for ffprobe */
   probeMs: 60_000,
-  /** 一个检测作业的时限:每秒素材 perSecondMs、下限 minDetectMs、上限 maxDetectMs。桌面版实测 5 分钟素材 TransNetV2 约 36 秒 */
+  /**
+   * Timeout for a detection job: perSecondMs per second of asset, minDetectMs floor, maxDetectMs
+   * ceiling. Desktop app measured ~36s for 5 min asset with TransNetV2
+   */
   perSecondMs: 2_000,
   minDetectMs: 120_000,
   maxDetectMs: 60 * 60_000,
-  /** 把素材取到工作目录:大小与时限 */
+  /** Fetch asset into workspace directory: size and timeout */
   maxFetchBytes: 1024 * 1024 * 1024,
   fetchMs: 5 * 60_000,
-  /** 模型档把整段视频解成 48x27 的小帧放在内存里(每帧约 4 KB,复制两份):超过这么多帧就改用 scdet */
+  /**
+   * Model tier decodes entire video into 48x27 mini-frames in RAM (~4 KB per frame, two copies):
+   * fall back to scdet if exceeding this many frames
+   */
   maxModelFrames: 120_000,
-  /** 整个进程同时在跑的检测作业 */
+  /** Detection jobs running concurrently across the entire process */
   maxRunning: 2,
-  /** 进度写账本的最小间隔 */
+  /** Minimum interval for writing progress to the ledger */
   progressMinMs: 400,
-  /** 工作区索引里留多少条作业 */
+  /** How many jobs to keep in the workspace index */
   historyJobs: 20,
-  /** scdet 的阈值(与桌面版同一个数:压低了会在单镜头内高速运动时虚报) */
+  /**
+   * Threshold for scdet (same value as desktop app: lowering causes false positives on high-speed
+   * motion within a single shot)
+   */
   scdetThreshold: 10,
 });
 
@@ -88,13 +125,13 @@ const sha = (text) => createHash('sha256').update(text).digest('hex');
 const round3 = (v) => Math.round(v * 1000) / 1000;
 
 /**
- * 节点上的镜头识别配置(部署决定)。
+ * Shot detection configuration on the node (determined by deployment).
  *
- *   PROMPTCUT_FFMPEG                    ffmpeg 的绝对路径。配了镜头识别才可用(`scdet` 档只要它)
- *   PROMPTCUT_FFPROBE                   可选:ffprobe 的绝对路径;缺省取 ffmpeg 同目录下的 ffprobe
- *   PROMPTCUT_AGENT_SHOTS_PYTHON        可选:装了 onnxruntime 的 Python 解释器(绝对路径)。配了才有 TransNetV2 档
- *   PROMPTCUT_AGENT_SHOTS_MODELS        配了 Python 就要:权重目录(绝对路径;里面是 transnetv2.onnx)
- *   PROMPTCUT_AGENT_SHOTS_PYLIBS        可选:onnxruntime 等装在这个目录(同时进 Python 的模块搜索路径)
+ *   PROMPTCUT_FFMPEG                    Absolute path to ffmpeg. Required for shot detection (`scdet` tier only needs this)
+ *   PROMPTCUT_FFPROBE                   Optional: absolute path to ffprobe; defaults to ffprobe in same dir as ffmpeg
+ *   PROMPTCUT_AGENT_SHOTS_PYTHON        Optional: Python interpreter with onnxruntime (absolute path); required for TransNetV2 tier
+ *   PROMPTCUT_AGENT_SHOTS_MODELS        Required if Python is set: weights dir (absolute path; contains transnetv2.onnx)
+ *   PROMPTCUT_AGENT_SHOTS_PYLIBS        Optional: onnxruntime etc. installed in this dir (enters Python module search path)
  */
 export function readShotsConfig(env, { root }) {
   const ffmpeg = env.PROMPTCUT_FFMPEG;
@@ -135,14 +172,14 @@ const jsonLines = (onEvent) => {
       const line = buf.slice(0, i).trim();
       buf = buf.slice(i + 1);
       if (!line) continue;
-      try { const ev = JSON.parse(line); if (ev && typeof ev === 'object') onEvent(ev); } catch { /* 不是 JSON 的行不要 */ }
+      try { const ev = JSON.parse(line); if (ev && typeof ev === 'object') onEvent(ev); } catch { /* Discard non-JSON lines */ }
     }
   };
   feed.flush = () => { if (buf.trim()) feed('\n'); };
   return feed;
 };
 
-/** 按行切文本流(ffmpeg 的 stderr / `-progress` 输出),回调拿到完整的一行 */
+/** Split text stream by line (ffmpeg stderr / `-progress` output); callback receives a full line */
 const textLines = (onLine) => {
   let buf = '';
   const feed = (text) => {
@@ -155,14 +192,14 @@ const textLines = (onLine) => {
   return feed;
 };
 
-/** 框按面积取前几个并取整(与桌面版 `topBoxes` 同一口径) */
+/** Take top boxes by area and round to integers (same standard as desktop app `topBoxes`) */
 function topBoxes(boxes, limit = 4) {
   return [...boxes].sort((a, b) => b.w * b.h - a.w * a.h).slice(0, limit).map((b) => ({
     label: b.label, x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.w), h: Math.round(b.h), conf: Math.round(b.conf * 100) / 100,
   }));
 }
 
-/** 帧率文本 `25/1` / `30000/1001` / `25` -> 数 */
+/** Frame rate text `25/1` / `30000/1001` / `25` -> number */
 function parseRate(raw) {
   if (typeof raw !== 'string') return 0;
   const [n, d] = raw.split('/').map(Number);
@@ -172,16 +209,23 @@ function parseRate(raw) {
 
 /**
  * @param {object} d
- * @param {object | null} d.config `readShotsConfig` 的结果;没有就是 null(工具如实回「没配」)
- * @param {object} d.resources `run-resources.mjs` 的 `createRunResources`(register / authorize / verifyFence)
- * @param {object} d.assets `project-assets.mjs` 的 `createProjectAssets`(只用 `openRead`)
- * @param {object} d.jobs `tool-jobs.mjs` 的 `createToolJobs`
- * @param {(context: object) => (object | Promise<object>)} d.workspace 这个对话的工作区(`workspace.mjs` 的 `open()` 的结果)
- * @param {object} d.project 项目一侧的窄接口(G 包接到 doc 的版本预期与操作栅栏):
- *   `getMedia(context, mediaId)` -> 项目当前副本里的素材记录或 null(带 `mediaRev`);
- *   `setMediaShots(context, { mediaId, expectedMediaRev, shots, jobId })` -> `{ projectRev? }`,版本对不上抛带 `code: 'media-changed'` 的错;
- *   `getStage(context)` -> `{ width, height }`(可选;折叠主体情况时给 suggestedRect 用,没有就不给 suggestedRect)
- * @param {object} d.kernel 宿主经 ssr-host 载入缝取来注入:`{ subjectForRange, suggestPosition, rectForSafeSide }`(必需)
+ * @param {object | null} d.config Result of `readShotsConfig`; null if absent (tool faithfully
+ *   returns "not configured")
+ * @param {object} d.resources `createRunResources` from `run-resources.mjs` (register / authorize /
+ *   verifyFence)
+ * @param {object} d.assets `createProjectAssets` from `project-assets.mjs` (only uses `openRead`)
+ * @param {object} d.jobs `createToolJobs` from `tool-jobs.mjs`
+ * @param {(context: object) => (object | Promise<object>)} d.workspace Workspace for this chat
+ *   (result of `open()` in `workspace.mjs`)
+ * @param {object} d.project Narrow interface on project side (Package G connects to doc's version
+ *   expectation and operation fence):
+ *   `getMedia(context, mediaId)` -> asset record in project's current replica or null (with `mediaRev`);
+ *   `setMediaShots(context, { mediaId, expectedMediaRev, shots, jobId })` -> `{ projectRev? }`,
+ *   throws error with `code: 'media-changed'` if versions do not match;
+ *   `getStage(context)` -> `{ width, height }` (optional; used for suggestedRect when folding
+ *   subject status, omitted if absent)
+ * @param {object} d.kernel Injected by host via ssr-host loading seam:
+ *   `{ subjectForRange, suggestPosition, rectForSafeSide }` (required)
  */
 export function createShotsTools({
   config = null, resources, assets, jobs, workspace, project,
@@ -196,29 +240,41 @@ export function createShotsTools({
     if (typeof kernel?.[fn] !== 'function') throw new ShotsToolError(`Shot detection is not fully configured: missing kernel function ${fn} (the host must fetch it through the ssr-host loading seam and inject it into kernel)`, 'shots-unconfigured');
   }
   const limits = { ...SHOTS_DEFAULTS, ...limitsIn };
-  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响工具 */ } };
-  /** `config.args` 只给单测与探针(把解释器整个换成替身脚本);正式的一律隔离模式,包目录来自部署配置 */
+  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* Logging failure does not affect tools */ } };
+  /**
+   * `config.args` is only for unit tests and probes (replaces interpreter entirely with a stub
+   * script); production always uses isolated mode, package directory comes from deployment config.
+   */
   const stubArgs = config && Array.isArray(config.args) && config.args.length ? config.args : null;
   const pythonGlobals = config?.python ? ['--models-dir', config.modelsDir, ...(config.pylibs ? ['--pylibs', config.pylibs] : []), '--local-only'] : [];
   const pythonArgv = (subArgs) => (stubArgs
     ? [...stubArgs, ...pythonGlobals, ...subArgs]
     : isolatedPythonArgs('promptcut_shots', { roots: splitRoots(config.pythonPath), args: [...pythonGlobals, ...subArgs] }));
-  /** `config.ffmpegArgs` / `config.ffprobeArgs` 同样只给单测与探针(把可执行文件换成替身脚本) */
+  /**
+   * `config.ffmpegArgs` / `config.ffprobeArgs` are likewise only for unit tests and probes
+   * (replaces executables with stub scripts).
+   */
   const ffmpegArgv = (args) => [...(Array.isArray(config?.ffmpegArgs) ? config.ffmpegArgs : []), ...args];
   const ffprobeArgv = (args) => [...(Array.isArray(config?.ffprobeArgs) ? config.ffprobeArgs : []), ...args];
   const loadKernel = async () => kernel;
 
-  /** 正在跑的作业(本进程):jobId -> 状态。close 要等它们的子进程真关 */
+  /** Running jobs (this process): jobId -> status. close must wait for child processes to actually close */
   const live = new Map();
-  /** 同一素材同一时刻只一个检测作业:`项目\0素材` -> jobId */
+  /** Only one detection job per asset at a time: `project\0media` -> jobId */
   const byMedia = new Map();
-  /** 正在登记账本、还没进 live 的检测作业数(两个并发调用不能同时越过上限检查) */
+  /**
+   * Number of detection jobs registering in ledger and not yet live (two concurrent calls cannot
+   * bypass the limit check at the same time).
+   */
   let reserving = 0;
   let statusCache = null;
   let ffmpegCache = null;
   let closing = false;
   const settled = new Set();
-  /** 本进程起的、还没关的子进程(含 version / status / ffprobe):close 要全部杀掉并等它们真关 */
+  /**
+   * Child processes spawned by this process and not yet closed (including version / status /
+   * ffprobe): close must kill all of them and wait for them to actually close.
+   */
   const children = new Set();
 
   const authorize = async (context, action) => {
@@ -226,7 +282,8 @@ export function createShotsTools({
     try { return await resources.authorize(context, action); }
     catch (error) {
       if (error instanceof ShotsToolError) throw error;
-      // 文档服务联系不上:fail closed,但说清是「上游不可用」(503),不是「没权限」(403)
+      // Cannot reach document service: fail closed, but clarify it is "upstream unavailable" (503),
+      // not "no permission" (403)
       if (['run-authority-unavailable', 'tool-instance-unavailable', 'fence-unavailable', 'authorization-unavailable'].includes(error?.code)) {
         throw Object.assign(new ShotsToolError('The document service is temporarily unreachable, so permissions for this turn could not be confirmed and shot detection did not start. Try again later.', 'authority-unavailable'), { status: 503 });
       }
@@ -234,7 +291,7 @@ export function createShotsTools({
     }
   };
 
-  /* ---------------------------------------------------------------- 工作区索引(中文原因、用的哪一档等账本不存的东西) */
+  /* ---------------------------------------------------------------- Workspace index (items not stored in ledger, e.g. Chinese reason, tier used) */
 
   function readIndexFile(ws, file) {
     try {
@@ -244,7 +301,7 @@ export function createShotsTools({
     } catch { return []; }
   }
   const readIndex = (ws) => readIndexFile(ws, INDEX_FILE);
-  /** 读-改-写在一个同步段里完成,同一进程内不会交错 */
+  /** Read-modify-write is completed in a synchronous block; will not interleave within same process */
   function mutateIndex(ws, mutate) {
     try {
       const rows = readIndex(ws);
@@ -253,9 +310,9 @@ export function createShotsTools({
     } catch (err) { say('agent.shots.index-failed', { message: String(err?.message ?? err).slice(0, 120) }); }
   }
 
-  /* ---------------------------------------------------------------- 起子进程 */
+  /* ---------------------------------------------------------------- Spawn child process */
 
-  /** 路径与盘符不回给模型 */
+  /** Paths and drive letters are not returned to the model */
   const scrub = (text, ws) => {
     let out = String(text ?? '');
     let workDir = null;
@@ -274,8 +331,10 @@ export function createShotsTools({
   };
 
   /**
-   * 起一个子进程(ffmpeg / ffprobe / Python),登记到 run-resources(整棵进程树真关了才算关)。
-   * 回 `{ done, kill, signal, closed }`:`done` 解析成 `{ code, timedOut, stderrTail, spawnError }`。
+   * Spawns a child process (ffmpeg / ffprobe / Python) and registers it with run-resources
+   * (considered closed only when the entire process tree has actually closed).
+   * Returns `{ done, kill, signal, closed }`: `done` resolves to
+   * `{ code, timedOut, stderrTail, spawnError }`.
    */
   async function runChild(context, ws, command, args, { timeoutMs, env = {}, onStdout = () => {}, onStderr = () => {} } = {}) {
     const child = ws.spawn(command, args, { env });
@@ -292,7 +351,7 @@ export function createShotsTools({
         },
       });
     } catch {
-      // 登记被拒:superviseChild 已经杀掉整棵树并等它收干净
+      // Registration rejected: superviseChild already killed the entire tree and waited for cleanup
       throw new ShotsToolError('This turn no longer has permission to continue (stopped, moved to private, or the Agent was shut down), so the shot detection process did not start.', 'shots-forbidden');
     }
     const done = run.done.then((end) => ({
@@ -306,7 +365,10 @@ export function createShotsTools({
     return { done, kill: entry.kill, signal: run.signal ?? NEVER_ABORTED, closed: entry.closed };
   }
 
-  /** ffmpeg 起得来吗(`-version`)。成功缓存一会儿,失败不缓存太久。回 `{ ok, reason? }` */
+  /**
+   * Checks if ffmpeg starts (`-version`). Cache successes briefly, do not cache failures too long.
+   * Returns `{ ok, reason? }`.
+   */
   async function ffmpegStatus(context, ws, { fresh = false } = {}) {
     if (!config) return { ok: false, reason: NOT_CONFIGURED };
     if (!fresh && ffmpegCache && now() - ffmpegCache.at < (ffmpegCache.value.ok ? limits.statusCacheMs : 2000)) return ffmpegCache.value;
@@ -327,7 +389,10 @@ export function createShotsTools({
   }
 
 
-  /** 模型档就绪吗:Python 的 `status`(要 onnxruntime 与权重文件都在)。回 `{ ready, why?, reason?, detail? }`;只有权限被撤才抛 */
+  /**
+   * Is model tier ready: Python's `status` (requires both onnxruntime and weight files).
+   * Returns `{ ready, why?, reason?, detail? }`; only throws if permissions are revoked.
+   */
   async function modelStatus(context, ws, { fresh = false } = {}) {
     if (!config?.python) {
       return { ready: false, why: 'no-python', reason: 'TransNetV2 is not configured on the node (no Python interpreter or weights).' };
@@ -371,7 +436,7 @@ export function createShotsTools({
     return value;
   }
 
-  /** 选这次用哪一档。ffmpeg 起不来就两档都没有 */
+  /** Selects which tier to use this time. Neither tier is available if ffmpeg fails to start */
   async function chooseEngine(context, ws) {
     const ff = await ffmpegStatus(context, ws);
     if (!ff.ok) return { unavailable: true, reason: ff.reason };
@@ -380,11 +445,13 @@ export function createShotsTools({
     return { engine: 'scdet', scdetWhy: model.reason, model };
   }
 
-  /* ---------------------------------------------------------------- 账本更新 */
+  /* ---------------------------------------------------------------- Ledger update */
 
   /**
-   * 一个作业的账本句柄:更新串行(revision 精确),共有已读任务进入 retained 后自动补一次检查点。
-   * 作业已经是终态(被栅栏取消)时回 `{ terminal: true }`,调用方据此收手。
+   * A job's ledger handle: updates are serialized (exact revision); automatically adds a checkpoint
+   * once shared read tasks enter retained.
+   * Returns `{ terminal: true }` when the job is already in a terminal state (cancelled by fence),
+   * signaling caller to stop.
    */
   function tracker(context, jobId, startRevision = 0) {
     let revision = startRevision;
@@ -460,7 +527,8 @@ export function createShotsTools({
     if (live.size + reserving >= limits.maxRunning) throw new ShotsToolError('Too many shot detection jobs are running on the node; try again in a moment.', 'shots-busy');
 
     const requestId = REQUEST_RE.test(options.requestId ?? '') ? options.requestId : `sh_${randomUUID().replace(/-/g, '')}`;
-    // 先占位再 await:同一素材的两个并发调用,第二个看到占位就回 busy
+    // Place placeholder before await: of two concurrent calls on same asset,
+    // second sees placeholder and returns busy
     byMedia.set(mediaKey, RESERVED);
     reserving += 1;
     let started;
@@ -485,7 +553,7 @@ export function createShotsTools({
         + ' For long media or if the model fails midway, it switches to scdet; the tier finally used is whatever engine list_shots returns.',
     };
     if (started.state !== 'queued' || live.has(started.jobId)) {
-      // 同一 requestId 的重试:作业已经开了,不再开第二个
+      // Retry with same requestId: job is already started, do not start a second one
       if (byMedia.get(mediaKey) === RESERVED) byMedia.delete(mediaKey);
       return { ...result, started: false, alreadyRunning: started.state === 'queued' || started.state === 'running', state: started.state };
     }
@@ -505,7 +573,11 @@ export function createShotsTools({
     return result;
   }
 
-  /** 作业的收尾:账本一笔、工作区索引一笔。账本写不了(权限已撤)也不抛——栅栏取消由宿主的 `cancelForFence` 补 */
+  /**
+   * Finalizing the job: one entry in ledger, one in workspace index. Does not throw even if ledger
+   * cannot be written (permissions revoked): fence cancellation is supplemented by host's
+   * `cancelForFence`.
+   */
   async function finishJob(job, ws, track, { state, errorCode, message, extra = {} }) {
     const patch = { state, ...(errorCode ? { errorCode } : {}), ...(state === 'done' ? { progress: 1 } : {}), ...(extra.outputRefs ? { outputRefs: extra.outputRefs } : {}) };
     const applied = await track.patch(patch);
@@ -516,7 +588,7 @@ export function createShotsTools({
     return applied;
   }
 
-  /** ffprobe 取帧率和时长。回 `{ ok, fps, duration }` 或 `{ ok:false, message, ... }` */
+  /** ffprobe fetches frame rate and duration. Returns `{ ok, fps, duration }` or `{ ok:false, message, ... }` */
   async function probeVideo(job, ws, file) {
     const { context } = job;
     let out = '';
@@ -548,7 +620,10 @@ export function createShotsTools({
     return { ok: true, fps, duration: Number.isFinite(duration) && duration > 0 ? duration : 0 };
   }
 
-  /** 校验 Python 的 result 事件并折成项目里 `MediaAsset.shots` 的形状;格式不对抛 `bad-result` */
+  /**
+   * Validates Python's result event and folds into project's `MediaAsset.shots` shape;
+   * throws `bad-result` if format is invalid.
+   */
   function shotsFromPython(ev, at) {
     const finite = (v) => typeof v === 'number' && Number.isFinite(v);
     const transitions = Array.isArray(ev.transitions) ? ev.transitions : null;
@@ -567,12 +642,15 @@ export function createShotsTools({
     };
   }
 
-  /** scdet 的命中点 -> 项目里 `MediaAsset.shots` 的形状(一律硬切:scdet 只给一个时间点,没有跨度;与桌面版同一口径) */
+  /**
+   * scdet hit points -> project's `MediaAsset.shots` shape (always hard cuts: scdet only provides
+   * a timestamp, no span; same standard as desktop app).
+   */
   function shotsFromScdet(hits, duration, at) {
     const times = [...new Set(hits.map((h) => round3(h.t)))].sort((a, b) => a - b);
     const transitions = times.map((t) => {
       const hit = hits.find((h) => round3(h.t) === t);
-      // scdet 的分数是 0~100 的画面差异;折成 0~1 当置信度(桌面版一律写 1)
+      // scdet score is 0-100 visual difference; map to 0-1 as confidence (desktop app always writes 1)
       const confidence = Number.isFinite(hit?.score) ? Math.min(1, Math.round(hit.score * 10) / 1000) : 1;
       return { kind: 'cut', start: t, end: t, time: t, confidence };
     });
@@ -587,7 +665,7 @@ export function createShotsTools({
     return { engine: 'scdet', createdAt: new Date(at).toISOString(), transitions, shots };
   }
 
-  /** 跑 ffmpeg scdet。回 `{ ok, shots }` 或 `{ ok:false, cancelled | timedOut | message }` */
+  /** Runs ffmpeg scdet. Returns `{ ok, shots }` or `{ ok:false, cancelled | timedOut | message }` */
   async function runScdet(job, ws, file, meta, track, limitMs) {
     const { context } = job;
     const hits = [];
@@ -634,7 +712,7 @@ export function createShotsTools({
     catch (error) { return { ok: false, message: error.message }; }
   }
 
-  /** 跑 TransNetV2(Python)。回 `{ ok, shots }` 或 `{ ok:false, cancelled | timedOut | message }` */
+  /** Runs TransNetV2 (Python). Returns `{ ok, shots }` or `{ ok:false, cancelled | timedOut | message }` */
   async function runTransNet(job, ws, file, meta, track, limitMs) {
     const { context } = job;
     let resultEvent = null;
@@ -686,7 +764,7 @@ export function createShotsTools({
       const first = await track.patch({ state: 'running', stage: 'fetch', progress: 0 });
       if (!first.ok) return;
 
-      // 1) 取素材字节(带哈希核对)到工作目录
+      // 1) Fetch asset bytes (with hash verification) to working directory
       let read;
       try { read = await assets.openRead(context, mediaId); }
       catch (error) {
@@ -722,7 +800,7 @@ export function createShotsTools({
       await read.closed.catch(() => {});
       if (stopped()) return await finishJob(job, ws, track, cancelledNote());
 
-      // 2) ffprobe:帧率与时长
+      // 2) ffprobe: frame rate and duration
       await track.patch({ stage: 'probe', progress: 0.05 });
       mutateIndex(ws, (rows) => { const row = rows.find((r) => r.jobId === job.jobId); if (row) row.status = 'running'; });
       const meta = await probeVideo(job, ws, mediaFile);
@@ -731,7 +809,8 @@ export function createShotsTools({
         return await finishJob(job, ws, track, { state: 'error', errorCode: 'SHOTS_FAILED', message: `Shot detection failed: ${meta.message}${FALLBACK_HINT}` });
       }
 
-      // 3) 选档并检测。模型档的帧数太多会吃光内存,改用 scdet;模型档中途出错也改用 scdet(并如实记下)
+      // 3) Select tier and detect. If model tier has too many frames it will exhaust memory,
+      // switch to scdet; if model tier fails midway, also switch to scdet (and faithfully record it).
       let engine = job.engine;
       let scdetWhy = job.scdetWhy;
       if (engine === 'transnetv2' && meta.duration * meta.fps > limits.maxModelFrames) {
@@ -771,10 +850,11 @@ export function createShotsTools({
       }
       const shots = outcome.shots;
 
-      // 4) 写项目素材的当前版本(带取字节时的 mediaRev 做版本预期)
+      // 4) Write current version of project asset (using mediaRev from byte fetch as version expectation)
       const committing = await track.patch({ stage: 'commit', progress: 0.97 });
       if (!committing.ok) {
-        // 账本已被栅栏取消(终态),或权限已撤、账本写不了:都不写项目
+        // If ledger was cancelled by fence (terminal state), or permissions revoked and ledger
+        // cannot be written: do not write to project
         return await finishJob(job, ws, track, { state: 'cancelled', errorCode: 'FENCE_CANCELLED', message: 'This round can no longer write to the project (it was stopped, made private, or permissions changed); the detection result was not written.' });
       }
       try { await authorize(context, 'write'); }
@@ -796,7 +876,7 @@ export function createShotsTools({
         },
       });
     } finally {
-      if (mediaFile) { try { ws.remove(mediaFile); } catch { /* 留给对话删除时清 */ } try { fs.rmSync(path.dirname(ws.resolve(mediaFile)), { recursive: true, force: true }); } catch { /* 同上 */ } }
+      if (mediaFile) { try { ws.remove(mediaFile); } catch { /* Left to be cleaned up when chat is deleted */ } try { fs.rmSync(path.dirname(ws.resolve(mediaFile)), { recursive: true, force: true }); } catch { /* Same as above */ } }
     }
   }
 
@@ -805,7 +885,10 @@ export function createShotsTools({
   const INTERRUPTED = 'The previous shot detection was interrupted by a service restart or shutdown, no result. You can call detect_shots again (pass force:true).';
   const FINISHED = ['done', 'error', 'cancelled', 'interrupted'];
 
-  /** 一条工作区索引里的作业现在是什么状态:账本是主;作业已经收尾而账本没写成(权限已撤)时以索引里的终态为准 */
+  /**
+   * Current status of a job in workspace index: ledger is primary; if job has finalized but ledger
+   * write failed (permissions revoked), the terminal state in the index prevails.
+   */
   async function stateOf(context, row, isLive) {
     let ledger = null;
     try { ledger = await jobs.get(context, row.jobId); } catch { ledger = null; }
@@ -815,7 +898,10 @@ export function createShotsTools({
     return { state, ledger };
   }
 
-  /** 主体检测那一边的「在跑 / 失败」(读 `perception/subject.mjs` 写在同一个对话工作区里的索引与账本) */
+  /**
+   * "Running / failed" from subject detection side (reads index and ledger written by
+   * `perception/subject.mjs` in the same chat workspace).
+   */
   async function subjectJobState(context, ws, mediaId) {
     const row = [...readIndexFile(ws, SUBJECT_INDEX_FILE)].reverse().find((r) => r.kind === 'detect' && r.mediaId === mediaId);
     if (!row) return null;
@@ -827,7 +913,7 @@ export function createShotsTools({
     return null;
   }
 
-  /** 与桌面版 `subjectDigest` 同一口径(`stage` 不知道时不给 suggestedRect) */
+  /** Same standard as desktop app `subjectDigest` (omits suggestedRect when `stage` is unknown) */
   function subjectDigest(k, info, stage) {
     if (!info) return null;
     const round2 = (v) => Math.round(v * 100) / 100;
@@ -874,7 +960,8 @@ export function createShotsTools({
       try { const s = await project.getStage(context); if (s && s.width > 0 && s.height > 0) stage = { width: s.width, height: s.height }; } catch { stage = null; }
     }
     const subjectJob = await subjectJobState(context, ws, mediaId);
-    // 这一批结果是哪一档、为什么:作业索引里找得到就说原因(找不到,比如是别的对话跑的,只说档位)
+    // Which tier this batch of results is and why: include reason if found in job index
+    // (if not found, e.g. run by another chat, only report tier)
     const doneRow = row && row.status === 'done' && row.engine === media.shots.engine ? row : null;
     const engineNote = media.shots.engine === 'scdet'
       ? `Currently using the ffmpeg scdet fallback, which only detects hard cuts and cannot detect gradual transitions such as dissolves${doneRow?.scdetWhy ? `. ${doneRow.scdetWhy}` : ''}`
@@ -887,7 +974,8 @@ export function createShotsTools({
       shots: media.shots.shots.map((s) => ({ ...s, subject: subjectDigest(k, k.subjectForRange(media.subjects, s.start, s.end), stage) })),
       transitions: media.shots.transitions.map(({ thumbs: _thumbs, ...rest }) => rest),
     };
-    // 顺序有讲究(与桌面版一致):1. 主体检测上次失败 2. 在跑 3. 没检测过 4. 整批采样全失败 5. 有结果
+    // Order matters (consistent with desktop app): 1. Subject detection failed last time 2. Running
+    // 3. Never detected 4. Entire batch sampling failed 5. Has results
     if (subjectJob?.error) {
       return {
         ...result,
@@ -933,7 +1021,7 @@ export function createShotsTools({
     };
   }
 
-  /* ---------------------------------------------------------------- 对外 */
+  /* ---------------------------------------------------------------- External */
 
   const handlers = {
     detect_shots: (context, args, options) => detectShots(context, args, options),
@@ -943,17 +1031,21 @@ export function createShotsTools({
   return Object.freeze({
     handles: new Set(SHOTS_TOOL_NAMES),
     /**
-     * @param {string} name 工具名
-     * @param {object} args 模型给的参数(只收 mediaId / force)
-     * @param {object} context F0 发的可信八字段
-     * @param {{ requestId?: string }} [options] 宿主给的幂等号(工具调用 id);同一号重试不会开第二个作业
+     * @param {string} name Tool name
+     * @param {object} args Arguments provided by model (only accepts mediaId / force)
+     * @param {object} context Trusted eight fields sent by F0
+     * @param {{ requestId?: string }} [options] Idempotency id provided by host (tool call id);
+     *   retries with same id will not start a second job
      */
     call(name, args, context, options = {}) {
       const handler = Object.hasOwn(handlers, name) ? handlers[name] : null;
       if (!handler) return Promise.reject(new ShotsToolError(`Shot detection does not handle ${String(name).slice(0, 60)}`, 'unknown-tool'));
       return Promise.resolve().then(() => handler(context, args ?? {}, options));
     },
-    /** 这台节点上镜头识别能跑到哪一档(宿主与探针用,不是模型能调的工具)。需要 read 权限 */
+    /**
+     * Which tier shot detection can run on this node (for host and probe use, not a tool callable by
+     * model). Requires read permission.
+     */
     async status(context) {
       await authorize(context, 'read');
       const ws = await workspace(context);
@@ -966,7 +1058,10 @@ export function createShotsTools({
         model: { ready: model.ready, ...(model.reason ? { reason: model.reason } : null), ...(model.detail ? { detail: model.detail } : null) },
       };
     },
-    /** 取消本对话的一个检测作业(宿主的控制路径与单测用;不是模型能调的工具)。回子进程已关的凭据 */
+    /**
+     * Cancels a detection job for this chat (for host control path and unit tests; not a tool
+     * callable by model). Returns receipt that child process has closed.
+     */
     async cancel(context, jobId) {
       await authorize(context, 'write');
       const job = live.get(jobId);

@@ -8,19 +8,23 @@ import { overLimit } from './http-guard.mjs';
 import { stagePortsOf } from './stage-ports.mjs';
 import { createAgentInstance } from './agent/service/instance.mjs';
 /*
- * 必须静态 import:vite 打包配置时,别的插件静态引入的 prerender-client.mjs 被打进同一个包里,
- * 状态(预渲染的地址、就绪没有)在那一份上。这里要是换成 import(new URL(...)) 动态加载,拿到的是
- * 磁盘上的另一份模块实例,状态永远是空的 —— 实测服务端 see_frames 在 whenPrerenderReady 里干等 60 秒。
+ * Must use static import: during vite bundling configuration, prerender-client.mjs statically
+ * imported by other plugins is bundled into the same bundle, and the state (prerender address,
+ * whether it is ready) lives on that copy. If dynamically loaded with import(new URL(...)) here,
+ * what is obtained is another module instance from disk with perpetually empty state: in testing,
+ * server-side see_frames waited in vain for 60 s in whenPrerenderReady.
  */
 import { prerenderPost } from './prerender-client.mjs';
-// 镜像的存储本体在镜像插件里(两个进程都挂);这里只读当前编辑页 session 的最新一版
+// The mirror storage itself lives in the mirror plugin (mounted in both processes); here it only
+// reads the latest version of the current editor page session
 import { latestMirror, latestPlayhead } from './vite-plugin-mirror';
 import { tr } from './i18n.mjs';
 
 
 /**
- * 在文件管理器里打开一个目录。
- * explorer 打开目录时退出码就是 1,所以这里不看退出码,也不等它。
+ * Opens a directory in the file manager.
+ * When explorer opens a directory, its exit code is 1, so here we ignore the exit code and do not
+ * wait for it.
  */
 function revealInFileManager(dir: string) {
   const opener = process.platform === 'win32' ? 'explorer.exe'
@@ -28,7 +32,7 @@ function revealInFileManager(dir: string) {
   try {
     spawn(opener, [dir], { detached: true, stdio: 'ignore' }).unref();
   } catch {
-    /* 打不开就算了,文件已经写好了,路径也会回给界面 */
+    /* If it fails to open, ignore it: the file is already written, and the path is returned to the UI */
   }
 }
 
@@ -39,16 +43,18 @@ function sendJson(res: ServerResponse, code: number, data: any) {
   res.end(JSON.stringify(data));
 }
 
-/* 请求体超限的 413:实现挪去 server/http-guard.mjs 了,vision 那边也要用同一份 */
+/* 413 for payload too large: implementation moved to server/http-guard.mjs; vision uses same copy */
 
 export default function vitePluginAi(): Plugin {
   return {
     name: 'vite-plugin-ai',
     configureServer(server) {
       server.httpServer?.on('listening', () => {
-        // 这个文件是桌面 APP 的会话(server/mcp-server.mjs)找「用户正在用的那个实例」的依据,被别的实例盖掉就会
-        // 把用户的桌面 APP 引到错误的端口上。测试与探针起的编辑器(PROMPTCUT_NO_PORT_FILE=1)不写:公共入口
-        // scripts/lib/no-user-dirs.mjs 与 npm test 的全局准备把它设上;桌面版和用户自己 `npm run dev` 起的编辑器照旧写
+        // This file is how desktop app sessions (server/mcp-server.mjs) locate "the instance the user is
+        // currently using"; being overwritten by another instance would lead the user's desktop app to the
+        // wrong port. Editors started by tests and probes (PROMPTCUT_NO_PORT_FILE=1) do not write this:
+        // common entrypoint scripts/lib/no-user-dirs.mjs and the global setup of npm test set this flag;
+        // the desktop app and editors started by users with `npm run dev` continue writing it as usual.
         if (process.env.PROMPTCUT_NO_PORT_FILE === '1') return;
         try {
           const addr = server.httpServer?.address();
@@ -64,10 +70,12 @@ export default function vitePluginAi(): Plugin {
               port,
               host,
               /*
-               * 两个舞台端口(E1)。编辑器端口 +1 / +2 的反向代理,舞台 iframe 从它们加载 ——
-               * 写进来是给**页面之外**的人看的:桌面壳要按它给 WebView2 放行 / 探端口占用,
-               * 探针脚本不用再自己推算。页面不读这里(端口表由 vite-plugin-stage-ports 注入)。
-               * 代理没起来(端口被占)时页面退回同源单舞台,这张表仍然是「本该是哪两个」。
+               * Two stage ports (E1). Reverse proxies at editor port +1 / +2, from which stage iframes load:
+               * written here for people **outside the page**: desktop shell uses it to allowlist WebView2 /
+               * probe port occupancy, and probe scripts no longer need to calculate it themselves. The page
+               * does not read this (stage port table is injected by vite-plugin-stage-ports).
+               * If proxy fails to start (port occupied), page falls back to same-origin single stage;
+               * this table still reflects "which two ports it should have been".
                */
               stagePorts: stagePortsOf(port),
               pid: process.pid,
@@ -78,9 +86,13 @@ export default function vitePluginAi(): Plugin {
       });
 
       /*
-       * Agent 服务的实现在 server/agent/service/instance.mjs(契约 docs/plan/cloud-agent-contract.md 第 2.1 节):
-       * 页面通道、项目副本、工具调用入口、对话、多 Agent 与桌面会话的接口都在那里,这里把它的路由原样挂到编辑器进程上。
-       * 留在本文件的是只属于桌面的接口:驱动清单、安装与登录、诊断、机器码、配置、额度面板,以及上面的 port.json。
+       * The Agent service implementation is in server/agent/service/instance.mjs (contract
+       * docs/plan/cloud-agent-contract.md Section 2.1): page channels, project replicas, tool call
+       * entry points, chat, and interfaces for multi-Agent and desktop sessions are all there; here
+       * its routes are mounted as-is onto the editor process.
+       * What remains in this file are interfaces belonging exclusively to the desktop: driver manifest,
+       * installation and login, diagnostics, machine code, configuration, quota panel, and port.json
+       * above.
        */
       const agent = createAgentInstance({
         server: {
@@ -134,15 +146,16 @@ export default function vitePluginAi(): Plugin {
       });
 
       /**
-       * 列出某家能用的模型。
+       * List the available models for a provider.
        *
-       * 两条路:
-       *   - `agy`:跑 `agy models`(输出是「名字<TAB>说明」);
-       *   - `api`:打 OpenAI 兼容的 `GET {baseUrl}/v1/models`。中转站基本都实现了这个口子,
-       *     返回 `{ data: [{ id, object, owned_by }], object: "list" }`。
+       * Two paths:
+       *   - `agy`: run `agy models` (output is "name<TAB>description");
+       *   - `api`: call OpenAI-compatible `GET {baseUrl}/v1/models`. Relay services basically all
+       *     implement this endpoint, returning `{ data: [{ id, object, owned_by }], object: "list" }`.
        *
-       * claude / codex 没有对应命令,清单只能在设置里手填 —— 与其编一份可能过期的
-       * 硬编码名单,不如老实说这一家读不到。
+       * claude / codex have no corresponding command, and the manifest can only be manually filled in
+       * settings: rather than fabricating a potentially outdated hardcoded list, it is better to
+       * honestly say this provider cannot be read.
        */
       server.middlewares.use('/api/ai/models', async (req, res) => {
         if (req.method !== 'GET') return sendJson(res, 405, { ok: false, error: 'GET only' });
@@ -174,7 +187,7 @@ export default function vitePluginAi(): Plugin {
             execFile(inv.command, inv.args, { env: cliEnv('agy'), timeout: 30000, windowsHide: true },
               (err, stdout) => (err && !stdout ? reject(err) : resolve(stdout || '')));
           });
-          // 只收「名字<TAB>说明」那些行,把「Fetching available models...」之类的抬头滤掉
+          // Only keep lines with "name<TAB>description", filtering out headers like "Fetching available models..."
           const models = out.split(/\r?\n/)
             .map((l) => l.split('\t')[0].trim())
             .filter((n) => /^[\w.:-]+$/.test(n));
@@ -190,8 +203,10 @@ export default function vitePluginAi(): Plugin {
       server.httpServer?.once('close', () => { void setupService.then(service => service.dispose()); });
       server.middlewares.use('/api/ai/setup', async (req, res) => {
         if (req.method === 'POST') {
-          // 粘贴授权码:把用户在登录对话框里粘的那串码送进正在跑的 Claude 登录任务的标准输入。
-          // 码是凭证:不写日志,出错信息里不带它;形状校验和写入在 setup.mjs 的 submitCode。
+          // Paste authorization code: feed the code string the user pasted in the login dialog into stdin
+          // of the running Claude login task.
+          // The code is a credential: do not log it, do not include it in error messages; shape validation
+          // and writing are in submitCode in setup.mjs.
           if (!req.headers['content-type']?.startsWith('application/json')) return sendJson(res, 415, { ok: false, error: 'JSON required' });
           if (req.headers.origin && req.headers.origin !== 'http://' + req.headers.host && req.headers.origin !== 'https://' + req.headers.host) return sendJson(res, 403, { ok: false, error: 'Origin rejected' });
           let body = '';
@@ -250,19 +265,21 @@ export default function vitePluginAi(): Plugin {
       }
 
       /**
-       * POST /api/ai/diagnostics/save —— 报告太长时存成文件,并打开它所在的文件夹。
+       * POST /api/ai/diagnostics/save: save as a file when the report is too long, and open its folder.
        *
-       * 为什么不一律走剪贴板:诊断报告带上每一步执行事件之后动辄几百 KB,
-       * 粘到聊天框里既贴不动也没人看。超过阈值就落盘,让用户直接把文件发过来。
+       * Why not always use the clipboard: diagnostic reports easily reach hundreds of KB once each
+       * execution event is included; pasting into a chat box is both sluggish and unreadable. Write to
+       * disk when exceeding the threshold, letting the user send the file directly.
        *
-       * **每次单独建一个带时间戳的文件夹**,里面就这一个 txt。直接打开
-       * 「诊断报告」总目录的话,用户会看到一堆历次的文件,还得自己认哪个是刚生成的。
+       * **Always create a separate timestamped folder each time**, containing only this single txt.
+       * If opening the main "Diagnostic reports" directory directly, the user would see a pile of files
+       * from previous runs and have to identify which one was just generated.
        */
       server.middlewares.use('/api/ai/diagnostics/save', async (req, res) => {
         if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'POST only' });
         let body = '';
         let tooBig = false;
-        // 报告本身就是大块头,这里的上限只用来挡住明显不正常的请求
+        // The report itself is bulky; the limit here is only used to block obviously abnormal requests
         req.on('data', (c) => { if (tooBig) return; body += c; tooBig = overLimit(req, res, body.length, 64 * 1024 * 1024, tr("The report is over 64MB and was not saved")); });
         req.on('end', () => {
           if (tooBig) return;
@@ -271,12 +288,12 @@ export default function vitePluginAi(): Plugin {
             if (typeof text !== 'string' || !text) return sendJson(res, 400, { ok: false, error: 'text is required' });
             const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-');
             const safeLabel = String(label || 'diagnostic').replace(/[\\/:*?"<>|]/g, '');
-            // 和 ai.json 放一处,不往桌面上堆东西;反正马上就用资源管理器打开了
+            // Kept together with ai.json, not cluttering the desktop; File Explorer opens it right away anyway
             const root = path.join(process.env.LOCALAPPDATA || os.homedir(), 'promptcut', tr("diagnostic reports"));
             const dir = path.join(root, `${safeLabel}-${stamp}`);
             fs.mkdirSync(dir, { recursive: true });
             const file = path.join(dir, `${safeLabel}-${stamp}.txt`);
-            // 带 BOM:Windows 记事本没有它会把中文按 ANSI 读成乱码
+            // With BOM: without it, Windows Notepad will read Chinese as ANSI garbled text
             fs.writeFileSync(file, '﻿' + text, 'utf8');
             revealInFileManager(dir);
             sendJson(res, 200, { ok: true, dir, file });
@@ -284,12 +301,14 @@ export default function vitePluginAi(): Plugin {
         });
       });
 
-      // 排查信息:用户点「诊断」时一次性拿全,复制给我们看。
-      // 里面绝不能有明文 Key —— publicConfig() 已经把它换成 { set, last4 }。
+      // Troubleshooting info: gathered completely when the user clicks "Diagnostics" to copy and show us.
+      // It must never contain a plaintext Key: publicConfig() has already replaced it with { set, last4 }.
       //
-      // 机器码同样要脱敏。它不只是个编号,它**就是**分发 API 配置时的加密口令
-      // (configShare 拿它当 password),整串写进报告等于把解密口令一起交出去。
-      // 只留第一组:够我们认出是哪台机器,不够任何人拿去解密。
+      // Machine code must also be sanitized. It is not just an identifier; it **is** the encryption
+      // passphrase when distributing API configuration (configShare uses it as password), and writing
+      // the entire string into the report is equivalent to handing over the decryption passphrase.
+      // Keep only the first group: enough for us to recognize which machine it is, not enough for anyone
+      // to use for decryption.
       server.middlewares.use('/api/ai/diagnostics', async (req, res) => {
         if (req.method !== 'GET') return sendJson(res, 405, { ok: false, error: 'GET only' });
         try {
@@ -302,35 +321,40 @@ export default function vitePluginAi(): Plugin {
           ]);
           res.setHeader('Cache-Control', 'no-store');
           /*
-           * 驱动探活会给 claude / codex / agy 各起一个子进程(runners/auth.mjs,
-           * 单个超时 15 秒)。诊断报告那条路等不起,而且它要的是**这台机器的现状**,
-           * 不是「CLI 现在还登着吗」,所以它带 ?refresh=0 走进程内缓存。
+           * Driver liveness probes spawn a child process for each of claude / codex / agy (runners/auth.mjs,
+           * 15-second timeout each). The diagnostic report path cannot afford to wait, and what it wants is
+           * **the current state of this machine**, not "is the CLI still logged in?", so it takes ?refresh=0
+           * to use in-process cache.
            *
-           * 还要把它单独 try 起来:原来整个响应是 all-or-nothing 的,探活一抛错就 500,
-           * 把 node 和 sessions 一起带走 —— 而那两段恰恰是这个按钮最有价值的产出,
-           * 偏偏在机器出问题的时候最容易被连坐。
+           * It must also be wrapped in its own try: previously the entire response was all-or-nothing;
+           * if the probe threw an error it returned 500, taking node and sessions down with it: yet those
+           * two sections are precisely the most valuable output of this button, and coincidentally the most
+           * prone to collateral damage when the machine has issues.
            */
           const refresh = new URL(req.url || '/', 'http://x').searchParams.get('refresh') !== '0';
           let providers: unknown;
           try {
             /*
-             * refresh=0 那条路(诊断快照)再压一道时限。
+             * Apply an additional time limit to the refresh=0 path (diagnostic snapshot).
              *
-             * 但**要说清这道时限管不到什么**,别把它当成一张不存在的保票:
-             * runners/index.mjs 的 probeVersion 用的是 execFileSync,而三个 provider
-             * 都在第一个 await 之前调它 —— 也就是说 listProviders(...) 这个调用本身
-             * 就同步阻塞(每个 CLI 上限 15 秒),下面那个 setTimeout 要等它返回之后
-             * 才被创建。CLI 真卡住时这道 race 完全不生效,整个 dev server 一起冻住。
-             * 真修法是把 probeVersion 改成异步 execFile,那要单独一轮评审。
+             * But **make it clear what this time limit cannot cover**, and do not treat it as a non-existent
+             * guarantee: probeVersion in runners/index.mjs uses execFileSync, and all three providers call it
+             * before the first await: that is, the listProviders(...) call itself blocks synchronously (up to
+             * 15 seconds per CLI), and the setTimeout below is created only after it returns. If a CLI truly
+             * hangs, this race does not take effect at all, and the entire dev server freezes together. The
+             * real fix is changing probeVersion to async execFile, which requires a separate review round.
              *
-             * 它管得到的是:探活本身返回慢(而不是卡死)、以及 listProviders 抛错。
-             * 这两种下面照常把 node 和 sessions 返回 —— 那两段才是这个按钮最有价值的
-             * 产出,不该被 providers 这一格连坐。
+             * What it does cover: the liveness probe itself returning slowly (rather than hanging completely),
+             * and listProviders throwing an error. In both cases, node and sessions are returned as usual
+             * below: those two sections are the most valuable output of this button and should not suffer
+             * collateral damage from the providers slot.
              *
-             * 缓存也别高估:TTL 只有 5 秒(index.mjs),用户点按钮时基本不命中,
-             * 所以 refresh=0 的实际收益是「不强制刷新 probeAuth」,不是「直接走缓存」。
+             * Do not overestimate the cache either: TTL is only 5 seconds (index.mjs), almost never hitting
+             * when the user clicks the button, so the actual benefit of refresh=0 is "do not force refresh
+             * probeAuth", not "serve directly from cache".
              *
-             * refresh=true 那条路(AI 设置里的「诊断」)不压时限:它要的就是真实探活结果。
+             * The refresh=true path ("Diagnostics" in AI settings) applies no time limit: it wants the real
+             * liveness probe result.
              */
             providers = refresh
               ? await runners.listProviders({ refresh })
@@ -352,13 +376,14 @@ export default function vitePluginAi(): Plugin {
             },
             machineCode: redactMachineCode(machineCode()),
             machineCodeNote: 'Only the first group is kept: the machine code is also the decryption passphrase for config distribution, so the full string is never sent out',
-            // 本地服务这个进程的现状:跑了多久、内存还剩多少、是打包版还是源码跑的。
-            // 「重启一下就好了」这类问题,不看这些就只能靠猜。
+            // Current state of this local service process: uptime, remaining memory, packaged build or running
+            // from source. For "it works after a restart" issues, without inspecting these you can only guess.
             node: env.nodeStatus(),
             /*
-             * 后端的会话文件柜。界面上的对话是按项目走的,而**服务端接哪段历史**取决于
-             * localStorage 里那把会话 id;两者脱节时界面上完全看不出来(见 81f255b)。
-             * 报「有几段、各几条、多新」,是这类看不见的串台唯一的物证。不含对话内容。
+             * Backend session filing cabinet. Chats in the UI follow the project, whereas **which history the
+             * server connects to** depends on that session id in localStorage; when the two are disconnected,
+             * nothing can be seen in the UI (see 81f255b). Reporting "how many segments, how many items each,
+             * how recent" is the only physical evidence of such invisible crosstalk. Contains no chat content.
              */
             sessions: env.inspectSessionStore(),
             providers,
@@ -369,11 +394,14 @@ export default function vitePluginAi(): Plugin {
       });
 
       /*
-       * 本机识别码:分发 API 配置时当加密口令用。只给摘要后的码,原始指纹不出服务端。
+       * Local identification code: used as encryption passphrase when distributing API configuration.
+       * Only provides the digested code; raw fingerprints do not leave the server.
        *
-       * 这里**故意返回完整码**,不像 /api/ai/diagnostics 那样截断 —— 用户就是要把这一整串
-       * 发给帮他加密配置的人,截了这个功能就没了。它的保护来自 vite-plugin-api-guard 那道
-       * 同源卡口:本机上别的网页(它们都是跨源)打不进这个接口。
+       * Here we **intentionally return the full code**, not truncated like /api/ai/diagnostics: the user
+       * needs to send this entire string to the person encrypting configuration for them, and truncating
+       * it breaks this feature. Its protection comes from the same-origin checkpoint in
+       * vite-plugin-api-guard: other web pages on this machine (all cross-origin) cannot hit
+       * this endpoint.
        */
       server.middlewares.use('/api/ai/machine-code', async (req, res) => {
         if (req.method !== 'GET') return sendJson(res, 405, { ok: false, error: 'GET only' });
@@ -387,7 +415,7 @@ export default function vitePluginAi(): Plugin {
       server.middlewares.use('/api/ai/config', async (req, res) => {
         try {
           const { publicConfig, writeConfig, clearKey } = await import(new URL('./ai-config.mjs', import.meta.url).href);
-          // POST /api/ai/config/clear-key {kind}:删掉那一路的密钥文件(设置窗口里的「清理密钥」)
+          // POST /api/ai/config/clear-key {kind}: delete that provider's key file ("Clear key" in settings)
           if ((req.url || '').split('?')[0] === '/clear-key') {
             if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'POST only' });
             let body = '';
@@ -444,7 +472,7 @@ export default function vitePluginAi(): Plugin {
         }
       });
 
-      // 额度:给设置窗口显示用。refresh=1 强制重查(Claude 那条要跑一次 claude -p,十来秒)
+      // Quota: for display in settings. refresh=1 forces a recheck (Claude runs claude -p, ~10 seconds)
       server.middlewares.use('/api/ai/quota', async (req, res) => {
         if (req.method !== 'GET') return sendJson(res, 405, { ok: false, error: 'GET only' });
         try {
@@ -455,7 +483,8 @@ export default function vitePluginAi(): Plugin {
           const { publicConfig } = await import(new URL('./ai-config.mjs', import.meta.url).href);
           const cfg = mod.normalizeQuotaConfig(publicConfig().quota);
           const quota = await guard.get(provider, { refresh: url.searchParams.get('refresh') === '1' });
-          // 面板问的时候也要带上模型,不然显示的「已熔断」和真正发起对话时的判定对不上
+          // When querying from the panel, the model must also be included; otherwise the displayed
+          // "Circuit broken" will not match the evaluation when actually initiating chat
           const verdict = guard.verdict(provider, cfg, url.searchParams.get('model') || '');
           sendJson(res, 200, { ok: true, quota, config: cfg, blocked: !!verdict.blocked, message: verdict.message ?? null, bytesSince: guard.bytesSince(provider) });
         } catch (e: any) {

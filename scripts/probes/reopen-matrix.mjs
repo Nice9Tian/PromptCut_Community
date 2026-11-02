@@ -14,13 +14,16 @@ export async function runRecoveryMatrix(o) {
   }, selector, text);
   const waitJournal = () => member.waitForFunction(async () => {
     const sync = window.probe.sync, descriptor = sync.getSyncView().association;
-    // 本机存储暂时忙时这次查询会失败,在时限内再查,不当成断言失败
+    // When local storage is temporarily busy, this query fails; retry within timeout without treating
+    // it as an assertion failure
     try {
       const r = await sync.recoveryRequest('select', descriptor, { contentId: window.probe.store.getState().project.id });
       return r.journal?.pending?.length > 0;
     } catch { return false; }
   }, { timeout: 15000 });
-  // 2026-10-22 起:离线批次被拒后逐项转进「冲突合并」(conflict-merge 报告第十节),DocSync 只停一下就回到云端现状;等的是窗口
+  // As of 2026-10-22: after offline batch rejection, items transition one by one into "conflict merge"
+  // (conflict-merge report section 10), DocSync pauses only briefly before returning to current cloud
+  // state; what it waits for is the window
   const mergeWindow = () => member.waitForSelector('[data-pc="conflict-merge"]', { timeout: 20000 });
   const mergeAll = async (button) => {
     await member.evaluate(() => { for (const i of document.querySelectorAll('[data-pc="merge-thing-check"]')) if (!i.checked) i.click(); });
@@ -95,7 +98,8 @@ export async function runRecoveryMatrix(o) {
   await member.close(); await stop(memberRuntime.child);
   memberRuntime = await editor('member', 5206); assert.notEqual(memberRuntime.pid, beforePid);
   member = await page(memberRuntime.base); await open(member, memberFile); await mergeWindow();
-  // 离线时改的名称在窗口里是「项目设置」一条、二级「名称」,冲突(主机也改了名);本机先回到云端现状
+  // Name changed while offline appears in window as "Project settings" item, secondary "Name",
+  // conflicting (host also changed name); local first returns to current cloud state
   const replayRow = await member.evaluate(() => document.querySelector('[data-pc="merge-thing"][data-key="offline:settings"]')?.innerText ?? null);
   assert.ok(replayRow && replayRow.includes('matrix-offline-replay') && replayRow.includes('matrix-remote-replay'), `conflict row: ${replayRow}`);
   assert.equal(await member.evaluate(() => window.probe.store.getState().project.name), 'matrix-remote-replay');
@@ -105,7 +109,9 @@ export async function runRecoveryMatrix(o) {
   evidence.crashRetainsOfflineQueue = true; evidence.conflictReplayUi = true;
 
   phase('conflict discard UI retains a real local backup');
-  // 离线窗口要盖住「成员的离线修改落盘 + 主机的修改保存」:成员先重连的话冲突不会发生。1.2 秒在机器忙时不够(实测落盘 1.7 秒、主机保存 3.4 秒)
+  // Offline window must cover "member offline changes written to disk + host changes saved": if
+  // member reconnects first, conflict won't occur. 1.2 s is insufficient when machine is busy
+  // (measured 1.7 s disk write, 3.4 s host save)
   await member.evaluate(() => window.probe.sync.currentSharedLink().dropFor(8000));
   await member.waitForFunction(() => !window.probe.sync.currentSharedLink().connected);
   await name(member, 'matrix-offline-discard'); await waitJournal();

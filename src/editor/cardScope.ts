@@ -1,33 +1,38 @@
 import type { CardDef } from "../kernel/types";
 import { onlinePage } from "../online/pageFlag.ts";
-import { tr } from "../i18n/index.ts"; // 带扩展名:本模块的单测不装解析钩子,直接 import
+import { tr } from "../i18n/index.ts"; // With extension: this module's unit tests do not install the resolve hook and import it directly
 
 /**
- * 卡片库对 Agent 暴露多少 —— 三档,以及每一档能不能关掉。
+ * How much of the card library is exposed to the Agent: three tiers, and whether each tier can be turned off.
  *
- * # 为什么要有这个
+ * # Why this exists
  *
- * `src/cards/user/` 是**一个全局目录**,`index.ts` 用 `import.meta.glob` 扫全目录。
- * 所以从前 Agent 给 A 项目建的卡,打开 B 项目照样出现在 `list_cards` 里。
- * 用户的原话:「ThreeJS 的资产又从上一个项目泄露给他了」—— 那张卡是给某个客户做的,
- * 串到别人的片子里既是噪音也是风险(Agent 真的会拿去用)。
+ * `src/cards/user/` is **one global directory**, and `index.ts` scans the whole directory with `import.meta.glob`.
+ * So a card the Agent built for project A used to show up in `list_cards` when opening project B.
+ * The user's own words: "ThreeJS assets leaked to him from the previous project again". That card was made
+ * for a particular client; leaking into someone else's video is both noise and a risk (the Agent really would use it).
  *
- * # 三档
+ * # Three tiers
  *
- *   基础素材   内置的三组:自家库(native)、搬来的第三方(magicui)、素材封装卡(asset)。
- *              随包发,永远在,但可以按组关掉 —— 比如「这条片子只用自家库」。
- *   自定义素材 用户卡里标成「共享」的那些。跨项目可见,给你自己的品牌卡这类留的口子。
- *   项目素材   用户卡的默认档:只在**建它的那个项目**里出现。定制卡多半是给某个客户
- *              做的,默认共享才是反直觉的那个选择。
+ *   Base media     The three built-in groups: built-in library (native), third-party ones brought over (magicui),
+ *                  media wrapper cards (asset). Shipped with the package and always there, but each group can be
+ *                  turned off, e.g. "this video only uses the built-in library".
+ *   Custom media   The user cards marked "shared". Visible across projects, an opening left for things like
+ *                  your own brand cards.
+ *   Project media  The default tier for user cards: they appear only in **the project that built them**.
+ *                  Custom cards are mostly made for one client, so sharing by default is the
+ *                  counterintuitive choice.
  *
- * 档位记在服务端的 `src/cards/user/_scopes.json`(见 server/vite-plugin-cards.ts),
- * 因为注册表拿到的是 import 出来的 CardDef 对象、读不到文件里的注释。
+ * Tiers are recorded on the server in `src/cards/user/_scopes.json` (see server/vite-plugin-cards.ts),
+ * because the registry receives imported CardDef objects and cannot read comments in the file.
  *
- * # 老卡怎么办
+ * # What about old cards
  *
- * 这个功能之前建的卡在表里没有条目。**不把它们藏起来** —— 悄悄让四张已有的卡消失,
- * 比泄露更难查。它们按「自定义(未归属)」处理,在面板里标出来,由用户决定留还是删;
- * 而「自定义素材」这个开关本身就是最直接的止血手段:关掉它,立刻只剩内置卡 + 本项目的卡。
+ * Cards built before this feature have no entry in the table. **Do not hide them**: quietly making four
+ * existing cards vanish is harder to trace than a leak. They are handled as "custom (unassigned)", marked in
+ * the panel, and the user decides whether to keep or delete them;
+ * and the "custom media" switch itself is the most direct stopgap: turn it off and immediately only built-in
+ * cards plus this project's cards remain.
  */
 
 export type CardScope = "project" | "custom";
@@ -40,13 +45,13 @@ export interface ScopeEntry {
 }
 
 export interface CardVisibility {
-  /** 基础素材总开关。关掉 = 只剩自定义 / 本项目的卡(极少用,但留着) */
+  /** Master switch for base media. Off = only custom / this project's cards remain (rarely used, but kept) */
   base: boolean;
-  /** 基础素材里放出哪几组 */
+  /** Which groups of base media are exposed */
   groups: Record<BaseGroup, boolean>;
-  /** 自定义素材(标了共享的定制卡,跨项目可见) */
+  /** Custom media (custom cards marked shared, visible across projects) */
   custom: boolean;
-  /** 项目素材(只属于当前项目的定制卡)。关掉它等于"这一轮只用现成的卡" */
+  /** Project media (custom cards that belong only to the current project). Turning it off means "only use ready-made cards this round" */
   project: boolean;
 }
 
@@ -84,18 +89,18 @@ export function readVisibility(): CardVisibility {
 }
 
 export function writeVisibility(v: CardVisibility): void {
-  try { localStorage.setItem(LS_KEY, JSON.stringify(v)); } catch { /* 存不下就这一次不记住,不该报错 */ }
+  try { localStorage.setItem(LS_KEY, JSON.stringify(v)); } catch { /* If it cannot be saved, just do not remember it this time; it should not raise an error */ }
 }
 
-/** 服务端那张归属表。改动不频繁,读进来缓存着;建卡和改档位之后失效 */
+/** The server-side ownership table. It changes rarely, so it is read in and cached; invalidated after a card is built or a tier is changed */
 let scopeCache: Record<string, ScopeEntry> | null = null;
 
-/** 在线构建的编译期常量(写法与用意见 `src/online/pageFlag.ts` 的「在线构建剪枝」):在线构建里剪掉 /api/cards/scopes */
+/** Compile-time constant of the online build (usage and intent in "online build pruning" of `src/online/pageFlag.ts`): /api/cards/scopes is pruned in the online build */
 const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
 
 export async function loadScopes(force = false): Promise<Record<string, ScopeEntry>> {
   if (scopeCache && !force) return scopeCache;
-  // 在线浏览器模式没有编辑器进程,也就没有定制卡的归属表(用户卡在在线页面一期不渲染,契约第 1 节)
+  // Online browser mode has no editor process, so there is no ownership table for custom cards (user cards are not rendered on online pages in phase one, contract section 1)
   if (ONLINE_BUILD || onlinePage()) return (scopeCache = {});
   try {
     const r = await fetch("/api/cards/scopes").then((x) => x.json());
@@ -111,11 +116,14 @@ export function invalidateScopes(): void {
 }
 
 /**
- * 改一张卡的档位(右键菜单那一项)。
+ * Change the tier of a card (the right-click menu item).
  *
- * projectId 由调用方传进来,不在这里去问 —— 这个模块只放**规则**,不依赖编辑器的 io 层。
- * 那条依赖曾经存在,结果是这份纯逻辑没法单测(node 解析不了 vite 那种省略扩展名的 import),
- * 而 isCardVisible 恰恰是整个「定制卡跨项目泄露」的唯一修复点,最该有测试的就是它。
+ * projectId is passed in by the caller and not looked up here: this module holds only **rules** and does not
+ * depend on the editor's io layer.
+ * That dependency used to exist, and as a result this pure logic could not be unit-tested (node cannot resolve
+ * vite-style imports without extensions),
+ * yet isCardVisible is the single fix point for the whole "custom card leaks across projects" problem, and it
+ * is the one that most needs tests.
  */
 export async function setCardScope(cardId: string, scope: CardScope, projectId?: string | null): Promise<void> {
   if (ONLINE_BUILD || onlinePage()) return;
@@ -127,16 +135,19 @@ export async function setCardScope(cardId: string, scope: CardScope, projectId?:
   invalidateScopes();
 }
 
-/** 归属表已经加载过就给缓存,没加载过给 null。存盘是同步的,等不了一次请求 */
+/** Returns the cache if the ownership table was already loaded, null if not. Saving is synchronous and cannot wait for a request */
 export function peekScopes(): Record<string, ScopeEntry> | null {
   return scopeCache;
 }
 
 /**
- * 项目里用到的全部卡片 id:所有剪辑(激活的那条在 tracks,停放的在 cuts[].tracks)里片段的 cardId。
+ * All card ids used in the project: the cardId of the clips in all cuts (the active one in tracks, parked ones
+ * in cuts[].tracks).
  *
- * 「用到了」本身就是最硬的归属证据 —— 时间轴上摆着这张卡,它就是这个项目的素材,
- * 不管归属表里记的是哪个草稿 id(那张表以前按草稿 id 记,换个打开方式就对不上)。
+ * "Used" is itself the hardest evidence of ownership: if the card sits on the timeline, it is this project's
+ * media,
+ * whatever draft id the ownership table recorded (that table used to record by draft id, which stops matching
+ * when opened a different way).
  */
 export function usedCardIds(p: { tracks?: { clips?: { cardId?: string }[] }[]; cuts?: { tracks?: { clips?: { cardId?: string }[] }[] }[] }): Set<string> {
   const out = new Set<string>();
@@ -149,8 +160,8 @@ export function usedCardIds(p: { tracks?: { clips?: { cardId?: string }[] }[]; c
 }
 
 /**
- * 一张用户卡的源码 import 了同目录的哪些文件(`./other` / `./other.tsx`)。
- * 打包进 .proc 时顺着它把依赖一起带上,不然换台机器这张卡编译不过。
+ * Which files in the same directory (`./other` / `./other.tsx`) a user card's source imports.
+ * When packing into .proc, bring those dependencies along, otherwise the card will not compile on another machine.
  */
 export function localCardImports(source: string): string[] {
   const out = new Set<string>();
@@ -160,14 +171,18 @@ export function localCardImports(source: string): string[] {
 }
 
 /**
- * 这张卡此刻该不该出现在 list_cards 里。
+ * Whether this card should appear in list_cards right now.
  *
- * 判据分两半:内置卡看「组开没开」,用户卡看「档位 + 是不是本项目建的」。
- * 拿不到归属表(还没加载完、请求失败)时**一律放行** —— 宁可多给几张,
- * 也不能因为一次网络抖动让 Agent 突然一张卡都看不见。
+ * The criterion has two halves: for built-in cards, whether "the group is on"; for user cards, "tier + whether
+ * this project built it".
+ * When the ownership table is unavailable (not finished loading, request failed), **always let it through**:
+ * better to give a few extra cards
+ * than to have the Agent suddenly see no card at all because of one network blip.
  *
- * `used` 是当前项目时间轴上用到的卡(usedCardIds)。用到了就算本项目的素材,
- * 和归属表记的项目 id 无关 —— 否则从桌面打开一份 .proc,片子里正用着的卡在卡库里反而找不到。
+ * `used` is the set of cards used on the current project's timeline (usedCardIds). If used, it counts as this
+ * project's media,
+ * regardless of the project id in the ownership table; otherwise, when opening a .proc from the desktop, the
+ * card the video is actually using could not be found in the card library.
  */
 export function isCardVisible(
   card: CardDef<any>,
@@ -183,17 +198,17 @@ export function isCardVisible(
   }
   if (v.project && used?.has(card.id)) return true;
   const entry = scopes[card.id];
-  // 没有条目 = 这个功能之前建的老卡,按「自定义(未归属)」处理,不藏。
-  // 悄悄让几张已有的卡消失,比泄露更难查 —— 要清理请在卡库里手动改档或删掉。
+  // No entry = an old card built before this feature; handle it as "custom (unassigned)", do not hide it.
+  // Quietly making a few existing cards vanish is harder to trace than a leak. To clean up, change the tier or delete manually in the card library.
   if (!entry) return v.custom;
   if (entry.scope === "custom") return v.custom;
-  // 项目素材:只在建它的那个项目里出现。没记下项目 id 的(老数据)按本项目算,不藏
+  // Project media: appears only in the project that built it. If no project id was recorded (old data), treat it as this project's, do not hide it
   if (!v.project) return false;
   if (!entry.projectId) return true;
   return entry.projectId === projectId;
 }
 
-/** 面板上要显示的一行:这张用户卡属于谁、是什么档 */
+/** The line to show on the panel: who this user card belongs to and which tier it is */
 export function describeUserCard(
   card: CardDef<any>,
   scopes: Record<string, ScopeEntry>,

@@ -19,7 +19,7 @@ test('resolveTuning clamps to the three ranges of K2', () => {
   assert.equal(resolveTuning({ STEP_PERCENTILE: 2 }).STEP_PERCENTILE, 1);
   assert.equal(resolveTuning({ STEP_MIN_SAMPLES: 1 }).STEP_MIN_SAMPLES, 8);
   assert.equal(resolveTuning({ STEP_MIN_SAMPLES: 10000 }).STEP_MIN_SAMPLES, 120);
-  // 范围内的值原样留着
+  // In-range values are kept as-is
   assert.equal(resolveTuning({ COST_SCALE: 2 }).COST_SCALE, 2);
   assert.equal(resolveTuning({ STEP_MIN_SAMPLES: 32.4 }).STEP_MIN_SAMPLES, 32, 'sample count is rounded to an integer');
 });
@@ -33,10 +33,10 @@ test('resolveTuning falls back to defaults on bad values, without modifying its 
 });
 
 test('robustStep takes the nearest-rank percentile: the 0.9 quantile of 16 samples is the 15th', () => {
-  // 0…15，缺省 STEP_MIN_SAMPLES = 16 刚好够
+  // 0…15, default STEP_MIN_SAMPLES = 16 is just enough
   const samples = seq(16);
   assert.equal(robustStep(samples, resolveTuning()), 14, 'ceil(0.9 × 16) = 15 → 15th in ascending order = 14');
-  // 乱序输入结果一样（内部排序）
+  // Out-of-order input produces the same result (internally sorted)
   assert.equal(robustStep([...samples].reverse(), resolveTuning()), 14);
 });
 
@@ -49,10 +49,10 @@ test('STEP_PERCENTILE set to 1 is the old "single maximum" basis', () => {
 test('when samples are fewer than STEP_MIN_SAMPLES, take the maximum (conservative side)', () => {
   const few = [1, 1, 2, 40];
   assert.equal(robustStep(few, resolveTuning()), 40);
-  // 补够样本之后同一组数走百分位、挡掉那一帧
+  // After collecting enough samples, the same set of numbers uses percentiles to block that frame
   const enough = [...seq(19, () => 1), 40];
   assert.equal(robustStep(enough, resolveTuning()), 1);
-  // 下调 STEP_MIN_SAMPLES 让 4 个样本也走百分位
+  // Lower STEP_MIN_SAMPLES so that 4 samples also use percentiles
   assert.equal(robustStep(few, resolveTuning({ STEP_MIN_SAMPLES: 8 })), 40, '4 < 8 still takes the maximum');
   assert.equal(robustStep(seq(8, (i) => i), resolveTuning({ STEP_MIN_SAMPLES: 8 })), 7, 'ceil(0.9 × 8) = 8 → the 8th');
 });

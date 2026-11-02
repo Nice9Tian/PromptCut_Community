@@ -5,9 +5,9 @@ import { easeExpoOut, accentOf } from "../../cards/native/hud";
 import { fitOr } from "../fit";
 
 /**
- * 增长折线图:一条动态画出的平滑渐变折线,并在最高点标注数字。
- * 从 growth-curve 拆出,去除了外壳及所有标题和脚注。
- * 进场:曲线 pathLength 从 0 到 1,渐变面积淡入,之后最高点弹出数值。
+ * Growth line chart: a dynamically drawn smooth gradient line chart that annotates numbers at the peak.
+ * Extracted from growth-curve, stripped of shell and all titles and footnotes.
+ * Entrance: curve pathLength goes from 0 to 1, gradient area fades in, then peak pops up the value.
  */
 interface Params {
   points: string;

@@ -1,8 +1,10 @@
 /**
- * M6a 共享项目：成员列表、创建者操作、连接角色（契约 `docs/plan/auth-contract.md` 第 6、7 节，用例 AU4、AU5、AU6、AU10）。
- * 跑：node --test server/test/auth-members.test.mjs
+ * M6a shared project: member list, creator operations, connection roles (contract
+ * `docs/plan/auth-contract.md` sections 6 and 7, test cases AU4, AU5, AU6, AU10).
+ * Run: node --test server/test/auth-members.test.mjs
  *
- * 只照契约写，不看实现。起服务的接口是测试方的假设，集中在 `auth-kit.mjs` 文件头。
+ * Written strictly against the contract, ignoring implementation. Service startup interfaces
+ * are test assumptions, centralized in the `auth-kit.mjs` file header.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +18,7 @@ import { snapshotTaskInput, byType } from './fake-ws-kit.mjs';
 
 const R = (i) => `198.51.100.${i}`;
 
-/** 等连接被服务端关闭，回 { code, reason }；ms 内没关就抛错 */
+/** Wait for connection to be closed by server, returning { code, reason }; throw if not closed within ms */
 async function closedWithin(c, ms, what) {
   let timer;
   const e = await Promise.race([
@@ -61,7 +63,7 @@ test('AU4 two devices report the same username: userId differs; both show "usern
     for (const k of ['editing', 'rendering', 'agents']) assert.ok(k in row.tags, `tags has ${k}`);
   }
 
-  // 订阅变化：B 离开后观察者收到一条新的 shared.members.list
+  // Subscribe to changes: observer receives a new shared.members.list after B leaves
   await askOrNull(obs, { type: 'shared.watch' });
   const mark = obs.all.length;
   b.close();
@@ -85,7 +87,7 @@ test('AU5 creator operation set-password (open entry): takes effect with a proof
   assert.equal(await joinStatus(env, proj, { username: 'zoe', password: 'new-pw', remote: R(13) }), 101, 'new passphrase');
   await sleep(200);
   assert.equal(member.ws.readyState, 1, 'live connection stays up');
-  // set-password 只用于自由进入：限定进入的项目上回 error
+  // set-password is only for open entry: returns error on restricted entry projects
   const rproj = await createProject(env, { mode: 'restricted' });
   const rc = await join(env, rproj, { username: 'alice', as: 'creator', remote: R(14) });
   const bad = await adminOp(rc, rproj, 'set-password', { project: credential('x') });
@@ -130,14 +132,15 @@ test('AU5 creator operation delete: all connections in the space close with 4004
   const creator = await join(env, proj, { username: 'alice', as: 'creator', remote: R(40) });
   const m1 = await join(env, proj, { username: 'zoe', remote: R(41) });
   const m2 = await join(env, proj, { username: 'yan', role: 'render', remote: R(42) });
-  // 在空间里写点东西，好确认数据被删
+  // Write something in the space to confirm data is deleted
   const put = await ask(m1, { type: 'content.put', kind: 'card-source', key: 'k', body: { a: 1 } }, 'content.stored');
   assert.equal(put.type, 'content.stored', JSON.stringify(put));
   const tenantDir = path.join(env.dataDir, 'tenants', proj.projectId);
   const recordFile = path.join(env.dataDir, 'auth', 'projects', `${proj.projectId}.json`);
   assert.ok(fs.existsSync(recordFile));
 
-  // 回包可能先于关闭到，也可能连接直接被关；两种都接受，但连接必须以 4004 关闭
+  // Response may arrive before closure, or connection may be closed directly; both are accepted,
+  // but connection must close with 4004
   let r = null;
   try { r = await adminOp(creator, proj, 'delete'); } catch { r = null; }
   if (r) assert.equal(r.type, 'shared.admin.ok', JSON.stringify(r));
@@ -170,12 +173,12 @@ test('AU5 no proof, wrong proof, non-creator → forbidden, and no effect', asyn
   assert.deepEqual([wrong.type, wrong.reason], ['error', 'forbidden'], `wrong proof: ${JSON.stringify(wrong)}`);
   const wrongPw = await adminOp(creator, proj, 'kick', { username: 'vic', deviceId: victim.deviceId }, { password: proj.password });
   assert.deepEqual([wrongPw.type, wrongPw.reason], ['error', 'forbidden'], `proof computed with the project passphrase: ${JSON.stringify(wrongPw)}`);
-  // 非创建者：成员连接按自己的口令算证明
+  // Non-creator: member connection computes proof using its own passphrase
   const byMember = await adminOp(member, proj, 'kick', { username: 'vic', deviceId: victim.deviceId }, { password: proj.password, username: 'zoe' });
   assert.deepEqual([byMember.type, byMember.reason], ['error', 'forbidden'], `non-creator: ${JSON.stringify(byMember)}`);
   const byMemberNoProof = await adminOp(member, proj, 'delete', {}, { noProof: true });
   assert.deepEqual([byMemberNoProof.type, byMemberNoProof.reason], ['error', 'forbidden'], `non-creator without proof: ${JSON.stringify(byMemberNoProof)}`);
-  // 别的连接的 nonce 不认：成员取的挑战给创建者用
+  // Reject nonces from other connections: challenge fetched by a member used by creator
   const ch = await ask(member, { type: 'shared.challenge' }, 'shared.challenge.ok');
   if (ch.type === 'shared.challenge.ok') {
     const { adminMac, derive } = await import('./auth-kit.mjs');
@@ -190,7 +193,10 @@ test('AU5 no proof, wrong proof, non-creator → forbidden, and no effect', asyn
   assert.equal(await joinStatus(env, proj, { username: 'zoe', remote: R(53) }), 101, 'the rejected operations changed nothing');
 });
 
-/** 数据面的全部消息类型（渲染任务队列、项目、内容库、服务地址、成员、票据），各给一条固定的消息 */
+/**
+ * All message types on the data plane (render queue, project, content store, service address,
+ * member, ticket), each given a fixed message
+ */
 function dataPlaneScript() {
   const task = snapshotTaskInput({ resultKey: 'rk-au5', projectId: 'p-au5' });
   return [
@@ -230,7 +236,8 @@ const outcome = (r) => (r === null ? 'no-reply' : `${r.type}${r.type === 'error'
 
 test('AU5 apart from creator operations, creator and member get identical results for all data-plane messages (listed one by one)', async (t) => {
   const env = await hostFor(t);
-  // 两个一模一样的项目：一边是创建者连接，一边是普通成员连接，状态演进相同
+  // Two identical projects: one with a creator connection, one with a regular member connection,
+  // identical state transitions
   const p1 = await createProject(env, { mode: 'free' });
   const p2 = await createProject(env, { mode: 'free' });
   const creator = await join(env, p1, { username: 'alice', as: 'creator', remote: R(60) });
@@ -243,7 +250,7 @@ test('AU5 apart from creator operations, creator and member get identical result
   }
   const diff = rows.filter((r) => r.creator !== r.member);
   assert.deepEqual(diff, [], `creator and member differ: ${JSON.stringify(diff)}\nAll: ${JSON.stringify(rows)}`);
-  // 顺带核对几条确定的结果
+  // Also verify several expected results
   const byType = Object.fromEntries(rows.map((r) => [r.type, r.creator]));
   assert.equal(byType['node.hello'], 'error:forbidden', 'page connection sends node.hello');
   assert.equal(byType['service.announce'], 'error:forbidden', 'member sends service.announce');
@@ -305,7 +312,7 @@ test('AU6 kick: connection closes, ticket returns 401 immediately, re-entry retu
   const u = await adminOp(creator, proj, 'unban', { username: 'zoe', deviceId: dev.deviceId });
   assert.equal(u.type, 'shared.admin.ok', JSON.stringify(u));
   assert.equal(await joinStatus(env, proj, { username: 'zoe', device: dev, remote: R(86) }), 101, 'can get in after unban');
-  // 踢过之后发的新票据可用（代数已前进，新票据带新代数）
+  // New ticket issued after kicking is usable (generation has advanced, new ticket carries new generation)
   const z2 = await join(env, proj, { username: 'zoe', device: dev, remote: R(87) });
   const tk2 = (await ticketOf(z2, { kind: 'asset', access: 'r' })).ticket;
   assert.equal((await env.asset(`media/${hash}`, { remote: R(87), headers: bearer(tk2) })).status, 200);
@@ -352,7 +359,7 @@ test('AU10 write identity: the actor written by an agent connection carries a ch
   const ch2 = await watcher.next((m) => m.type === 'content.changed' && m.key === 'b');
   assert.equal(ch2.actor.role, 'page');
   assert.ok(ch2.actor.conversation === null || ch2.actor.conversation === undefined, `page write has no chat number: ${JSON.stringify(ch2.actor)}`);
-  // 项目版本日志同样记 actor
+  // Project version log also records actor
   await ask(watcher, { type: 'project.open', projectId: 'p1' }, 'project.state');
   await ask(agent, { type: 'project.announce', projectId: 'p1', digest: 'abcdef0123456789' }, 'project.announced');
   const rev = await watcher.next(byType('project.rev'));
@@ -386,7 +393,7 @@ test('AU10 on one device, the two connections page + render are one row in the m
   assert.equal(row.conns.find((c) => c.role === 'agent').conversation, 2);
   assert.deepEqual(row.conns.filter((c) => c.role === 'render').map((c) => c.owner).sort((a, b) => a.kind.localeCompare(b.kind)), [{ kind: 'agent', c: 2 }, { kind: 'user' }]);
 
-  // render 认领一个任务 → rendering
+  // render claims a task → rendering
   const w = await ask(render, { type: 'node.hello', nodeId: 'n-au10', profile: 'pc' }, 'node.welcome');
   assert.equal(w.type, 'node.welcome', JSON.stringify(w));
   await ask(page, { type: 'publisher.hello', publisherId: 'pub-au10' }, 'publisher.welcome');

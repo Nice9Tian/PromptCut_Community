@@ -4,27 +4,28 @@ import { useReadOnly } from "../../readOnly";
 
 type Wave = { peaks: number[]; duration: number };
 
-/** 波形画多少根竖线:条带只有一两百像素宽,100 根足够看出起伏 */
+/** How many vertical bars the waveform draws: the strip is only one or two hundred pixels wide, and 100 bars are enough to show the ups and downs */
 const BARS = 100;
 
 export interface AudioStripProps extends Omit<HTMLAttributes<HTMLDivElement>, "children"> {
   name: ReactNode;
-  /** 名字下面那行弱文字(时长、说明、「用在 N 段」……) */
+  /** The muted text line under the name (duration, description, "used in N segments"...) */
   sub?: ReactNode;
-  /** 给了就在背景画整段波形(范围 0..duration),不依赖时间轴片段 */
+  /** If given, draws the whole waveform in the background (range 0..duration), independent of timeline clips */
   url?: string;
   icon?: "play" | "fx" | "plus";
-  /** 悬停 / 键盘聚焦时才露出来的操作按钮 */
+  /** Action buttons that only show on hover / keyboard focus */
   actions?: ReactNode;
-  /** data-* 之类的自动化钩子 */
+  /** Automation hooks such as data-* */
   attrs?: Record<string, string>;
-  /** 拖它或点它会改项目:这个项目只给了只读权限(游客)时不接拖动、悬停写明原因(同 PreviewCard 的 edits) */
+  /** Dragging or clicking it changes the project: when this project grants only read-only access (guest), dragging is not accepted and hover states the reason (same as edits in PreviewCard) */
   edits?: boolean;
 }
 
 /**
- * 56px 高的圆角音频条:左边图标,中间名字和一行说明,背景是整段波形。
- * 素材库的音频素材、特效里的音频效果 / 预设都用它。
+ * A 56px-high rounded audio strip: icon on the left, name and a description line in the middle,
+ * the whole waveform in the background.
+ * Used by audio media in the media library and by audio effects / presets under effects.
  */
 export function AudioStrip({ name, sub, url, icon = "play", actions, attrs, className, edits, ...rest }: AudioStripProps) {
   const [wave, setWave] = useState<Wave | null>(null);
@@ -88,7 +89,7 @@ export function AudioStrip({ name, sub, url, icon = "play", actions, attrs, clas
         )}
       </span>
       <span className="pc-lib-strip-text">
-        {/* 名字行是 flex(后面可能跟「随时间变化」小标签),纯文字要包一层才截得出省略号 */}
+        {/* The name row is flex (it may be followed by a small "Varies over time" label), so plain text needs a wrapper to be truncated with an ellipsis */}
         <span className="pc-lib-strip-name">{typeof name === "string" ? <span className="pc-lib-ellipsis">{name}</span> : name}</span>
         {sub != null && sub !== "" && <span className="pc-lib-strip-sub">{sub}</span>}
       </span>

@@ -1,11 +1,16 @@
 /**
- * 内容库模块（契约 `docs/plan/docservice-contract.md` 第 2 节、第 3 节，用例 N1～N8）。
- * 跑：node --test server/test/docservice-content.test.mjs
+ * Content store module (contract `docs/plan/docservice-contract.md` sections 2 and 3, test
+ * cases N1-N8).
+ * Run: node --test server/test/docservice-content.test.mjs
  *
- * 只照契约写，不看实现。被测模块用动态 import 取，模块缺失时每条用例各自失败。
- * `createDocService` 独立模式、端口 0、`autoTick: false`；存储用 memory 或临时目录。
- * principal 由测试的 `authenticate` 按查询串 `?user=` 给出（见 `fake-docservice-env.mjs`）。
- * 契约没要求本模块的回包带 `reqId`，测试按回包类型等（同一连接上按顺序一问一答）。
+ * Written strictly against the contract, ignoring implementation. Module under test is loaded via
+ * dynamic import; each test case fails individually if module is missing.
+ * `createDocService` standalone mode, port 0, `autoTick: false`; storage uses memory or temporary
+ * directory.
+ * principal is provided by test `authenticate` via query string `?user=` (see
+ * `fake-docservice-env.mjs`).
+ * The contract does not require responses from this module to include `reqId`; tests wait by
+ * response type (sequential request-response on the same connection).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -29,7 +34,7 @@ async function start({ store, clock = { t: T0 }, ...moduleOptions } = {}) {
 }
 
 let reqSeq = 0;
-/** 发一条带 reqId 的请求，按回包类型等（reqId 没带回时不至于等到超时），再断言 reqId 原样带回（契约第 10 节第 6 条） */
+/** Send request with reqId, wait by response type (avoids timing out if reqId is not returned), then assert reqId is returned as is (contract section 10 item 6) */
 async function call(c, message, replyType) {
   const reqId = `n-${++reqSeq}`;
   c.send({ ...message, reqId });
@@ -73,12 +78,12 @@ test('N1 get after put returns the same body, hash = sha256(JSON.stringify(body)
       `get ${key}`,
     );
   }
-  // 各 kind 互不串：同一个 key 在别的 kind 下没有
+  // Kinds do not cross-contaminate: same key does not exist under other kinds
   assert.equal((await get(c, 'render-manifest', 'scene/1.json')).missing, true);
   const h = await env.health();
   assert.ok(Array.isArray(h.modules) && h.modules.includes('content'), `/healthz.modules must include content: ${JSON.stringify(h.modules)}`);
 
-  // 契约第 10 节第 5 条：不往 /healthz 加字段，只提供 describe()
+  // Contract section 10 item 5: does not add fields to /healthz, only provides describe()
   const bare = await startStandalone({ modules: [] });
   t.after(bare.cleanup);
   assert.deepEqual(Object.keys(h).sort(), Object.keys(await bare.health()).sort(), 'the /healthz field set is unchanged after mounting the content store module');
@@ -125,7 +130,7 @@ test('N3 list filters by prefix and sorts by key ascending; exactly 1000 items g
   t.after(env.cleanup);
   const c = await env.connect('alice');
   for (const key of ['b/2', 'a/2', 'a/10', 'a/1', 'c', 'ab']) await put(c, 'event-detail', key, { key });
-  await put(c, 'render-manifest', 'a/9', {}); // 别的 kind 不出现
+  await put(c, 'render-manifest', 'a/9', {}); // Other kinds do not appear
 
   const all = await list(c, 'event-detail');
   assert.deepEqual(all.items.map((x) => x.key), ['a/1', 'a/10', 'a/2', 'ab', 'b/2', 'c'], 'ascending by key (string comparison)');
@@ -137,7 +142,7 @@ test('N3 list filters by prefix and sorts by key ascending; exactly 1000 items g
   assert.deepEqual((await list(c, 'event-detail', 'a')).items.map((x) => x.key), ['a/1', 'a/10', 'a/2', 'ab']);
   assert.deepEqual((await list(c, 'event-detail', 'zzz')).items, []);
 
-  // 1000 条边界：流水线发，逐条收
+  // 1,000-item boundary: send pipelined, receive one by one
   const keys = Array.from({ length: 1001 }, (_, i) => `bulk/${String(i).padStart(4, '0')}`);
   for (const key of keys.slice(0, 1000)) c.send({ type: 'content.put', kind: 'snapshot-manifest', key, body: 1 });
   for (let i = 0; i < 1000; i++) assert.equal((await untilType(c, ['content.stored', 'error'], 5000)).type, 'content.stored');
@@ -180,13 +185,13 @@ test('N5 a body over maxBodyBytes replies too-large and persists no state (count
   const w = await env.connect('bob');
   await watch(w, KINDS);
 
-  const exact = 'a'.repeat(98); // JSON.stringify 后 100 字节
+  const exact = 'a'.repeat(98); // 100 bytes after JSON.stringify
   assert.equal(Buffer.byteLength(JSON.stringify(exact)), 100);
   assert.equal((await put(c, 'card-source', 'edge', exact)).type, 'content.stored', 'exactly at the limit is allowed');
   await w.next(byType('content.changed'));
 
   const tooLong = 'a'.repeat(99);
-  const multiByte = '中'.repeat(33); // 35 个字符、101 字节
+  const multiByte = 'Medium'.repeat(33); // 35 characters, 101 bytes
   assert.equal(Buffer.byteLength(JSON.stringify(multiByte)), 101);
   const before = env.store.read('content/card-source').length;
   for (const body of [tooLong, multiByte, { big: 'x'.repeat(200) }]) {
@@ -238,23 +243,23 @@ test('N6 a connection with content.watch receives content.changed on overwrite, 
   assert.deepEqual(c1.actor, { userId: 'alice', session: null }, 'actor comes from principal, and session is null when not given (contract section 10, item 4)');
   assert.equal(c1.previousActor, null, 'previousActor is null on the first write');
   await alice.next(byType('content.changed'));
-  // 契约第 10 节第 2 条：同一条请求先回包、后广播
+  // Contract section 10 item 2: for the same request, respond first, then broadcast
   const iStored = alice.all.findIndex((m) => m.type === 'content.stored');
   const iChanged = alice.all.findIndex((m) => m.type === 'content.changed');
   assert.ok(iStored >= 0 && iChanged > iStored, `content.stored comes before content.changed: stored@${iStored}, changed@${iChanged}`);
 
-  // bob 覆盖 alice（带 session；正文里自报的 userId 不算数）
+  // bob overwrites alice (with session; self-reported userId in body does not count)
   const b2 = { v: 2 };
   const s2 = await put(bob, 'card-source', 'cards/x', { ...b2, userId: 'mallory' }, { session: 'tab-b', userId: 'mallory' });
   const c2 = await w.next(byType('content.changed'));
   assert.deepEqual(pick(c2), { type: 'content.changed', kind: 'card-source', key: 'cards/x', hash: s2.hash, rev: 2 });
   assert.deepEqual(c2.actor, { userId: 'bob', session: 'tab-b' });
   assert.deepEqual(c2.previousActor, c1.actor, 'previousActor is the actor of the write that was overwritten');
-  // 被覆盖方（alice）在频道里看到自己被覆盖
+  // Overwritten party (alice) sees itself overwritten in the channel
   const seenByAlice = await alice.next(byType('content.changed'));
   assert.equal(seenByAlice.previousActor?.userId, 'alice');
   assert.equal(seenByAlice.actor?.userId, 'bob');
-  // session: null 视为没给
+  // session: null is treated as not provided
   await put(alice, 'card-source', 'cards/x', { v: 3 }, { session: null });
   const c3null = await w.next(byType('content.changed'));
   assert.deepEqual(c3null.actor, { userId: 'alice', session: null }, 'session: null counts as not given');
@@ -266,7 +271,7 @@ test('N6 a connection with content.watch receives content.changed on overwrite, 
   assert.deepEqual(await changes(idle, 0), [], 'a connection that did not watch receives nothing');
   assert.deepEqual(await changes(bob, 0), [], 'the overwriting side, which is not watching, receives nothing either');
 
-  // 别的 kind：content.changed 没有 rev；只到 watch 了那个 kind 的连接
+  // Other kinds: content.changed has no rev; only goes to connections watching that kind
   await put(bob, 'snapshot-manifest', 'm', { a: 1 });
   const c3 = await otherKind.next(byType('content.changed'));
   assert.deepEqual({ kind: c3.kind, key: c3.key, previousActor: c3.previousActor }, { kind: 'snapshot-manifest', key: 'm', previousActor: null });
@@ -357,7 +362,7 @@ test('N8 an unknown kind replies bad-message; an invalid key or kinds is rejecte
     const r = await watch(c, kinds);
     assert.deepEqual({ type: r.type, reason: r.reason }, { type: 'error', reason: 'bad-message' }, `content.watch kinds=${JSON.stringify(kinds)}`);
   }
-  // key：1～512 个字符的字符串
+  // key: string of 1-512 characters
   for (const key of ['', 'k'.repeat(513), 5, null, undefined, { k: 1 }]) {
     const r = await put(c, 'card-source', key, 1);
     assert.deepEqual({ type: r.type, reason: r.reason }, { type: 'error', reason: 'bad-message' }, `key=${JSON.stringify(key)?.slice(0, 20)}`);

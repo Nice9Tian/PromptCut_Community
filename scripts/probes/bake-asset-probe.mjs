@@ -1,32 +1,49 @@
 /**
- * `bake_card` 的卡片快照经素材服务存取的端到端探针(报告 `docs/archive/agent-reports/AGENT-bake-asset.md`;
- * 语义 `docs/semantics/product/asset-service.md`「预渲染的产物」「职责」、`product/agent.md`「素材与产物」)。
+ * End-to-end probe for card snapshot access via asset service in `bake_card` (report
+ * `docs/archive/agent-reports/AGENT-bake-asset.md`; semantics
+ * `docs/semantics/product/asset-service.md` "Prerender outputs", "Responsibilities";
+ * `product/agent.md` "Assets and outputs").
  *
  *   node scripts/probes/bake-asset-probe.mjs [--port 5970] [--keep]
  *
- * 自己起一个编辑器 dev server(`--port`,缺省 5970,舞台另占 +1、+2;带 PROMPTCUT_NO_PORT_FILE=1),产物与素材落在新建的临时目录
- * (含 `PROMPTCUT_ARTIFACT_DIR`:px / snap 的本机存放,否则缺省落在仓库 `out/asset-store/`,第二次运行起 P7 的块本机已有);
- * 再在 `--port + 5` 上起一台计数的「远程素材服务」(内存里实现分片上传、对账、收尾、取回,三个命名空间都收),
- * 当作共享项目连着的那一台:编辑器带 `PROMPTCUT_ASSET_URL=<它>` 与 `PROMPTCUT_PUSH=1` 起,预渲染进程的推送队列、
- * 编辑器进程的上传目标都指向它(卡片快照写进本机素材服务之后再推一份过去)。
+ * Spawns its own editor dev server (`--port`, defaults to 5970; stage additionally occupies +1 and
+ * +2; with PROMPTCUT_NO_PORT_FILE=1); outputs and assets are stored in a newly created temporary
+ * directory (including `PROMPTCUT_ARTIFACT_DIR`: local storage for px / snap; otherwise defaults to
+ * `out/asset-store/` in the repository, where chunks for P7 would already exist locally on
+ * subsequent runs); then starts a counting "remote asset service" on `--port + 5` (in-memory
+ * implementation of chunked uploads, reconciliation, finalization, and retrieval, accepting all
+ * three namespaces), acting as the instance connected to the shared project: editor starts with
+ * `PROMPTCUT_ASSET_URL=<it>` and `PROMPTCUT_PUSH=1`, where the prerender process push queue and the
+ * editor process upload target both point to it (card snapshots are written to the local asset
+ * service and then pushed as another copy).
  *
- *   P1 bake_card(预渲染进程,`/api/vision/bake`):回 `/api/asset/px/<sha256>`;经编辑器取回的是 PNG、sha256 与地址一致;
- *      索引 `<导出目录>/bake-index/<键>.json` 记着这个内容哈希;素材目录里没有 `bake-*.png`;
- *      计数的远程素材服务收到了这一块的分片与收尾,从它那儿取回的字节相同(经接口写入与读回);
- *   P2 同样的参数再要一次:cached、同一个地址、不重渲;
- *   P3 3D 视图那条路(编辑器进程的热备渲染器,`/api/ui-render/bake-batch`):回 px 地址,远程也收到了;页面把它当图片加载得出来;
- *   P4 预取那条路(页面发到预渲染进程的 bake-status / bake-batch / bake-evict):批量渲两个时刻 → 盘点报字节与地址;
- *      淘汰一个键 → 盘点里没了,但那块字节在素材服务里照样取得到;
- *   P5 老地址:素材目录里放一张老格式的 `bake-<clip>-<键>.png`(以前的版本落下的),`/@media/<名>` 照常能取;
- *      同一个键再要时不重渲,经素材服务迁进 px(内容哈希就是旧文件的),旧文件还在;
- *   P6 贴图:scene-3d 的 texture 填 P1 的 px 地址,导出用的渲染器渲出来与不贴图时不同(预渲染进程经素材服务取到了贴图);
- *   P7 共享项目的另一个成员:一张只在远程素材服务上的 PNG,编辑器连上远程(`POST /api/media/remote`)后,
- *      页面按 `/api/asset/px/<hash>` 加载得出来,远程被请求过这一块。
- *   (素材服务不可达时回清楚的错,由单测 BKA-4 覆盖:编辑器进程自己就是本机素材服务,探针里断不开它。)
+ *   P1 bake_card (prerender process, `/api/vision/bake`): returns `/api/asset/px/<sha256>`;
+ *      retrieved via the editor, it is a PNG whose sha256 matches the address; index
+ *      `<export dir>/bake-index/<key>.json` records this content hash; asset catalog contains no
+ *      `bake-*.png`; counting remote asset service received chunk uploads and finalization for this
+ *      chunk, and bytes retrieved from it are identical (written and read back via API);
+ *   P2 Request again with identical parameters: cached, same address, no re-render;
+ *   P3 3D view path (hot-standby renderer in editor process, `/api/ui-render/bake-batch`): returns
+ *      px address, remote also received it; page successfully loads it as an image;
+ *   P4 Prefetch path (bake-status / bake-batch / bake-evict sent from page to prerender process):
+ *      batch-renders two timestamps -> inventory reports bytes and addresses; evict a key ->
+ *      absent from inventory, but that chunk's bytes remain retrievable from the asset service;
+ *   P5 Legacy address: place an old-format `bake-<clip>-<key>.png` (left from an earlier version)
+ *      in the asset catalog; `/@media/<name>` retrievable as usual; requesting the same key again
+ *      does not re-render, migrated into px via asset service (content hash is that of the old
+ *      file), old file remains;
+ *   P6 Texture: fill scene-3d texture with P1's px address; rendering with the export renderer
+ *      differs from untextured (prerender process fetched texture via asset service);
+ *   P7 Another member of the shared project: a PNG existing only on the remote asset service; after
+ *      editor connects to remote (`POST /api/media/remote`), page successfully loads it via
+ *      `/api/asset/px/<hash>`, and remote was requested for this chunk.
+ *   (Clear error returned when asset service is unreachable, covered by unit test BKA-4: the
+ *   editor process is itself the local asset service, so the probe cannot disconnect it.)
  *
- * 结束时只停自己起的进程(编辑器进程树、计数服务、探针的 puppeteer Chrome);`--keep` 不关、不删临时目录。
+ * On exit, only stops processes it started (editor process tree, counting service, probe's
+ * puppeteer Chrome); `--keep` leaves them running and does not delete temporary directory.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,并设 PROMPTCUT_NO_PORT_FILE=1
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR, and set PROMPTCUT_NO_PORT_FILE=1
 import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -79,7 +96,7 @@ async function until(label, fn, timeoutMs = 120000, everyMs = 300) {
   }
 }
 
-/** 一张 w×h 的纯色 PNG(RGBA),自己拼,不要 ffmpeg */
+/** A w×h solid-color PNG (RGBA), assembled directly without ffmpeg */
 function makePng(w, h, [r, g, b, a = 255]) {
   const crc = (buf) => { const c = Buffer.alloc(4); c.writeUInt32BE(zlib.crc32(buf) >>> 0); return c; };
   const chunk = (type, data) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const td = Buffer.concat([Buffer.from(type), data]); return Buffer.concat([len, td, crc(td)]); };
@@ -105,10 +122,13 @@ async function startEditor() {
   editor = spawn(process.execPath, [viteBin(), '--port', String(PORT), '--strictPort', '--host', '127.0.0.1'],
     { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
       env: { ...process.env, PROMPTCUT_EXPORT_DIR: EXPORT_DIR, PROMPTCUT_DATA_DIR: DATA_DIR, PROMPTCUT_NO_PORT_FILE: '1',
-        // 产物(px / snap)的本机存放目录也落在临时目录:缺省是 `<仓库>/out/asset-store/`,跨次运行会留着上一次的块,
-        // P7 那张「只在远程上」的 PNG(内容固定、哈希固定)第二次起本机就有了,不再向远程取,「远程被请求过这一块」必不过
+        // Local storage directory for outputs (px / snap) also resides in temporary directory: defaults to
+        // `<repo>/out/asset-store/`, where chunks from previous runs persist across runs; the "remote-only"
+        // PNG for P7 (fixed content, fixed hash) would already exist locally on subsequent runs, no longer
+        // fetching from remote, so "remote was requested for this chunk" would definitely fail
         PROMPTCUT_ARTIFACT_DIR: ARTIFACT_DIR,
-        // 共享项目连着的素材服务:预渲染进程的推送队列(J.12 要显式打开)与编辑器进程的上传目标都指向计数的那一台
+        // Asset service connected to the shared project: prerender process push queue (J.12 must be
+        // explicitly enabled) and editor process upload target both point to the counting instance
         PROMPTCUT_ASSET_URL: `${REMOTE}/api/asset`, PROMPTCUT_PUSH: '1' } });
   const keep = (c) => { editorLog.push(c.toString()); if (editorLog.length > 600) editorLog.shift(); };
   editor.stdout.on('data', keep);
@@ -121,7 +141,7 @@ function stopEditor() {
   else editor.kill('SIGKILL');
 }
 
-/* ---- 计数的远程素材服务:<ns>/<hash>/chunks、PUT <ns>/<hash>/<n>、POST <ns>/<hash>/complete、GET/HEAD <ns>/<hash> ---- */
+/* ---- Counting remote asset service: <ns>/<hash>/chunks, PUT <ns>/<hash>/<n>, POST <ns>/<hash>/complete, GET/HEAD <ns>/<hash> ---- */
 const CHUNK = 8 * 1024 * 1024;
 const remoteBlobs = new Map(); // `${ns}/${hash}` → { bytes, type }
 const remoteParts = new Map(); // `${ns}/${hash}` → { size, ext, parts: Map<n, Buffer> }
@@ -168,7 +188,7 @@ const remote = http.createServer(async (req, res) => {
 });
 const remoteCount = (pred) => remoteLog.filter(pred).length;
 
-/** 目录里递归列出的文件名 */
+/** File names recursively listed in the directory */
 function walk(dir) {
   const out = [];
   if (!fs.existsSync(dir)) return out;
@@ -222,7 +242,7 @@ try {
   const project = await projectNow();
   check(fs.readdirSync(MEDIA_DIR).filter((n) => n.startsWith('bake-')).length === 0, 'No bake-*.png in the media directory at start');
 
-  /* ---- P1 bake_card:经素材服务写进 px,远程收到、读回相同 ---- */
+  /* ---- P1 bake_card: written to px via asset service, remote received, identical when read back ---- */
   const t0 = Date.now();
   const p1 = await post(`${EDITOR}/api/vision/bake`, { project, clipId: placed.a, t: 2, size: 512, bg: '#0b0f17' });
   out.p1 = { ...p1, ms: Date.now() - t0 };
@@ -241,13 +261,13 @@ try {
   check(p1Remote.status === 200 && p1Remote.bytes.equals(p1Got.bytes), 'P1 bytes read back from the remote asset service are identical');
   out.pushLog = editorLog.join('').split(/\r?\n/).filter((l) => /\[artifact-push\] push\.(started|skip|asset-base)|\[bake-store\]/.test(l)).slice(0, 12);
 
-  /* ---- P2 再要一次:命中 ---- */
+  /* ---- P2 Request again: hit ---- */
   const t2 = Date.now();
   const p2 = await post(`${EDITOR}/api/vision/bake`, { project, clipId: placed.a, t: 2, size: 512, bg: '#0b0f17' });
   out.p2 = { cached: p2.cached, url: p2.url, ms: Date.now() - t2 };
   check(p2.ok === true && p2.cached === true && p2.url === p1.url, 'P2 same parameters requested again: cached, same address', out.p2);
 
-  /* ---- P3 3D 视图那条路(编辑器进程) ---- */
+  /* ---- P3 3D view path (editor process) ---- */
   const p3 = await page.evaluate(async ({ project, clipId }) => {
     const res = await fetch('/api/ui-render/bake-batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project, clips: [{ clipId, t: 2 }], size: 1024, priority: 1 }) });
     const data = await res.json();
@@ -260,7 +280,7 @@ try {
   const p3Hash = String(p3.url || '').split('/').pop();
   check(!!(await until('P3 remote received', async () => remoteBlobs.has(`px/${p3Hash}`), 30000, 250)), 'P3 what the editor process rendered was also pushed to the remote asset service');
 
-  /* ---- P4 预取那条路(页面发到预渲染进程) ---- */
+  /* ---- P4 Prefetch path (sent from page to prerender process) ---- */
   const p4 = await page.evaluate(async ({ project, a, b }) => {
     const { prerenderUrl } = await import('/src/render/prerender.ts');
     const call = async (url, payload) => { const r = await fetch(await prerenderUrl(url), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); return r.json(); };
@@ -288,13 +308,13 @@ try {
   check(p4.final?.items?.[0]?.bytes === null && typeof p4.final?.items?.[1]?.bytes === 'number', 'P4 after eviction the inventory no longer has it, the other is still there', p4.final?.items);
   check((await getBytes(EDITOR + p4.victimUrl)).status === 200, 'P4 only the index entry was evicted, the bytes can still be fetched from the asset service');
 
-  /* ---- P5 老地址 ---- */
+  /* ---- P5 Legacy address ---- */
   const st5 = await post(`${PRE}/api/vision/bake-status`, { project, clips: [{ clipId: placed.b, t: 1 }], size: 1024 });
   const it5 = st5.items?.[0] ?? {};
   const legacyBytes = makePng(64, 36, [200, 40, 90]);
   const legacyOk = check(/^bake-.*-[0-9a-f]{12}\.png$/.test(it5.name || '') && it5.bytes === null, 'P5 inventory gives this key\'s file name in the old format, and it is not rendered yet', it5);
   if (legacyOk) {
-    fs.writeFileSync(path.join(MEDIA_DIR, it5.name), legacyBytes); // 模拟以前的版本落在素材目录里的旧文件
+    fs.writeFileSync(path.join(MEDIA_DIR, it5.name), legacyBytes); // Simulates an old file left in the asset catalog by an earlier version
     const old = await getBytes(`${EDITOR}/@media/${encodeURIComponent(it5.name)}`);
     check(old.status === 200 && old.bytes.equals(legacyBytes), 'P5 old address /@media/bake-….png can still be fetched as usual', { status: old.status });
     const t5 = Date.now();
@@ -306,7 +326,7 @@ try {
     check(old2.status === 200, 'P5 old address can still be fetched after migration');
   }
 
-  /* ---- P6 贴图:scene-3d 的 texture 用 px 地址,导出用的渲染器取得到 ---- */
+  /* ---- P6 Texture: scene-3d texture uses px address, retrievable by export renderer ---- */
   await page.evaluate(async ({ c, url }) => { const m = await import('/src/store/project.ts'); m.actions.setClipParams(c, { texture: url, shape: 'cube' }); }, { c: placed.c, url: p1.url });
   const projCube = await projectNow();
   const cubePlain = JSON.parse(JSON.stringify(projCube));
@@ -318,7 +338,7 @@ try {
   const texLog = editorLog.join('');
   check(!/texture[^\n]*(404|failed)/i.test(texLog), 'P6 no texture fetch errors in the log');
 
-  /* ---- P7 共享项目的另一个成员:只在远程上的 px ---- */
+  /* ---- P7 Another member of the shared project: px existing only on remote ---- */
   const only = makePng(40, 30, [20, 180, 60]);
   const onlyHash = sha256(only);
   remoteBlobs.set(`px/${onlyHash}`, { bytes: only, type: 'image/png' });
@@ -339,12 +359,12 @@ try {
 } finally {
   out.editorLogTail = editorLog.join('').split(/\r?\n/).filter((l) => /error|bake-store|artifact-push/i.test(l)).slice(-25);
   if (!KEEP) {
-    try { await browser?.close(); } catch { /* 已关 */ }
+    try { await browser?.close(); } catch { /* Closed */ }
     stopEditor();
     remote.closeAllConnections?.();
     remote.close();
     await delay(500);
-    try { fs.rmSync(EXPORT_DIR, { recursive: true, force: true }); } catch { /* 进程刚退,留着 */ }
+    try { fs.rmSync(EXPORT_DIR, { recursive: true, force: true }); } catch { /* Process just exited, keep it */ }
   }
 }
 

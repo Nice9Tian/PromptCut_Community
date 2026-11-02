@@ -1,30 +1,38 @@
 /**
- * 渲染面时钟的安装入口。**必须是 main.tsx 的第一个 import。**
+ * Installation entry point for render plane clock. **Must be the first import in main.tsx.**
  *
- * Motion 在自己的模块初始化时就把 requestAnimationFrame 抓进了帧循环里
- * (createRenderBatcher(requestAnimationFrame, ...)),晚于它安装的补丁对它无效——
- * 那样卡片还是按墙上时钟播,拖播放头就又变成「从头重播一遍」。
- * 所以这个文件要排在所有会牵出 motion 的 import 之前。
+ * Motion captures requestAnimationFrame into its frame loop during its own module initialization
+ * (createRenderBatcher(requestAnimationFrame, ...)), so patches installed after it have no effect
+ * on it: cards would still play against the wall clock, and scrubbing the playhead would turn back
+ * into "replaying from the start". Therefore, this file must come before all imports that bring
+ * in motion.
  *
- * 只在 ?stage=1 的渲染面里装;编辑器主文档不能装,不然它自己的界面动画会被一起冻住。
+ * Only install in the render plane with ?stage=1; do not install in editor main document,
+ * otherwise its own UI animations will be frozen along with it.
  *
- * 同一个道理也管随机数和墙上时钟:第三方库在模块加载时就抓走 Math.random(lottie-web 的
- * `BMMath.random = Math.random`),所以 pinEntropy 也要在这里、赶在所有 import 之前装上 ——
- * 导出视图(?export=1)和渲染面(?stage=1)都装。导出视图的 performance.now / rAF 仍由
- * ExportView 里的 installExportClock 装,时机不变(提前装会换掉 Motion 的时间戳来源)。
- * proto-main.tsx 也把这个文件放在第一行,proto.html 的导出入口同样罩得住。
+ * The same applies to random numbers and the wall clock: third-party libraries capture Math.random
+ * when modules load (lottie-web's `BMMath.random = Math.random`), so pinEntropy must also be
+ * installed here before all imports: installed in both export view (?export=1) and render plane
+ * (?stage=1). In export view, performance.now / rAF are still installed by installExportClock in
+ * ExportView with timing unchanged (installing early would replace Motion's timestamp source).
+ * proto-main.tsx also places this file on the first line, equally covering the export entry of
+ * proto.html.
  */
 import { installStageClock } from "./stageClock";
 import { installPinnedEntropy } from "../kernel/pinEntropy";
 
 /**
- * 浏览器逐帧导出(C10a,`src/export/frameCompositor.ts`)的导出页带 `?export=1&rafControl=1`:这里没有 CDP 的 beginFrame,
- * 若照常跑真 rAF,Motion 的帧循环(模块求值时就抓走了 rAF)每个真 vsync 都走一拍、每拍至少推 1 ms,
- * 合成一帧要几百毫秒,弹簧类动画就越走越快。所以赶在 Motion 之前把 rAF 换成手动队列:
- * 回调只在导出方调 `window.__pcBrowserBeginFrame()` 时跑一轮(一拍 = 桌面导出的一次 beginFrame)。
- * 兜底:有回调在排队而 5 秒没人推(页面里有东西在等 rAF),自己推一拍并记进 `__pcRafFallbacks`,不让导出挂死;
- * 正常导出里它应为 0(浏览器导出的统计里带出来)。
- * 桌面导出、预渲染不带 `rafControl`,一个字节不变。
+ * Export pages for browser frame-by-frame export (C10a, `src/export/frameCompositor.ts`) carry
+ * `?export=1&rafControl=1`: there is no CDP beginFrame here, and if real rAF ran as usual,
+ * Motion's frame loop (which captured rAF during module evaluation) would advance one tick every
+ * real vsync, pushing at least 1 ms per tick; compositing a frame takes hundreds of milliseconds,
+ * so spring-like animations would run faster and faster. Therefore, before Motion runs, rAF is
+ * replaced with a manual queue: callbacks run one round only when exporter calls
+ * `window.__pcBrowserBeginFrame()` (one tick = one beginFrame in desktop export). Fallback: if
+ * callbacks are queued and no one advances them for 5 seconds (something in the page is waiting
+ * for rAF), advance one tick automatically and record it in `__pcRafFallbacks` to prevent export
+ * from hanging; in normal exports it should be 0 (surfaced in browser export stats). Desktop
+ * export and prerender do not carry `rafControl`, left unchanged byte for byte.
  */
 function installManualRaf(): void {
   const w = window as Window & { __pcBrowserBeginFrame?: () => number; __pcRafFallbacks?: number };
@@ -54,7 +62,7 @@ if (typeof window !== "undefined") {
   const q = new URLSearchParams(location.search);
   if (q.has("stage")) {
     installStageClock();
-    installPinnedEntropy(); // 在舞台时钟之后:Date 要读得到舞台时间
+    installPinnedEntropy(); // After stage clock: Date must be able to read stage time
   } else if (q.has("export")) {
     if (q.get("rafControl") === "1") installManualRaf();
     installPinnedEntropy();

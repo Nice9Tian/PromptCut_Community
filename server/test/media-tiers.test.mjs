@@ -1,9 +1,10 @@
-// C6.6 两档素材与上传队列(`docs/plan/c66-design.md` 第 2、3 节,验收 T1～T3)。
-// 跑:node --test server/test/media-tiers.test.mjs
+// C6.6 two-tier assets and upload queue (`docs/plan/c66-design.md` sections 2 and 3, acceptance checks T1-T3).
+// Run: node --test server/test/media-tiers.test.mjs
 //
-// 素材插件是 .ts:和 asset-service.test 一样用 typescript 转译到临时目录再 import,
-// 它惰性 import 的兄弟模块(media-tiers、upload-queue、bandwidth-gate、bakery/ffmpeg、asset-store/client)换成仓库里的绝对地址。
-// 测试素材一律现场用 ffmpeg 生成(第 8 节「测试素材」)。
+// The asset plugin is .ts: like asset-service.test, transpiled with typescript to a temp dir before
+// import, and sibling modules it lazy-imports (media-tiers, upload-queue, bandwidth-gate,
+// bakery/ffmpeg, asset-store/client) are replaced with absolute paths in the repo.
+// Test assets are always generated on the fly with ffmpeg (section 8 "Test assets").
 import fs from 'node:fs';
 import os from 'node:os';
 import http from 'node:http';
@@ -27,7 +28,7 @@ delete process.env.PROMPTCUT_EDITOR_URL;
 delete process.env.PROMPTCUT_ASSET_URL;
 delete process.env.PROMPTCUT_HEADLESS;
 
-/** T3 的假客户端不读文件,resolveFile 回一个存在的路径即可 */
+/** Fake client in T3 does not read files; resolveFile only needs to return an existing path */
 const HERE = fileURLToPath(import.meta.url);
 const ffmpegOk = spawnSync('ffmpeg', ['-version'], { windowsHide: true }).status === 0;
 const serverUrl = (rel) => pathToFileURL(path.join(ROOT, 'server', rel)).href;
@@ -58,7 +59,7 @@ const uq = await import(serverUrl('upload-queue.mjs'));
 const gateMod = await import(serverUrl('bandwidth-gate.mjs'));
 const { createAssetClient } = await import(serverUrl('asset-store/client.mjs'));
 
-/* ---------------- 环境 ---------------- */
+/* ---------------- Environment ---------------- */
 
 function serviceHandler(root) {
   const a = asset.assetServiceMiddleware(root);
@@ -73,8 +74,10 @@ async function listen(handler) {
 }
 
 /**
- * 断网注入:夹在上传方与远端素材服务之间的代理。`offline` 为真时直接掐断连接(不转发);
- * 每个请求记一行 `{ method, path, auth, dropped }`。`dropWhen(req)` 回真时从这一个请求起断网。
+ * Disconnection injection: proxy between uploader and remote asset service. When `offline` is
+ * true, sever connection directly (no forwarding); each request logs a line of
+ * `{ method, path, auth, dropped }`. When `dropWhen(req)` returns true, disconnect starting from
+ * this request.
  */
 async function flakyProxy(target) {
   const t = new URL(target);
@@ -105,7 +108,7 @@ const probe = (file) => {
 const sha256File = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const fixtures = path.join(OUT, 'fixtures');
 fs.mkdirSync(fixtures, { recursive: true });
-/** 1080p、带音轨、moov 在尾(ffmpeg 写 MP4 的缺省)、约 17 MB(3 片) */
+/** 1080p, with audio track, moov at the end (ffmpeg's default when writing MP4), ~17 MB (3 chunks) */
 const LATE_1080 = path.join(fixtures, 'late-1080.mp4');
 const PRORES = path.join(fixtures, 'prores.mov');
 const FASTSTART = path.join(fixtures, 'fast.mp4');
@@ -126,12 +129,13 @@ async function importFile(origin, file, name = path.basename(file), query = '?ti
 }
 const chunksOf = async (base, hash) => (await fetch(`${base}/media/${hash}/chunks`)).json();
 
-/** 回包里只许有这些字段:同步状态(传没传完)不进回包、不进项目 */
+/** Only these fields allowed in response: sync status (whether upload finished) not in response or project */
 const RESPONSE_KEYS = new Set(['ok', 'hash', 'ext', 'name', 'path', 'url', 'bytes', 'deduped', 'tiers', 'small', 'remux']);
 const SYNC_WORDS = /upload|sync|complete|received|progress|queued/i;
 
 /* ======================================================================== *
- * T1:导入 1080p 视频 → 素材小尺寸 ≤ 800×600、H.264、faststart;素材原尺寸编码不变;tiers 两个哈希
+ * T1: import 1080p video → small-size asset ≤ 800×600, H.264, faststart;
+ * original-size asset encoding unchanged; tiers two hashes
  * ======================================================================== */
 
 const rootA = path.join(OUT, 'importer');
@@ -156,16 +160,17 @@ test('T1-1 import a 1080p MP4 with a late moov: the asset original size is remux
   assert.equal(rec.state, 'ready');
   assert.match(rec.small, /^[0-9a-f]{64}$/);
 
-  // 素材原尺寸:库里的就是重封装后的,moov 在前,流的编码与源文件逐一相同
+  // Original-size asset: what is in library is remuxed, moov in front, stream codecs match source file
+  // one by one
   const orig = path.join(media.mediaDir(rootA), `${body.hash}.mp4`);
   assert.equal(sha256File(orig), body.hash);
   assert.equal(await tiers.faststartState(orig), 'faststart');
   const a = probe(LATE_1080), b = probe(orig);
   assert.deepEqual(b.streams.map((s) => `${s.codec_type}:${s.codec_name}:${s.width ?? ''}x${s.height ?? ''}`), a.streams.map((s) => `${s.codec_type}:${s.codec_name}:${s.width ?? ''}x${s.height ?? ''}`));
-  // 重封装前那份不留在库里
+  // Copy prior to remuxing is not kept in the library
   assert.equal((await fetch(`${originA}/@media/${srcHash}`)).status, 404);
 
-  // 素材小尺寸:≤ 800×600、H.264、faststart、AAC
+  // Small-size asset: ≤ 800×600, H.264, faststart, AAC
   const small = path.join(media.mediaDir(rootA), `${rec.small}.mp4`);
   const sp = probe(small);
   const v = sp.streams.find((s) => s.codec_type === 'video');
@@ -175,7 +180,8 @@ test('T1-1 import a 1080p MP4 with a late moov: the asset original size is remux
   assert.equal(sp.streams.find((s) => s.codec_type === 'audio')?.codec_name, 'aac');
   assert.equal(await tiers.faststartState(small), 'faststart');
 
-  // 连本地素材服务:两档都已在本地素材服务上 complete,上传队列什么都没进
+  // Connect to local asset service: both tiers already complete on local asset service,
+  // nothing entered upload queue
   assert.equal((await chunksOf(`${originA}/api/asset`, body.hash)).complete, true);
   assert.equal((await chunksOf(`${originA}/api/asset`, rec.small)).complete, true);
   const q = await (await fetch(`${originA}/api/media/upload-queue`)).json();
@@ -183,7 +189,7 @@ test('T1-1 import a 1080p MP4 with a late moov: the asset original size is remux
   assert.equal(q.queue.items.length, 0);
   assert.ok(q.queue.skippedLocal >= 1);
 
-  // 同一个文件再导入一次:复用上次重封装的结果,哈希相同
+  // Import same file once more: reuse result of previous remux, hashes match
   const again = await importFile(originA, LATE_1080, 'again.mp4');
   assert.equal(again.hash, body.hash);
   assert.equal(again.remux.reused, true);
@@ -204,7 +210,7 @@ test('T1-2 ProRes MOV: the asset original size is still ProRes (only a same-cont
   const v = probe(path.join(media.mediaDir(rootA), `${rec.small}.mp4`)).streams.find((s) => s.codec_type === 'video');
   assert.equal(v.codec_name, 'h264');
   assert.deepEqual([v.width, v.height], [640, 360], 'No upscaling');
-  // 没有音轨也能生成(-map 0:a:0?)
+  // Can still generate without audio tracks (-map 0:a:0?)
   assert.equal(probe(path.join(media.mediaDir(rootA), `${rec.small}.mp4`)).streams.some((s) => s.codec_type === 'audio'), false);
 });
 
@@ -226,7 +232,7 @@ test('T1-4 applies to video only: importing images and audio carries no tiers an
     const service = await media.mediaTierService(rootA);
     assert.equal(service.manager.status([body.hash])[body.hash].state, 'unknown');
   }
-  // 不带 tiers=1 的老调用(.procp 还原、配音)行为不变:不重封装
+  // Legacy calls without tiers=1 (.procp restore, voiceover) behavior unchanged: no remuxing
   const plain = await importFile(originA, LATE_1080, 'plain.mp4', '');
   assert.equal(plain.hash, sha256File(LATE_1080));
   assert.equal('tiers' in plain, false);
@@ -243,7 +249,7 @@ test('T1-5 HDR (BT.2020 + PQ tags complete) takes the zscale + tonemap branch, a
   assert.equal(r.hdr, true);
   const v = probe(out).streams[0];
   assert.deepEqual([v.codec_name, v.pix_fmt, v.color_primaries, v.color_transfer, v.width, v.height], ['h264', 'yuv420p', 'bt709', 'bt709', 800, 450]);
-  // SDR 源不走这个分支
+  // SDR source does not take this branch
   assert.equal(tiers.isHdrPq((await tiers.probeMedia('ffprobe', FASTSTART)).video), false);
 });
 
@@ -296,7 +302,8 @@ test('T1-8 when the remux fails, the source file is kept as the asset original s
 });
 
 /* ======================================================================== *
- * T2:断网导入再联网 —— 只补缺片;两档的 chunks 分别 complete;回包、项目记录没有同步字段
+ * T2: offline import then reconnect: only fill missing chunks; chunks for both tiers
+ * complete separately; response and project records have no sync fields
  * ======================================================================== */
 
 test('T2-1 wired through the plugin: connected to the remote asset service, the network drops at chunk 2 of the asset original size, and after reconnecting only the missing chunks are filled in; the chunks of both tiers complete separately; with a ticket', { skip: !ffmpegOk && 'No ffmpeg', timeout: 60_000 }, async () => {
@@ -315,7 +322,7 @@ test('T2-1 wired through the plugin: connected to the remote asset service, the 
 
   const srcBytes = fs.statSync(LATE_1080).size;
   assert.ok(srcBytes > 2 * 8 * 1024 * 1024, `The test asset must exceed 2 chunks, actual ${srcBytes}`);
-  // 素材原尺寸第 1 号分片(第 2 片)一到就断网
+  // Disconnect as soon as chunk 1 (2nd chunk) of original-size asset arrives
   let original = null;
   proxy.state.dropWhen = (req) => original && req.method === 'PUT' && req.url === `/api/asset/media/${original}/1`;
   const body = await importFile(originB, LATE_1080, 'offline.mp4');
@@ -324,7 +331,7 @@ test('T2-1 wired through the plugin: connected to the remote asset service, the 
   const small = service.manager.status([original])[original].small;
   assert.match(small, /^[0-9a-f]{64}$/);
 
-  // 等到断网之后客户端的几次重试都失败、队列进了退避
+  // Wait until client retries fail after disconnect and queue enters backoff
   const t0 = Date.now();
   while (!(service.queue.stats().failures >= 1) && Date.now() - t0 < 20_000) await new Promise((r) => setTimeout(r, 50));
   assert.ok(service.queue.stats().failures >= 1, 'The network drop should make this asset fail once');
@@ -333,7 +340,7 @@ test('T2-1 wired through the plugin: connected to the remote asset service, the 
   assert.equal(before.complete, false);
   assert.equal((await chunksOf(`${remote}/api/asset`, small)).complete, true, 'The asset small size is uploaded first and was complete before the network drop');
 
-  // 联网,等队列清空(队列退避 5 s 后重试)
+  // Reconnect, wait for queue to drain (queue retries after 5 s backoff)
   proxy.state.offline = false;
   proxy.state.dropWhen = null;
   let guard;
@@ -344,24 +351,24 @@ test('T2-1 wired through the plugin: connected to the remote asset service, the 
   assert.deepEqual(puts, ['S/0', 'O/0', 'O/1', 'O/2'], `Actual PUT order ${JSON.stringify(puts)}`);
   const dropped = proxy.state.log.filter((e) => e.dropped).length;
   assert.ok(dropped >= 1);
-  // 两档分别 complete
+  // Both tiers complete separately
   const cs = await chunksOf(`${remote}/api/asset`, small);
   const co = await chunksOf(`${remote}/api/asset`, original);
   assert.equal(cs.complete, true);
   assert.equal(co.complete, true);
   assert.deepEqual(co.received, [0, 1, 2]);
-  // 远端取回的字节就是本机那两份
+  // Bytes retrieved from remote match the two copies on this machine
   const got = Buffer.from(await (await fetch(`${remote}/api/asset/media/${original}`)).arrayBuffer());
   assert.equal(crypto.createHash('sha256').update(got).digest('hex'), original);
-  // 每个请求都带票据(只进 Authorization 头,不进地址)
+  // Every request carries a ticket (only in Authorization header, not in URL)
   const sent = proxy.state.log.filter((e) => !e.dropped);
   assert.ok(sent.length > 0 && sent.every((e) => e.auth === 'Bearer test-ticket-1'), 'Every request carries a Bearer ticket');
   assert.ok(sent.every((e) => !/[?&]t=/.test(e.path)));
-  // 回包与本机登记都没有同步状态
+  // Neither response nor local registry has sync status
   for (const key of Object.keys(body)) assert.ok(RESPONSE_KEYS.has(key) && !SYNC_WORDS.test(key), `Response field ${key}`);
   const saved = JSON.parse(fs.readFileSync(path.join(media.mediaDir(rootB), 'tiers.json'), 'utf8'));
   assert.doesNotMatch(JSON.stringify(saved.items[original]), SYNC_WORDS);
-  // 队列文件里这一素材已出队
+  // This asset has been dequeued in the queue file
   const qfile = JSON.parse(fs.readFileSync(path.join(rootB, 'out', 'upload-queue.json'), 'utf8'));
   assert.deepEqual(qfile.items, []);
 });
@@ -441,9 +448,11 @@ test('T2-2 resume after restart: when the network drops the queue is stopped (le
   q2.start();
   await q2.drain();
   await q2.stop();
-  // 「重启后只补缺片」看 q2 整个过程发出的全部分片，而不只看最后一次 tier-done：客户端 retries 为 0，
-  // 机器忙时 q2 可能撞上一次连接抖动（代理刚销毁过套接字）而整项重试，第二遍素材原尺寸已齐、tier-done 的 sent 是 []。
-  // 判据没放宽：q2 只要重发了第 0、1 片（或根本没发第 2 片），下面两条都会挂。
+  // "Only fill missing chunks after restart" checks all chunks sent by q2 across the entire process,
+  // not just the last tier-done: client retries is 0; when the machine is busy, q2 might hit a
+  // connection jitter (proxy just destroyed a socket) and retry the whole item; on the second pass,
+  // original-size asset is complete, so tier-done sent is [].
+  // Criterion is not relaxed: if q2 resends chunk 0 or 1 (or fails to send chunk 2), both checks fail.
   const tierDone = events.slice(eventMark).filter((e) => e.e === 'upload.tier-done' && e.hash === hash);
   assert.ok(tierDone.length >= 1, 'After the restart the asset original size finishes uploading');
   assert.deepEqual([...new Set(tierDone.flatMap((e) => e.sent))].sort(), [2], `After the restart only chunk 2 is filled in: ${JSON.stringify(tierDone.map((e) => e.sent))}`);
@@ -457,10 +466,13 @@ test('T2-2 resume after restart: when the network drops the queue is stopped (le
 });
 
 /* ======================================================================== *
- * T3:队列顺序 —— 逐个素材、先小后大;素材排在产物后面
+ * T3: queue order: asset by asset, small first then large; assets queued after artifacts
  * ======================================================================== */
 
-/** 内存里的素材服务客户端:记下每一片;`failOnce` 里的哈希第一次 PUT 抛网络错误 */
+/**
+ * In-memory asset service client: records every chunk; hashes in `failOnce` throw a network error
+ * on the first PUT
+ */
 function memoryClient({ failOnce = new Set(), delayMs = 5 } = {}) {
   const store = new Map();
   const calls = [];
@@ -489,7 +501,8 @@ test('T3-1 all asset small sizes are uploaded first, then the asset original siz
   const client = memoryClient({ failOnce: new Set([H('b')]) });
   const log = [];
   const q = uq.createUploadQueue({ file: null, target: () => ({ client }), resolveFile: () => HERE, backoff: [20], log: (e, f) => log.push(`${e}:${f.id?.[0] ?? ''}:${f.tier ?? ''}`) });
-  // 进队顺序 A、B、C;tiers 故意把素材原尺寸写在前面,队列要自己把素材小尺寸排到前面
+  // Enqueue order A, B, C; tiers intentionally lists original-size asset first,
+  // queue must reorder small-size asset to the front
   await q.enqueue({ name: 'A', tiers: [{ tier: 'original', hash: H('b') }, { tier: 'small', hash: H('a') }] });
   await q.enqueue({ name: 'B', tiers: [{ tier: 'original', hash: H('d') }, { tier: 'small', hash: H('c') }] });
   await q.enqueue({ name: 'C', tiers: [{ tier: 'original', hash: H('e') }] });
@@ -504,7 +517,7 @@ test('T3-1 all asset small sizes are uploaded first, then the asset original siz
     'upload.tier-start:d:original', 'upload.tier-done:d:original', 'upload.item-done:d:',
     'upload.tier-start:e:original', 'upload.tier-done:e:original', 'upload.item-done:e:',
   ]);
-  // 实际落到素材服务的顺序:小 A、小 B、原 A、原 B、原 C
+  // Actual order landing on asset service: small A, small B, original A, original B, original C
   assert.deepEqual(client.calls, [H('a'), H('c'), H('b'), H('d'), H('e')]);
 });
 
@@ -571,7 +584,7 @@ test('T3-4 the push queue is attached to the bandwidth gate: it registers demand
   await pq.stop();
   assert.ok(calls.includes('undemand'));
 
-  // 跨进程探针
+  // Cross-process probe
   const f = path.join(OUT, 'fl', 'push-queue.json');
   fs.mkdirSync(path.dirname(f), { recursive: true });
   fs.writeFileSync(f, JSON.stringify({ v: 1, items: [{ unit: {}, priority: 0, attempts: 0 }] }));
@@ -586,7 +599,7 @@ test('T3-4 the push queue is attached to the bandwidth gate: it registers demand
 });
 
 
-/* ---- 素材小尺寸全部先传(用户 2026-10-13:「强制先上传小尺寸,然后上传大尺寸」) ---- */
+/* ---- Upload all small-size assets first (user, 2026-10-13: "force upload small size first, then large size") ---- */
 
 const three = async (q) => {
   await q.enqueue({ name: 'A', tiers: [{ tier: 'small', hash: H('a') }, { tier: 'original', hash: H('b') }] });
@@ -625,7 +638,7 @@ test('T3-7 an asset enqueued while an asset original size is uploading: its asse
   let added = false;
   const log = (e, f) => {
     if (e !== 'upload.tier-start' || f.tier !== 'original' || added) return;
-    added = true; // 第一份素材原尺寸开传的那一刻:给只有素材原尺寸的 C 补上素材小尺寸,再进一个新素材 D
+    added = true; // Moment the first original-size asset starts uploading: add small-size asset for C which only had original-size asset, then enqueue new asset D
     void q.enqueue({ name: 'C', tiers: [{ tier: 'small', hash: H('7') }, { tier: 'original', hash: H('8') }] });
     void q.enqueue({ name: 'D', tiers: [{ tier: 'small', hash: H('1') }, { tier: 'original', hash: H('2') }] });
   };
@@ -636,14 +649,16 @@ test('T3-7 an asset enqueued while an asset original size is uploading: its asse
   q.start();
   await q.drain();
   await q.stop();
-  // 小 A、小 B、原 A(正在传的这一档传完才让)、小 C(先进队)、小 D、原 B、原 C、原 D
+  // Small A, small B, original A (only yields after current tier completes), small C (enqueued first),
+  // small D, original B, original C, original D
   assert.deepEqual(client.calls, [H('a'), H('c'), H('b'), H('7'), H('1'), H('d'), H('8'), H('2')]);
 });
 
 test('T3-8 queue recovery after an app restart: unfinished asset small sizes are uploaded first, then the asset original sizes; tiers already done are not uploaded again', async () => {
   const file = path.join(os.tmpdir(), `pc-upload-order-${process.pid}-${Date.now()}.json`);
   const client = memoryClient({ failOnce: new Set([H('c')]) });
-  // 第一个实例:小 A 传完、小 B 失败后退避很久(模拟这时应用被关掉)
+  // First instance: small A finishes uploading, small B backs off for a long time after failure
+  // (simulating application closed at this point)
   const q1 = uq.createUploadQueue({ file, target: () => ({ client }), resolveFile: () => HERE, backoff: [600_000] });
   await three(q1);
   q1.start();
@@ -651,7 +666,7 @@ test('T3-8 queue recovery after an app restart: unfinished asset small sizes are
   await q1.stop();
   assert.deepEqual(client.calls, [H('a')], 'Before the restart only the asset small size of A had finished uploading');
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).items.length, 3, 'All three assets are still in the queue file');
-  // 第二个实例:同一个队列文件
+  // Second instance: same queue file
   const log = [];
   const q2 = uq.createUploadQueue({ file, target: () => ({ client }), resolveFile: () => HERE, backoff: [10], log: (e, f) => { if (e === 'upload.tier-start') log.push(f.tier); } });
   assert.equal(q2.stats().restored, 3);

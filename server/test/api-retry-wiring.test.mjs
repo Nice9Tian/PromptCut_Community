@@ -1,17 +1,19 @@
 /**
  * node --test server/test/api-retry-wiring.test.mjs
  *
- * 重试**接进 runners/api.mjs 了没有**。
+ * Whether retry is **wired into runners/api.mjs**.
  *
- * 单测 retry-fetch 模块本身是不够的:模块写对了、没接到 createProvider 的 fetchImpl 上,
- * 线上照样一撞 429 就报错。所以这一条从 startRun 进去,数真正发出去了几次请求。
+ * Unit-testing the retry-fetch module itself is not enough: even if the module is written
+ * correctly, if it is not wired to fetchImpl in createProvider, production will still throw an
+ * error as soon as it hits 429. So this test goes in from startRun and counts how many requests
+ * were actually sent.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const { startRun } = await import('../runners/api.mjs');
 
-/** 一段最小的、能让 provider 正常收尾的 SSE */
+/** A minimal SSE that allows the provider to finalize normally */
 function okStream(text) {
   const chunks = [
     `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`,
@@ -35,7 +37,7 @@ function errResponse(status) {
   };
 }
 
-/** 跑一次对话,返回 { events, runHandle } */
+/** Run a chat once and return { events, runHandle } */
 function run({ fetchImpl, idleMsForTest, retryForTest, vendor = 'openai', onStart }) {
   const events = [];
   return new Promise((resolve) => {
@@ -54,7 +56,7 @@ function run({ fetchImpl, idleMsForTest, retryForTest, vendor = 'openai', onStar
       },
     });
     onStart?.(r);
-    // 兜底:万一没有 done/error 也别把测试挂死
+    // Fallback: in case there is no done/error, avoid hanging the test
     (r?.done ?? Promise.resolve()).finally?.(() => setTimeout(() => resolve(events), 50));
   });
 }
@@ -78,7 +80,7 @@ test('After a 429 it retries automatically and eventually delivers the reply: th
   const seen = [];
   const fetchImpl = async (url, options) => {
     seen.push(url);
-    // 前两次上游拥挤,第三次正常
+    // Upstream congested the first two times, normal on the third
     return n++ < 2 ? errResponse(429) : okStream('OK');
   };
   const events = await run({ fetchImpl, retryForTest: { baseDelayMs: 5, maxDelayMs: 10 } });
@@ -107,7 +109,7 @@ test('a. When the first packet of an HTTP 200 SSE stream returns an upstream tim
       ]);
     }
     if (n === 2) {
-      // 先来一帧空 role delta、再来 upstream timed out,同样还没吐任何内容块
+      // First an empty role delta frame, then upstream timed out; still has not emitted any content chunk
       return sseChunks([
         'data: {"choices":[{"delta":{"role":"assistant","content":""}}]}\n\n',
         'data: {"error":{"message":"The upstream service timed out. Please try again later. (request id: 202610180052009722857049rKYajio)"}}\n\n',
@@ -129,7 +131,7 @@ test('b. When a single attempt triggers withIdleTimeout (the external signal is 
   const fetchImpl = (url, options) => {
     n++;
     if (n === 1) {
-      // 第一次尝试完全无响应,触发 withIdleTimeout
+      // First attempt has no response at all, triggering withIdleTimeout
       return new Promise((_res, rej) => {
         options.signal.addEventListener('abort', () => rej(options.signal.reason), { once: true });
       });
@@ -147,7 +149,7 @@ test('b. When a single attempt triggers withIdleTimeout (the external signal is 
   const text = events.filter((e) => e.type === 'text').map((e) => e.delta).join('');
   assert.equal(text, 'Returned normally after the timeout retry');
 
-  // 用户点击停止(abort()):立即停止、绝不重试
+  // User clicks stop (abort()): stop immediately, never retry
   let stopCalls = 0;
   const stopEvents = await run({
     fetchImpl: (url, options) => {
@@ -166,11 +168,15 @@ test('b. When a single attempt triggers withIdleTimeout (the external signal is 
 
 test('c. When an SSE stream has already emitted part of its text_delta and then receives parsed.error or is cut off, never resend the same request; wrap up as "cut off midway by the gateway" and let the model continue (stream-cut 2026-10-22)', async () => {
   /*
-   * 2026-10-22 用户定:「中途被网关掐断按截断处理(保住半截参数、走代码块续写)」。原来这里断言「直接报错」;
-   * 现在同一请求仍然绝不重发(重试层不碰已经出过内容的流),但这一轮不再当错误:已经说的话保留,下一次请求是新的一轮,
-   * 带着「被网关中途掐断」的提示。这里每次都在同一处断、什么也没留下,连续 3 次之后明说没做成。
+   * (user decision, 2026-10-22): "Midway cutoffs by the gateway are handled as truncation
+   * (preserving partial parameters, continuing via code block continuation)". Previously this
+   * asserted "error directly"; now the same request is still never resent (the retry layer does not
+   * touch streams that have already emitted content), but this round is no longer treated as an
+   * error: words already spoken are preserved, and the next request is a new round, bearing the
+   * notice "cut off midway by gateway". Here it breaks at the same place every time leaving nothing
+   * behind; after 3 consecutive attempts, explicitly state that it failed.
    */
-  // 场景 1:吐出一半 text_delta 后收到 parsed.error
+  // Scenario 1: parsed.error received after emitting half of text_delta
   const bodies1 = [];
   const events1 = await run({
     fetchImpl: async (_url, init) => {
@@ -191,7 +197,7 @@ test('c. When an SSE stream has already emitted part of its text_delta and then 
   assert.ok(err1, 'Exceeding the limit of consecutive cut-offs must report an error');
   assert.match(err1.message, /cut off midway by the gateway 3 times in a row/);
 
-  // 场景 2:吐出一半 text_delta 后流异常断开(未收到 finish_reason)
+  // Scenario 2: stream disconnected abnormally after emitting half of text_delta (no finish_reason received)
   const bodies2 = [];
   const events2 = await run({
     fetchImpl: async (_url, init) => {
@@ -226,7 +232,7 @@ test('d. When the first packet of an SSE stream returns a non-retryable error (s
 });
 
 test('e. anthropic and gemini streams are likewise retried automatically when they hit a transient SSE error or an empty-stream disconnect before producing the first content block', async () => {
-  // Anthropic:第一次 message_start 后发 overloaded_error,第二次正常完成
+  // Anthropic: first sends overloaded_error after message_start, completes normally the second time
   let anthCalls = 0;
   const anthEvents = await run({
     vendor: 'anthropic',
@@ -251,7 +257,8 @@ test('e. anthropic and gemini streams are likewise retried automatically when th
   assert.equal(anthEvents.find((e) => e.type === 'error'), undefined);
   assert.equal(anthEvents.filter((e) => e.type === 'text').map((e) => e.delta).join(''), 'Anthropic recovered');
 
-  // Gemini:第一次空流意外结束,第二次首包 upstream timed out,第三次正常完成
+  // Gemini: first time empty stream ends unexpectedly, second time first packet upstream
+  // timed out, third time completes normally
   let gemCalls = 0;
   const gemEvents = await run({
     vendor: 'gemini',

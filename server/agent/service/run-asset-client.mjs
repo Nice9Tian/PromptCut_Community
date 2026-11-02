@@ -43,8 +43,9 @@ export const resourceRevision = ref => digestOf({ v: 1, ...validateAssetRef(ref)
 export const assetRefId = ref => `asset:${resourceRevision(ref)}`;
 
 /**
- * 本机直连 BlobStore 的运行期素材客户端（社区版 / 本机模式，不经云端 mTLS transport）。
- * 支持 `server/asset-store/fs-store.mjs` 或 `memory-store.mjs`。
+ * Runtime asset client connecting directly to BlobStore locally (community edition / local mode,
+ * bypassing cloud mTLS transport).
+ * Supports `server/asset-store/fs-store.mjs` or `memory-store.mjs`.
  */
 export function createLocalRunAssetClient({ store, projectId: fixedProjectId = null, media = () => ({}) } = {}) {
   if (!store || typeof store.chunks !== 'function' || typeof store.putChunk !== 'function' ||

@@ -1,9 +1,12 @@
 /**
- * 横向贯穿整页的顶栏(用户 2026-10-23 定):压在侧栏和主区之上,所以**收起键和产品标识的位置是固定的** ——
- * 侧栏收起来、换页、进聊天都不会动。
+ * The top bar that runs across the whole page horizontally (user decision, 2026-10-23): it sits above
+ * the sidebar and the main area, so **the positions of the collapse button and the product logo are
+ * fixed**: they do not move when the sidebar collapses, when the page changes, or when entering a chat.
  *
- * 左边恒定是「回首页」「收起侧栏」加 Logo,三样的位置不随页面变;中间 `center` 由页面给(聊天页放对话名);
- * 右边先是账号(用户要求摆在「共有」左边),再是 `right` 由页面给的那几颗。
+ * The left side is always "Home", "Collapse sidebar" and the Logo, and the positions of these three do
+ * not change with the page; the middle `center` is supplied by the page (the chat page puts the chat
+ * name there); the right side is first the account (the user asked for it to be placed to the left of
+ * "Shared"), then the buttons supplied by the page through `right`.
  */
 import type { JSX, ReactNode } from "react";
 import { Logo } from "../ui/Logo";
@@ -12,12 +15,12 @@ import { hueOf } from "./hue";
 import { tr } from "../i18n/index.ts";
 
 export function TopBar(props: {
-  /** 现在就在开始页(首页按钮标成当前项) */
+  /** It is currently on the start page (the Home button is marked as the current item) */
   atHome: boolean;
   onHome: () => void;
   collapsed: boolean;
   onToggleSide: () => void;
-  /** 账号那一块:在线浏览器才有。桌面版没有账号,两样都不给,这一块整个不出现 */
+  /** The account section: only in the online browser. The desktop app has no account, so neither is passed and this section does not appear at all */
   accountName?: string | null;
   onSignOut?: () => void;
   center?: ReactNode;
@@ -29,7 +32,8 @@ export function TopBar(props: {
   const account = !!props.onSignOut;
   return (
     <header className="ps-top" data-pc="start-top">
-      {/* 首页:原来聊天页那颗返回键,用户 2026-10-23 换成小房子并挪到收起键左边 */}
+      {/* Home: the back button that used to be on the chat page; the user replaced it with a little house on
+   2026-10-23 and moved it to the left of the collapse button */}
       <button
         type="button"
         className="ps-top-home"
@@ -50,13 +54,14 @@ export function TopBar(props: {
         type="button"
         className="ps-top-collapse"
         data-pc="start-side-collapse"
-        /* 点亮(强调色)=列表栏开着,灰=关着(2026-10-23 用户定:原先反了,收起来时才亮) */
+        /* Lit (emphasis color) = the list bar is open, gray = closed (user decision, 2026-10-23: it used to be
+           the other way round, lit only when collapsed) */
         aria-pressed={!props.collapsed}
         aria-label={props.collapsed ? tr("Expand sidebar") : tr("Collapse sidebar")}
         title={props.collapsed ? tr("Expand sidebar") : tr("Collapse sidebar")}
         onClick={props.onToggleSide}
       >
-        {/* 一个带左栏的面板:左栏实心表示侧栏在,空心表示收起来了 */}
+        {/* A panel with a left rail: a solid left rail means the sidebar is present, a hollow one means it is collapsed */}
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
           <rect x="3" y="4.5" width="18" height="15" rx="2" />
           <path d="M9 4.5v15" />
@@ -72,7 +77,8 @@ export function TopBar(props: {
 
       <LanguageMenu className="ps-ghost-btn" prepare={props.prepareLanguageSwitch} />
 
-      {/* 账号:摆在右边那几颗的左侧(用户 2026-10-23 定,原来在侧栏底下)。桌面版没有账号,这一块不出现 */}
+      {/* Account: placed to the left of the buttons on the right (user decision, 2026-10-23; it used to be at
+   the bottom of the sidebar). The desktop app has no account, and this section does not appear */}
       {account && <div className="ps-top-account" data-pc="start-top-account">
         <span
           className="ps-avatar"

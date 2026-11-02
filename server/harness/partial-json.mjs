@@ -1,9 +1,13 @@
 /**
- * 从写到一半就被截断的工具参数 JSON 里把已经写出来的字段取出来(A07,2026-10-22)。
+ * Extracts already-written fields from tool argument JSON that was truncated halfway through writing
+ * (A07, 2026-10-22).
  *
- * 只认顶层是对象的形状(工具参数都是):逐个读「键: 值」。字符串值读到结尾没收引号的,算写了一半(`complete: false`),
- * 转义读到一半(末尾单个 `\`、`\u12`)的那一截丢掉。别的值(数字、对象、数组……)读完整了才要,读不完整的丢掉。
- * 截断的参数通常是「前面几个短字段 + 最后一个很长的字符串字段(源码)」,所以最有用的是最长的那个字符串字段。
+ * Only recognizes top-level object shapes (which all tool arguments are): reads "key: value" one by
+ * one. String values without a closing quote at the end are treated as half-written
+ * (`complete: false`), and half-read escape sequences (a trailing single `\` or `\u12`) are
+ * discarded. Other values (numbers, objects, arrays…) are kept only if read completely, and
+ * discarded if incomplete. Truncated arguments are typically "several short fields upfront + one
+ * very long string field at the end (source code)", so the most useful is that longest string field.
  */
 
 const WS = /\s/;
@@ -33,12 +37,12 @@ function readString(s, i) {
     out += c;
     i += 1;
   }
-  // 末尾是半个代理对:丢掉
+  // Trailing half of a surrogate pair: discard
   if (out && /[\uD800-\uDBFF]$/.test(out)) out = out.slice(0, -1);
   return { value: out, end: s.length, complete: false };
 }
 
-/** 读一个非字符串的值(数字、true、对象、数组……):按括号与字符串配平找到它的结尾 */
+/** Reads a non-string value (numbers, true, objects, arrays…): finds its end by balancing brackets and strings */
 function readRaw(s, i) {
   let depth = 0, j = i;
   while (j < s.length) {
@@ -92,12 +96,14 @@ export function parsePartialObject(text) {
 }
 
 /**
- * 半截工具调用的有用部分:最长的字符串字段(写了一半的多半就是它),和其它已经写完整的字段。
+ * Useful parts of a partial tool call: the longest string field (most likely the one that was
+ * half-written), and other already-completed fields.
  * @returns {{ key: string|null, text: string, complete: boolean, rest: Record<string, unknown> }}
  */
 export function salvageToolCall(args) {
   const { fields } = parsePartialObject(args);
-  // 写到一半被截断的那个字段(最后一个、没收引号的字符串)就是要接着写的;没有这样的才取最长的字符串字段
+  // The field truncated halfway through (the last unclosed string) is the one to continue writing;
+  // only take the longest string field if no such field exists
   const last = fields.at(-1);
   let best = last && last.string && !last.complete ? last : null;
   if (!best) for (const f of fields) if (f.string && (!best || f.value.length > best.value.length)) best = f;

@@ -1,19 +1,21 @@
 /**
- * 给 add_clip / update_clip 的 `params` 生成真实的 JSON Schema。
+ * Generates real JSON Schema for `params` of add_clip / update_clip.
  *
- * 为什么需要它:`params` 的合法字段取决于 cardId,静态写不出来。原来的写法是
- * `params: { type: "object" }` —— 一个没有任何字段说明的自由对象。
- * MCP server 走 tools/list 时会动态换成下面这个 anyOf,但 **API 直连从来没做这一步**,
- * 于是模型收到的是被 sanitizeSchema 规范成的 `{ type:"object", properties:{} }`,
- * 意思变成「这个对象没有任何字段」—— 模型因此**根本无法传任何卡片参数**,
- * 建出来的卡永远是 params: {}。字幕卡没有 lines、动效卡全是默认值,根子都在这里。
+ * Why it is needed: valid fields of `params` depend on cardId and cannot be written statically.
+ * The original code was `params: { type: "object" }`: a free-form object without any property
+ * descriptions. When the MCP server goes through tools/list, it dynamically replaces this with the
+ * anyOf below, but **direct API has never done this step**. Consequently, what the model receives
+ * is `{ type:"object", properties:{} }` normalized by sanitizeSchema, which means "this object has
+ * no properties": the model is therefore **completely unable to pass any card parameters**,
+ * and created cards always have params: {}. Caption cards lack lines, motion graphics cards are all
+ * default values: the root cause is right here.
  *
- * 两条路现在共用这一份,不会再出现「CLI 能传、API 传不了」的不对称。
+ * Both paths now share this logic, eliminating the asymmetry where "CLI can pass them, but API cannot".
  */
 
 import { PARAMS_PATCH_DESC } from "./tools/clips.mjs";
 
-/** 控件类型 → JSON Schema 类型 */
+/** Control type → JSON Schema type */
 function typeOf(control) {
   if (control.type === "number") return { type: "number" };
   if (control.type === "select") {
@@ -26,7 +28,8 @@ function describe(control) {
   const bits = [control.label].filter(Boolean);
   if (control.required) bits.push("required");
   if (control.hint) bits.push(control.hint);
-  // 素材目录:列出可选的 URL,但不做 enum —— 目录之外的 URL / 内联 JSON 也是合法的
+  // Asset catalog: lists candidate URLs, but does not use enum: URLs outside the catalog /
+  // inline JSON are also valid
   if (control.type === "asset" && Array.isArray(control.options) && control.options.length) {
     bits.push("Media catalog:" + control.options.map((o) => `${o.value}(${o.label})`).join(";"));
   }
@@ -34,11 +37,14 @@ function describe(control) {
 }
 
 /**
- * @param cards list_cards({ detail: 'full' }) 的返回,每项要有 id / controls
- * @param opts.patch true:给 update_clip 用的「增量补丁」版本。params 在那里是补丁,只写要改的键,
- *        所以不带 `required`(必填的键已经在 clip 上了,不用每次重传)并且说明里写明「没传的键保持当前值」。
- *        线上 2026-10-21:模型看到 required 和一整份字段,就把凭记忆的整份参数带回来,把用户刚撤销的颜色写了回去。
- * @returns 可直接塞进 add_clip.params / update_clip.params 的 schema
+ * @param cards Return value of list_cards({ detail: 'full' }), each item must have id / controls
+ * @param opts.patch true: "delta patch" version for update_clip. params is a patch there, only
+ *        writing keys to change, so it omits `required` (required keys are already on the clip, no
+ *        need to retransmit every time) and the description explicitly states "unpassed keys retain
+ *        current values". Production 2026-10-21: when the model saw required and the full set of
+ *        fields, it brought back the entire parameters from memory, writing back the color the user
+ *        had just undone.
+ * @returns Schema that can be plugged directly into add_clip.params / update_clip.params
  */
 export function buildParamsSchema(cards, opts = {}) {
   const usable = (cards || []).filter((c) => c && typeof c.id === "string" && Array.isArray(c.controls));
@@ -62,7 +68,7 @@ export function buildParamsSchema(cards, opts = {}) {
         type: "object",
         properties,
         ...(required.length && !patch ? { required } : {}),
-        // 留个口子:卡片刚加的参数还没进这份 schema 时也能传进来
+        // Leave an escape hatch: parameters newly added to a card can still be passed in before entering this schema
         additionalProperties: true,
       };
     }),
@@ -70,24 +76,27 @@ export function buildParamsSchema(cards, opts = {}) {
 }
 
 /**
- * 就地把 add_clip / update_clip 的 params 换成真实 schema。
- * 拿不到卡片列表时原样返回 —— 宁可退回自由对象,也不要因为拼 schema 失败让工具整个用不了。
+ * Replaces params of add_clip / update_clip in place with the real schema.
+ * Returns as-is when card list cannot be retrieved: better to fall back to a free-form object
+ * than make the tool completely unusable due to schema assembly failure.
  */
 export function injectCardParams(tools, cards) {
   const schema = buildParamsSchema(cards);
   if (!schema) return tools;
   const patchSchema = buildParamsSchema(cards, { patch: true });
   for (const tool of tools) {
-    // 只碰卡片的两个工具:add_part / set_part 也有 params,那是部件的,由 injectPartParams 管
+    // Touches only the two card tools: add_part / set_part also have params, but those belong to parts
+    // and are managed by injectPartParams
     if (tool?.name !== "add_clip" && tool?.name !== "update_clip") continue;
     const props = tool?.inputSchema?.properties ?? tool?.parameters?.properties;
-    // update_clip 的 params 是增量补丁,用补丁版(不带 required、说明写明没传的键保持当前值)
+    // params of update_clip is a delta patch; use patch version (omits required, description states
+    // unpassed keys retain current values)
     if (props && "params" in props) props.params = tool.name === "update_clip" ? patchSchema : schema;
   }
   return tools;
 }
 
-/* ── 部件:add_part / set_part 的 params,add_composite 的 parts ──────────────── */
+/* ── Parts: params of add_part / set_part, parts of add_composite ──────────── */
 
 const FRAME_SCHEMA = {
   type: "object",
@@ -99,7 +108,7 @@ const FRAME_SCHEMA = {
   required: ["x", "y"],
 };
 
-/** 部件参数按 partId 分支的 schema;和卡片那份一个做法 */
+/** Schema for part parameters branched by partId; same approach as the card one */
 export function buildPartParamsSchema(parts) {
   const usable = (parts || []).filter((p) => p && typeof p.id === "string" && Array.isArray(p.controls));
   if (usable.length === 0) return null;
@@ -119,8 +128,9 @@ export function buildPartParamsSchema(parts) {
 }
 
 /**
- * add_composite.parts 的 schema:每项 { partId, params, frame, enterMs, label, children }。
- * children 不能无限递归(Gemini 不支持 $ref),展开两层够用;再深的用 add_part 加。
+ * Schema for add_composite.parts: each item is { partId, params, frame, enterMs, label, children }.
+ * children cannot recurse infinitely (Gemini does not support $ref); expanding two levels is
+ * enough; add deeper ones with add_part.
  */
 export function buildPartsListSchema(parts, paramsSchema) {
   const ids = (parts || []).map((p) => p?.id).filter((id) => typeof id === "string");
@@ -140,7 +150,7 @@ export function buildPartsListSchema(parts, paramsSchema) {
   return { type: "array", items: item({ type: "array", items: item({ type: "array", items: item(null) }) }), description: "List of part instances; nest at most three levels here, use add_part for deeper ones" };
 }
 
-/** 就地把 add_part / set_part 的 params 和 add_composite 的 parts 换成真实 schema;拿不到部件列表就原样返回 */
+/** Replace params of add_part / set_part and parts of add_composite with real schemas in place; return as-is if part list cannot be obtained */
 export function injectPartParams(tools, parts) {
   const schema = buildPartParamsSchema(parts);
   if (!schema) return tools;

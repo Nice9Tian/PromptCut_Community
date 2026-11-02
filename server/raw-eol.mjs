@@ -1,13 +1,18 @@
 /**
- * `?raw` 源码统一换行(eol-eperm)。
+ * Unified newlines for `?raw` source code (eol-eperm).
  *
- * Vite 自带的 `?raw` 加载(`vite:asset`)把文件原文照字面塞进 `export default "..."`。Windows 上 autocrlf 检出是 CRLF,
- * 于是同一个提交在 CRLF 检出与 LF 检出上构建,内嵌源码表(`src/render/cardSourceFiles.mjs`、`src/cards/user/index.ts`、
- * `src/ai/roles/index.ts`)的字符串不同,在线构建的分块哈希跟着不同;页面侧拿它算的卡片源码版本(成本身份键的一段)也不同。
- * 服务端的代码版本(`server/frame-code.mjs`)早已统一成 LF,这里让页面侧同口径:项目 `src/` 下的 `?raw` 一律交出 LF 的原文。
+ * Vite's built-in `?raw` loader (`vite:asset`) puts the file's raw content literally into
+ * `export default "..."`. On Windows, autocrlf checkouts produce CRLF, so building the same commit
+ * on a CRLF checkout versus an LF checkout yields different strings in embedded source tables
+ * (`src/render/cardSourceFiles.mjs`, `src/cards/user/index.ts`, `src/ai/roles/index.ts`), causing
+ * different chunk hashes in online builds; the card source version calculated from it on the page
+ * side (a segment of the cost identity key) also differs. Server-side code versions
+ * (`server/frame-code.mjs`) were unified to LF long ago; here we align the page side with the same
+ * criteria: `?raw` under project `src/` always emits LF raw text.
  *
- * 排在 `enforce: 'pre'`,先于 `vite:asset`。卡片改动层(`vite-plugin-cards.ts` 的 `cardOverridesLoader`,也是 pre)
- * 在插件数组里排在本插件前面,改过的文件由它交出(它自己也统一换行),本插件只管其余。
+ * Placed at `enforce: 'pre'`, preceding `vite:asset`. The card overlay layer (`cardOverridesLoader`
+ * in `vite-plugin-cards.ts`, also pre) precedes this plugin in the plugins array; modified files
+ * are emitted by it (which also unifies newlines itself), and this plugin only handles the rest.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,7 +21,7 @@ export const normalizeEol = (text) => String(text).replace(/\r\n/g, '\n');
 
 const RAW_QUERY = /[?&]raw(?:&|$)/;
 
-/** 这个模块 id 该不该由本插件交出:带 `?raw`、落在 `<root>/src/` 下的绝对路径 */
+/** Whether this module id should be emitted by this plugin: absolute paths with `?raw` located under `<root>/src/` */
 export function rawEolTarget(root, id) {
   if (typeof id !== 'string' || !RAW_QUERY.test(id)) return null;
   const file = id.split('?')[0];
@@ -26,18 +31,18 @@ export function rawEolTarget(root, id) {
   return file;
 }
 
-/** `?raw` 模块的代码:LF 原文 */
+/** Code of the `?raw` module: LF raw text */
 export const rawModuleCode = (text) => `export default ${JSON.stringify(normalizeEol(text))}`;
 
-/** Vite 插件 */
+/** Vite plugin */
 export function rawEolPlugin() {
   let root = process.cwd();
   return {
     name: 'promptcut-raw-eol',
     enforce: 'pre',
     configResolved(config) { root = config.root; },
-    // 入口页 index.html 同理:构建产物里的它照原文抄换行,CRLF 检出出来的 dist 就和 LF 的不同
-    // (Vite 拆掉入口 <script> 时还会在 </body> 前留下一个 CR,所以产物落盘前再统一一次)
+    // Same applies to entry page index.html: in build outputs it copies newlines verbatim, so dist from CRLF checkout differs from LF
+    // (when Vite removes entry <script>, it leaves a CR before </body>, so unify once more before output hits disk)
     transformIndexHtml: { order: 'post', handler: (html) => normalizeEol(html) },
     generateBundle: {
       order: 'post',

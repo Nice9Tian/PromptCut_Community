@@ -1,4 +1,4 @@
-/** 手机版的内联线性图标(演示稿的同一套:描边 1.8、圆角端点、颜色走 currentColor) */
+/** Inline line icons of the mobile app (the same set as the demo: stroke 1.8, round caps, color via currentColor) */
 const PATHS = {
   video: <><rect x="3" y="6" width="18" height="13" rx="2.5" /><path d="M3 10.5h18M7 6l2.5 4.5M12 6l2.5 4.5M17 6l2 4.5" /></>,
   image: <><rect x="3" y="4" width="18" height="16" rx="2.5" /><circle cx="9" cy="10" r="1.6" /><path d="M4 18l5-5 4 3.5 3-2.5 4 4" /></>,

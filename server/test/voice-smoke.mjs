@@ -1,9 +1,11 @@
-// 配音的真实冒烟:用 fixtures/voices.json 里的音色,走 API 各合成一句,文件写到临时目录。
-// **会花钱**(每句约几分钱;只用已经合成过的音色,不会触发 ¥9.9 的新音色费)。
-// 不在 npm test 里;手动跑:
-//   VOICE_API_KEY=sk-… node server/test/voice-smoke.mjs      # 用环境变量里的 API Key
-//   node server/test/voice-smoke.mjs                          # 用「配音设置」里存的 API Key
-// API 地址:配音设置里的(或跟随 API 设置);都没有就用 fixture 里记的那个。
+// Real voiceover smoke: use voices in fixtures/voices.json, synthesize one sentence each via API,
+// and write files to a temporary directory.
+// **Costs money** (a few cents per sentence; only uses already synthesized voices, won't trigger
+// the ¥9.9 new-voice fee).
+// Not in npm test; run manually:
+//   VOICE_API_KEY=sk-… node server/test/voice-smoke.mjs      # Use API Key from environment variable
+//   node server/test/voice-smoke.mjs                          # Use API Key stored in "Voiceover settings"
+// API address: from Voiceover settings (or follows API settings); if neither, use the one recorded in fixture.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

@@ -1,9 +1,11 @@
 /**
- * 工具实现里打编辑器接口(`/api/...`)用的地址。
+ * Address used in tool implementations to call editor APIs (`/api/...`).
  *
- * 页面里是同源相对地址,原样返回。C6.5 起一部分工具在 Agent 服务端(编辑器 vite 进程)里经 `ssrLoadModule`
- * 执行(`server/agent/`),Node 的 fetch 不认相对地址,服务端载入这些模块后调 `setApiBase("http://127.0.0.1:<端口>")`。
- * 只影响本模块的使用方,不改全局 fetch。
+ * In the page, it is a same-origin relative address, returned as is. Starting from C6.5, some
+ * tools run in the Agent server (editor vite process) via `ssrLoadModule` (`server/agent/`);
+ * Node's fetch does not accept relative addresses, so after loading these modules the server
+ * calls `setApiBase("http://127.0.0.1:<port>")`. Only affects consumers of this module
+ * without modifying the global fetch.
  */
 let base = "";
 

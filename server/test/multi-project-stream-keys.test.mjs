@@ -1,16 +1,27 @@
 /**
- * 多项目模式的产流：键与要求按「这条流展开出的子集」算（主会话 2026-10-22 定，三级：键认的是会影响这几帧画面的东西，不是整个项目）。
- * 跑：npm test -- server/test/multi-project-stream-keys.test.mjs（纯逻辑，真的卡片图与卡片计划，不起浏览器）
+ * Stream production in multi-project mode: keys and requirements computed by "subset expanded from
+ * this stream" (lead session decision, 2026-10-22, tier 3: keys identify things affecting these
+ * frame visuals, not the whole project).
+ * Run: npm test -- server/test/multi-project-stream-keys.test.mjs (pure logic, real card graph and
+ * card plan, no browser spawned)
  *
- *   MSK1  展开是确定的：同样的项目、同样的帧，算几次都是同一个子集、同一个键；按子集再展开一次还是同一个（节点手里的是子集也一样）
- *   MSK2  发布方与节点同一个 need：切分方拿到的流（`queueStreamOf` 的形状）与产流节点手里的完整的流算出同一个 `streamNeed`、
- *         同一份 `requires.cardSources`，逐字节相同
- *   MSK3  切分：流任务只要这条流展开出的子集里用到的那几份代码；没给 `streamCardSources` 的旧调用方照旧要全部
- *   MSK4  依赖下层的流退回整场景时，键按子集算：发布方（整个项目）与节点（只有子集）逐字节相同；项目里这一段以外的改动不让它作废，
- *         这一段以内的改动照旧作废
- *   MSK5  旧键对不上只会重算、不会取错：按旧口径（整个项目的 `entry.key`）出的流键与新键不同；执行器拿旧键的任务来对，
- *         这一版的流里没有它，回 `plan-mismatch`（不认领、不当成新键的结果用）
- *   MSK6  单卡流的键本来就只看这张卡（与项目里别的片段无关）：整个项目与子集算出的流键逐字节相同
+ *   MSK1  Expansion is deterministic: same project and same frames compute the same subset and same
+ *         key across multiple runs; expanding again from subset yields same result (even when node
+ *         holds only subset)
+ *   MSK2  Publisher and node share same need: stream received by splitter (shape of `queueStreamOf`)
+ *         and complete stream held by stream-producing node compute same `streamNeed`, same
+ *         `requires.cardSources`, byte-for-byte identical
+ *   MSK3  Splitting: stream tasks only require code used in subset expanded from this stream;
+ *         legacy callers not passing `streamCardSources` still require all as before
+ *   MSK4  When below-dependent streams fall back to whole scene, keys computed by subset: publisher
+ *         (whole project) and node (subset only) are byte-for-byte identical; changes outside this
+ *         segment do not invalidate it, changes within this segment still invalidate as usual
+ *   MSK5  Old key mismatches only trigger recalculation and do not fetch wrong one: stream keys
+ *         produced under old criteria (whole-project `entry.key`) differ from new keys; when runner
+ *         reconciles tasks with old keys, this stream version lacks it and returns `plan-mismatch`
+ *         (not claimed, not used as results for new keys)
+ *   MSK6  Single-card stream keys inherently inspect only this card (independent of other clips in
+ *         project): stream keys computed from whole project versus subset are byte-for-byte identical
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -37,7 +48,10 @@ const DEFS = {
 const getCard = (id) => DEFS[id];
 const VERSIONS = { odometer: 'builtin:odometer-v1', 'caption-track': 'builtin:caption-v1', 'user-a': 'user:a-v3', 'user-late': 'user:late-v7' };
 
-/** 从上到下：top（0～6）、glass 毛玻璃（1～4，目标卡）、mid（0～5，下层）、late（6～7，时间上不重叠）、vid 视频（0～8） */
+/**
+ * From top to bottom: top (0-6), glass frosted glass (1-4, target card), mid (0-5, lower layer),
+ * late (6-7, no time overlap), vid video (0-8)
+ */
 const project = () => ({
   id: 'subset-p', width: 1280, height: 720, fps: 30, duration: 8, themeId: 'dark', style: {},
   media: [{ id: 'm1', kind: 'video', hash: 'h1', url: '/@media/h1' }, { id: 'm9', kind: 'image', hash: 'h9', url: '/@media/h9' }],
@@ -53,11 +67,17 @@ const project = () => ({
 const edit = (fn) => { const p = project(); fn(p); return p; };
 const clipOf = (p, id) => p.tracks.flatMap((t) => t.clips).find((c) => c.id === id);
 
-/** 用真的管线方法算子集的整场景键（`FramePipeline#subsetFrameKey`，代码版本与卡片身份用替身） */
+/**
+ * Real pipeline method computes subset whole-scene key (`FramePipeline#subsetFrameKey`, stubs for
+ * code version and card identity)
+ */
 const fakePipeline = { code: () => 'code-1', cardSources: (p) => Object.fromEntries(p.tracks.flatMap((t) => t.clips).map((c) => c.cardId).filter((id) => VERSIONS[id] && id.startsWith('user')).map((id) => [id, VERSIONS[id]])) };
 const subsetKeyOf = (p) => (need) => FramePipeline.prototype.subsetFrameKey.call(fakePipeline, p, need);
 
-/** 这份项目的一版：真的卡片图 → 真的卡片计划。`unknown`：预渲染间不认识定义的片段（这时依赖下层的流退回整场景的键） */
+/**
+ * One version of this project: real card graph → real card plan. `unknown`: prerender does not
+ * recognize defined clip (below-dependent streams fall back to whole-scene keys)
+ */
 function entryOf(p, { unknown = [], subset = true } = {}) {
   const graph = projectCardGraph(p, getCard);
   const cardPlan = new CardFrameCache({ root: ROOT, project: p, envFingerprint: FP }).plan({
@@ -79,7 +99,8 @@ test('MSK1 expansion is deterministic: the same project and the same frames alwa
   for (let i = 0; i < 5; i += 1) assert.equal(JSON.stringify(expandProject(structuredClone(p), need).project), a, `attempt ${i + 2}`);
   const key = subsetKeyOf(p)(need);
   assert.equal(subsetKeyOf(structuredClone(p))(need), key);
-  // 节点手里只有一个更大的子集（例如这一版清单里几张卡的并集）：再按这条流展开，结果与从整个项目展开逐字节相同
+  // The node holds only a larger subset (e.g. union of several cards in this manifest version):
+  // expanding again by this stream is byte-for-byte identical to expanding from the whole project
   const wider = expandProject(p, { spans: [[0, 5]], clipIds: [] }).project;
   assert.equal(JSON.stringify(expandProject(wider, need).project), a);
   assert.equal(subsetKeyOf(wider)(need), key, 'a subset of a subset, the key is unchanged');
@@ -90,7 +111,7 @@ test('MSK1 expansion is deterministic: the same project and the same frames alwa
 test('MSK2 the publisher and the node get the same need and the same requires.cardSources (byte for byte identical)', () => {
   const p = project();
   for (const spec of specsOf(p)) {
-    const q = queueStreamOf(spec); // 切分方拿到的形状
+    const q = queueStreamOf(spec); // Shape received by splitter
     assert.deepEqual(streamNeed(q), streamNeed(spec), `${spec.kind}:${spec.topClipId}`);
     assert.equal(JSON.stringify(subsetCardSources(p, streamNeed(q), VERSIONS)), JSON.stringify(subsetCardSources(p, streamNeed(spec), VERSIONS)));
   }
@@ -111,7 +132,8 @@ test('MSK3 splitting: a stream task needs only the code used in this stream\'s s
   console.log('[MSK3] code needed by the frosted-glass stream', Object.keys(glass[0].requires.cardSources).join(','), '; the whole project has', Object.keys(VERSIONS).join(','));
   const old = splitPlan(base).filter((t) => t.kind === 'stream' && t.input.clipId === 'glass' && t.requires.belowDependent);
   for (const t of old) assert.deepEqual(t.requires.cardSources, VERSIONS, 'old caller: all');
-  // 两种切法任务 id 与结果键都相同（键没变，只是要求变少）
+  // Both splitting methods have identical task id and result key (key unchanged, requirements simply
+  // reduced)
   assert.deepEqual(glass.map((t) => t.id), old.map((t) => t.id));
 });
 
@@ -119,17 +141,19 @@ test('MSK4 when a stream that depends on lower layers falls back to the whole sc
   const p = project();
   const pub = belowOf(p, { unknown: ['mid'] });
   assert.equal(pub.belowScene, true, 'precondition: mid is not in the card plan, falling back to the whole scene');
-  // 节点手里只有这条流展开出的子集（多项目模式）：照子集算出来的流的键与发布方逐字节相同
+  // The node holds only the subset expanded from this stream (multi-project mode): stream key
+  // computed from subset is byte-for-byte identical to publisher
   const sub = expandProject(p, streamNeed(pub)).project;
   const node = belowOf(sub, { unknown: ['mid'] });
   assert.equal(node.contentKey, pub.contentKey);
   assert.equal(node.streamKey, pub.streamKey);
-  // 这一段以外（late 在 6～7 秒）的改动：键不变（原来按整个项目的键会作废）
+  // Changes outside this segment (late at 6-7s): key remains unchanged (previously invalidated under
+  // whole-project key)
   const outside = belowOf(edit((q) => { clipOf(q, 'late').params.text = 'changed'; }), { unknown: ['mid'] });
   assert.equal(outside.contentKey, pub.contentKey, 'changing late does not affect this segment');
   const outsideOld = belowOf(edit((q) => { clipOf(q, 'late').params.text = 'changed'; }), { unknown: ['mid'], subset: false });
   assert.notEqual(outsideOld.contentKey, belowOf(p, { unknown: ['mid'], subset: false }).contentKey, 'control: under the old definition, any change to late invalidates it');
-  // 这一段以内（top 在 0～6 秒，挡在上面）的改动：照旧作废
+  // Changes within this segment (top at 0-6s, occluding above): invalidated as usual
   assert.notEqual(belowOf(edit((q) => { clipOf(q, 'top').params.text = 'changed'; }), { unknown: ['mid'] }).contentKey, pub.contentKey);
 });
 
@@ -139,7 +163,8 @@ test('MSK5 an old key that does not match only causes a recompute, never a wrong
   const stale = belowOf(p, { unknown: ['mid'], subset: false });
   assert.notEqual(stale.contentKey, fresh.contentKey);
   assert.notEqual(stale.streamKey, fresh.streamKey, 'the result key (the directory in the stream store) also differs: old output cannot be found under the new key');
-  // 执行器：这一版的流里只有新键；旧键的任务来了不认，回 plan-mismatch（任务按失败处理，队列照新键重新切分、重算）
+  // Runner: only new keys exist in this stream version; tasks with old keys are rejected, returning
+  // plan-mismatch (task treated as failed, queue re-splits and re-computes according to new key)
   const { createPrerenderExecutor } = await import('../prerender-executor.mjs');
   const entry = entryOf(p, { unknown: ['mid'] });
   const pipeline = {
@@ -155,7 +180,8 @@ test('MSK5 an old key that does not match only causes a recompute, never a wrong
     requires: { envFingerprint: FP, codeVersion: CV, belowDependent: true, transcode: true, capabilities: { streams: true } },
   };
   await assert.rejects(executor.render(task, {}), (err) => err?.code === 'plan-mismatch', 'old key: plan-mismatch');
-  // 同一个任务换成新键：对得上（产流那一步由替身报错，说明确实走到了产）
+  // The same task switched to a new key: matches (the stream production step throws an error from
+  // the test double, showing that it indeed reached production)
   await assert.rejects(executor.render({ ...task, resultKey: fresh.streamKey, input: { ...task.input, contentKey: fresh.contentKey } }, {}), /should not produce/);
 });
 

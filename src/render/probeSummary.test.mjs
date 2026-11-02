@@ -29,14 +29,15 @@ test('stepped card fully advanced: catchUpMs is just the sum of the frames, no e
 });
 
 test('timing pass was capped: the remaining frames are filled with the "median excluding the first frame", not the average', () => {
-  // 首帧 20 ms(建树 + 解析关键帧),其余 40 帧各 1 ms;片段共 300 帧
+  // First frame 20 ms (tree building + keyframe parsing), remaining 40 frames 1 ms each; clip total 300 frames
   const steps = [20, ...seq(40, () => 1)];
   const out = summarizeProbe({ kind: 'stepped', steps, totalFrames: 300, truncated: true }, DEFAULT_TUNING);
   assert.equal(out.remainingFrames, 259);
   assert.equal(out.restMedianMs, 1);
   assert.equal(out.extrapolatedMs, 259);
   assert.equal(out.catchUpMs, 20 + 40 + 259);
-  // 旧口径(已推帧的平均 × 总帧数)在「首帧贵」的卡上系统性偏大
+  // Legacy metric (average of pushed frames × total frames) is systematically
+  // overestimated on cards with "expensive first frame"
   assert.ok(out.legacyCatchUpMs > out.catchUpMs * 1.3, `old method ${out.legacyCatchUpMs} vs new method ${out.catchUpMs}`);
 });
 
@@ -52,7 +53,7 @@ test('with fewer than STEP_MIN_SAMPLES samples, stepMs falls back to the max (co
   const out = summarizeProbe({ kind: 'stepped', steps, totalFrames: 6 }, DEFAULT_TUNING);
   assert.equal(out.samples, 6);
   assert.equal(out.stepMs, 9);
-  // 把门槛放低就走百分位
+  // Lowering the gate uses percentiles
   const loose = summarizeProbe({ kind: 'stepped', steps, totalFrames: 6 }, resolveTuning({ STEP_MIN_SAMPLES: 8 }));
   assert.equal(loose.stepMs, 9, 'STEP_MIN_SAMPLES clamp lower bound is 8, 6 samples are still not enough');
   const enough = summarizeProbe({ kind: 'stepped', steps: seq(20, (i) => (i === 19 ? 9 : 1)), totalFrames: 20 }, DEFAULT_TUNING);

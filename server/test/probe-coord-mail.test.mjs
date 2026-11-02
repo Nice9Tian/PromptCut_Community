@@ -1,4 +1,4 @@
-// 协调口里两个 Agent 之间的 HTTP 信箱（scripts/probes/probe-coord.mjs 的 createMailbox）。
+// HTTP mailbox between two Agents in coordination port (createMailbox in scripts/probes/probe-coord.mjs).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

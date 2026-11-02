@@ -1,9 +1,12 @@
 /**
- * `accept-018-files-old-proc-fixtures.mjs`(合成旧文件矩阵)的自检:样本造得出来,并且 main 上现有的读取代码读得懂它们——
- * 关联解析、素材引用保留、.procp 拆包后落进内容库的哈希与样本声明一致(缺的就是缺的)。
- * 这不是转换器的测试(转换器还没有,见 2.1-8),只保证将来拿它们当输入时样本本身是对的。
+ * Self-check for `accept-018-files-old-proc-fixtures.mjs` (synthetic legacy file matrix): samples
+ * can be created, and existing read code on main can understand them: association resolution,
+ * asset reference retention, and hashes of unpacked .procp stored into the content store match
+ * sample declarations (what is missing is missing).
+ * This is not a converter test (converter does not exist yet, see 2.1-8); it only ensures the
+ * samples themselves are correct when used as input in the future.
  *
- * 跑:npm test -- server/test/accept-018-files-old-proc-fixtures.test.mjs
+ * Run: npm test -- server/test/accept-018-files-old-proc-fixtures.test.mjs
  */
 import { srcUrl } from '../../src/testing/registerTs.mjs';
 import test from 'node:test';

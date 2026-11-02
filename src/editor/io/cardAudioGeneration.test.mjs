@@ -86,7 +86,8 @@ test('Source and parameter updates make results stale; a late upload after cance
     const job = generateCardAudio(clip.id); const rejection = assert.rejects(job, /aborted|has changed/);
     await until(() => release); assert.equal(cancelCardAudioGeneration(clip.id), true); release(); await rejection;
     assert.equal(getState().project.media.length, 0);
-    // 上一趟即使被取消，服务端仍可能收完字节。清理此测试服务的哈希以再次制造在途上传。
+    // Even if the previous pass was cancelled, the server might still finish receiving all bytes.
+    // Clear this test service's hashes to trigger an in-flight upload again.
     f.complete.clear();
     release = undefined;
     const another = generateCardAudio(clip.id); const stale = assert.rejects(another, /has changed/);
@@ -104,7 +105,8 @@ test('Source and parameter updates make results stale; a late upload after cance
 test('Online only reuses the WAV and never runs the user\'s audio; a missing persistent sound fails explicitly', async () => {
   const f = service();
   try {
-    // 用户卡:在线页面不执行它的声音代码(内置卡 2026-10-06 起可以在线合成,见 onlineSoundJudge.test.mjs)
+    // User card: the online page does not execute its audio code (built-in cards can synthesize
+    // online starting 2026-10-06, see onlineSoundJudge.test.mjs)
     const userDef = { ...def, id: 'av-user-fixture', source: 'user' };
     registerCards([userDef]);
     configureCardAudio({ getCard: id => id === def.id ? def : id === userDef.id ? userDef : undefined, sourceVersionOf: () => sourceVersion });

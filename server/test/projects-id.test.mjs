@@ -1,4 +1,4 @@
-// 草稿 id 直接当文件名用,这道校验是唯一挡住路径穿越的东西。
+// Draft id is used directly as file name; this validation is the only thing preventing path traversal.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { isValidDraftId } from "../vite-plugin-projects.ts";

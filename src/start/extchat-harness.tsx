@@ -1,14 +1,20 @@
 /**
- * 拓展栏里那块聊天面板的画法探针用的页面(只给 `scripts/probes/vibe-ext-chat-probe.mjs` 用,不进任何构建)。
+ * Page used by the probe for how the chat panel in the side panel is drawn (only for
+ * `scripts/probes/vibe-ext-chat-probe.mjs`, not part of any build).
  *
- * 不接云端、不接项目、不挂真舞台:直接用探针给的假消息画出那条拓展栏 ——
- * 上面两段(画面、修改前 / 修改后)用同样的 `.ps-ext-sec` 外壳加一块定高的占位(真内容是预览画面,
- * 那要整条渲染管线,和这支探针要验的「截断和高度分配」无关),下面挂真的 `ExtChatPanel` 和真的 `Composer`。
+ * No cloud, no project, no real stage: it draws that side panel directly from fake messages given by the probe ---
+ * the two upper sections (Visuals, Before / After) use the same `.ps-ext-sec` shell plus a fixed-height
+ * placeholder (the real content is the preview picture, which needs the whole render pipeline and has
+ * nothing to do with the "truncation and height allocation" this probe verifies), and the real
+ * `ExtChatPanel` and the real `Composer` hang below.
  *
- * 这样能验的就是 issue #4 定下的那几条:只有最新一条 Agent 回复留全文、其余收成两行、
- * 折起来的「Agent 操作」标一句还有几条、点一下能展开,以及「甲」——上面两段照常摊开、聊天面板吃掉剩下的高度。
- * 输入框在哪(`ChatView.tsx` 的 `inPanel`)不在这支里验,那是真页面上的事。
- * `showScrub` 打开时一并画出详细编辑与小窗两条进度滑杆(`.ps-detail-scrub`、`.ps-ext-scrub`),供 `vibe-scrub-probe.mjs` 验 issue #31。
+ * What this can verify are the points set in issue #4: only the latest Agent reply keeps its full text, the
+ * rest collapse into two lines, the folded "Agent actions" show a line saying how many more there are and
+ * can be expanded with a click, and "option A": the two upper sections spread out as usual and the chat
+ * panel takes the remaining height.
+ * Where the input box goes (`inPanel` in `ChatView.tsx`) is not verified here; that is a matter for the real page.
+ * When `showScrub` is on, the two progress sliders of detail editing and the mini window (`.ps-detail-scrub`,
+ * `.ps-ext-scrub`) are drawn as well, for `vibe-scrub-probe.mjs` to verify issue #31.
  */
 import { useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -23,11 +29,11 @@ import { ExtChatPanel } from "./ExtChatPanel";
 
 export interface ExtChatHarnessState {
   messages: ChatMessage[];
-  /** 这条拓展栏多宽(`sideWidth.ts` 的 EXT_WIDTH 允许 250～520) */
+  /** How wide this side panel is (`EXT_WIDTH` in `sideWidth.ts` allows 250 to 520) */
   width: number;
   canSend: boolean;
   whyNot: string | null;
-  /** 打开时在左列与拓展栏「画面」段画出两条真实进度滑杆,供 `vibe-scrub-probe.mjs` 验收 issue #31 */
+  /** When on, draws two real progress sliders in the left column and the side panel "Visuals" section, for `vibe-scrub-probe.mjs` to run the acceptance check on issue #31 */
   showScrub?: boolean;
 }
 

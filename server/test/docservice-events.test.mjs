@@ -1,6 +1,7 @@
 /**
- * 工具调用事件模块（C6.5 设计稿 `docs/plan/c65-design.md` 第 7 节）与内容库写入身份（第 10 节）。用例 DS-E1～DS-E6。
- * 跑：node --test server/test/docservice-events.test.mjs
+ * Tool invocation event module (C6.5 design draft `docs/plan/c65-design.md` section 7) and content
+ * store write identity (section 10). Test cases DS-E1-DS-E6.
+ * Run: node --test server/test/docservice-events.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

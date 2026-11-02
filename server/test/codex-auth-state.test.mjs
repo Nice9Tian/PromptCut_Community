@@ -48,7 +48,8 @@ const { startCliLoop } = await import('../runners/cli-loop.mjs');
 const { probeQuota } = await import('../runners/quota.mjs');
 let home;
 const write = patch => fs.writeFileSync(path.join(home, 'simulation.json'), JSON.stringify(patch));
-// 假 CLI 边跑边追加，这里可能读到空文件或半行，只算写完的行
+// The mock CLI appends while running; empty files or partial lines might be read here, only count
+// completed lines
 const calls = () => fs.existsSync(path.join(home, 'calls.jsonl')) ? fs.readFileSync(path.join(home, 'calls.jsonl'), 'utf8').split('\n').slice(0, -1).map(JSON.parse) : [];
 const wait = ms => new Promise(r => setTimeout(r, ms));
 async function until(fn) { for(let n=0;n<300;n++) { if(fn()) return; await wait(10); } assert.fail('timeout'); }

@@ -1,13 +1,15 @@
 /**
- * agy 这条路的提示词必须走 stdin,不能塞进命令行。
+ * Prompts on the agy path must go through stdin and cannot be stuffed into the command line.
  *
- * 跑法 —— **必须带这个 flag**:
+ * How to run: **must include this flag**:
  *   node --experimental-test-module-mocks --test server/test/agy-stdin.test.mjs
  *
- * 钉住的是一个真事故:原来是 `-p <整个提示词>`。Windows 单条命令行上限 32767 字符,
- * 系统提示词本身 15,000 出头还撑得住,一旦叠上文本协议那份工具清单(33,000)就是 49,000,
- * 直接 spawn ENAMETOOLONG —— 也就是「原生工具被拒 → 改用文本协议重试」这条兜底路
- * 从来没成功过,一进去就炸。claude.mjs / codex.mjs 早就走 stdin 了,agy 是唯一的例外。
+ * Pins down a real incident: originally it was `-p <entire prompt>`. The single command-line
+ * limit on Windows is 32767 characters; the system prompt itself at just over 15,000 could hold up,
+ * but once stacked with the text protocol tool manifest (33,000) it reached 49,000, directly
+ * triggering spawn ENAMETOOLONG: meaning the fallback path of "native tools rejected -> retry using
+ * text protocol" had never succeeded and blew up upon entry. claude.mjs / codex.mjs have long used
+ * stdin; agy was the sole exception.
  */
 import { test, mock, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,16 +18,16 @@ import { PassThrough, Writable } from 'node:stream';
 import * as realChildProcess from 'node:child_process';
 import { useFakeCliHome } from './fake-cli-home.mjs';
 
-// claude / agy 解析到临时目录里的假 .exe,断言 spawn 实参时不受本机装法(npm 垫片等)影响
+// claude / agy resolve to fake .exe in temp directory, so asserting spawn args is unaffected by local install (npm shims, etc.)
 const fakeCli = useFakeCliHome();
 after(() => fakeCli.dispose());
 
-/** Windows 一条命令行(含 exe 路径和所有参数)的硬上限 */
+/** Hard limit for a single Windows command line (including exe path and all arguments) */
 const WINDOWS_CMDLINE_LIMIT = 32767;
 
 let spawned;
-// 只换掉 spawn,其余原样透传 —— 整个模块换掉的话,同一张图里别的模块
-// (runners/auth.mjs 要 execFile)会在 import 阶段就找不到导出而挂掉
+// Only swap spawn and pass through the rest as-is: replacing the whole module would cause other
+// modules in the same graph (runners/auth.mjs needs execFile) to fail at import due to missing exports
 mock.module('node:child_process', { exports: { ...realChildProcess, spawn: (exe, args) => {
   const child = new EventEmitter();
   child.stdout = new PassThrough();
@@ -35,7 +37,7 @@ mock.module('node:child_process', { exports: { ...realChildProcess, spawn: (exe,
   child.stdin = new Writable({ write(chunk, _enc, done) { stdin += chunk.toString(); done(); } });
   child.stdin.on('finish', () => {
     spawned.stdin = stdin;
-    // 回一条最小的 result,好让 runner 正常收尾
+    // Return a minimal result so runner finishes normally
     child.stdout.write(JSON.stringify({ event: 'result', result: { conversation_id: 'c1', status: 'SUCCESS', response: 'Got it' } }) + '\n');
     queueMicrotask(() => child.emit('close', 0));
   });
@@ -45,7 +47,7 @@ mock.module('node:child_process', { exports: { ...realChildProcess, spawn: (exe,
 
 const { startRun } = await import('../runners/agy.mjs');
 
-/** 跑一轮,把这次 spawn 的实参和写进 stdin 的东西交回来 */
+/** Run one round and return the spawn arguments and what was written to stdin this time */
 async function run(opts) {
   spawned = null;
   const events = [];
@@ -82,7 +84,7 @@ test('stdin is the kind of NDJSON that agy accepts: it rejects input missing eve
   const lines = stdin.split('\n').filter(Boolean);
   assert.equal(lines.length, 1, 'One round, one message');
   const msg = JSON.parse(lines[0]);
-  // 这两个字段的名字是对着真 CLI 试出来的,写错任何一个 agy 都会当场报错
+  // Names of these two fields were tested against the real CLI; mistyping either causes agy to error immediately
   assert.equal(msg.event, 'user');
   assert.equal(msg.message.role, 'user');
   assert.match(msg.message.content, /System[\s\S]*User/);
@@ -96,9 +98,11 @@ test('Model / reasoning tier / session id still go on the command line and were 
 });
 
 /*
- * 名字里带档位的写法(gemini-3.8-flash-low)和 --effort 必须配对,配不上 agy 直接拒整轮。
- * 面板已经拆成「基名 + 档位」了,但后台任务、分工模式那几条路不经过面板,
- * 会话历史里也可能存着早先带后缀的名字 —— 这里是最后一道。
+ * Names written with tiers (gemini-3.8-flash-low) must pair with --effort; if they mismatch, agy
+ * rejects the whole round outright.
+ * The panel has been split into "base name + tier", but paths like background tasks and split-work
+ * mode do not go through the panel, and earlier names with suffixes might still be in session
+ * history: this is the last line of defense.
  */
 test('A model name with a tier suffix: strip it down to the base name and use the suffix as the tier, so the pair is guaranteed to be valid', async () => {
   const { args } = await run({ model: 'gemini-3.8-flash-low', effort: 'high' });

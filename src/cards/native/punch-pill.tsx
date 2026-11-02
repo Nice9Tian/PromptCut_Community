@@ -45,7 +45,8 @@ export const punchPill: CardDef<Params> = {
   useWhen: "Very short key words, selling-point tags or slogans (2 to 8 characters, exclamation mark not required) shown as a glowing capsule that pops in. The font is very large and stays on a single line without wrapping, so text that is too long will overflow the rounded corners. For a full emphasis sentence use blur-text; for quoting exact words use quote-lockup.",
   tags: ["quotable line","Slogan","short phrase","exclamation"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,

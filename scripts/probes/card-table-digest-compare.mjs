@@ -1,31 +1,40 @@
 /**
- * 卡片身份摘要的改前改后比对(渲染重构「丁」的硬约束:除了补登记的卡,别的内置卡的
- * 预渲染结果的键不许因为审阅表多了字段而变)。
+ * Card identity digest comparison before and after changes (hard constraint of render refactor
+ * "Ding": keys of prerender output for other built-in cards must not change due to added fields
+ * in the review table, except for backfilled cards).
  *
- * 做什么:对全部内置卡(`src/cards/index.ts` 注册的那四组:magicui、native、素材封装卡、探针卡),
- * 在基准提交和当前工作区各算一遍,逐张比。每张卡放进一个只有它自己的片段(缺省参数、30 帧每秒、2 秒、
- * 1920×1080),走和产品相同的函数:`projectCardGraph` 摊图 → 节点上的能力表 → `cardNodeIdentities`
- * (节点身份)、`cardSnapshotIdentity`(共享快照键的内容键)、`cardCostKey`(成本键)。源码版本用
- * `cardSourceVersion` 按卡片自己的导入闭包算,生成快照的代码指纹用 `snapshotCode`。
+ * What it does: for all built-in cards (the four groups registered in `src/cards/index.ts`:
+ * magicui, native, media wrapper cards, probe cards), calculate once each on the base commit
+ * and current checkout, comparing card by card. Place each card into a clip containing only
+ * itself (default parameters, 30 fps, 2 seconds, 1920×1080), running through the same functions
+ * as production: `projectCardGraph` graph flattening → capability table on nodes →
+ * `cardNodeIdentities` (node identities), `cardSnapshotIdentity` (content key of shared
+ * snapshot key), `cardCostKey` (cost key). Source version is calculated by `cardSourceVersion`
+ * from the card's own import closure, and code fingerprint for generating snapshots uses
+ * `snapshotCode`.
  *
- * 每张卡分四栏比:
- *   能力表      节点上的 `capabilities`(审阅表的内容经它进键)
- *   源码版本    这张卡导入闭包的全文(闭包里任何一个文件改一个字都会变)
- *   键          节点身份、快照内容键、成本键(真实的键,上面两样都在里面)
- *   键(定源码)  把源码版本换成常量后再算一遍的键:只看「能力表和节点」这一路有没有变
+ * Compare each card across four columns:
+ *   Capability table   Node `capabilities` (review table content enters keys through it)
+ *   Source version     Full text of card's import closure (changes if any file in closure changes a byte)
+ *   Keys               Node identities, snapshot content key, cost key (real keys, containing both above)
+ *   Keys (fixed src)   Keys recalculated after setting source version to a constant: checks only whether
+ *                      the "capability table and nodes" path changed
  *
- * 用法(在仓库或工作区根目录):
+ * Usage (at repository or workspace root):
  *   node scripts/probes/card-table-digest-compare.mjs [--base main] [--expect id1,id2,…] [--json out.json]
  *
- *   --base    基准提交,缺省 main。用 `git archive` 把它的 src/ 与 server/ 解到
- *             out/card-table-digest/<提交>/ 下(out/ 不入库),不动任何工作区与分支。
- *   --expect  允许变的卡片 id(逗号分隔)。缺省是「丁」补登记的四张。
- *   --json    把两边逐张的结果写成 JSON。
- *   --caps-only  只核「能力表和节点」这一路:能力表、注册表里的定义、键(定源码)三栏一张都不许变(--expect 里的除外),
- *             源码版本和真实的键变不变不管。用在本来就要让源码版本变的改动上(例如动了 `src/kernel/frameMode.mjs`)。
+ *   --base       Base commit, defaults to main. Uses `git archive` to unpack its src/ and server/
+ *                under out/card-table-digest/<commit>/ (out/ is not stored), without touching any
+ *                workspace or branch.
+ *   --expect     Card IDs allowed to change (comma-separated). Defaults to four cards backfilled in "Ding".
+ *   --json       Write results from both sides card-by-card to JSON.
+ *   --caps-only  Only verify the "capability table and nodes" path: none of the capability table,
+ *                registry definitions, or keys (fixed src) columns may change for any card (except
+ *                those in --expect), ignoring whether source version and real keys change. Used for
+ *                changes intended to alter source version (e.g. modifying `src/kernel/frameMode.mjs`).
  *
- * 退出码:0 = 只有 --expect 里的卡变了(键与能力表),并且它们确实都变了;1 = 别的卡变了,
- * 或者该变的没变;2 = 跑不起来。
+ * Exit code: 0 = only cards in --expect changed (keys and capability table), and they indeed all
+ * changed; 1 = other cards changed, or expected ones did not change; 2 = failed to run.
  */
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -43,7 +52,7 @@ const CAPS_ONLY = args.includes('--caps-only');
 
 const git = (...a) => execFileSync('git', a, { cwd: HERE, windowsHide: true, encoding: 'utf8', maxBuffer: 1 << 28 }).trim();
 
-/** 把基准提交的 src/、server/ 解到 out/ 下;依赖向上解析到仓库的 node_modules */
+/** Unpack src/ and server/ of base commit under out/; dependencies resolve upward to repository node_modules */
 function checkoutBase(ref) {
   const sha = git('rev-parse', ref);
   const dir = path.join(HERE, 'out', 'card-table-digest', sha.slice(0, 12));
@@ -52,7 +61,7 @@ function checkoutBase(ref) {
   fs.mkdirSync(dir, { recursive: true });
   const tar = path.join(dir, 'base.tar');
   execFileSync('git', ['archive', '--format=tar', '-o', tar, sha, 'src', 'server'], { cwd: HERE, windowsHide: true });
-  // 相对路径 + cwd:Git Bash 带的 GNU tar 会把 `C:` 当成远端主机名
+  // Relative path + cwd: GNU tar shipped with Git Bash treats `C:` as a remote hostname
   execFileSync('tar', ['-xf', 'base.tar'], { cwd: dir, windowsHide: true });
   fs.rmSync(tar);
   fs.writeFileSync(path.join(dir, '.done'), sha);
@@ -62,7 +71,7 @@ function checkoutBase(ref) {
 const FPS = 30, SECONDS = 2, STAGE = { width: 1920, height: 1080 };
 
 async function compute(root) {
-  // 载入器用当前工作区这一份(基准提交里可能还没有它),载的是 root 下的卡
+  // Loader uses current workspace copy (base commit may not have it yet), loading cards under root
   const kit = await loadBuiltinCards(root);
   try {
     const { load } = kit;
@@ -149,5 +158,6 @@ async function main() {
   return bad.length || missed.length ? 1 : 0;
 }
 
-// 卡片模块载入后会留下定时器(播放库、粒子库),不显式退出进程收不了场
+// Card modules leave timers behind after loading (playback library, particle library); process cannot
+// terminate cleanly without an explicit exit
 main().then(code => process.exit(code), error => { console.error(error); process.exit(2); });

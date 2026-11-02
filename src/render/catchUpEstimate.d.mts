@@ -1,16 +1,18 @@
 import type { CardCostRecord } from './cardCostKey.d.mts';
 
 /**
- * K3(b) 的「实际要追多少」（pinned 渲染 4：`t_c = (t − t_start) × FPS × t_oc`）。
- * `frames` 是从入点到此刻的帧数；回毫秒，封顶在整段 `catchUpMs` 上，
- * 算不出来就回整段代价（再没有就是 0，调用方自己兜底）。
+ * K3(b) "actual catch-up amount" (pinned render 4: `t_c = (t − t_start) × FPS × t_oc`).
+ * `frames` is the number of frames from the in point to this moment; returns milliseconds,
+ * capped at the full-clip `catchUpMs`. If calculation fails, returns the full-clip cost
+ * (or 0 if that is also absent; caller handles fallback).
  */
 export function catchUpEstimateMs(
   record: Partial<CardCostRecord> | null | undefined,
   frames: number,
 ): number;
 
-/** 整场景补跑的代价：推到 `t` 的积压（毫秒）与此后每秒时间线的墙钟（毫秒 / 秒）。见 `.mjs` 注释 */
+/** Whole-scene catch-up run cost: backlog pushed to `t` (ms) and wall clock per second
+ * of timeline thereafter (ms / s). See `.mjs` comments */
 export function sceneCatchUpCost(
   entries: readonly { start: number; end: number; record?: Partial<CardCostRecord> | null }[],
   t: number,
@@ -18,5 +20,6 @@ export function sceneCatchUpCost(
   activeAt?: (entry: { start: number; end: number }, t: number) => boolean,
 ): { backlogMs: number; ratePerSec: number };
 
-/** 播放态互换的目标拍要领先多少毫秒；后台推帧比播放慢（追不上）回 null */
+/** How many milliseconds ahead the target tick for playback-state swap should be;
+ * returns null if background frame pushing is slower than playback (cannot catch up) */
 export function playingLeadMs(backlogMs: number, ratePerSec: number): number | null;

@@ -1,13 +1,17 @@
 /**
- * 桌面 APP 经 MCP 直连(计划 `docs/plan/agent-workflow-plan.md` A4;语义 `user-workflow.md`「Agent 接入方式」「进度可见」)
- * 里 stdio MCP 服务(`server/mcp-server.mjs`)这一侧用到的纯函数:认厂商、定会话身份、找正在跑的编辑器、SKILL 提示词。
+ * Pure functions used on the stdio MCP service (`server/mcp-server.mjs`) side of desktop app direct
+ * MCP connections (plan `docs/plan/agent-workflow-plan.md` A4; semantics `user-workflow.md` "Agent
+ * connection type" "Progress visibility"): vendor recognition, determining session identity,
+ * finding running editors, and SKILL prompts.
  *
- * 不依赖 vite,也不读写任何用户配置;测试直接调。
+ * Does not depend on vite, nor read/write any user config; tests call directly.
  *
- * 身份怎么认(报告 `docs/reports/AGENT-skill-mcp.md`「未知数的结论」):
- *   - Claude Code 每个会话一个 `claude.exe`、各起一份 stdio MCP 进程,`_meta` 里没有会话号 —— 一个 MCP 进程算一个会话;
- *   - Codex 每次 `tools/call` 的 `_meta` 都带 `threadId` —— 按线程认,多个线程共用一个 MCP 进程也分得开,
- *     同一个线程换了 MCP 进程(Codex 重启)还是同一个身份。
+ * How identity is recognized (report `docs/reports/AGENT-skill-mcp.md` "Conclusions on unknowns"):
+ *   - Claude Code: one `claude.exe` per session, each launching a stdio MCP process, with no session
+ *     number in `_meta`: one MCP process counts as one session;
+ *   - Codex: every `tools/call` has `threadId` in `_meta`: recognized by thread, distinguishing
+ *     multiple threads sharing an MCP process; if the same thread switches MCP processes (Codex
+ *     restarts), it retains the same identity.
  */
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -15,7 +19,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { tr } from '../i18n.mjs';
 
-/** 已知客户端:`clientInfo.name` → 厂商 id 与给人看的名字 */
+/** Known clients: `clientInfo.name` → vendor id and human-readable name */
 const KNOWN_CLIENTS = [
   { test: /^claude-code$/i, vendor: 'claude-code', label: 'Claude Code' },
   { test: /codex/i, vendor: 'codex', label: 'Codex' },
@@ -27,7 +31,8 @@ const KNOWN_CLIENTS = [
 const clean = (v, max) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, max) : '');
 
 /**
- * 从 MCP `initialize` 的 `clientInfo` 认厂商。认不出来就用它自报的名字(截短),都没有是 `unknown`。
+ * Identify the vendor from MCP `initialize` `clientInfo`. If not recognized, use its self-reported
+ * name (truncated); if neither is present, use `unknown`.
  * @param {unknown} clientInfo
  * @returns {{ vendor: string, label: string, client: { name: string, version: string } }}
  */
@@ -42,14 +47,16 @@ export function vendorOf(clientInfo) {
   return { vendor: id || 'unknown', label: title || name || tr("Unknown desktop app"), client: { name, version } };
 }
 
-/** 这个 MCP 进程自己的会话号(一个进程一个;Claude Code 就靠它区分会话) */
+/** Session id of this MCP process itself (one per process; Claude Code relies on it to distinguish sessions) */
 export function newProcessSession() {
   return randomBytes(6).toString('base64url');
 }
 
 /**
- * 桌面会话在编辑器里的对话 ID(登记表、文档服务的写入身份、公告板都按它区分)。
- * 格式与 AI 栏的对话 ID 共用 `[A-Za-z0-9_-]{1,64}`,前缀 `desk-` 一眼看得出来源。
+ * Chat ID of the desktop session in the editor (the registry, document service write identity,
+ * and bulletin board all differentiate by it).
+ * Shares the format `[A-Za-z0-9_-]{1,64}` with AI panel chat IDs; the `desk-` prefix makes its
+ * origin obvious at a glance.
  * @param {{ processSession: string, thread?: string | null, vendor?: string }} o
  */
 export function desktopSessionKey({ processSession, thread = null, vendor = '' }) {
@@ -61,7 +68,7 @@ export function desktopSessionKey({ processSession, thread = null, vendor = '' }
   return `desk-${p}`;
 }
 
-/** `tools/call` 的 `_meta` 里的线程号(Codex 带 `threadId`,老版本在 `x-codex-turn-metadata.thread_id`) */
+/** Thread id in `_meta` of `tools/call` (Codex includes `threadId`, older versions in `x-codex-turn-metadata.thread_id`) */
 export function threadOf(meta) {
   if (!meta || typeof meta !== 'object') return null;
   const ok = (v) => (typeof v === 'string' && /^[A-Za-z0-9_.:-]{1,100}$/.test(v) ? v : null);
@@ -74,7 +81,7 @@ function defaultPidAlive(pid) {
     process.kill(pid, 0);
     return true;
   } catch (e) {
-    // 别的用户的进程:在,只是没权限发信号
+    // Another user's process: exists, but no permission to signal
     return e?.code === 'EPERM';
   }
 }
@@ -86,17 +93,19 @@ function argValue(argv, name) {
   return eq ? eq.slice(name.length + 1) : null;
 }
 
-/** 公共端口文件的位置:编辑器起来时写(`server/vite-plugin-ai.ts`),测试与探针起的编辑器不写 */
+/** Shared port file location: written when editor starts (`server/vite-plugin-ai.ts`), not by test/probe editors */
 export function defaultPortFile(tmpdir = os.tmpdir()) {
   return path.join(tmpdir, 'promptcut', 'port.json');
 }
 
 /**
- * 找用户正在用的那个编辑器实例。优先级:
- *   1. `--port <n>` 或环境变量 `PROMPTCUT_PORT`(AI 栏的命令行工具那条路由编辑器自己塞);
- *   2. `--port-file <文件>` 或 `PROMPTCUT_PORT_FILE`(探针用它指到自己起的实例,不读真正的 port.json);
- *   3. 公共的 `%TEMP%\promptcut\port.json`。
- * 端口文件里记了进程号且那个进程已经不在,算没有在跑的实例。
+ * Find the editor instance the user is actively using. Priority:
+ *   1. `--port <n>` or environment variable `PROMPTCUT_PORT` (injected by the editor itself for the
+ *      AI panel CLI tool route);
+ *   2. `--port-file <file>` or `PROMPTCUT_PORT_FILE` (used by probes to point to instances they
+ *      started, without reading the real port.json);
+ *   3. Shared `%TEMP%\promptcut\port.json`.
+ * If the port file records a PID and that process no longer exists, count as no running instance.
  *
  * @returns {{ ok: true, port: number, hosts: string[], source: string } | { ok: false, message: string, source: string }}
  */
@@ -143,8 +152,9 @@ export function discoverEditor({ env = process.env, argv = process.argv.slice(2)
 }
 
 /**
- * 给桌面 APP 的 SKILL 提示词,短版:放进 MCP `initialize` 的 `instructions`(Claude Code 拼进系统提示词,上限 2048 字符)。
- * 细节在 `get_skill_guide` 里,这里只说最要紧的几条。
+ * SKILL prompt for desktop app, short version: placed in MCP `initialize` `instructions` (Claude
+ * Code appends to system prompt, 2048 character limit).
+ * Details are in `get_skill_guide`; only the most critical rules are covered here.
  */
 export const SKILL_INSTRUCTIONS = [
   'PromptCut is a video editing app. Through this set of tools you directly edit the project the user currently has open in PromptCut, working at the same time as the user in the editor and the other Agents in the AI panel.',
@@ -156,14 +166,14 @@ export const SKILL_INSTRUCTIONS = [
   '5. When you need the user to decide or answer, stop and ask; do not keep editing.',
 ].join('\n');
 
-/** 桌面会话才有的本地工具:回完整的 SKILL 做法(不经编辑器,编辑器没开也能读) */
+/** Desktop-session local tool: returns full SKILL guide (bypasses editor, readable when editor is not running) */
 export const GUIDE_TOOL = Object.freeze({
   name: 'get_skill_guide',
   description: 'Call once before starting: reads PromptCut\'s full procedure (how to read the project, how to edit, how to view frames, how to report progress with report_progress, what to do when rejected). Takes no parameters and changes nothing.',
   inputSchema: { type: 'object', properties: {} },
 });
 
-/** `get_skill_guide` 回的全文 */
+/** Full text returned by `get_skill_guide` */
 export function skillGuide({ vendorLabel = '' } = {}) {
   return [
     '# Working in PromptCut',

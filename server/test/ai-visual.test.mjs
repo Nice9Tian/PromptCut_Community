@@ -148,7 +148,7 @@ test('writeJson & readJson', async (t) => {
   assert.equal(notFound, null);
 });
 
-/** 透明底上画若干不透明矩形 [x0, y0, x1, y1](含端点) */
+/** Draw multiple opaque rectangles [x0, y0, x1, y1] (inclusive) on a transparent background */
 function framePng(W, H, rects, opaque = false) {
   const png = new PNG({ width: W, height: H });
   png.data.fill(0);
@@ -161,7 +161,7 @@ function framePng(W, H, rects, opaque = false) {
 
 test('contentCrop: the union of the regions that appeared across 8 frames, with a margin, at the stage ratio, no narrower than 1/4 of the width, and not out of bounds', async () => {
   const W = 384, H = 216;
-  // 进场从左边飞到右边:两帧的位置都得框进去
+  // Entrance flies from left to right: positions of both frames must be boxed in
   const crop = await contentCrop([framePng(W, H, [[40, 90, 60, 110]]), framePng(W, H, [[150, 95, 170, 115]])]);
   assert.ok(crop);
   assert.ok(crop.x <= 40 && crop.x + crop.w >= 171, `Horizontally it must enclose 40..170: ${JSON.stringify(crop)}`);
@@ -170,7 +170,7 @@ test('contentCrop: the union of the regions that appeared across 8 frames, with 
   assert.ok(crop.w >= W / 4, 'No narrower than 1/4 of the width');
   assert.ok(crop.x >= 0 && crop.y >= 0 && crop.x + crop.w <= W && crop.y + crop.h <= H, 'Does not go out of bounds');
 
-  // 很小的一块:按最小宽度放大裁框,贴边时往里挪而不是出界
+  // Very small piece: enlarge crop box by minimum width, shift inward instead of going out of bounds when against edges
   const tiny = await contentCrop([framePng(W, H, [[0, 0, 3, 3]])]);
   assert.deepEqual([tiny.x, tiny.y, tiny.w >= W / 4], [0, 0, true]);
 });

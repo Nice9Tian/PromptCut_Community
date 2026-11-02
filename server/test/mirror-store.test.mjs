@@ -4,15 +4,20 @@ import { createMirrorStore, MAX_VERSIONS } from "../mirror-store.mjs";
 import { changedClips, projectHash } from "../../src/render/changedClips.mjs";
 
 /**
- * 镜像的存储本体(A7)。两个进程(编辑器 / 预渲染)各挂一份,帧请求按 `{session, localRev}`
- * 来这儿取项目 —— 所以这份测试要钉死的是「什么时候取得到、什么时候必须让页面重推」:
+ * Mirror storage core (A7). Mounted once in each of two processes (editor / prerender), frame
+ * requests fetch projects here by `{session, localRev}`: so this test pins down "when it can be
+ * retrieved, and when the page must re-push":
  *
- * - **8 版窗口**:请求和推送会交错,一个在飞的取帧请求要的是两秒前那一版;
- * - **stale**:两次推送乱序到达时旧的不能盖掉新的(不是错,回 200);
- * - **resync(409)**:补丁的基线滑出窗口、或者应用完哈希对不上 —— 哈希这一道是**唯一**
- *   能发现「两层 diff 自己写错了」的地方,漏掉它镜像会带着一份悄悄错掉的项目一直服务下去;
- * - **回拉补一版**(`insert`)不走 stale 闸:它按定义补的就是旧版本;
- * - **播放头**和项目分开存。
+ * - **8-version window**: requests and pushes interleave; an in-flight frame-fetch request asks for
+ *   the version from two seconds ago;
+ * - **stale**: when two pushes arrive out of order, the older must not overwrite the newer (not an
+ *   error, returns 200);
+ * - **resync(409)**: patch baseline slides out of window, or hashes do not match after applying:
+ *   the hash step is the **only** place that can detect "two-level diff bug wrote itself wrong",
+ *   omitting it allows the mirror to keep serving with a silently corrupted project;
+ * - **pulling back to catch up a version** (`insert`) bypasses stale gate: by definition what it
+ *   catches up is an older version;
+ * - **playhead** and project are stored separately.
  */
 
 const clip = (id, over = {}) => ({ id, start: 0, end: 1, kind: "card", cardId: "c", ...over });
@@ -23,13 +28,13 @@ const BASE = {
 };
 const project = (tracks) => ({ ...BASE, tracks });
 
-/** 拖一下第 `i` 段:store 是不可变更新,只有那一段和那条轨道换新对象 */
+/** Drag clip `i`: store is updated immutably, only that clip and that track receive new objects */
 function drag(p, ti, ci, start) {
   const t = p.tracks[ti];
   return { ...p, tracks: p.tracks.map((x, i) => (i === ti ? { ...t, clips: t.clips.map((c, j) => (j === ci ? { ...c, start, end: start + 1 } : c)) } : x)) };
 }
 
-/** 页面那一侧:把 prev→next 的改动按两层 diff 推给 store */
+/** Page side: push changes from prev→next to store as a two-level diff */
 function pushPatch(store, session, prev, next, fromLocalRev, toLocalRev) {
   return store.pushDiff({ session, fromLocalRev, toLocalRev, hash: projectHash(next), patch: changedClips(prev, next) });
 }
@@ -87,7 +92,7 @@ test("stale: a number in the same session that is not greater than the largest s
   }
   assert.equal(store.getMirror("s1", 3).project, a, "The old one did not overwrite the new one");
 
-  // 补丁那一路同一个判据
+  // Same criterion for the patch path
   const late = pushPatch(store, "s1", a, b, 2, 3);
   assert.equal(late.status, "stale");
 });
@@ -99,7 +104,7 @@ test("Two editor tabs do not overwrite each other", () => {
   store.pushFull({ session: "tab-A", localRev: 7, project: a });
   store.pushFull({ session: "tab-B", localRev: 1, project: b });
 
-  // B 的号比 A 小得多,但它是另一个 session —— 不该被当成 stale
+  // B's number is much smaller than A's, but it is another session: should not be treated as stale
   assert.equal(store.getMirror("tab-A", 7).project, a);
   assert.equal(store.getMirror("tab-B", 1).project, b);
   assert.equal(store.latestMirror().session, "tab-B", "The Agent gets the page that pushed last");
@@ -111,30 +116,31 @@ test("Two-level diff: after applying it is identical to the copy held by the pag
   const a = project([track("t1", 3), track("t2", 2)]);
   store.pushFull({ session: "s1", localRev: 1, project: a });
 
-  // 拖一段
+  // Drag a clip
   const b = drag(a, 0, 1, 4);
   assert.equal(pushPatch(store, "s1", a, b, 1, 2).status, "ok");
   assert.deepEqual(store.getMirror("s1", 2).project, b);
-  // 没动过的对象在镜像里还是同一个引用(8 版共享结构,这是它不吃内存的原因)
+  // Untouched objects remain same reference in mirror (structural sharing across 8 versions,
+  // why it uses no memory)
   assert.equal(store.getMirror("s1", 2).project.tracks[1], a.tracks[1]);
 
-  // 切轨道 hidden
+  // Toggle track hidden
   const c = { ...b, tracks: [{ ...b.tracks[0], hidden: true }, b.tracks[1]] };
   assert.equal(pushPatch(store, "s1", b, c, 2, 3).status, "ok");
   assert.equal(store.getMirror("s1", 3).project.tracks[0].hidden, true);
 
-  // 删一段 + 换轨道顺序
+  // Delete a clip + reorder tracks
   const d = { ...c, tracks: [c.tracks[1], { ...c.tracks[0], clips: c.tracks[0].clips.slice(1) }] };
   assert.equal(pushPatch(store, "s1", c, d, 3, 4).status, "ok");
   assert.deepEqual(store.getMirror("s1", 4).project.tracks.map((t) => t.id), ["t2", "t1"]);
   assert.equal(store.getMirror("s1", 4).hash, projectHash(d));
 
-  // 改画幅:顶层字段变了 → changedClips 给整份,pushDiff 也认
+  // Change aspect ratio: top-level field changed → changedClips passes whole set, pushDiff also accepts it
   const e = { ...d, width: 1280 };
   assert.equal(pushPatch(store, "s1", d, e, 4, 5).status, "ok");
   assert.equal(store.getMirror("s1", 5).project.width, 1280);
 
-  // 旧版本都还在,取帧请求晚到也拿得到
+  // Older versions are still retained; late-arriving frame-fetch requests can still get them
   assert.deepEqual(store.revsOf("s1"), [1, 2, 3, 4, 5]);
   assert.deepEqual(store.getMirror("s1", 1).project, a);
 });
@@ -152,7 +158,7 @@ test("resync(409): hash mismatch", () => {
   assert.equal(out.hash, projectHash(b));
   assert.equal(store.getMirror("s1", 2), null, "The mismatched version must not be accepted");
 
-  // 页面收到 409 就整份重推,同一个号照样收
+  // When page receives 409, it re-pushes in full; same number is accepted as usual
   assert.equal(store.pushFull({ session: "s1", localRev: 2, project: b }).status, "ok");
   assert.deepEqual(store.getMirror("s1", 2).project, b);
 });
@@ -166,7 +172,7 @@ test("resync(409): the baseline slid out of the window / this session has no ver
   store.pushFull({ session: "s1", localRev: 1, project: p });
   for (let rev = 2; rev <= 12; rev++) { const n = drag(p, 0, 0, rev); pushPatch(store, "s1", p, n, rev - 1, rev); p = n; }
 
-  // 窗口是 [5..12];拿第 3 版当基线的补丁补不回来
+  // Window is [5..12]; patch using version 3 as baseline cannot recover
   const out = store.pushDiff({ session: "s1", fromLocalRev: 3, toLocalRev: 13, hash: "x", patch: { kind: "tracks", order: null, tracks: [] } });
   assert.equal(out.status, "resync");
   assert.equal(out.reason, "window");
@@ -196,13 +202,14 @@ test("Pull-back fills in a version (insert): it does not go through the stale ga
   const v = [null, p];
   store.pushFull({ session: "s1", localRev: 1, project: p });
   for (let rev = 2; rev <= 4; rev++) { const n = drag(p, 0, 0, rev); pushPatch(store, "s1", p, n, rev - 1, rev); p = n; v[rev] = n; }
-  // 第 5 版的转发丢了,第 6 版靠整份补上:手里现在缺 5
+  // Forwarding for version 5 was lost, version 6 caught up in full: currently missing 5
   const five = drag(p, 0, 0, 5);
   const six = drag(five, 0, 1, 6);
   store.pushFull({ session: "s1", localRev: 6, project: six });
   assert.equal(store.getMirror("s1", 5), null);
 
-  // 一个在飞的取帧请求要第 5 版 —— 回拉回来只能走 insert,pushFull 会把它当乱序挡掉
+  // An in-flight frame-fetch request asks for version 5: pulling back can only use insert;
+  // pushFull would block it as out of order
   assert.equal(store.pushFull({ session: "s1", localRev: 5, project: five }).status, "stale");
   assert.equal(store.getMirror("s1", 5), null);
   const out = store.insert({ session: "s1", localRev: 5, project: five });
@@ -211,11 +218,11 @@ test("Pull-back fills in a version (insert): it does not go through the stale ga
   assert.equal(store.latestMirror().localRev, 6, "Filling in an old version should not touch \"the latest version\"");
   assert.deepEqual(store.revsOf("s1"), [1, 2, 3, 4, 5, 6]);
 
-  // 已经有的原样返回,不重复存
+  // Returns existing entries as-is, without storing duplicates
   assert.equal(store.insert({ session: "s1", localRev: 5, project: five }).status, "ok");
   assert.deepEqual(store.revsOf("s1"), [1, 2, 3, 4, 5, 6]);
 
-  // 比窗口里最旧的还旧:存进去也会当场被挤掉,直说没接住
+  // Older than oldest in window: storing it would be evicted immediately, report directly not caught
   let q = six;
   for (let rev = 7; rev <= 14; rev++) { const n = drag(q, 0, 0, rev); store.pushFull({ session: "s1", localRev: rev, project: n }); q = n; }
   assert.equal(store.revsOf("s1").length, 8);
@@ -234,12 +241,12 @@ test("Playhead: stored separately from the project and follows the current edito
   store.pushFull({ session: "s1", localRev: 1, project: project([track("t1", 1)]) });
   assert.equal(store.latestPlayhead().t, 3.5);
 
-  // 播放中报一次
+  // Report once during playback
   store.setPlayhead("s1", 9, true);
   assert.equal(store.latestPlayhead().playing, true);
   assert.equal(store.latestPlayhead().t, 9);
 
-  // 另一个标签接管:latestMirror 跟着谁,播放头就跟着谁
+  // Another tab takes over: whichever latestMirror follows, the playhead follows
   store.pushFull({ session: "s2", localRev: 1, project: project([track("t9", 1)]) });
   store.setPlayhead("s2", 1.25, false);
   assert.equal(store.latestMirror().session, "s2");
@@ -262,12 +269,12 @@ test("clear: wipe both tables clean", () => {
 
 test("Dragging for 2 seconds: every push is far smaller than 8 KB", () => {
   const store = createMirrorStore();
-  // 17 轨 × 10 段,和编辑台里一个中等项目差不多
+  // 17 tracks × 10 clips, roughly equivalent to a medium project in the editor
   let p = project(Array.from({ length: 17 }, (_, i) => track(`t${i}`, 10)));
   const full = JSON.stringify({ session: "s1", localRev: 1, project: p }).length;
   store.pushFull({ session: "s1", localRev: 1, project: p });
 
-  // 250 ms 防抖,2 秒 ≈ 8 次
+  // 250 ms debounce, 2 seconds ≈ 8 times
   let worst = 0;
   for (let rev = 2; rev <= 9; rev++) {
     const next = drag(p, 9, 4, rev * 0.1);

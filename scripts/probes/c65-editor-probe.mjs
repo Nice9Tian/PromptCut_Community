@@ -1,53 +1,81 @@
 /**
- * C6.5 页面一侧的验收探针(c65-editor 分支):真浏览器里点一遍同步、撤销、离线、本地备份、共享项目,并截图。
+ * Acceptance check probe on the page side for C6.5 (c65-editor branch): clicks through sync,
+ * undo, offline, local backup, and shared projects in a real browser, capturing screenshots.
  *
- * 用法:
+ * Usage:
  *   node scripts/probes/c65-editor-probe.mjs --origin http://127.0.0.1:5510 --hosted http://127.0.0.1:5518 --out out/c65-editor-shots [--phases local,shared]
  *   node scripts/probes/c65-editor-probe.mjs --origin http://127.0.0.1:5513 --hosted http://127.0.0.1:5518 --out out/c65-editor-shots --phases lan
  *
- * - `--origin`:本分支的编辑器(`?editor` 页面);`--hosted`:本机起的托管组合(`server/hosted/main.mjs`),
- *   代替阿里云,绝不连真正的托管端;`lan` 阶段要求编辑器以 `PROMPTCUT_LAN_HOST=1` 启动。
- * - 阶段:
- *   local  V2 真实页面版(两页交错编辑,两页与文档服务三份摘要相同)、部分没撤 / 全部没撤提示条、别人改动描边、
- *          离线对话框(丢弃 / 重放)、被覆盖的备份与气泡、本地备份列表、AI 栏「撤销这一步」(注入事件)
- *   shared 新建共享项目(托管)、打开共享项目、成员列表(重名、Agent 展开)、创建者操作(验证、改密码、踢人、禁入列表、删项目)、
- *          被踢的阻断弹窗、密码被改气泡、局域网模式要重启的提示
- *   lan    局域网模式新建 + 同名托管项目 → 打开对话框里并列两个候选
- * 结果:每项一行 JSON(`{ check, ok, ... }`),最后一行 `{ summary }`;有失败退出码 1。截图写进 `--out`。
+ * - `--origin`: editor for this branch (`?editor` page); `--hosted`: local hosted stack
+ *   (`server/hosted/main.mjs`) replacing Alibaba Cloud, never connecting to the real hosted side;
+ *   the `lan` phase requires starting the editor with `PROMPTCUT_LAN_HOST=1`.
+ * - Phases:
+ *   local  V2 real page version (interleaved editing on two pages, three summaries across two pages
+ *          and document service match), partial undo failure / full undo failure notice bar,
+ *          outline for other users' edits, offline dialog (discard / replay), overwritten backups
+ *          and bubbles, local backup list, AI panel "Undo this step" (injected event)
+ *   shared Create shared project (hosted), open shared project, member list (duplicate names,
+ *          Agent expansion), creator operations (verify, change password, kick user, ban list,
+ *          delete project), kicked blocking dialog, password changed bubble, restart required
+ *          notice in LAN mode
+ *   lan    Create in LAN mode + same-name hosted project → open dialog shows both candidates side
+ *          by side
+ * Results: one JSON line (`{ check, ok, ... }`) per item, final line `{ summary }`; exit code 1
+ * on failure. Screenshots written to `--out`.
  *
- * ## 跨机模式(C6.5 验收 U2):`--role creator|member`
+ * ## Cross-machine mode (C6.5 acceptance check U2): `--role creator|member`
  *
- * U2:另一台机器用「打开共享项目」进入后,看到的项目与局域网主机(或托管端)的 projectRev 相同;在上面改一处,创建者 5 s 内收到。
- * 两个角色各开一个真 Chrome 页面,只经协调口(`probe-coord.mjs`)交换进入信息与完成信号,不共享文件系统。
+ * U2: After another machine enters via "Open shared project", it sees the project with the same
+ * projectRev as the LAN host (or hosted side); make one edit there, and the creator receives it
+ * within 5 s. Each role opens one real Chrome page, exchanging join info and completion signals
+ * only through the coordination port (`probe-coord.mjs`), with no shared file system.
  *
- *   creator(局域网主机那台):
+ *   creator (LAN host machine):
  *     node scripts/probes/c65-editor-probe.mjs --role creator --mode lan|hosted (--coord-port <n> [--coord-host 0.0.0.0] | --coord <url>)
- *          (--origin <编辑器> | --spawn-editor <端口>) [--hosted <托管地址>] [--hosted-public <给成员的托管地址>] [--out <目录>] [--keep]
- *   member(另一台,只需出站):
- *     node scripts/probes/c65-editor-probe.mjs --role member --coord <url> (--origin <编辑器> | --spawn-editor <端口>) [--hosted <托管地址>] [--out <目录>]
+ *          (--origin <editor> | --spawn-editor <port>) [--hosted <hosted-url>] [--hosted-public <hosted-url-for-members>] [--out <dir>] [--keep]
+ *   member (other machine, outbound only):
+ *     node scripts/probes/c65-editor-probe.mjs --role member --coord <url> (--origin <editor> | --spawn-editor <port>) [--hosted <hosted-url>] [--out <dir>]
  *
- * - `--spawn-editor <端口>`:探针自己在仓库根起编辑器(`vite --port <端口> --strictPort`,`PROMPTCUT_PUSH=0`),跑完连进程树结束;
- *   creator 的局域网模式另加 `PROMPTCUT_LAN_HOST=1`(编辑器绑 `0.0.0.0`),其余绑 `127.0.0.1`。
- *   `--device-id` / `--device-name` 覆盖本机设备信息(`PROMPTCUT_DEVICE_ID` / `_NAME`,一台机器起两个实例时用)。
- * - `--mode lan`:creator 的编辑器必须是局域网主机;member 的页面靠本机编辑器的组播发现找到它。托管地址(member 这边查找时
- *   会同时查托管端)缺省设成一个连不上的回环地址 `http://127.0.0.1:9`,避免碰真正的托管端;给了 `--hosted` 就用它。
- * - `--mode hosted`:`--hosted` 必给(本机或局域网里起的托管组合,不要指真正的阿里云);`--hosted-public` 是写进协调口给成员的
- *   地址(缺省同 `--hosted`),member 的 `--hosted` 优先于协调口里的。
- * - 协调口的键:`u2-join`(creator → member:项目名、项目密码、模式、托管地址、创建后的 rev / sha256)、`u2-entered`、
- *   `u2-go`(creator 叫 member 改,带记号)、`u2-member-edit`(member 改完、文档服务确认后)、`u2-creator-edit`、`u2-member-result`。
- *   协调口不清键:每轮用 creator 新起的口(`--coord-port`),或新起一个 `shared-project-probe.mjs --role coord`。
- * - 计时都只用本机时钟,不跨机比时间戳:
- *     creator 的 `memberEditSeenMs` = 本页面 store 里出现成员那一处的时刻 − 收到成员「已提交」报告的时刻(先看到就记 0);
- *     另记 `memberEditSinceGoMs` = 看到的时刻 − 自己发出 `u2-go` 的时刻(含协调口往返与成员动手的时间,是上界)。
- *     member 的 `creatorEditSeenMs` 同理。两者都**只记录、不判**(2026-10-23 探针总审按 verification.md「耗时只记录,不当闸门」改;
- *     原先要求 ≤ 5000 ms,语义里没有这条时间承诺)。看到的是哪一处、是不是那张卡照旧判。
- * - projectRev 核对:member 进入后,页面的 rev / 项目 sha256 与「探针另开一条凭证连接直接向主机(托管端)project.open」读到的相同,
- *   且与 creator 报的相同;结束时两边再各核一次最终版本。
- * - 截图:`<role>-1-*.png`(creator 创建后 / member 进入后)、`<role>-2-*.png`(看到对方改动后)。
- * - 结束时 creator 以创建者身份删掉这个共享项目(免得局域网主机以后启动时还在广播);`--keep` 不删。
- * 结果:过程每步一行 JSON,最后一行 `{ ok, role, mode, projectId, rev, memberEditSeenMs | creatorEditSeenMs, ..., fails }`;有失败退出码 1。
+ * - `--spawn-editor <port>`: probe starts the editor itself at the repository root (`vite --port <port> --strictPort`,
+ *   `PROMPTCUT_PUSH=0`), terminating its process tree when done; creator in LAN mode additionally sets
+ *   `PROMPTCUT_LAN_HOST=1` (editor binds to `0.0.0.0`), while others bind to `127.0.0.1`.
+ *   `--device-id` / `--device-name` override local device info (`PROMPTCUT_DEVICE_ID` / `_NAME`,
+ *   used when running two instances on one machine).
+ * - `--mode lan`: creator's editor must be the LAN host; member's page finds it via the local editor's
+ *   multicast discovery. Hosted address (lookup on the member side checks the hosted side concurrently)
+ *   defaults to an unreachable loopback address `http://127.0.0.1:9` to avoid touching the real
+ *   hosted side; if `--hosted` is provided, use that.
+ * - `--mode hosted`: `--hosted` is required (hosted stack started locally or on the LAN, do not point
+ *   to real Alibaba Cloud); `--hosted-public` is the address written to the coordination port for
+ *   members (defaults to same as `--hosted`), with member's `--hosted` taking precedence over the one
+ *   in the coordination port.
+ * - Coordination port keys: `u2-join` (creator → member: project name, project password, mode,
+ *   hosted address, rev / sha256 after creation), `u2-entered`, `u2-go` (creator instructs member
+ *   to edit, with token), `u2-member-edit` (after member finishes editing and document service
+ *   confirms), `u2-creator-edit`, `u2-member-result`. Coordination port keys are not cleared:
+ *   use a newly started port from creator each round (`--coord-port`), or start a fresh
+ *   `shared-project-probe.mjs --role coord`.
+ * - All timing uses local clocks only, no cross-machine timestamp comparisons:
+ *     creator's `memberEditSeenMs` = time member's edit appears in this page's store - time member's
+ *     "submitted" report is received (recorded as 0 if seen earlier);
+ *     also records `memberEditSinceGoMs` = time seen - time own `u2-go` was sent (upper bound including
+ *     coordination round-trip and member edit time).
+ *     member's `creatorEditSeenMs` follows the same logic. Both are **recorded only, not evaluated**
+ *     (probe lead review, 2026-10-23, changed per verification.md "Record elapsed time only, do not
+ *     treat as a gate"; originally required ≤ 5000 ms, semantics had no such timing guarantee).
+ *     Which edit was seen and whether it was that card are still evaluated as before.
+ * - projectRev verification: after member enters, page rev / project sha256 matches what is read
+ *   from "probe opens a separate credential connection directly to host (hosted side) project.open",
+ *   and matches what creator reported; both sides verify the final version once more at the end.
+ * - Screenshots: `<role>-1-*.png` (after creator creation / member entry), `<role>-2-*.png` (after
+ *   seeing other party's edits).
+ * - At the end, creator deletes this shared project as creator (to prevent the LAN host from
+ *   broadcasting on future startups); `--keep` does not delete.
+ * Results: one JSON line per step, final line
+ * `{ ok, role, mode, projectId, rev, memberEditSeenMs | creatorEditSeenMs, ..., fails }`; exit code 1
+ * on failure.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import puppeteer from 'puppeteer';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
 import fs from 'node:fs';
@@ -68,7 +96,7 @@ const arg = (name, dflt) => {
 };
 let origin = arg('--origin', 'http://127.0.0.1:5510');
 const hosted = arg('--hosted', 'http://127.0.0.1:5518');
-/** 跨机模式(U2):creator | member;不给就是原来的三个阶段 */
+/** Cross-machine mode (U2): creator | member; omitted defaults to the original three phases */
 const ROLE = arg('--role', null);
 const outDir = path.resolve(arg('--out', 'out/c65-editor-shots'));
 const phases = arg('--phases', 'local,shared').split(',');
@@ -99,8 +127,9 @@ const browser = await puppeteer.launch({
 });
 
 /**
- * 编辑器可以看了没有:卡片测量遮罩(`ProbeGate`,「正在测量卡片」)不在,且项目里有片段时时间轴上至少一个片段
- * 真的排出来了(有宽高、在视口里)。回 { ready, gate, clips, visible }。
+ * Whether the editor is viewable: card measurement overlay (`ProbeGate`, "Measuring cards") is
+ * absent, and when the project contains clips, at least one clip on the timeline is actually
+ * laid out (has width and height, within viewport). Returns { ready, gate, clips, visible }.
  */
 const readyState = (page) => P(page, async () => {
   const gate = document.querySelector('[data-pc="probe-gate"]');
@@ -114,8 +143,10 @@ const readyState = (page) => P(page, async () => {
   return { ready: !gate && (clips === 0 || visible > 0), gate: gate ? gate.innerText.replace(/\s+/g, ' ').slice(0, 80) : null, clips, visible };
 });
 /**
- * 等编辑器可以看:连续两次(间隔 300 ms)都 ready 才算,免得撞上测量一轮刚完、下一轮还没排上的空档。
- * 慢机器上测量遮罩可能挂几十秒;超时不抛,回最后一次的状态由调用方判。
+ * Wait for the editor to be viewable: counts only when ready twice consecutively (300 ms interval)
+ * to avoid catching the gap where one measurement round just ended and the next is not yet queued.
+ * On slow machines, the measurement overlay may stay up for dozens of seconds; does not throw on
+ * timeout, returning the last state for the caller to evaluate.
  */
 async function waitEditorReady(page, ms) {
   const t0 = Date.now();
@@ -128,7 +159,7 @@ async function waitEditorReady(page, ms) {
     await sleep(300);
   }
 }
-/** 截图前没等到编辑器可以看的那几张(名字 + 状态);两种模式各自收尾时判失败 */
+/** Screenshots where editor was not viewable before capture (name + status); fails during finalization in either mode */
 const shotsNotReady = [];
 const SHOT_READY_MS = Number(arg('--shot-ready-timeout', '90')) * 1000;
 
@@ -144,21 +175,24 @@ async function shot(page, name) {
   return file;
 }
 
-/** 开一个编辑器页面,等同步接上;顺手关掉首次打开的「选择 AI 助手」对话框 */
+/** Open an editor page, wait for sync to connect; close the initial "Select AI assistant" dialog */
 async function openEditor(query = '') {
   if (process.env.PROBE_TRACE) console.error('[step] open', query);
   const page = await browser.newPage();
   page.on('pageerror', (e) => console.log(JSON.stringify({ pageerror: String(e?.message ?? e).slice(0, 300) })));
-  // 原生弹框会卡住页面里的 evaluate:记下来并关掉
+  // Native dialogs block evaluate in the page: record and dismiss them
   page.on('dialog', (d) => { console.log(JSON.stringify({ dialog: d.type(), message: d.message().slice(0, 300) })); void d.dismiss(); });
-  // 后台页面里 page.click / page.type 要等滚动与可见性,会一直挂着:点、打字之前先把它放到前面
+  // In background pages, page.click / page.type wait for scrolling and visibility and hang
+  // indefinitely: bring to the front before clicking or typing
   for (const m of ['click', 'type']) {
     const orig = page[m].bind(page);
     page[m] = async (...a) => { await page.bringToFront(); return orig(...a); };
   }
   await page.goto(`${origin}/?editor${query}`, { waitUntil: 'domcontentloaded' });
   await waitFor(() => page.evaluate(() => !!window.__pcSyncTest && window.__pcSyncTest.view().status === 'online'), 30_000, 'page sync connected');
-  // 打开项目时的卡片测量遮罩挡着整个编辑器(点、打字都落不下去),慢机器上能挂几十秒:等它退下、时间轴排出来
+  // When opening a project, the card measurement overlay covers the entire editor (clicks and
+  // typing cannot land) and can hang for dozens of seconds on slow machines: wait for it to dismiss
+  // and the timeline to lay out
   const ready = await waitEditorReady(page, Number(arg('--open-ready-timeout', '300')) * 1000);
   if (!ready.ready) throw new Error(`The editor did not become operable after opening (measurement overlay/timeline): ${JSON.stringify(ready)}`);
   say('editor.ready', { url: page.url(), waitedMs: ready.waitedMs, clips: ready.clips, visible: ready.visible });
@@ -179,7 +213,7 @@ const P = (page, fn, ...args) => {
   return page.evaluate(fn, ...args);
 };
 
-/** 页面里当前项目的摘要 */
+/** Summary of the current project in the page */
 const pageDigest = (page) => P(page, async () => {
   const S = await import('/src/store/project.ts');
   const json = JSON.stringify(S.getState().project);
@@ -187,7 +221,7 @@ const pageDigest = (page) => P(page, async () => {
   return { sha256: [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join(''), rev: window.__pcSyncTest.rev(), status: window.__pcSyncTest.view().status };
 });
 
-/** 文档服务里的真身(本机 local 空间):一条回环连接 project.open */
+/** Real instance in document service (this machine local space): loopback connection project.open */
 function docState(projectId, base = origin) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`${base.replace(/^http/, 'ws')}/docservice`, ['promptcut.v1']);
@@ -221,7 +255,7 @@ const setParam = (page, id, params) => P(page, async (id, params) => {
   const S = await import('/src/store/project.ts');
   S.actions.setClipParams(id, params);
 }, id, params);
-/** 一次提交里改两个片段的参数(撤销时是一步) */
+/** Modify parameters of two clips in one commit (a single step when undoing) */
 const setTwo = (page, a, b, text) => P(page, async (a, b, text) => {
   const S = await import('/src/store/project.ts');
   S.actions.editCardProject((p) => ({ ...p, tracks: p.tracks.map((t) => ({ ...t, clips: t.clips.map((c) => (c.id === a || c.id === b ? { ...c, params: { ...c.params, text } } : c)) })) }));
@@ -242,7 +276,7 @@ const settle = async (...pages) => {
   }
   await sleep(600);
 };
-/** 按文字点按钮(在 selector 范围里) */
+/** Click button by text (within selector scope) */
 async function clickText(page, text, scope = 'body') {
   if (process.env.PROBE_TRACE) console.error('[step] click', text);
   const ok = await P(page, (text, scope) => {
@@ -282,7 +316,7 @@ async function phaseLocal() {
   const B = await openEditor(`&join=${encodeURIComponent(docId)}`);
   check('join-page-gets-docservice-content', (await pageDigest(A)).sha256 === (await pageDigest(B)).sha256, { docId });
 
-  // ---------- V2 真实页面版:两页交错各 100 次(拖动 / 改参数)
+  // ---------- V2 real-page version: two pages interleaved 100 times each (scrub / modify parameters)
   const run = (page, seed, n) => P(page, async (seed, n) => {
     const S = await import('/src/store/project.ts');
     let x = seed >>> 0;
@@ -310,7 +344,8 @@ async function phaseLocal() {
   const ids = await clipIds(A);
   const [c1, c2, c3, c4, c5, c6, c7, c8] = ids;
 
-  // ---------- 撤销:部分没撤(A 一步改片段 1、2;B 随后改片段 2;A 撤销)
+  // ---------- Undo: partially not undone (A modifies clips 1 and 2 in one step; B then modifies
+  // clip 2; A undoes)
   await setTwo(A, c1, c2, 'A edited');
   await settle(A, B);
   const beforeC1 = (await docState(docId)).project.tracks.flatMap((t) => t.clips).find((c) => c.id === c1);
@@ -323,14 +358,14 @@ async function phaseLocal() {
   const a2 = await clipOf(A, c2);
   check('undo-partial-notice', !!notice && notice.includes('Undone, but these places were overwritten by later changes and were not reverted:') && a2.params.text === 'B edited' && a1.params.text !== 'A edited', { notice, c1: a1.params.text, c2: a2.params.text, c1WasBefore: beforeC1?.params?.text });
   await shot(A, 'undo-partial-notice');
-  // 点实体名跳过去并选中
+  // Click entity name to jump there and select it
   await P(A, () => document.querySelector('[data-pc=undo-notice] .pc-undo-entity')?.click());
   await sleep(300);
   const sel = await P(A, async () => (await import('/src/store/project.ts')).getState().selection);
   check('undo-notice-jump-selects', sel[0] === c2, { selection: sel });
   await P(A, () => document.querySelector('[data-pc=undo-notice] .pc-undo-bar-close')?.click());
 
-  // ---------- 撤销:全部没撤
+  // ---------- Undo: nothing undone
   await settle(A, B);
   await setParam(A, c3, { text: 'A3' });
   await settle(A, B);
@@ -343,7 +378,7 @@ async function phaseLocal() {
   await shot(A, 'undo-none-notice');
   await P(A, () => document.querySelector('[data-pc=undo-notice] .pc-undo-bar-close')?.click());
 
-  // ---------- 按钮禁用态与悬停提示
+  // ---------- Button disabled state and tooltip
   const btn = await P(A, () => ({
     undoTitle: document.querySelector('[data-pc=undo-btn]')?.getAttribute('title'),
     redoTitle: document.querySelector('[data-pc=redo-btn]')?.getAttribute('title'),
@@ -356,7 +391,7 @@ async function phaseLocal() {
   check('undo-buttons-disabled-when-empty', freshBtn.undo === true && freshBtn.redo === true, freshBtn);
   await fresh.close();
 
-  // Ctrl+Y 重做
+  // Ctrl+Y redo
   await setParam(A, c4, { text: 'A4' });
   await settle(A, B);
   await pressUndo(A);
@@ -369,7 +404,7 @@ async function phaseLocal() {
   await settle(A, B);
   check('ctrl-y-redo', afterUndo !== 'A4' && (await clipOf(A, c4)).params.text === 'A4', { afterUndo });
 
-  // ---------- 别人的改动:时间轴描边 1.5 s
+  // ---------- Others' edits: timeline stroke 1.5 s
   await A.bringToFront();
   await setParam(B, c4, { text: 'B edited here' });
   await sleep(300);
@@ -379,7 +414,8 @@ async function phaseLocal() {
   const gone = await P(A, (id) => !document.querySelector(`[data-clip-id="${id}"][data-remote-flash]`), c4);
   check('remote-flash-1.5s', flashed && gone, { flashed, goneAfter: gone });
 
-  // ---------- 被覆盖:A 改了片段 6,B 随后改同一片段 → A 先存本地备份,出气泡
+  // ---------- Overwritten: A modifies clip 6, B then modifies the same clip → A first saves local
+  // backup, shows bubble
   await setParam(A, c6, { text: 'A6' });
   await settle(A, B);
   await setParam(B, c6, { text: 'B6' });
@@ -388,9 +424,12 @@ async function phaseLocal() {
   check('overwritten-toast', !!toast && toast.startsWith('Your recent changes were overwritten by you on another page.'), { toast });
   await shot(A, 'overwritten-toast');
 
-  // ---------- 离线:A 断网期间改 3 次,B 期间也改;A 回来 → 第一条被拒 → 冲突合并窗口
-  // 2026-10-22 起整份「加进去 / 不要了」的离线对话框换成逐项的「冲突合并」(conflict-merge 报告第十节):
-  // 「不要了」= 全勾 → 删除选中;「加进去」= 全勾 → 合并;关窗(下次再说)后顶栏是「冲突合并」按钮(原「同步已暂停」)
+  // ---------- Offline: A modifies 3 times while disconnected, B also modifies in the meantime; A
+  // comes back → first edit rejected → conflict merge dialog
+  // Starting 2026-10-22, the whole-batch "Add in / Discard" offline dialog was replaced with
+  // item-by-item "Conflict merge" (conflict-merge report section 10):
+  // "Discard" = check all → delete selected; "Add in" = check all → merge; after closing the dialog
+  // (decide later), the top bar shows the "Conflict merge" button (formerly "Sync paused")
   const offline = async (value) => {
     await P(A, () => window.__pcSyncTest.drop(4000));
     await waitFor(() => P(A, () => window.__pcSyncTest.view().status === 'offline'), 5000, 'A offline');
@@ -434,14 +473,15 @@ async function phaseLocal() {
   const afterReplay = [await pageDigest(A), await pageDigest(B), await docState(docId)];
   check('offline-replay', afterReplay[0].sha256 === afterReplay[2].sha256 && afterReplay[1].sha256 === afterReplay[2].sha256 && (await clipOf(A, c5)).params.text === 'replay2' && (await clipOf(A, c7)).params.text === 'B7-replay', { c5: (await clipOf(A, c5)).params.text, c7: (await clipOf(A, c7)).params.text });
 
-  // ---------- 本地备份列表(丢弃前的那批 + 被覆盖的那一版);恢复 = 一次新写入
+  // ---------- Local backup list (the batch before discard + the overwritten version); restore = a
+  // new write
   await openProjectMenu(A);
   await clickText(A, 'Local backups…', '.pc-proj-menu');
   await waitFor(() => P(A, () => document.querySelectorAll('[data-pc=backup-row]').length > 0), 5000, 'backup list');
   const rows = await P(A, () => [...document.querySelectorAll('[data-pc=backup-row]')].map((r) => r.innerText.replace(/\s+/g, ' ')));
   check('backups-list', rows.some((r) => r.includes('Discarded while offline')) && rows.some((r) => r.includes('overwritten')), { rows: rows.slice(0, 6) });
   await shot(A, 'backups-dialog');
-  // 恢复被覆盖的那一版(片段 6 回到 A6)
+  // Restore the overwritten version (clip 6 reverts to A6)
   const revBefore = (await docState(docId)).rev;
   await P(A, (c6) => {
     const row = [...document.querySelectorAll('[data-pc=backup-row]')].find((r) => r.dataset.entity?.endsWith(`/@${c6}`) && r.innerText.includes('overwritten by you on another page'));
@@ -452,7 +492,8 @@ async function phaseLocal() {
   check('backup-restore-is-new-write', d6.project.tracks.flatMap((t) => t.clips).find((c) => c.id === c6)?.params.text === 'A6' && d6.rev > revBefore && (await clipOf(B, c6)).params.text === 'A6', { revBefore, revAfter: d6.rev });
   await clickText(A, 'Close', '[data-pc=backups-dialog]');
 
-  // ---------- AI 栏「撤销这一步」:Agent 的提交(一条回环连接模拟) + 注入带 opId 的完成事件
+  // ---------- AI panel "Undo this step": Agent commit (simulated via a loopback connection) +
+  // inject completion event with opId
   const agentOp = (ops) => new Promise((resolve, reject) => {
     const ws = new WebSocket(`${origin.replace(/^http/, 'ws')}/docservice`, ['promptcut.v1']);
     const opId = `agent-op-${Date.now()}`;
@@ -482,7 +523,7 @@ async function phaseLocal() {
   const log8 = d8.project.tracks.flatMap((t) => t.clips).find((c) => c.id === c8).params.text ?? null;
   const canUndo = await P(A, async () => (await import('/src/store/project.ts')).actions.canUndo());
   check('agent-undo-step', reverted.found && reverted.done && reverted.state === 'done' && log8 === before8 && canUndo, { reverted, before8, now: log8 });
-  // 进了用户自己的撤销栈:Ctrl+Z 把 Agent 的改动恢复回来
+  // Entered the user's own undo stack: Ctrl+Z restores the Agent's changes
   await pressUndo(A);
   await settle(A, B);
   check('agent-undo-in-user-stack', (await clipOf(B, c8)).params.text === 'Edited by Agent');
@@ -504,7 +545,8 @@ async function phaseShared() {
   await setHosted(B);
   const name = `c65-demo-${Date.now().toString(36)}`;
 
-  // ---------- 新建共享项目:先看限定进入的名单表,再以自由进入建成
+  // ---------- Create shared project: first inspect restricted entry list table, then create with
+  // open entry
   await openProjectMenu(A);
   await clickText(A, 'New shared project', '.pc-proj-menu');
   await typeInto(A, '#pc-ns-name', name);
@@ -534,7 +576,7 @@ async function phaseShared() {
   await clickText(A, 'Back', '[data-pc=new-shared-dialog]');
   const sharedId = aView.shared?.projectId;
 
-  // ---------- 打开共享项目(B):查找 → 验证 → 进入
+  // ---------- Open shared project (B): search → verify → enter
   await openProjectMenu(B);
   await clickText(B, 'Open shared project', '.pc-proj-menu');
   await B.type('#pc-os-name', name);
@@ -556,7 +598,7 @@ async function phaseShared() {
   await settle(A, B);
   check('open-shared-enter', (await pageDigest(A)).sha256 === (await pageDigest(B)).sha256, { a: await pageDigest(A), b: await pageDigest(B) });
 
-  // ---------- 成员列表:同名不同设备、Agent 对话
+  // ---------- Member list: same name on different devices, Agent chat
   const device = await P(B, () => window.__pcSyncTest.view().device);
   const wsBase = hosted.replace(/^http/, 'ws');
   const extra = [];
@@ -583,7 +625,7 @@ async function phaseShared() {
   const btnText = await P(A, () => document.querySelector('[data-pc=members-button]')?.innerText ?? '');
   check('members-button-badge', /Members: ?\d+/.test(btnText), { btnText });
 
-  // ---------- 创建者操作:改项目密码(验证 → 改),成员收到气泡
+  // ---------- Creator operations: change project password (verify → change), members receive bubble
   await clickText(A, 'Change project password', '[data-pc=members-pop]');
   await waitFor(() => P(A, () => !!document.querySelector('[data-pc=creator-verify]')), 5000, 'verification dialog');
   await typeInto(A, '#pc-cv-pw', 'wrong');
@@ -602,7 +644,7 @@ async function phaseShared() {
   check('member-password-changed-toast', pwToast?.startsWith('The project password has been changed. Your current connection is not affected, but the new password is required the next time you enter.'), { pwToast });
   await shot(B, 'member-password-changed-toast');
 
-  // ---------- 踢人(踢 MacBook 上的 bob):验证 → 确认
+  // ---------- Kick member (kick bob on MacBook): verify → confirm
   await A.click('[data-pc=members-button]');
   await sleep(300);
   await P(A, () => {
@@ -620,7 +662,7 @@ async function phaseShared() {
   const kickToast = await waitFor(() => P(A, () => [...document.querySelectorAll('.pc-toast')].map((t) => t.innerText).find((t) => t.includes('Kicked')) ?? null), 8000, 'kick bubble').catch(() => null);
   check('kick-free-mode-hint', kickToast?.startsWith('Kicked. In open entry mode, to block them completely, you need to change the project password.'), { kickToast });
 
-  // ---------- 已禁入的设备
+  // ---------- Banned devices
   await A.click('[data-pc=members-button]');
   await sleep(300);
   await clickText(A, 'Banned devices', '[data-pc=members-pop]');
@@ -632,7 +674,7 @@ async function phaseShared() {
   await shot(A, 'creator-bans');
   await clickText(A, 'Back', '[data-pc=bans-dialog]');
 
-  // ---------- 删项目对话框(手打项目名)
+  // ---------- Delete project dialog (manually type project name)
   await A.click('[data-pc=members-button]');
   await sleep(300);
   await clickText(A, 'Delete project', '[data-pc=members-pop]');
@@ -646,7 +688,7 @@ async function phaseShared() {
   await shot(A, 'creator-delete');
   await clickText(A, 'Cancel', '[data-pc=delete-dialog] .pc-dialog-foot');
 
-  // ---------- 踢 B:B 看到阻断弹窗
+  // ---------- Kick B: B sees blocking dialog
   await A.click('[data-pc=members-button]');
   await sleep(300);
   await P(A, () => {
@@ -662,7 +704,7 @@ async function phaseShared() {
   check('kicked-blocking-dialog', blocked?.includes('You have been kicked out of this project by the creator and can no longer edit. To come back, ask the creator to revoke it.') && blocked.includes('start page'), { blocked });
   await shot(B, 'blocked-kicked');
 
-  // 收尾:真的删掉(验证删除流程与自己回开始页)
+  // Cleanup: actually delete (verify deletion flow and returning to the start page oneself)
   await A.click('[data-pc=members-button]');
   await sleep(300);
   await clickText(A, 'Delete project', '[data-pc=members-pop]');
@@ -687,9 +729,9 @@ async function phaseLan() {
   const lan = await P(C, () => window.__pcSyncTest.view().device);
   if (!check('lan-host-editor', lan?.lanHost === true, { device: lan })) return;
   const name = `c65-lan-${Date.now().toString(36)}`;
-  // 同名的托管项目(直接经托管端建)
+  // Hosted project with the same name (created directly via hosted side)
   await createSharedProject({ where: 'hosted', hostedUrl: hosted, name, mode: 'free', creator: { username: 'zed', password: 'zed-pw' }, password: 'x-pw', kdf: { alg: 'pbkdf2-sha256', iter: 100000 } });
-  // 局域网模式新建(本机当主机)
+  // Create in LAN mode (this machine as host)
   await openProjectMenu(C);
   await clickText(C, 'New shared project', '.pc-proj-menu');
   await typeInto(C, '#pc-ns-name', name);
@@ -703,7 +745,8 @@ async function phaseLan() {
   check('new-shared-lan', created === 'Created successfully. Members on the same network segment can join by looking up the project name. Remember to keep this machine on.', { created });
   await clickText(C, 'Back', '[data-pc=new-shared-dialog]');
   await sleep(1500);
-  // 另一个页面查找:局域网(本机主机经组播应答)+ 托管端各一个 → 并列
+  // Search from another page: one each from LAN (local host responds via multicast) + hosted side
+  // → side by side
   const D = await openEditor();
   await setHosted(D);
   await openProjectMenu(D);
@@ -717,12 +760,15 @@ async function phaseLan() {
   await D.close();
 }
 
-/* ======================================================================== U2 跨机 */
+/* ======================================================================== U2 cross-machine */
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const say = (step, fields = {}) => console.log(JSON.stringify({ step, t: Date.now(), ...fields }));
 
-/** worktree 没有自己的 node_modules(往上解析到主仓库那一份):按模块解析 vite,再回到包根找 bin */
+/**
+ * worktree has no node_modules of its own (resolves up to main repo): resolve vite as a module,
+ * then return to package root to find bin
+ */
 function viteBin() {
   const local = path.join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js');
   if (fs.existsSync(local)) return local;
@@ -733,7 +779,10 @@ function viteBin() {
 
 let editorProc = null;
 const editorLog = [];
-/** 在仓库根起一个编辑器;`lan` 时以局域网主机身份(PROMPTCUT_LAN_HOST=1,编辑器自己改绑 0.0.0.0) */
+/**
+ * Start an editor at the repo root; when `lan`, act as the LAN host (PROMPTCUT_LAN_HOST=1, editor
+ * rebinds to 0.0.0.0 itself)
+ */
 async function spawnEditor(port, { lan }) {
   const env = { ...process.env, PROMPTCUT_PUSH: '0' };
   if (lan) env.PROMPTCUT_LAN_HOST = '1';
@@ -757,14 +806,18 @@ async function spawnEditor(port, { lan }) {
 async function stopEditor() {
   if (!editorProc || editorProc.exitCode !== null || !editorProc.pid) return;
   const exited = new Promise((r) => editorProc.once('exit', r));
-  // 编辑器还拉着预渲染进程和 Chrome:连进程树一起结束(只结束自己起的这一棵)
+  // The editor also keeps prerender processes and Chrome running: terminate along with the process
+  // tree (only terminate this tree spawned by itself)
   if (process.platform === 'win32') spawn('taskkill', ['/PID', String(editorProc.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
   else editorProc.kill('SIGKILL');
   await Promise.race([exited, sleep(10_000)]);
   say('editor.stopped', { pid: editorProc.pid });
 }
 
-/** 探针另开一条凭证连接,直接向主机(托管端)读项目:{ rev, sha256 } */
+/**
+ * The probe opens a separate credential connection to read project directly from the host (hosted
+ * side): { rev, sha256 }
+ */
 async function hostRead(base, projectId, cred, tag) {
   const protocols = await buildAuthProtocols({
     base, projectId, username: cred.username, as: cred.as, password: cred.password, role: 'page',
@@ -790,7 +843,10 @@ async function hostRead(base, projectId, cred, tag) {
   });
 }
 
-/** 在同一次 evaluate 里改片段参数并等文档服务确认(DocSync.whenSettled);回从改到确认的毫秒(页面时钟) */
+/**
+ * Modify clip parameters in the same evaluate and wait for document service confirmation
+ * (DocSync.whenSettled); return milliseconds from modification to confirmation (page clock)
+ */
 const editAndSave = (page, id, params) => P(page, async (id, params) => {
   const S = await import('/src/store/project.ts');
   const M = await import('/src/editor/sync/syncManager.ts');
@@ -801,8 +857,10 @@ const editAndSave = (page, id, params) => P(page, async (id, params) => {
 }, id, params);
 
 /**
- * 盯着页面 store:哪个片段的 params.text 变成 value。回 { at(本机时刻), clipId, flash(时间轴上有「别人的改动」描边) }。
- * 立即开始盯(不等报告),所以对方的改动先于协调口的报告到达也记得到。
+ * Watch page store: which clip's params.text becomes value. Returns { at(this machine timestamp),
+ * clipId, flash(timeline has "others' edits" stroke) }.
+ * Start watching immediately (without waiting for reports), so peer changes arriving before the
+ * coordinator port report are also captured.
  */
 function watchFor(page, value, ms, shotName) {
   return (async () => {
@@ -831,7 +889,8 @@ async function runCreator(res, fails) {
   const runId = res.runId;
   const timeoutMs = Number(arg('--timeout', '900')) * 1000;
 
-  // 协调口:自己起(跨机时 --coord-host 0.0.0.0),或用现成的
+  // Coordinator port: start one yourself (--coord-host 0.0.0.0 for cross-machine), or use an
+  // existing one
   let coordUrl = arg('--coord', null);
   const coordPort = arg('--coord-port', null);
   if (coordPort) {
@@ -852,7 +911,7 @@ async function runCreator(res, fails) {
   if (mode === 'lan' && !(device?.lanHost && device?.localEditor)) throw new Error(`LAN mode requires the editor to be started with PROMPTCUT_LAN_HOST=1 and the page to be opened from loopback: ${JSON.stringify(device)}`);
   if (mode === 'hosted') await P(A, (u) => localStorage.setItem('pc.shared.hostedUrl', u), hosted);
 
-  // ---------- D11 界面「新建共享项目」(自由进入)
+  // ---------- D11 UI "Create shared project" (open entry)
   const name = `u2-${runId}`;
   const creatorPw = `cpw-${randomBytes(6).toString('hex')}`;
   const projectPw = `ppw-${randomBytes(6).toString('hex')}`;
@@ -892,14 +951,14 @@ async function runCreator(res, fails) {
   await coord.put('u2-join', { runId, name, mode, username: 'bob', projectPassword: projectPw, hosted: hostedPublic, rev: host0.rev, sha256: host0.sha256, hostDeviceName: device.deviceName });
   say('creator.join-posted', { coord: coordUrl });
 
-  // ---------- 成员进入
+  // ---------- Member joins
   const entered = await coord.take('u2-entered', Date.now() + timeoutMs);
   if (!entered) throw new Error('Timed out waiting for the member to join');
   say('creator.member-entered', entered);
   res.member = { entered };
   if (!entered.ok) fails.push('member-enter');
 
-  // ---------- 成员改一处 → 本页面 5 s 内看到
+  // ---------- Member makes one edit → seen on this page within 5 s
   const seenMember = watchFor(A, memberToken, 120_000, 'creator-2-saw-member-edit');
   const tGo = Date.now();
   await coord.put('u2-go', { memberToken, creatorToken });
@@ -912,10 +971,13 @@ async function runCreator(res, fails) {
   res.memberEdit = { clipId: report.clipId, value: report.value, memberCommitMs: report.commitMs, seenClipId: seen.clipId, flash: seen.flash };
   res.shots.push(seen.shot);
   say('creator.saw-member-edit', { memberEditSeenMs: res.memberEditSeenMs, memberEditSinceGoMs: res.memberEditSinceGoMs, ...res.memberEdit });
-  // memberEditSeenMs 量的是改动从一边到另一边要多久（含协调口往返），语义里没有这条时间承诺：耗时只记录,不当闸门(verification.md,2026-10-07 用户改定);2026-10-23 探针总审改
+  // memberEditSeenMs measures how long an edit takes from one side to the other (including
+  // coordinator port round-trip); there is no such timing commitment in semantics: elapsed time is
+  // only recorded, not used as a gate (verification.md, user revised decision, 2026-10-07; probe
+  // overall review revision, 2026-10-23)
   if (seen.clipId !== report.clipId) fails.push('member-edit-wrong-clip');
 
-  // ---------- 本页面改一处,交成员核对
+  // ---------- This page makes one edit, hand over to member to verify
   const ids = await clipIds(A);
   const target = ids.find((id) => id !== report.clipId) ?? ids[0];
   const commitMs = await editAndSave(A, target, { text: creatorToken });
@@ -929,7 +991,7 @@ async function runCreator(res, fails) {
   res.creatorEditSeenMs = memberResult.creatorEditSeenMs ?? null;
   if (!memberResult.ok) fails.push(`member:${(memberResult.fails ?? []).join('|')}`);
 
-  // ---------- 最终三方一致:本页面、主机、成员页面
+  // ---------- Finally all three parties consistent: this page, host, member page
   await settle(A);
   const page1 = await pageDigest(A);
   const host1 = await hostRead(shared.base, shared.projectId, cred, `creator-${runId}`);
@@ -938,7 +1000,7 @@ async function runCreator(res, fails) {
   if (page1.rev !== host1.rev || page1.sha256 !== host1.sha256) fails.push('final-creator-vs-host');
   if (memberResult.final?.page?.rev !== host1.rev || memberResult.final?.page?.sha256 !== host1.sha256) fails.push('final-member-vs-host');
 
-  // ---------- 收尾:删掉这个共享项目
+  // ---------- Cleanup: delete this shared project
   if (!argv.includes('--keep')) {
     const del = await P(A, async (pw) => {
       const S = await import('/src/editor/sync/syncManager.ts');
@@ -971,12 +1033,14 @@ async function runMember(res, fails) {
     say('member.join', { ...join, projectPassword: '(present)' });
     res.mode = join.mode;
     res.name = join.name;
-    // 查找时页面会同时查托管端:局域网模式缺省给一个连不上的回环地址,不碰真正的托管端
+    // When searching, the page queries the hosted side simultaneously: LAN mode defaults to an
+    // unreachable loopback address, without touching the real hosted side
     const hostedUrl = argv.includes('--hosted') ? hosted : join.mode === 'hosted' ? join.hosted : 'http://127.0.0.1:9';
     res.hosted = hostedUrl;
     await P(B, (u) => localStorage.setItem('pc.shared.hostedUrl', u), hostedUrl);
 
-    // ---------- D11 界面「打开共享项目」:查找 →(并列时挑对应模式)→ 验证 → 进入
+    // ---------- D11 UI "Open shared project": search → (pick corresponding mode when side by side) →
+    // verify → enter
     await openSharedMenu(B, 'Open shared project');
     await B.type('#pc-os-name', join.name);
     await clickText(B, 'Find', '[data-pc=open-shared-dialog] .pc-dialog-foot');
@@ -1020,7 +1084,8 @@ async function runMember(res, fails) {
     res.shots.push(await shot(B, 'member-1-entered'));
     await coord.put('u2-entered', { ok: revOk && shared.where === join.mode, rev: page0.rev, sha256: page0.sha256, hostRev: host0.rev, where: shared.where, base: shared.base, candidate: label, enterMs: res.enterMs });
 
-    // ---------- 改一处:第一个片段的 text 参数;文档服务确认后报「已提交」
+    // ---------- Make one edit: text parameter of the first clip; reports "Submitted" after document
+    // service confirms
     const go = await coord.take('u2-go', Date.now() + 120_000);
     if (!go) throw new Error('Timed out waiting for the creator\'s "edit" signal');
     const seenCreator = watchFor(B, go.creatorToken, 180_000, 'member-2-saw-creator-edit');
@@ -1030,7 +1095,7 @@ async function runMember(res, fails) {
     res.memberEdit = { clipId, value: go.memberToken, commitMs };
     say('member.edit-committed', res.memberEdit);
 
-    // ---------- 等创建者那一处在本页出现
+    // ---------- Wait for creator's edit to appear on this page
     const report = await coord.take('u2-creator-edit', Date.now() + 120_000);
     const tReport = Date.now();
     if (!report) throw new Error('Timed out waiting for creator "submitted"');
@@ -1039,7 +1104,9 @@ async function runMember(res, fails) {
     res.creatorEdit = { clipId: report.clipId, value: report.value, creatorCommitMs: report.commitMs, seenClipId: seen.clipId, flash: seen.flash };
     res.shots.push(seen.shot);
     say('member.saw-creator-edit', { creatorEditSeenMs: res.creatorEditSeenMs, ...res.creatorEdit });
-    // creatorEditSeenMs 同上，只记录不判（耗时只记录,不当闸门(verification.md,2026-10-07 用户改定);2026-10-23 探针总审改）
+    // creatorEditSeenMs same as above, recorded only and not judged (elapsed time is only recorded,
+    // not used as a gate (verification.md, user revised decision, 2026-10-07; probe overall review
+    // revision, 2026-10-23))
     if (seen.clipId !== report.clipId) fails.push('creator-edit-wrong-clip');
 
     await settle(B);
@@ -1050,8 +1117,8 @@ async function runMember(res, fails) {
     result = { ok: fails.length === 0, fails: [...fails], rev: res.rev, creatorEditSeenMs: res.creatorEditSeenMs, memberEdit: res.memberEdit, final: res.final };
     await B.close();
   } finally {
-    // 失败也告诉创建者,免得它干等
-    try { await coord.put('u2-member-result', result ?? { ok: false, fails: [...fails, 'member-error'] }); } catch { /* 协调口已关 */ }
+    // Also notify creator on failure to avoid waiting in vain
+    try { await coord.put('u2-member-result', result ?? { ok: false, fails: [...fails, 'member-error'] }); } catch { /* Coordinator port closed */ }
   }
 }
 

@@ -1,12 +1,18 @@
 /**
- * 单独成流的两类卡:源依赖卡(转场、套在视频上的素材效果卡)和外框用了三维变形的独立卡
- * (`frame-stream.mjs` 的 `soloStreamKind`;语义 `docs/semantics/mechanism/rendering.md`「重管线:预渲染」「怎么产,按卡分」)。
- * 用例名以 `SS-` 开头。跑:npm test -- server/test/source-stream.test.mjs
+ * Two categories of cards that stream solo: source-dependent cards (transitions, media effect cards
+ * applied over video) and standalone cards whose outer frame uses 3D transform (`soloStreamKind` in
+ * `frame-stream.mjs`; semantics in `docs/semantics/mechanism/rendering.md` "Heavy pipeline:
+ * prerender", "How to produce, split by card").
+ * Test case names start with `SS-`. Run: npm test -- server/test/source-stream.test.mjs
  *
- * 管:哪些卡算这两类、计划(形状、不并进组流、占预算)、键与页面的输入签名对项目数据的反应、隔离工程、回放、切分与认领、层表。
- * 流里的像素对不对、贴回舞台对不对由探针 `scripts/probes/stream-source-probe.mjs` 核对。
+ * Covers: which cards count as these two categories, planning (shape, not merged into group stream,
+ * occupying budget), reaction of keys and page input signatures to project data, isolated projects,
+ * replay, split and claim, layer table.
+ * Whether pixels in the stream are correct and whether pasting back to the stage is correct is
+ * verified by probe `scripts/probes/stream-source-probe.mjs`.
  *
- * 键用**真的**卡片计划算:项目 → `projectCardGraph`(卡片定义用替身)→ `CardFrameCache.plan()` → `planStreams`。
+ * Keys are calculated with **real** card plans: project → `projectCardGraph` (card definitions use
+ * stubs) → `CardFrameCache.plan()` → `planStreams`.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -29,16 +35,18 @@ import { localMediaGate } from '../queue-local-media.mjs';
 import { projectCardGraph } from '../../src/kernel/cardGraph.mjs';
 import { streamInputSig } from '../../src/render/streamInputSig.mjs';
 
-/* ------------------------------------------------------------------ 场景 */
+/* ------------------------------------------------------------------ Scenario */
 
 const FP = '0123456789abcdef';
 const BROWSER = 'fedcba9876543210';
 const CV = 'cv-source';
-const UNUSED_ROOT = path.join(os.tmpdir(), 'pc-source-unused');   // plan() 不碰盘
+const UNUSED_ROOT = path.join(os.tmpdir(), 'pc-source-unused');   // plan() does not touch the disk
 
 /**
- * 卡片定义的替身。依不依赖下层这一样不看这里写的,看审阅表(`src/cards/capabilities.json`):
- *   `caption-track` 登记的是「独立」,`odometer` 是「依赖下层」;三张素材效果卡(写了 `card`)没登记 → 「未知」。
+ * Stubs for card definitions. Whether it is below-dependent is not determined by what is written
+ * here, but by the review table (`src/cards/capabilities.json`):
+ *   `caption-track` is registered as "standalone", `odometer` as "below-dependent"; three media
+ *   effect cards (specifying `card`) are not registered → "unknown".
  */
 const gpu = () => ({ type: 'glsl' });
 const DEFS = {
@@ -53,15 +61,17 @@ const getCard = id => DEFS[id];
 const SOURCE_VERSIONS = Object.fromEntries(Object.keys(DEFS).map(id => [id, `builtin:${id}-v1`]));
 
 /**
- * 从上到下(第一条序列在最上面):
- *   t-tilt   tilt    独立卡,外框带三维(rotateY),0.5～3 秒
- *   t-flat   flat    独立卡,平面,0～4 秒
- *   t-trans  trans   转场(素材效果卡,接 va、vb 两段视频),3.1～4.1 秒;入点不在 15 的倍数帧上(第 93 帧)
- *   t-fx     fx      套在视频上的素材效果卡(素材段 + 卡,接自己那段素材),1.3～3 秒(第 39 帧)
- *   t-gen    gen     没有输入的素材效果卡(自己生成画面),0～2 秒
- *   t-glass  glass3  依赖下层的卡,外框带三维,4～5 秒
- *   t-va     va      视频 m1,0～3.6 秒
- *   t-vb     vb      视频 m2,3.6～8 秒
+ * From top to bottom (the first track is on top):
+ *   t-tilt   tilt    standalone card, outer frame with 3D (rotateY), 0.5-3 s
+ *   t-flat   flat    standalone card, planar, 0-4 s
+ *   t-trans  trans   transition (media effect card, connects two videos va and vb), 3.1-4.1 s;
+ *                    in point not on a multiple of 15 frames (frame 93)
+ *   t-fx     fx      media effect card applied over video (media clip + card, connects its own
+ *                    media), 1.3-3 s (frame 39)
+ *   t-gen    gen     media effect card without input (generates visuals itself), 0-2 s
+ *   t-glass  glass3  below-dependent card, outer frame with 3D, 4-5 s
+ *   t-va     va      video m1, 0-3.6 s
+ *   t-vb     vb      video m2, 3.6-8 s
  */
 const project = () => ({
   id: 'source-p', width: 1280, height: 720, fps: 30, duration: 8, themeId: 'dark', style: {}, camera3dFov: 50,
@@ -107,7 +117,7 @@ const keyOf = (p, clipId) => specOf(p, clipId)?.contentKey ?? null;
 const sigOf = (p, clipId) => streamInputSig(p, { clipIds: [clipId], kind: 'card' });
 const controlOf = (entry, clipId) => entry.cardPlan.find(c => c.clipId === clipId);
 
-/* ================================================================== 哪些卡算 */
+/* ================================================================== Which cards count */
 
 test('SS-eligible source-dependent cards: media effect cards with an input connected (transitions, ones applied over media), or ones the review table marks sourceDependent; independent cards with a 3D frame; nothing else counts', () => {
   const p = project();
@@ -123,11 +133,12 @@ test('SS-eligible source-dependent cards: media effect cards with an input conne
   assert.equal(graphCardWithInputs(p, clipOf(p, 'fx')), true);
   assert.equal(graphCardWithInputs(p, clipOf(p, 'gen')), false);
   assert.equal(graphCardWithInputs(p, clipOf(p, 'flat')), false);
-  // 平面独立卡的判据(可以并进组流的那一种)照旧不收这两类
+  // Criteria for planar standalone cards (the kind that can merge into group streams) still exclude
+  // these two categories
   assert.equal(streamEligible(controlOf(entry, 'tilt'), clipOf(p, 'tilt'), trackOf(p, 'tilt')), false);
   assert.equal(streamEligible(controlOf(entry, 'fx'), clipOf(p, 'fx'), trackOf(p, 'fx')), false);
   assert.equal(streamEligible(controlOf(entry, 'flat'), clipOf(p, 'flat'), trackOf(p, 'flat')), true);
-  // 手写的能力:审阅表的三个值
+  // Hand-written capabilities: three values in the review table
   const clip = { id: 'a', cardId: 'x', start: 0, end: 1 }, track = { id: 't' };
   const ctl = (compositing, extra = {}) => ({ clipId: 'a', count: 30, capabilities: { compositing }, ...extra });
   assert.equal(soloStreamKind(ctl('sourceDependent'), clip, track, {}), 'source', 'the review table says sourceDependent');
@@ -138,16 +149,17 @@ test('SS-eligible source-dependent cards: media effect cards with an input conne
   assert.equal(soloStreamKind(ctl('context'), { ...clip, nodeId: 'n' }, track, { cardNodes: [{ id: 'n', adapter: 'card', inputs: { source: 'x' } }] }), 'source', 'the old catch-all value, with an input connected');
   assert.equal(soloStreamKind(ctl('unknown'), { ...clip, nodeId: 'n' }, track, { cardNodes: [{ id: 'n', adapter: 'card', kind: 'audio', inputs: { source: 'x' } }] }), null, 'a media effect card that outputs only sound does not count');
   assert.equal(soloStreamKind(ctl('unknown'), { ...clip, nodeId: 'n' }, track, { cardNodes: { n: { id: 'n', adapter: 'card', inputs: { source: 'x' } } } }), 'source', 'old data with nodes stored as an object keyed by id is recognized too');
-  // 不出画、没有帧的不算
+  // Those that produce no visuals or have no frames do not count
   assert.equal(soloStreamKind(ctl('sourceDependent'), clip, { id: 't', hidden: true }, {}), null);
   assert.equal(soloStreamKind(ctl('sourceDependent'), clip, { id: 't', sourceOnly: true }, {}), null);
   assert.equal(soloStreamKind(ctl('sourceDependent', { count: 0 }), clip, track, {}), null);
   assert.equal(soloStreamKind(ctl('sourceDependent'), { ...clip, cardId: '' }, track, {}), null, 'a plain media clip is not a card');
-  // 「依赖下层的流」的判据对这几张卡怎么说:接了输入的素材效果卡它也认(未知),所以计划里要先把单独成流的挑走
+  // What criteria for "below-dependent stream" say about these cards: it also recognizes media effect
+  // cards connected to input (unknown), so those streaming solo must be picked out first in the plan
   assert.equal(belowStreamEligible(controlOf(entry, 'fx'), clipOf(p, 'fx'), trackOf(p, 'fx')), true);
 });
 
-/* ================================================================== 计划 */
+/* ================================================================== Plan */
 
 test('SS-plan: each of these two kinds yields one single-card stream (kind card, plane local) with solo; segments count from their own first frame; media effect cards with no input and below-dependent cards that also have 3D are not in these two kinds (not yielded while the below-dependent stream is off)', () => {
   const p = project();
@@ -156,7 +168,7 @@ test('SS-plan: each of these two kinds yields one single-card stream (kind card,
     'flat independent cards come first; the ones that get their own stream follow in painter\'s order');
   for (const s of specs) { assert.equal(s.plane, 'local'); assert.equal(s.firstSegment, 0); assert.equal(s.clipIds.length, 1); assert.equal(s.streamKey, resultKeyOf(s.contentKey, FP)); }
   const fx = specs.find(s => s.topClipId === 'fx');
-  // 1.3 秒 = 第 39 帧,3 秒之前的最后一帧是第 89 帧:51 帧,4 个分段(15、15、15、6)
+  // 1.3 s = frame 39, last frame before 3 s is frame 89: 51 frames, 4 segments (15, 15, 15, 6)
   assert.deepEqual([fx.originFrame, fx.firstFrame, fx.lastFrame, fx.lastSegment], [39, 39, 89, 3]);
   assert.notEqual(fx.originFrame % SEGMENT_FRAMES, 0, 'does not start on a frame that is a multiple of 15');
   assert.deepEqual(fx.offset, { x: 0, y: 0 });
@@ -165,17 +177,19 @@ test('SS-plan: each of these two kinds yields one single-card stream (kind card,
   assert.deepEqual([trans.originFrame, trans.lastFrame, trans.lastSegment], [93, 122, 1]);
   const tilt = specs.find(s => s.topClipId === 'tilt');
   assert.deepEqual([tilt.originFrame, tilt.lastFrame], [15, 89]);
-  // 三维外框:框在隔离工程里居中摆着,流的矩形是框外扩一圈(和平面的卡一个算法),不是它在屏幕上投影出来的样子
+  // 3D outer frame: frame is centered in isolated project; stream rectangle expands one ring around
+  // frame (same algorithm as planar cards), not what it looks like projected on screen
   assert.deepEqual(tilt.offset, { x: 340, y: 210 });
   assert.deepEqual(tilt.bound, { x: -32, y: -32, w: 664, h: 364 });
-  // 交给切分的形状带着 solo;平面的独立卡不带这一项(形状与原来相同)
+  // Shape passed to splitter carries solo; planar standalone cards do not include this item (shape
+  // identical to original)
   assert.equal(queueStreamOf(fx).solo, 'source');
   assert.equal(queueStreamOf(tilt).solo, 'spatial');
   assert.ok(!('solo' in queueStreamOf(specs.find(s => s.topClipId === 'flat'))));
   assert.equal(queueStreamOf(fx).kind, 'card');
-  // 不在预渲染集合里的不出
+  // Those not in prerender set are not emitted
   assert.deepEqual(plan(p, { picked: id => id !== 'fx' && id !== 'tilt' }).map(s => s.topClipId), ['flat', 'trans']);
-  // 没有环境指纹:一条都不出
+  // No environment fingerprint: none is emitted
   assert.deepEqual(planStreams(entryOf(p), { codeVersion: CV }), []);
 });
 
@@ -198,7 +212,7 @@ test('SS-below: when the "below-dependent stream" is on, media effect cards with
 });
 
 test('SS-nomerge: they do not take part in group stream merging, but each takes one decoder: they push the budget over, and what gets merged are the flat independent cards beside them', () => {
-  // 三张平面独立卡叠在一起,上面再压一张三维外框的、一张转场
+  // Three planar standalone cards stacked together, with a 3D outer frame card and a transition layered on top
   const p = edit((x) => {
     x.tracks = [
       { id: 't-tilt', clips: [{ id: 'tilt', cardId: 'caption-track', start: 0, end: 4, params: {}, frame: { x: 0, y: 0, w: 300, h: 200, rotateY: 30 } }] },
@@ -212,15 +226,17 @@ test('SS-nomerge: they do not take part in group stream merging, but each takes 
   });
   const shape = specs => specs.map(s => `${s.kind}:${s.clipIds.join('+')}`);
   assert.deepEqual(shape(plan(p, { budget: 6 })), ['card:c', 'card:b', 'card:a', 'card:trans', 'card:tilt'], 'budget is enough: one each');
-  // 预算 4:五条流超了一条,合并的是两张相邻的平面独立卡
+  // Budget 4: five streams exceed by one; the two adjacent planar standalone cards are merged
   assert.deepEqual(shape(plan(p, { budget: 4 })), ['group:c+b', 'card:a', 'card:trans', 'card:tilt']);
-  // 预算 3:三张平面的并成一组;两条单独成流的不动
+  // Budget 3: three planar ones are merged into one group; two streaming solo remain untouched
   assert.deepEqual(shape(plan(p, { budget: 3 })), ['group:c+b+a', 'card:trans', 'card:tilt']);
-  // 预算 1:能并的都并了,这两条仍然各自一条(超出预算的层由舞台照兜底顺序处理)
+  // Budget 1: everything that can merge has merged, these two still remain one each (layers
+  // exceeding budget are handled by the stage in fallback order)
   const tight = plan(p, { budget: 1 });
   assert.deepEqual(shape(tight), ['group:c+b+a', 'card:trans', 'card:tilt']);
   assert.deepEqual(tight.filter(s => s.solo).map(s => s.solo), ['source', 'spatial']);
-  // 单独成流的卡夹在两张平面独立卡中间时,照旧挡住那两张合并(它在画家顺序里有自己那一层)
+  // When a card forming its own stream is sandwiched between two plane standalone cards, it still
+  // blocks those two from merging as usual (it has its own layer in painter's order)
   const between = edit((x) => {
     x.tracks = [
       { id: 't-a', clips: [{ id: 'a', cardId: 'caption-track', start: 0, end: 4, params: { text: 'a' } }] },
@@ -231,14 +247,14 @@ test('SS-nomerge: they do not take part in group stream merging, but each takes 
   assert.deepEqual(shape(plan(between, { budget: 1 })), ['card:b', 'card:a', 'card:tilt']);
 });
 
-/* ================================================================== 键与输入签名 */
+/* ================================================================== Keys and input signatures */
 
 test('SS-key-source: if any of the video\'s or card\'s parameters, trim or time mapping changes, both the stream key and the page\'s input signature change; where the card sits and how the other layers above or below are edited never change them', () => {
   const base = project();
   const k = { fx: keyOf(base, 'fx'), trans: keyOf(base, 'trans') };
   const s = { fx: sigOf(base, 'fx'), trans: sigOf(base, 'trans') };
   assert.ok(k.fx && k.trans && s.fx && s.trans);
-  /** [说明, 改法, 哪张卡的流该变] */
+  /** [Description, how to change, which card's stream should change] */
   const changes = [
     ['the video it is applied over was swapped for another clip', (x) => { clipOf(x, 'fx').mediaId = 'm1'; }, ['fx']],
     ['the media itself changed content (hash changes)', (x) => { x.media.find(m => m.id === 'm3').hash = 'h3b'; x.media.find(m => m.id === 'm3').url = '/@media/h3b'; }, ['fx']],
@@ -264,7 +280,7 @@ test('SS-key-source: if any of the video\'s or card\'s parameters, trim or time 
       assert.equal(sigOf(p, id) !== s[id], moved, `${what}: ${id} input signature ${moved ? 'should change' : 'should not change'}`);
     }
   }
-  // 不在流里的:这张卡摆在哪、多透明;上面下面别的层
+  // Not in the stream: where this card is placed, how transparent it is; other layers above and below
   const same = [
     ['card position, opacity, fade-in', (x) => { Object.assign(clipOf(x, 'trans'), { opacity: 0.5, fadeIn: 0.2, frame: undefined }); clipOf(x, 'fx').opacity = 0.7; }],
     ['the independent card above was edited', (x) => { clipOf(x, 'flat').params.text = 'changed'; }],
@@ -274,8 +290,12 @@ test('SS-key-source: if any of the video\'s or card\'s parameters, trim or time 
     const p = edit(change);
     for (const id of ['fx', 'trans']) { assert.equal(keyOf(p, id), k[id], `${what}: ${id} key unchanged`); assert.equal(sigOf(p, id), s[id], `${what}: ${id} signature unchanged`); }
   }
-  // 转场接的那段视频自己在时间轴上挪了:画面不变(素材效果卡按自己的时间加输入的偏移取帧,不看那个片段摆在哪),键不变;
-  // 页面的签名记着两个片段的起点差,会变 —— 页面先不贴,渲染节点认下新一版后照同一个键重写层表里的签名,页面再贴上
+  // The video clip connected to the transition moved on the timeline: visuals remain unchanged
+  // (media effect card fetches frames by its own time plus input offset, regardless of where that
+  // clip is placed), key remains unchanged;
+  // The page signature records the start-point difference between the two clips, which will change:
+  // the page does not paste yet; after the render node accepts the new version, it rewrites the
+  // signature in the layer table under the same key, then the page pastes it
   const movedSource = edit((x) => { clipOf(x, 'va').end = 3.4; clipOf(x, 'va').start = 0.2; });
   assert.equal(keyOf(movedSource, 'trans'), k.trans);
   assert.notEqual(sigOf(movedSource, 'trans'), s.trans);
@@ -294,7 +314,8 @@ test('SS-key-spatial 3D frame: the 3D properties, position, and in-plane scaling
     assert.equal(sigOf(p, 'tilt'), s, `${what}: signature unchanged`);
     assert.equal(specOf(p, 'tilt').solo, 'spatial');
   }
-  // 三维全拿掉:变回平面的独立卡,同一个键(流里的画面本来就一样),只是不再单独成流
+  // Remove all 3D: reverts to a plane standalone card, same key (visuals in the stream were already
+  // the same anyway), it just no longer forms its own stream
   const flatten = edit((x) => { const f = clipOf(x, 'tilt').frame; delete f.rotateY; delete f.rotateX; });
   assert.equal(keyOf(flatten, 'tilt'), k);
   assert.ok(!('solo' in specOf(flatten, 'tilt')));
@@ -309,7 +330,7 @@ test('SS-key-spatial 3D frame: the 3D properties, position, and in-plane scaling
   }
 });
 
-/* ================================================================== 隔离工程 */
+/* ================================================================== Isolated project */
 
 test('SS-isolated: the isolated project of a source-dependent card: only this card is shown, the video clips it uses all stay in a hidden track (media and nodes untouched); its appearance properties are removed', () => {
   const p = edit((x) => { Object.assign(clipOf(x, 'trans'), { opacity: 0.5, fadeIn: 0.3, emphasis: { kind: 'shadow' } }); });
@@ -322,7 +343,7 @@ test('SS-isolated: the isolated project of a source-dependent card: only this ca
   assert.equal(shown.cardId, 'tr-fade');
   for (const gone of ['opacity', 'fadeIn', 'emphasis', 'motion']) assert.ok(!(gone in shown), `${gone} is not in the stream`);
   assert.deepEqual([shown.start, shown.end], [3.1, 4.1], 'Time is not shifted');
-  // 两段视频还在,只是不出画
+  // Both video clips are still there, they just do not output video
   for (const id of ['va', 'vb']) {
     const track = iso.tracks.find(t => t.clips.some(c => c.id === id));
     assert.equal(track.hidden, true); assert.equal(track.sourceOnly, true);
@@ -330,13 +351,14 @@ test('SS-isolated: the isolated project of a source-dependent card: only this ca
   }
   assert.deepEqual(iso.cardNodes, p.cardNodes);
   assert.deepEqual(iso.media, p.media);
-  // 隔离工程的卡片图里,转场的两路输入解得到(没有被当成「片段已删除」丢掉)
+  // In the isolated project's card graph, both inputs of the transition can be resolved (not dropped
+  // as "clip deleted")
   const graph = projectCardGraph(iso, getCard);
   const node = graph.nodes.find(n => n.id === 'n-trans');
   assert.deepEqual(Object.keys(node.inputs).sort(), ['A', 'B']);
   assert.equal(node.missingInputs, undefined);
   assert.deepEqual(graph.outputs.map(o => o.clipId), ['trans'], 'only this card is shown');
-  // 套在视频上的那一种:这个片段自己带着素材和节点
+  // The kind wrapped over video: this clip carries its own asset and node
   const fx = isolatedStreamProject(p, specOf(p, 'fx')).tracks.find(t => !t.hidden).clips[0];
   assert.deepEqual([fx.id, fx.mediaId, fx.mediaOffset, fx.nodeId], ['fx', 'm3', 0.5, 'n-fx']);
 });
@@ -351,27 +373,28 @@ test('SS-isolated-spatial: the isolated project of a 3D frame: the frame keeps o
   assert.equal(iso.camera3dFov, 50);
 });
 
-/* ================================================================== 回放 */
+/* ================================================================== Replay */
 
 test('SS-replay replay: needed when the card itself is motion-style; not needed for remotion-style cards that only take media; needed when the input chain has other media effect cards', () => {
   const p = project();
   assert.equal(specOf(p, 'fx').replay, true, 'fx-invert is motion-style');
   assert.equal(specOf(p, 'fx').mountFrame, 38, 'starts from its own mount frame (0.05 s before the in point)');
   assert.equal(specOf(p, 'trans').replay, false, 'tr-fade is remotion-style, both inputs take media');
-  // remotion 式的素材效果卡套在视频上:不回放
+  // Remotion-style media effect card wrapped over video: does not replay
   const direct = edit((x) => { clipOf(x, 'fx').cardId = 'fx-direct'; nodeOf(x, 'n-fx').cardId = 'fx-direct'; });
   assert.equal(specOf(direct, 'fx').replay, false);
-  // 转场的一路改接另一张素材效果卡的输出:那张卡的写法这里拿不到,保守地回放
+  // One branch of the transition is rewired to another media effect card's output: that card's code
+  // cannot be obtained here, conservatively replays
   const chained = edit((x) => { nodeOf(x, 'n-trans').inputs.A = { nodeId: 'n-fx', offset: 0, rate: 1 }; });
   assert.equal(specOf(chained, 'trans').replay, true);
-  // 显式写在项目里的素材节点:和 `@clip/<id>/source` 一样没有历史
+  // Asset node explicitly written in the project: has no history, just like `@clip/<id>/source`
   const mediaNode = edit((x) => { x.cardNodes.push({ id: 'n-m', adapter: 'media', media: x.media[0], inputs: {} }); nodeOf(x, 'n-trans').inputs.A = { nodeId: 'n-m', offset: 0, rate: 1 }; });
   assert.equal(specOf(mediaNode, 'trans').replay, false);
-  // 三维外框的独立卡:照它自己的写法
+  // Standalone card with a 3D frame: follows its own implementation
   assert.equal(specOf(p, 'tilt').replay, true);
 });
 
-/* ================================================================== 切分与认领 */
+/* ================================================================== Splitting and claiming */
 
 const planTask = planTaskOf({ projectId: 'source-p', projectRev: 3 });
 function splitOf(p, extra = {}, mapStream = s => s) {
@@ -400,16 +423,17 @@ test('SS-split splitting: streams of these two kinds produce only the splitter\'
       assert.equal(t.requires.belowDependent, false);
       assert.deepEqual(Object.keys(t.input).filter(key => key !== 'density').sort(), ['cardId', 'clipId', 'contentKey', 'entryKey'], `${id}: no input for the browser copy (stream / bake / dual)`);
     }
-    // 先稀疏后满密度,同一个结果键
+    // First sparse then full density, same result key
     assert.deepEqual(mine.map(t => t.input.density ?? 'dense'), [...mine.filter(t => t.input.density).map(() => 'sparse'), ...mine.filter(t => !t.input.density).map(() => 'dense')]);
     assert.ok(mine.some(t => t.input.density === 'sparse') && mine.some(t => !t.input.density));
     assert.ok(mine.filter(t => t.input.density === 'sparse').every(t => t.priority > mine.find(x => !x.input.density).priority), `${id}: sparse stream tasks rank ahead of full density`);
   }
-  // 三维外框的那张是内置的独立卡:要不是单独成流,浏览器本来做得了(同一次切分里平面的那张就有浏览器那一份)
+  // The card with the 3D frame is a built-in standalone card: if it were not streaming separately,
+  // the browser could have handled it (in the same split, the plane card has the browser portion)
   const flat = specs.find(s => s.topClipId === 'flat');
   assert.ok(streams.some(t => t.input.contentKey === flat.contentKey && t.requires.envFingerprint === BROWSER), 'the flat independent card has the browser copy');
   assert.ok(streams.filter(t => t.requires.envFingerprint === BROWSER).every(t => t.input.contentKey === flat.contentKey), 'the browser copy exists only for flat independent cards');
-  // 分段范围:fx 是 0～3(51 帧),一个任务;帧数按实际算
+  // Segment range: fx is 0-3 (51 frames), one task; frame count is based on actual count
   const fx = specs.find(s => s.topClipId === 'fx');
   const dense = streams.filter(t => t.input.contentKey === fx.contentKey && !t.input.density);
   assert.deepEqual(dense.map(t => [t.range.from, t.range.to, t.weight.frames]), [[0, 3, 51]]);
@@ -443,7 +467,9 @@ test('SS-list: manifest plan of the online page: when the splitter can produce s
   const entry = entryOf(p);
   const listed = planListStreams(entry, ['fx', 'trans', 'tilt', 'flat'], { envFingerprint: FP, codeVersion: CV });
   assert.deepEqual(listed.map(s => `${s.topClipId}:${s.solo ?? '-'}`), ['flat:-', 'fx:source', 'trans:source', 'tilt:spatial']);
-  // 单卡流的内容键与清单里还有哪些片段无关:只给一个片段也算得出同一条流(执行器按任务的片段把它对回这一版)
+  // The content key of a single-card stream is independent of what other clips remain in the
+  // manifest: the same stream can be computed even given only one clip (the executor aligns it back
+  // to this version based on the task clip)
   for (const id of ['fx', 'trans', 'tilt']) {
     assert.equal(planListStreams(entry, [id], { envFingerprint: FP, codeVersion: CV })[0].contentKey, listed.find(s => s.topClipId === id).contentKey);
   }
@@ -469,7 +495,7 @@ test('SS-list: manifest plan of the online page: when the splitter can produce s
   } else assert.fail('this task was not recognized as a manifest plan');
 });
 
-/* ================================================================== 层表 */
+/* ================================================================== Layer table */
 
 test('SS-layer-map: the streams table of the layer table: these two kinds are rows like ordinary single-card streams (kind card, plane local), and the input signature is the one the page computes', () => {
   const p = project();
@@ -486,7 +512,8 @@ test('SS-layer-map: the streams table of the layer table: these two kinds are ro
       inputSig: sigOf(p, id),
     });
   }
-  // 页面按改过的项目算:视频的裁剪改了对不上,三维的角度改了照旧对得上
+  // The page calculates from the modified project: if video cropping changes, it does not match;
+  // if the 3D angle changes, it still matches as usual
   assert.notEqual(streamInputSig(edit((x) => { clipOf(x, 'fx').mediaOffset = 1; }), rows.find(r => r.topClipId === 'fx')), rows.find(r => r.topClipId === 'fx').inputSig);
   assert.equal(streamInputSig(edit((x) => { clipOf(x, 'tilt').frame.rotateY = 5; }), rows.find(r => r.topClipId === 'tilt')), rows.find(r => r.topClipId === 'tilt').inputSig);
 });
@@ -495,7 +522,7 @@ test('SS-sparse: the sparse version\'s interval is the frame count of one segmen
   assert.equal(SPARSE_STRIDE, SEGMENT_FRAMES);
 });
 
-/* ================================================================== 位置矩形 */
+/* ================================================================== Position rectangle */
 
 test('SS-opaque-box: a screenshot with no alpha channel (the picture fills the frame and is opaque, as most streams carrying video are): the placement rectangle is the whole image, not treated as unreadable', () => {
   const png = new PNG({ width: 64, height: 40 });
@@ -505,11 +532,13 @@ test('SS-opaque-box: a screenshot with no alpha channel (the picture fills the f
   assert.deepEqual(pngAlphaBox(rgb), { x: 0, y: 0, w: 64, h: 40 });
   const gray = PNG.sync.write(png, { colorType: 0 });
   assert.deepEqual(pngAlphaBox(gray), { x: 0, y: 0, w: 64, h: 40 });
-  // 带 alpha 通道的照旧逐像素量;全透明照旧是 null
+  // Those with an alpha channel are measured pixel-by-pixel as usual; fully transparent is still null
+  // as usual
   assert.deepEqual(pngAlphaBox(PNG.sync.write(png)), { x: 0, y: 0, w: 64, h: 40 });
   png.data.fill(0);
   assert.equal(pngAlphaBox(PNG.sync.write(png)), null);
-  // 真彩色但带透明色(tRNS):有的像素可能是透明的,这里不解,照旧回「读不懂」
+  // Truecolor with transparency color (tRNS): some pixels may be transparent; not decoded here,
+  // returns "cannot parse" as usual
   const keyed = Buffer.concat([rgb.subarray(0, 33), Buffer.from([0, 0, 0, 6]), Buffer.from('tRNS'), Buffer.alloc(6), Buffer.alloc(4), rgb.subarray(33)]);
   assert.deepEqual(pngAlphaBox(keyed), { full: true });
 });

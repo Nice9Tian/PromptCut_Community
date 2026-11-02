@@ -1,23 +1,38 @@
 /**
- * 任务 F（`claude/queue-maint`）：舞台互换时生成快照跟着后台位置走 —— 专门的互换剧本（M7 契约第 4.3 节、D8；
- * `docs/archive/agent-reports/AGENT-rq-m7-node.md`「没做成的」第 4 条）。不起浏览器：
+ * Task F (`claude/queue-maint`): snapshot generation follows background position during stage swap:
+ * dedicated swap script (M7 contract section 4.3, D8; item 4 of "What wasn't done" in
+ * `docs/archive/agent-reports/AGENT-rq-m7-node.md`). Does not launch browser:
  *
- *   - 真的：节点编排 `src/online/browserNode.ts`、单飞队列 `stageJobs.ts`、舞台登记处 `stageBridge.ts`（含按角色滤事件、
- *     `swapStageClients` 的互换、按客户端记的推送基线）、生成快照的活 `stageBake.ts`（宿主一帧的前半段）；
- *   - 假的：舞台（按「灌进来的项目 + 本地帧」确定地出 HTML，不是后台就回 `role`，一帧在飞时角色变了回 `cancelled`，同 `StageView.tsx`）、
- *     队列（一个任务的认领、放回、完成）。
+ *   - Real: node arrangement `src/online/browserNode.ts`, single-flight queue `stageJobs.ts`, stage
+ *     registry `stageBridge.ts` (including filtering events by role, swap of `swapStageClients`,
+ *     push baseline tracked per client), snapshot generation job `stageBake.ts` (first half of a
+ *     host frame);
+ *   - Fake: stage (deterministically outputs HTML based on "fed-in project + local frame"; returns
+ *     `role` if not background; returns `cancelled` if role changes while a frame is in flight,
+ *     same as `StageView.tsx`), queue (claim, release, and completion of a task).
  *
- *   QM-F-01 基线：不互换，一台后台舞台做完 10 帧
- *   QM-F-02 契约的互换流程：第 4 帧在飞时补跑排进来 → 当前帧做完、放回（yield-urgent，已做 5 帧留在本页）→ 补跑在旧后台上跑 →
- *           互换 → 重新认领后在新后台上先整份重灌隔离单卡工程、从第 5 帧接着做 → 10 帧与基线逐字节相同
- *   QM-F-03 两帧之间后台位置换了人（没有补跑先行：iframe 重载、补跑刚完就开了活的那一小段窗口）：下一帧前核到换人 →
- *           改用新后台、先重灌再做；旧舞台上先发的下一帧作废；不放回、不失败；与基线逐字节相同
- *   QM-F-04 一帧中途后台位置换了人（剧本查出的缺陷，已修）：旧舞台回 cancelled，或者做完了但事件在互换后才到、被按角色滤掉 ——
- *           在新后台上重灌、重做这一帧，不计失败；与基线逐字节相同。后台位置没换人时 cancelled 照旧按可重试失败交回
- *   QM-F-05 补跑刚完、互换之前从单飞队列开出的 bake 活（活记的是旧后台）：第一帧前核到换人，帧只出自新后台、只往新后台灌
- *           隔离单卡工程；旧后台（新前台）最后留在 front 角色
+ *   QM-F-01 Baseline: no swap, one background stage finishes 10 frames
+ *   QM-F-02 Contract swap flow: catch-up run queues in while frame 4 is in flight → current frame
+ *           finishes and is released (yield-urgent, 5 completed frames remain on this page) →
+ *           catch-up run executes on the old background → swap → after re-claiming, first re-feed
+ *           the entire isolated single-card project on the new background and resume from frame 5 →
+ *           10 frames byte-for-byte identical to baseline
+ *   QM-F-03 Background position switched between two frames (no catch-up run beforehand: iframe
+ *           reload, or the narrow window where a job started right after catch-up run finished):
+ *           switch detected before the next frame → switch to new background, re-feed first then
+ *           run; next frame sent ahead on old stage is invalidated; no release, no failure;
+ *           byte-for-byte identical to baseline
+ *   QM-F-04 Background position switched mid-frame (defect found by script, fixed): old stage
+ *           returns cancelled, or finishes but event arrives after swap and is filtered by role:
+ *           re-feed and redo this frame on new background, not counted as failure; byte-for-byte
+ *           identical to baseline. When background position has not switched, cancelled is returned
+ *           as retryable failure as usual
+ *   QM-F-05 Bake job launched from single-flight queue right after catch-up run finished and before
+ *           swap (job recorded old background): switch detected before frame 1, frames only come
+ *           from new background, and isolated single-card project is fed only to new background;
+ *           old background (new foreground) ends up in front role
  *
- * 跑：node --test src/editor/stageBake.test.mjs
+ * Run: node --test src/editor/stageBake.test.mjs
  */
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
@@ -33,7 +48,7 @@ const sha256 = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex"
 const FP = "aaaaaaaaaaaaaaaa";
 const FRAMES = 10;
 
-/* ------------------------------------------------------------------ 项目与任务 */
+/* ------------------------------------------------------------------ Project and task */
 
 const PROJECT = {
   id: "p", fps: 30, duration: 10, width: 1280, height: 720,
@@ -50,19 +65,22 @@ const TASK = {
   weight: { class: "light" }, requires: { envFingerprint: FP, codeVersion: "cv", cardSources: {}, transcode: false, userCards: false, graphCards: false },
 };
 
-/* ------------------------------------------------------------------ 假舞台 */
+/* ------------------------------------------------------------------ Fake stage */
 
 /**
- * 一台舞台（一个 iframe 的 RPC 客户端）。`bakeFrame` 的产出只由「此刻灌进来的项目」与本地帧决定：
- * 灌的是隔离单卡工程时目标片段从 0 起、项目时长是这张卡的；灌的是整个项目（补跑）时片段从 2 s 起 —— 没重灌就出不一样的字节。
+ * A stage (an RPC client for an iframe). The output of `bakeFrame` is determined solely by the
+ * "project fed in at this moment" and the local frame: when feeding the isolated single-card
+ * project, the target clip starts from 0 and project duration is this card's; when feeding the
+ * whole project (catch-up run), the clip starts from 2 s: without re-feeding, different bytes are
+ * produced.
  */
 function fakeStage(name, role) {
   const handlers = new Set();
   const s = {
     name, role, disposed: false, project: null, gen: 0,
     calls: [],          // [['setRole', role, job] | ['setProject', reset, visibleClip] | ['bakeFrame', frame] | ['bakeCancel']]
-    hold: null,         // (frame) => boolean：这一帧先停住，等 release(frame)
-    lateEvent: null,    // (frame) => boolean：这一帧的事件等 flushLate() 才发
+    hold: null,         // (frame) => boolean: pause this frame first and wait for release(frame)
+    lateEvent: null,    // (frame) => boolean: events for this frame are emitted only when flushLate() is called
     waiting: new Map(), late: [],
     onEvent(h) { handlers.add(h); return () => handlers.delete(h); },
     emit(e) { for (const h of [...handlers]) h(e); },
@@ -82,7 +100,8 @@ function fakeStage(name, role) {
       const gen = ++s.gen;
       if (s.hold?.(req.localFrame)) await new Promise((r) => s.waiting.set(req.localFrame, r));
       else await new Promise((r) => setImmediate(r));
-      // 同 StageView：一帧在飞时角色变了、被作废（新的一帧、bakeCancel）、项目换了，都回 cancelled，不发事件
+      // Same as StageView: when role changes while a frame is in flight, is invalidated (new frame,
+      // bakeCancel), or project changes, all return cancelled without emitting events
       if (s.role !== "back" || gen !== s.gen || s.project !== p) return { ok: false, reason: "cancelled" };
       const clip = p.tracks.filter((t) => !t.hidden).flatMap((t) => t.clips).find((c) => c.id === req.clipId);
       if (!clip) return { ok: false, reason: "no-clip" };
@@ -91,7 +110,8 @@ function fakeStage(name, role) {
       const bytes = new TextEncoder().encode(html);
       const hash = sha256(bytes);
       const event = { type: "bake-frame", session: req.session, clipId: req.clipId, localFrame: req.localFrame, hash, bytes: bytes.length, htmlRaw: bytes.buffer, small: null };
-      // 事件与回包走同一条 postMessage 通道、事件在前：事件晚到时回包也跟在它后面（flushLate 先发事件、再放回包）
+      // Events and responses travel on the same postMessage channel with events first: when events arrive
+      // late, responses follow behind them (flushLate emits events first, then releases responses)
       if (s.lateEvent?.(req.localFrame)) await new Promise((r) => s.late.push({ event, r })); else s.emit(event);
       return { ok: true, localFrame: req.localFrame, hash, bytes: bytes.length, small: null, ms: 1, pausedMs: 0, remounted: false, smallMs: 0, readyMs: 0 };
     },
@@ -102,14 +122,17 @@ function fakeStage(name, role) {
   return s;
 }
 
-/** K5 的互换（`stageSwap.ts` 的 `swapAndDress` 的前几步）：登记处对调，再改两台的角色 */
+/**
+ * K5 swap (first few steps of `swapAndDress` in `stageSwap.ts`): swap registries, then change roles
+ * of both stages
+ */
 async function swap(newFront, newBack) {
   bridge.swapStageClients({ client: newFront }, { client: newBack });
   await newBack.setRole("back");
   await newFront.setRole("front");
 }
 
-/* ------------------------------------------------------------------ 假队列 + 节点 */
+/* ------------------------------------------------------------------ Fake queue + node */
 
 function rig({ stages, afterFrame = null }) {
   const log = [];
@@ -153,7 +176,8 @@ function rig({ stages, afterFrame = null }) {
       const { event, stage } = await baker.bakeFrame(job);
       htmlOf.set(job.localFrame, new TextDecoder().decode(new Uint8Array(event.htmlRaw)));
       bakedOn.set(job.localFrame, stage.name);
-      // 宿主一帧的后半段（解压、推素材服务、进页面内快照库）：剧本可以在这里停住，造出「两帧之间」
+      // Latter half of a host frame (decompressing, pushing to asset service, entering in-page snapshot
+      // store): script can pause here, creating "between two frames"
       if (afterFrame) await afterFrame(job.localFrame);
       return { hash: event.hash, bytes: event.bytes, small: null };
     },
@@ -165,7 +189,7 @@ function rig({ stages, afterFrame = null }) {
     node, baker, log, stages, htmlOf, bakedOn,
     get result() { return result; },
     of: (type) => log.filter((m) => m.type === type),
-    /** 节点的节拍（宿主每 250 ms 一次）走到 until 成立 */
+    /** Node ticks (host once every 250 ms) until until condition holds */
     async run(until, max = 300) {
       for (let i = 0; i < max; i++) { node.tick(); await flush(); if (until()) return; }
       throw new Error(`The script did not run to the end: ${JSON.stringify(log.map((m) => m.type))}`);
@@ -178,7 +202,7 @@ beforeEach(() => {
   bridge.resetStageBridge();
 });
 
-/** 不互换跑一遍，拿每帧的 HTML 当基线 */
+/** Run once without swapping, using each frame's HTML as baseline */
 async function baseline() {
   jobs.resetStageJobs();
   bridge.resetStageBridge();
@@ -214,7 +238,8 @@ test("QM-F-02 The contract's swap flow: while frame 4 is in flight a catch-up ru
   await r.run(() => B.waiting.has(4));
   assert.deepEqual(B.bakedFrames(), [0, 1, 2, 3, 4], "Frames 0~3 are done, frame 4 is in flight (the frame sent ahead during the sequential run)");
 
-  // 补跑（更急）排进来：单飞队列 abort 生成快照的活，节点要求让路
+  // Catch-up run (more urgent) queues in: single-flight queue aborts snapshot generation job, node
+  // requests yield
   const catchupOrder = [];
   const catchup = jobs.runBackJob("catchup", async (ctx) => {
     catchupOrder.push(["catchup-start", ctx.stage.name, r.of("task.release").length]);
@@ -233,7 +258,7 @@ test("QM-F-02 The contract's swap flow: while frame 4 is in flight a catch-up ru
   assert.deepEqual(catchupOrder, [["catchup-start", "B", 1]], "The catch-up run starts on the old background B only after the release");
   assert.deepEqual(B.bakedFrames(), [0, 1, 2, 3, 4], "After yielding, the old background no longer sends the next frame ahead");
 
-  // K5：补跑完 B 转到前台，A 接任后台
+  // K5: after catch-up run finishes, B switches to foreground, A takes over background
   await swap(B, A);
   assert.equal(bridge.backStage(), A);
   await r.run(() => r.result !== null);
@@ -259,7 +284,9 @@ test("QM-F-03 The background slot changes hands between two frames (no catch-up 
   bridge.setStageClient("front", A);
   bridge.setStageClient("back", B);
   B.hold = (f) => f === 3;
-  // 第 2 帧还在推素材服务（宿主一帧的后半段）时，顺推先发的第 3 帧已经在 B 上：这时互换 —— 节点此刻不在等任何一帧
+  // While frame 2 is still pushing to asset service (latter half of a host frame), frame 3 sent ahead
+  // via speculative push is already on B: swap at this point: node is not waiting for any frame at
+  // this moment
   let pushDone;
   const pushing = new Promise((res) => { pushDone = res; });
   const r = rig({ stages: { A, B }, afterFrame: (f) => (f === 2 ? pushing : undefined) });
@@ -287,11 +314,12 @@ for (const variant of ["cancelled", "late-event"]) {
     bridge.setStageClient("front", A);
     bridge.setStageClient("back", B);
     const r = rig({ stages: { A, B } });
-    // 用拍子控住：第 5 帧由节点亲自来要（先把顺推时先发的那一帧挡掉：它回来前就互换）
+    // Control with ticks: frame 5 is requested by node directly (first block the frame sent ahead via
+    // speculative push: swap before it returns)
     if (variant === "cancelled") {
       B.hold = (f) => f === 5;
       await r.run(() => B.waiting.has(5));
-      // 等节点真的在等第 5 帧（第 4 帧已记下）
+      // Wait until node is actually waiting for frame 5 (frame 4 already recorded)
       await r.run(() => r.htmlOf.has(4));
       await swap(B, A);
       B.release(5);
@@ -300,7 +328,9 @@ for (const variant of ["cancelled", "late-event"]) {
       B.lateEvent = (f) => f === 5;
       await r.run(() => B.waiting.has(5));
       await r.run(() => r.htmlOf.has(4));
-      // 旧舞台做完第 5 帧、事件与回包还在路上时互换：事件到父页时 B 已是前台，被登记处按角色滤掉，回包 ok 跟在后面
+      // Old stage finishes frame 5; swap while events and response are still in transit: when events reach
+      // parent page, B is already foreground and filtered out by registry by role, response ok follows
+      // behind
       B.release(5);
       await r.run(() => B.late.length === 1, 50);
       await swap(B, A);
@@ -321,7 +351,8 @@ test("QM-F-04b When the background slot has not changed hands, a stage reply of 
   const A = fakeStage("A", "front"), B = fakeStage("B", "back");
   bridge.setStageClient("front", A);
   bridge.setStageClient("back", B);
-  // 第 2 帧先发的那一次与节点亲自来要的那一次都回 cancelled（后台一直是 B）
+  // Both the speculatively sent attempt for frame 2 and the attempt requested directly by the node
+  // return cancelled (background has always been B)
   let n2 = 0;
   const orig = B.bakeFrame;
   B.bakeFrame = async (req) => {
@@ -342,19 +373,22 @@ test("QM-F-05 A bake job opened just after a catch-up run finished and before th
   const A = fakeStage("A", "front"), B = fakeStage("B", "back");
   bridge.setStageClient("front", A);
   bridge.setStageClient("back", B);
-  // 补跑先占住单飞队列
+  // Catch-up run occupies single-flight queue first
   let finishCatchup;
   const gate = new Promise((res) => { finishCatchup = res; });
   const catchup = jobs.runBackJob("catchup", async () => { await bridge.pushProject("back", PROJECT, { reset: true }); await gate; });
   await flush();
-  // 节点在补跑期间不认领（不闲）；这里直接让它的活排在补跑后面：模拟认领到时还在取项目（prep），补跑才来
+  // Node does not claim during catch-up run (not idle); here queue its job directly behind catch-up
+  // run: simulating that upon claim it is still fetching project (prep) when catch-up run arrives
   const r = rig({ stages: { A, B } });
   await flush();
   assert.equal(r.of("task.claim").length, 0, "The catch-up run is running: the node is not idle and does not claim");
-  // 认领一次（绕过闲判据，模拟补跑来之前已认领、还在 prep）
+  // Claim once (bypass idle check, simulating already claimed and still in prep before catch-up run
+  // arrives)
   r.node.receive({ type: "task.claimed", id: TASK.id, token: 1, version: 2, leaseUntil: Infinity, task: { ...TASK, state: "claimed", version: 2 } });
   await flush();
-  // 补跑完，紧跟着互换（runSettleSwap：await catchUpBack 之后 swapAndDress）
+  // Catch-up run finishes, immediately followed by swap (runSettleSwap: swapAndDress after await
+  // catchUpBack)
   finishCatchup();
   await catchup;
   await swap(B, A);
@@ -363,7 +397,8 @@ test("QM-F-05 A bake job opened just after a catch-up run finished and before th
   assert.deepEqual(B.bakedFrames(), [], `Frames do not come from the old background (now the front): ${JSON.stringify(B.calls)}`);
   assert.deepEqual(A.bakedFrames(), [...Array(FRAMES).keys()]);
   assert.equal(B.role, "front", `The new front's final role: ${JSON.stringify(B.calls)}`);
-  // 剧本看到的：bake 活是在互换前从单飞队列里开出来的，活记的舞台是旧后台 B；第一帧前核位置时改到 A、在 A 上重灌
+  // What the script sees: bake job was spawned from single-flight queue before swap, job recorded
+  // stage as old background B; when checking position before frame 1, switched to A and re-fed on A
   assert.equal(r.baker.diag().restages, 1, "The job was opened on the old background, and the change of hands is detected before the first frame");
   assert.equal(B.calls.filter((c) => c[0] === "setProject").length, 1, "B received only the whole-scene project of the catch-up run, not the isolated single-card project");
   assert.deepEqual(r.result.frames, base.frames);

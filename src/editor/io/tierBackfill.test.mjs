@@ -1,7 +1,8 @@
 /**
- * C6.6 设计稿第 9 节第 2 条的页面一侧:打开项目时,缺 `tiers.small` 的视频请编辑器进程补转,好了补写 `tiers.small`。
- * 跑:node --test src/editor/io/tierBackfill.test.mjs
- * `fetch` 换成假的编辑器进程:`/api/media/tiers/backfill` 与 `/api/media/tiers`。
+ * Page side of C6.6 design doc section 9 item 2: when opening a project, ask editor process to
+ * backfill transcoding for videos missing `tiers.small`, and backfill `tiers.small` once done.
+ * Run: node --test src/editor/io/tierBackfill.test.mjs
+ * `fetch` is replaced with fake editor process: `/api/media/tiers/backfill` and `/api/media/tiers`.
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test from "node:test";
@@ -100,7 +101,8 @@ test("Store backfill in the background after opening a project: an old voiceover
     assert.equal(get(ok.id).hash, H("9"));
     assert.equal(get(ok.id).url, `/@media/${H("9")}`);
     assert.equal(get(gone.id).hash, undefined);
-    // 补上哈希写回素材表会再触发一轮(1.5 s 后);补不上的那条后台不再去 adopt
+    // Backfilling the hash and writing back to asset table triggers another round (after 1.5 s);
+    // the background will not try to adopt the one that cannot be backfilled
     const goneTries = () => asked.filter((p) => p.endsWith("voice-gone.mp3")).length;
     const before = goneTries();
     await new Promise((r) => setTimeout(r, 2200));

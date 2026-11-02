@@ -1,11 +1,12 @@
 /**
  * node --test src/ai/envReport.test.mjs
  *
- * 诊断报告里的「环境快照」。
+ * "Environment snapshot" in the diagnostic report.
  *
- * 它守的不是某个算法,是**一份清单**:模式、项目路径、素材库、后端会话 id。
- * 少一项的代价不是崩溃,而是又一轮来回问用户 —— 也就是这份报告存在的全部理由落空。
- * 所以下面每条测试都对着一个「漏了它就查不下去」的字段。
+ * What it guards is not an algorithm, but **a manifest**: mode, project path, media library,
+ * backend session id. The cost of missing an item is not a crash, but another round of
+ * back-and-forth questioning the user: meaning the entire reason for this report's existence is
+ * lost. Therefore, each test below targets a field where "troubleshooting cannot proceed without it".
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -87,9 +88,11 @@ test("Even on a clean start it must say \"it is clean\", instead of leaving an e
 
 test("The body of the script the user wrote must not go into the report: this report is meant to be uploaded", () => {
   /*
-   * pc.ai.script 存的是用户手写的剧本(ai/script.ts)。原来这里按 `ai*` / `pc.*`
-   * 前缀通配收值,于是剧本前 200 字静默进了要上传的报告(ai/reportSubmit.ts)。
-   * 通配还意味着将来任何新加的同前缀键都会自动跟着外发,加键的人不会想到这一层。
+   * pc.ai.script stores the user's handwritten script (ai/script.ts). Originally values were
+   * collected here via `ai*` / `pc.*` prefix wildcards, so the first 200 characters of the script
+   * silently entered the report to be uploaded (ai/reportSubmit.ts). Wildcards also mean that any
+   * newly added keys with the same prefix in the future would automatically be sent outbound, which
+   * whoever adds the key would not think of.
    */
   const script = "Act 1: The hero finishes drinking wild dog milk and turns straight into a happy puppy, the shot pushes in";
   const r = buildEnvReport({ ...base, storage: store({ "pc.ai.script": script }) });

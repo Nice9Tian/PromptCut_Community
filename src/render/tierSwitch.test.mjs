@@ -1,11 +1,15 @@
 /**
- * C6.6 第 4 节(`docs/plan/c66-design.md`):换档判据、预热槽位的对齐与名额、可播性探测、预取顺序、导出拦截。
- * 跑:node --test src/render/tierSwitch.test.mjs
+ * C6.6 Section 4 (`docs/plan/c66-design.md`): tier switch criteria, warm-up slot alignment and
+ * quota, playability probe, prefetch order, export intercept.
+ * Run: node --test src/render/tierSwitch.test.mjs
  *
- * 用例名前缀对应设计稿的验收:T5 = 另一端打开先透明、素材小尺寸出现、素材原尺寸到了换档(帧误差不超过一帧);
- * T6 = 素材原尺寸不可播时预览停在素材小尺寸;T7 = 素材原尺寸没到时导出提示「等待上传方」、不出片。
- * 可播性探测用一个假的 DOM(只有 `<video>` 要的那几样),不起浏览器;真浏览器的那一份在
- * `scripts/probes/tier-switch-probe.mjs`。
+ * Test case name prefixes correspond to design acceptance checks: T5 = opening on other end starts
+ * transparent, small-size asset appears, tier switch when original-size asset arrives (frame
+ * error within one frame); T6 = preview stays at small-size asset when original-size asset is not
+ * playable; T7 = when original-size asset has not arrived, export shows notice "Waiting for
+ * uploader", producing no final video.
+ * Playability probe uses a mock DOM (only the few things `<video>` needs) without launching a
+ * browser; the real browser version is in `scripts/probes/tier-switch-probe.mjs`.
  */
 import "../testing/registerTs.mjs";
 import test from "node:test";
@@ -20,7 +24,7 @@ const SMALL = "b".repeat(64);
 const media = { id: "m1", name: "clip.mov", url: `/@media/${ORIG}`, hash: ORIG, tiers: { original: ORIG, small: SMALL }, ext: "mov", kind: "video" };
 const never = () => { throw new Error("Should not query playability"); };
 
-/* ---------------- T5:换档判据 ---------------- */
+/* ---------------- T5: Tier switch criteria ---------------- */
 
 test("T5-tier-1: asset service not asked yet → small media size (the first frame does not fetch the original media size directly), not counted as waiting", () => {
   assert.deepEqual(chooseTier(media, [], { playable: never }), { url: `/@media/${SMALL}`, tier: "small", awaiting: false });
@@ -49,7 +53,7 @@ test("T5-tier-5: media without a hash during migration is not counted as waiting
   assert.deepEqual(chooseTier(legacy, [TIERS_KNOWN_LOCAL]), { url: legacy.url, tier: "original", awaiting: false });
 });
 
-/* ---------------- T5:预热槽位 ---------------- */
+/* ---------------- T5: Warm-up slots ---------------- */
 
 const sc = (id, url, start, end, offset = 0) => ({ id, url, start, end, offset });
 const small = sc("c1", `/@media/${SMALL}`, 0, 10, 0);
@@ -103,7 +107,7 @@ test("T5-warm-4: previous tier never showed a picture (failed while waiting for 
   assert.equal(p.load[p.active].url, small.url);
 });
 
-/* ---------------- T5:预取顺序 ---------------- */
+/* ---------------- T5: Prefetch order ---------------- */
 
 test("T5-prefetch-order: all small media first, then all original-size media, each in the order of clips on the timeline; unused ones last; each hash only once", () => {
   const h = (c) => c.repeat(64);
@@ -123,7 +127,7 @@ test("T5-prefetch-order: all small media first, then all original-size media, ea
   assert.deepEqual(prefetchOrder(project).map((i) => `${i.tier}:${i.hash[0]}`), ["small:5", "small:2", "original:4", "original:1", "original:3"]);
 });
 
-/* ---------------- T6:可播性 ---------------- */
+/* ---------------- T6: Playability ---------------- */
 
 class FakeMedia {
   constructor(tag, env) { this.tag = tag; this.env = env; this.l = {}; this.style = {}; this.videoWidth = 640; this.duration = 3; }
@@ -143,7 +147,8 @@ function fakeDom({ canPlay = "maybe", behavior = (el) => el.fire("loadeddata"), 
   const env = { canPlay, behavior, frames, asked: [], removed: 0, timeouts: [], retries: [], els: [] };
   globalThis.document = { createElement: (tag) => { const el = new FakeMedia(tag, env); env.els.push(el); return el; }, body: { appendChild() {} } };
   globalThis.window = {
-    // 「未知」冷却结束的那一下由用例手动触发(env.retries),不自己响:免得串到后面的用例里
+    // The moment "unknown" cooldown ends is triggered manually by test case (env.retries), not firing
+    // on its own: to avoid spilling into subsequent test cases
     __pcRealSetTimeout: (fn, ms) => {
       env.timeouts.push(ms);
       if (ms >= P.RETRY_UNKNOWN_MS) { env.retries.push(fn); return 0; }
@@ -184,7 +189,7 @@ test("T6-probe-3: after loadeddata, wait until the frame callback actually deliv
     assert.equal(await P.probePlayable(ORIG, `/@media/${ORIG}`, "mp4"), true);
     assert.equal(P.playableOnThisHost(ORIG), true);
   } finally { clearDom(); P.setBrowserMajorForTest(null); P.forgetPlayable(); }
-  // 有 loadeddata、帧回调一直不来:超时 → 未知(不是放得了)
+  // loadeddata fired, frame callback never arrives: timeout → unknown (not playable)
   P.forgetPlayable(); P.setBrowserMajorForTest("152");
   fakeDom({ canPlay: "probably", frames: false });
   try {
@@ -204,7 +209,7 @@ test("T6-probe-4: a timeout is recorded as \"unknown\": not cached, no re-probe 
     assert.equal(P.shouldProbe(ORIG), false, "cooling down");
     env.now += P.RETRY_UNKNOWN_MS;
     assert.equal(P.shouldProbe(ORIG), true, "probe again after cooldown");
-    // 未知期间预览给素材小尺寸
+    // Preview serves small-size asset during the unknown period
     assert.equal(playbackUrl(media, [TIERS_KNOWN_LOCAL, SMALL, ORIG], { probe: false }), `/@media/${SMALL}`);
   } finally { clearDom(); P.setBrowserMajorForTest(null); P.forgetPlayable(); }
 });
@@ -237,7 +242,7 @@ test("T6-probe-4c: still no result after the cooldown ends: remove the off-scree
     assert.equal(await P.probePlayable(ORIG, `/@media/${ORIG}`, "mp4", "video", { remote: true }), undefined);
     assert.equal(P.shouldProbe(ORIG), false, "cooling down");
     assert.equal(env.retries.length, 1);
-    env.retries[0](); // 冷却结束(真墙钟上的计时器);墙钟读数故意不往前拨:通知之后必须真能重探
+    env.retries[0](); // Cooldown ends (timer on real wall clock); wall clock reading is intentionally not advanced: must really be able to re-probe after notification
     assert.equal(env.removed, 1);
     assert.equal(n, 1, "notified proactively once");
     assert.equal(P.shouldProbe(ORIG), true, "re-evaluation after the notification will probe again");
@@ -268,7 +273,7 @@ test("T6-probe-6: notify subscribers when a probe reaches a result (the picture 
   P.forgetPlayable();
 });
 
-/* ---------------- T7:导出拦截 ---------------- */
+/* ---------------- T7: Export intercept ---------------- */
 
 test("T7-gate-1: block only when the original-size media used on the timeline has not fully arrived; unused ones and ones in migration are not blocked; the message says \"waiting for the uploader\" and the media name", () => {
   const h = (c) => c.repeat(64);
@@ -281,7 +286,8 @@ test("T7-gate-1: block only when the original-size media used on the timeline ha
     ],
     tracks: [{ id: "t", clips: [{ id: "x", mediaId: "b", start: 5, end: 6 }, { id: "y", mediaId: "a", start: 0, end: 5 }, { id: "z", mediaId: "d", start: 6, end: 7 }] }],
   };
-  // 素材小尺寸到齐了也不算:导出只用素材原尺寸
+  // Even if all small-size assets have arrived, it does not count: export uses only
+  // original-size assets
   const missing = missingOriginals(project, [h("2"), h("3")]);
   assert.deepEqual(missing.map((m) => m.name), ["开场.mov"]);
   assert.deepEqual(missingOriginals(project, [h("1"), h("3")]), []);

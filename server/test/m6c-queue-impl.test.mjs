@@ -1,9 +1,11 @@
 /**
- * M6c X2～X5（`docs/plan/m6c-contract.md`）实现方的单测：本地档能力闸、`watch: 'all'` 收紧、`plan` 就近认领、
- * 本机队列节点的闲时门槛。用例名以编号开头（X2-*～X5-*），与契约验收表逐项对应。
+ * Implementer unit tests for M6c X2-X5 (`docs/plan/m6c-contract.md`): local tier capability gate,
+ * `watch: 'all'` tightening, `plan` nearby claim, idle gate for local queue nodes. Test case names
+ * start with numbers (X2-* to X5-*), corresponding item by item to contract acceptance table.
  *
- * 队列单测用 `fake-render-queue-env.mjs` 的假时钟与收集器；端到端用环回（`fake-loopback-transport.mjs`）、
- * 假执行器（`fake-render-executor.mjs`，按假时钟推进）与假产物库，全部在一个进程里、不开真实计时器。
+ * Queue unit tests use fake clock and collector in `fake-render-queue-env.mjs`; end-to-end uses
+ * loopback (`fake-loopback-transport.mjs`), fake executor (`fake-render-executor.mjs`, advanced
+ * by fake clock), and fake artifact store, all in one process without real timers.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,11 +33,11 @@ const pcNode = (fp = FP, extra = {}) => ({
   capabilities: { transcode: true, userCards: true, graphCards: true }, ...extra,
 });
 
-/* ================================================================== 端到端的小装置 */
+/* ================================================================== End-to-end harness */
 
 /**
- * 一个真队列、一条环回、若干 `createLocalNode`，假时钟驱动。
- * `step(ms)`：投递 → 各节点 tick → 投递 → 队列 tick → 投递 → 推进时钟。
+ * One real queue, one loopback, several `createLocalNode` instances, driven by fake clock.
+ * `step(ms)`: deliver → node ticks → deliver → queue tick → deliver → advance clock.
  */
 function createRig({ constants, planContext, planMs = 100, durationMs = 300 } = {}) {
   const clock = createTimerClock();
@@ -75,9 +77,9 @@ function createRig({ constants, planContext, planMs = 100, durationMs = 300 } = 
     nodes.push(rec);
     return rec;
   }
-  /** 连接 `connId` 发给队列的某类消息 */
+  /** Messages of a certain type sent to queue by connection `connId` */
   const sent = (connId, type) => lb.log().filter(e => e.dir === 'in' && e.connId === connId && e.message.type === type).map(e => e.message);
-  /** 队列发给连接 `connId` 的某类消息 */
+  /** Messages of a certain type sent by queue to connection `connId` */
   const received = (connId, type) => lb.log().filter(e => e.dir === 'out' && e.connId === connId && e.message.type === type).map(e => e.message);
   const task = id => queue.describe().tasks.find(t => t.id === id) ?? null;
   const hygiene = () => {
@@ -86,9 +88,9 @@ function createRig({ constants, planContext, planMs = 100, durationMs = 300 } = 
   return { clock, lb, queue, exec, sink, nodes, settle, step, addNode, sent, received, task, hygiene };
 }
 
-/* ================================================================== X2 本地档能力闸 */
+/* ================================================================== X2 Local tier capability gate */
 
-/** 一版项目：一条没有哈希的本地素材、一条有哈希的素材；三个片段 */
+/** One project revision: one local asset without hash, one asset with hash; three clips */
 const MEDIA_PROJECT = {
   media: [
     { id: 'm-local', name: 'clip.mp4', url: '/@media/clip.mp4' },
@@ -129,7 +131,7 @@ test('X2-1 localMediaGate: only media without a content hash that is fetched by 
   assert.equal(uses(control('clip-plain', 'shared', 120)), false, 'Shared-tier clip references only media with hashes: does not count');
   assert.equal(uses(control('clip-gone', 'shared', 10)), true, 'Clip not found: counts conservatively');
   assert.equal(uses({ clipId: 'clip-plain', kind: 'stream' }), true, 'Stream: counts');
-  // 档位缺省按 capabilities 判
+  // Tier is determined by capabilities by default
   assert.equal(uses({ clipId: 'clip-plain', capabilities: { frameMode: 'stateful', compositing: 'unknown' } }), true, 'unknown is the local tier');
 
   const ctx = { entryKey: 'k', cardPlan: [] };
@@ -159,9 +161,9 @@ test('X2-2 splitPlan: when localMedia is given, snapshot and stream tasks for wh
   assert.ok(plainShared.every(t => !('localMedia' in t.requires)), 'Shared tier referencing only media with hashes sets no gate');
   const streams = gated.filter(t => t.kind === 'stream');
   assert.ok(streams.length > 0 && streams.every(t => t.requires.localMedia === 'node-A'), 'stream tasks');
-  // 缺省 usesLocalMedia：给了 localMedia 就全部设闸
+  // Default usesLocalMedia: gates all when localMedia is provided
   assert.ok(splitPlan({ ...base, localMedia: 'node-A' }).every(t => t.requires.localMedia === 'node-A'));
-  // 其余字段与不设闸时一样
+  // Remaining fields are the same as when not gated
   for (let i = 0; i < gated.length; i++) {
     const { localMedia: _drop, ...rest } = gated[i].requires;
     assert.deepEqual({ ...gated[i], requires: rest }, plain[i]);
@@ -175,7 +177,7 @@ test('X2-3 node-side filter rule 1: skip when requires.localMedia is not equal t
   assert.deepEqual(checkClaimable(view, { ...pcNode(), nodeId: 'node-B' }), { ok: false, rule: 1, reason: 'local-media' });
   assert.deepEqual(checkClaimable(view, pcNode()), { ok: false, rule: 1, reason: 'local-media' }, 'nodeId unknown: does not take it');
 
-  // 会话：node 描述里没有 nodeId，用会话自己的 nodeId 过滤
+  // Session: node descriptor has no nodeId, filter using session's own nodeId
   const sentA = [];
   const sentB = [];
   const mk = (nodeId, out) => createNodeSession({ nodeId, node: pcNode(), send: m => out.push(m), now: () => T0 });
@@ -198,7 +200,7 @@ test('X2-4 queue: under the pre-filter, other nodes cannot see localMedia tasks 
     h.publish('p', [T1]);
     const snapA = h.node('a', 'node-A', { hello: { envFingerprint: FP } }).one('a', 'queue.snapshot');
     const snapB = h.node('b', 'node-B', { hello: { envFingerprint: FP } }).one('b', 'queue.snapshot');
-    const snapN = h.node('n', 'node-N').one('n', 'queue.snapshot');   // 不带指纹的节点：localMedia 照样挡
+    const snapN = h.node('n', 'node-N').one('n', 'queue.snapshot');   // Node without fingerprint: localMedia still blocks
     assert.deepEqual(snapA.tasks.map(x => x.id), [T1.id]);
     assert.deepEqual(snapB.tasks.map(x => x.id), prefilter ? [] : [T1.id], `Filter ${prefilter ? 'on' : 'off'}: B's snapshot`);
     assert.deepEqual(snapN.tasks.map(x => x.id), prefilter ? [] : [T1.id]);
@@ -219,14 +221,15 @@ test('X2-4 queue: under the pre-filter, other nodes cannot see localMedia tasks 
 
 test('X2-5 end to end for a project with local-tier media: other nodes claim such tasks 0 times and receive 0 task.opened; the publisher node completes all of them', async () => {
   const rig = createRig({ planContext: MEDIA_PLAN, durationMs: 400 });
-  // 执行器之后按这一版项目加闸（vite-plugin-frames 的做法：owner = plan 的发布方）
+  // Executor then gates based on this project revision (vite-plugin-frames approach: owner = plan
+  // publisher)
   const gate = e => ({ ...e, plan: async (task, opts) => withLocalMedia(await e.plan(task, opts), { project: MEDIA_PROJECT, owner: task.source.publisher.id }) });
   const a = rig.addNode('node-A', { wrapExecutor: gate });
   const b = rig.addNode('node-B', { wrapExecutor: gate });
   a.local.start();
   b.local.start();
   await rig.settle();
-  // 发布方就是 node-A 自己（预渲染进程替页面发布，契约 J.5）
+  // Publisher is node-A itself (prerender process publishes on behalf of the page, contract J.5)
   const plan = planTaskOf({ projectId: 'p1', projectRev: 1, codeVersion: CV, envFingerprint: FP, preferNode: 'node-A' });
   a.endpoint.send({ type: 'task.publish', tasks: [plan] });
 
@@ -249,7 +252,7 @@ test('X2-5 end to end for a project with local-tier media: other nodes claim suc
   a.local.stop(); b.local.stop();
 });
 
-/* ================================================================== X3 watch: 'all' 收紧 */
+/* ================================================================== X3 watch: 'all' tightened */
 
 test('X3-1 browser with watch all returns forbidden, its earlier watch is unchanged; listing its own projects works as usual', () => {
   const h = createQueueHarness(createRenderQueue);
@@ -265,7 +268,7 @@ test('X3-1 browser with watch all returns forbidden, its earlier watch is unchan
   assert.equal(h.publish('p', [T2]).of('br', 'task.opened').length, 1, 'The project watched earlier still receives deltas as usual');
   const T3 = makeTaskInput({ resultKey: 'x3-1c', projectId: 'p2' });
   assert.equal(h.publish('p', [T3]).of('br', 'task.opened').length, 0, 'Did not turn into the full set');
-  // 带 reqId 回显
+  // Echoes with reqId
   const withReq = h.handle('br', { type: 'queue.watch', projects: 'all', reqId: 'w1' }).one('br', 'error');
   assert.deepEqual([withReq.reason, withReq.reqId], ['forbidden', 'w1']);
 });
@@ -296,7 +299,8 @@ test('X3-2 host with watch all: receives only project summaries and 0 single-tas
   const tokens = [];
   for (let round = 0; round < 6; round++) {
     const m = h.bus.mark();
-    // 每轮：3 个项目各发布 2 个（其中一个带指纹）、认领一个、完成上一轮认领的
+    // Each round: publish 2 for each of 3 projects (one with fingerprint), claim one, complete the
+    // one claimed in previous round
     for (let k = 0; k < 3; k++) {
       h.publish('p', [
         makeTaskInput({ projectId: `proj-${k}`, resultKey: `x3-2-${round}-${k}`, priority: round + k }),
@@ -325,7 +329,7 @@ test('X3-2 host with watch all: receives only project summaries and 0 single-tas
   t.diagnostic(`host watch all: ${deltas} single-task deltas, ${summaries} summaries (6 cycles)`);
   assert.equal(deltas, 0, '0 single-task deltas');
   assert.equal(h.bus.of('w').filter(x => DELTAS.has(x.type)).length, 0);
-  // 同一时刻 pc 的 watch all 照旧：收增量、不收摘要
+  // At the same time pc watch all as before: receives deltas, not summaries
   assert.ok(h.bus.of('a').some(x => x.type === 'task.opened'), 'pc still receives the full set');
   assert.equal(h.bus.of('a').filter(x => x.type === 'queue.summary').length, 0);
 });
@@ -347,7 +351,7 @@ test('X3-3 host also watches specific projects besides the summary: it receives 
   h.watch('w', []);
   h.publish('p', [makeTaskInput({ projectId: 'proj-3', resultKey: 'x3-3d' })]);
   assert.equal(h.tick().of('w').length, 0, 'Empty list: summaries stop too');
-  // 摘要中的 host 以 pc 重新报到：摘要停
+  // Host in summary checks in again as pc: summaries stop
   h.watch('w', 'all');
   h.hello('w', 'node-W', { profile: 'pc' });
   h.publish('p', [makeTaskInput({ projectId: 'proj-4', resultKey: 'x3-3e' })]);
@@ -375,7 +379,7 @@ test('X3-4 a host session changes its watch according to the summary: on receivi
   host.local.stop();
 });
 
-/* ================================================================== X4 plan 就近认领 */
+/* ================================================================== X4 plan nearest claim */
 
 function planScene(constants) {
   const h = createQueueHarness(createRenderQueue, constants ? { constants } : {});
@@ -405,7 +409,7 @@ test('X4-2 within the window, another pc\'s claim of the plan returns preferred 
   h.clock.advance(4_000);
   const r = h.claim('b', plan.id, 1).one('b', 'task.claim-rejected');
   assert.deepEqual([r.reason, r.preferNode, r.state, r.version, r.retryInMs], ['preferred', 'node-A', 'open', 1, 1_001]);
-  h.clock.set(T0 + 5_000);   // 恰好 PLAN_PREFER_MS：仍在窗口里（过期按严格大于判）
+  h.clock.set(T0 + 5_000);   // Exactly PLAN_PREFER_MS: still within window (expiration evaluated as strictly greater than)
   assert.equal(h.claim('b', plan.id, 1).one('b', 'task.claim-rejected').reason, 'preferred');
   assert.equal(h.task(plan.id).state, 'open');
   assert.equal(h.claim('a', plan.id, 1).one('a', 'task.claimed').id, plan.id, 'preferNode can claim within the window');
@@ -416,9 +420,10 @@ test('X4-6 (integration ruling) preferNode disconnects: the exclusive window end
   h.clock.advance(1_000);
   assert.equal(h.claim('b', plan.id, 1).one('b', 'task.claim-rejected').reason, 'preferred', 'Before the disconnect: the window is in place');
   h.disconnect('a');
-  // 发布方与节点常在同一条连接；这里节点 a 单独断开，发布方 p 还在，plan 不会因为没人要被删
-  h.node('a2', 'node-A', { hello: { envFingerprint: FP } });   // 同一 nodeId 重连
-  h.clock.advance(1_000);   // 仍在原来的 5 s 窗口里
+  // Publisher and node often share same connection; here node a disconnects alone, publisher p
+  // remains, plan will not be deleted for being unclaimed
+  h.node('a2', 'node-A', { hello: { envFingerprint: FP } });   // Reconnect with same nodeId
+  h.clock.advance(1_000);   // Still within the original 5 s window
   assert.equal(h.claim('b', plan.id, 1).one('b', 'task.claimed').id, plan.id, 'After the disconnect the window ends, and another pc can claim');
 });
 
@@ -431,7 +436,8 @@ test('X4-3 after the window, any pc with a matching fingerprint can claim; one w
   const { h: h2, plan: plan2 } = planScene({ PLAN_PREFER_MS: 100 });
   h2.clock.advance(101);
   assert.equal(h2.claim('b', plan2.id, 1).one('b', 'task.claimed').id, plan2.id, 'The overridden window');
-  // 过滤开时，带 preferNode 的 plan 对指纹不符的节点也看不见（和细任务同一处前置过滤）
+  // When filtering is on, plans with preferNode are invisible to nodes with mismatched fingerprints
+  // (same pre-filtering as fine-grained tasks)
   const { h: h3 } = planScene();
   const snapC = h3.watch('c', 'all').one('c', 'queue.snapshot');
   assert.equal(snapC.tasks.length, 0);
@@ -453,7 +459,7 @@ test('X4-4 host and browser claims of the plan always return plan-profile (both 
   const view = { ...plan, source: { ...plan.source, userId: 'u1' } };
   assert.deepEqual(checkClaimable(view, { ...pcNode(), profile: 'host' }), { ok: false, rule: 6, reason: 'plan-on-host' });
   assert.equal(checkClaimable(view, { ...pcNode(), profile: 'browser', userId: 'u1' }).ok, false);
-  // 节点侧：带 preferNode 的 plan 查指纹（规则 1）；没带的旧形状不查
+  // Node side: plans with preferNode check fingerprint (rule 1); legacy shapes without it do not check
   assert.deepEqual(checkClaimable(view, pcNode(FP_B)), { ok: false, rule: 1, reason: 'env-fingerprint' });
   const legacy = { ...view, requires: { codeVersion: CV, envFingerprint: FP } };
   assert.deepEqual(checkClaimable(legacy, pcNode(FP_B)), { ok: true });
@@ -490,9 +496,9 @@ test('X4-5 session end to end: when the publisher node is busy, another pc gets 
   }
 });
 
-/* ================================================================== X5 闲时门槛 */
+/* ================================================================== X5 idle gate */
 
-/** 假管线：preload 的一个代际还在 html（没 ready），其余安静 */
+/** Fake pipeline: one preload generation is still in html (not ready), rest are quiet */
 function fakePipeline(extra = {}) {
   const controller = new AbortController();
   return {
@@ -516,7 +522,7 @@ test('X5-1 idle gate: no claiming if there was an interactive frame request in t
   assert.equal(gate.reason(), 'interaction');
   now += 1;
   assert.equal(gate.idle(), true, 'A full 500 ms');
-  outside = now - 100;   // 路由记下的交互（/see user、/playback）
+  outside = now - 100;   // Interactions recorded by router (/see user, /playback)
   assert.equal(gate.idle(), false);
   outside = -Infinity;
 
@@ -535,7 +541,7 @@ test('X5-1 idle gate: no claiming if there was an interactive frame request in t
 test('X5-2 the gate lets claims through when preload is not ready (M5b\'s executor isIdle did not let them through at this point; isIdle was removed during integration)', () => {
   const pipeline = fakePipeline();
   assert.equal(createQueueIdleGate({ pipeline }).idle(), true, 'X5: can claim even when preload is not ready');
-  // 流在忙同样不挡（执行器有空位由会话守）
+  // Stream busy likewise does not block (executor capacity is guarded by session)
   const busyStreams = fakePipeline({ _streams: { workers: new Set([1]), encoding: new Set() } });
   assert.equal(createQueueIdleGate({ pipeline: busyStreams }).idle(), true);
 });
@@ -551,13 +557,13 @@ test('X5-3 during a simulated drag there are 0 new claims and the task in hand i
   pub.send({ type: 'publisher.hello', publisherId: 'pub' });
   const tasks = Array.from({ length: 6 }, (_, i) => makeTaskInput({ resultKey: `x5-3-${i}`, requires: { envFingerprint: FP, codeVersion: CV } }));
   pub.send({ type: 'task.publish', tasks });
-  // 先让它认领到一个、开工
+  // Let it claim one first and start work
   for (let i = 0; i < 10 && n.local.running().length === 0; i++) await rig.step(100);
   const holding = n.local.running();
   assert.equal(holding.length, 1, 'One task is in hand before the drag');
   const claimsBefore = rig.sent(n.connId, 'task.claim').length;
 
-  // 拖动 3 秒：每 100 ms 一次交互帧请求
+  // Scrub for 3 seconds: one interactive frame request every 100 ms
   dragging = true;
   for (let i = 0; i < 30; i++) { if (dragging) gate.note(); await rig.step(100); }
   dragging = false;
@@ -567,7 +573,7 @@ test('X5-3 during a simulated drag there are 0 new claims and the task in hand i
   assert.equal(rig.sent(n.connId, 'task.release').length, 0, 'The task in hand is not released');
   assert.equal(rig.task(holding[0]).state, 'done', 'The task in hand is finished');
 
-  // 停手：400 ms 内仍不认领，满 500 ms 之后恢复
+  // Stop: still does not claim within 400 ms, resumes after reaching 500 ms
   await rig.step(100); await rig.step(100); await rig.step(100);
   assert.equal(rig.sent(n.connId, 'task.claim').length - claimsBefore, 0, 'Still no claiming less than 500 ms after stopping');
   for (let i = 0; i < 5; i++) await rig.step(100);

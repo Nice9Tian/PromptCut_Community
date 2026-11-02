@@ -1,31 +1,46 @@
 /**
- * 剪辑段里的有声动效卡:导出前自动生成声音递归进剪辑段,成片里听得到,并按剪辑段的音量、淡入淡出、静音处理
- * (剪辑段首版局限补齐第 3 项,`docs/archive/agent-reports/AGENT-cut-segment-followups.md`)。
+ * Audio motion cards in cut segments: automatically generate audio recursively into cut segments
+ * before export, audible in the final video, and processed according to cut segment volume,
+ * fade-in/fade-out, and mute (item 3 of cut segment initial version limitation followups,
+ * `docs/archive/agent-reports/AGENT-cut-segment-followups.md`).
  *
- *   node scripts/probes/cut-segment-card-sound-probe.mjs [--port 5373] [--out <目录>]
+ *   node scripts/probes/cut-segment-card-sound-probe.mjs [--port 5373] [--out <dir>]
  *
- * 做法:本探针自己起一台本树的 dev server(端口 --port 与 +1、+2 要空着,不碰 5190～5192;导出、数据目录都在 --out 下),
- * 无头 Chrome(`--mute-audio`,不向扬声器出声)打开编辑台,摆这个项目(声音都没生成过):
- *   剪辑2(2 秒):内置有声卡 av-pulse 放在 0.5～1.1 秒(880 Hz 提示音,0.3 秒);
- *   剪辑3(2 秒):一个引用剪辑2 的剪辑段 0～2 秒(两层嵌套);
- *   剪辑1(激活,16 秒):
- *     S1 1～3 秒引用剪辑2,音量 1        → 提示音在 1.5 秒;
- *     S2 4～6 秒引用剪辑2,音量 0.5      → 4.5 秒,比 S1 低 6 dB;
- *     S3 7～9 秒引用剪辑2,静音          → 7.5 秒没有声音;
- *     S4 10～12 秒引用剪辑2,淡入 1 秒    → 10.5 秒,落在淡入中段(增益 0.5～0.8),比 S1 低;
- *     S5 13～15 秒引用剪辑3             → 13.5 秒,和 S1 一样响。
- * 两条导出路各走一遍,每一遍之前都把项目换回「声音都没生成过」:
- *   B 浏览器那一路(和 `exportVideoBrowser({ sounds: true })` 同样先生成声音,再按 `browserExport.encodeAudio` 的做法在 Chrome 里离线混音成 WAV;
- *     视频编码那一步不走:本机 dev server 上 exportVideoBrowser 连空项目都卡住不返回,开工前的提交上同样);
- *   D 桌面导出(`window.__pcIo.exportVideo()`:先生成声音,再交预渲染进程导出,ffmpeg 混音)。
+ * Method: this probe starts a dev server from this tree itself (port `--port` and +1, +2 must be
+ * free, not touching 5190-5192; export and data directories are under `--out`), headless Chrome
+ * (`--mute-audio`, no sound to speakers) opens the editor, setting up this project (no audio has
+ * been generated):
+ *   Cut 2 (2 seconds): built-in audio card av-pulse placed at 0.5-1.1 seconds (880 Hz notification
+ *     sound, 0.3 seconds);
+ *   Cut 3 (2 seconds): a cut segment referencing cut 2 at 0-2 seconds (two levels of nesting);
+ *   Cut 1 (active, 16 seconds):
+ *     S1 1-3 seconds references cut 2, volume 1        → notification sound at 1.5 seconds;
+ *     S2 4-6 seconds references cut 2, volume 0.5      → 4.5 seconds, 6 dB lower than S1;
+ *     S3 7-9 seconds references cut 2, muted          → no sound at 7.5 seconds;
+ *     S4 10-12 seconds references cut 2, 1-second fade-in → 10.5 seconds, falls in the middle of
+ *       fade-in (gain 0.5-0.8), lower than S1;
+ *     S5 13-15 seconds references cut 3             → 13.5 seconds, as loud as S1.
+ * Run each of the two export paths once, restoring the project to "no audio has been generated"
+ * before each run:
+ *   B Browser path (similarly generates audio first like `exportVideoBrowser({ sounds: true })`,
+ *     then offline mixes into WAV in Chrome following `browserExport.encodeAudio`; skips the video
+ *     encoding step: on local dev server, exportVideoBrowser hangs and does not return even on empty
+ *     projects, identical on the pre-work commit);
+ *   D Desktop export (`window.__pcIo.exportVideo()`: generates audio first, then hands off to
+ *     prerender process for export, mixing with ffmpeg).
  *
- * 断言(每条一行 PASS/FAIL,最后一行打一行 JSON,有失败退出码 1):
- *   N  导出前的清单只有一项:剪辑2 里那张有声卡(带 cutId;被引用 5 次、两层嵌套也只列一次);改动前导出直接报缺
- *   G  导出之后声音记在剪辑2 的原片段上(停放的剪辑),激活剪辑的序列不动;再列清单为空
- *   成片(ffmpeg astats 量各窗口 RMS dB):S1 有声(> -45 dB);S2 比 S1 低 6 dB(±1.5);S3 无声(< -60 dB);
- *     S4 比 S1 低 1～8 dB;S5 与 S1 差不到 1.5 dB;段与段之间无声(< -60 dB)
+ * Assertions (one line PASS/FAIL per item, the last line prints a JSON line, exits with code 1 on
+ * failure):
+ *   N  The manifest before export has only one item: that audio card in cut 2 (with cutId; listed
+ *      only once even when referenced 5 times across two levels of nesting); before the change,
+ *      export directly reported missing
+ *   G  After export, audio is recorded on cut 2's original clip (parked cut), while the active cut's
+ *      track remains untouched; listing the manifest again is empty
+ *   Final video (ffmpeg astats measuring RMS dB in each window): S1 has sound (> -45 dB); S2 is 6 dB
+ *     lower than S1 (+-1.5); S3 has no sound (< -60 dB); S4 is 1-8 dB lower than S1; S5 differs
+ *     from S1 by less than 1.5 dB; silence between segments (< -60 dB)
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -48,7 +63,7 @@ const check = (key, cond, note, extra) => {
   if (!cond) fails.push(`${key}: ${note}`);
   console.log(`${cond ? 'PASS' : 'FAIL'} ${key} ${note} ${extra !== undefined ? JSON.stringify(extra).slice(0, 500) : ''}`);
 };
-/** 一个文件 [from, to) 秒的整体 RMS(dB);没有声音样本时 null,全零 -200 */
+/** Overall RMS (dB) of a file for [from, to) seconds; null when no audio samples, -200 for all zeros */
 function rmsOf(file, from, to) {
   const r = spawnSync('ffmpeg', ['-hide_banner', '-ss', String(from), '-t', String(to - from), '-i', file, '-vn', '-af', 'astats=metadata=0:reset=0', '-f', 'null', '-'], { encoding: 'utf8', windowsHide: true });
   const m = /Overall[\s\S]*?RMS level dB:\s*(-?inf|-?[\d.]+)/.exec(r.stderr);
@@ -83,7 +98,8 @@ try {
   await page.waitForFunction(() => !!window.__pcStore && !!window.__pcIo, { timeout: 120_000 });
   await sleep(5000);
 
-  /* 摆项目,存一份「声音都没生成过」的原样,两条路各从它开始 */
+  /* Set up project, save an intact copy of "no audio has been generated",
+   * each of the two paths starts from it */
   const setup = await page.evaluate(() => {
     const a = window.__pcStore.actions;
     a.newProject('Audio cards inside a cut segment');
@@ -129,9 +145,11 @@ try {
 
     const file = path.join(OUT, mode === 'browser' ? 'browser.wav' : 'desktop.mp4');
     if (mode === 'browser') {
-      // 浏览器那一路:和 exportVideoBrowser({ sounds: true }) 同样先 prepareExportSounds,再按 browserExport.encodeAudio 的做法
-      // (audioPlanOf → 按条切片 → renderMix,Chrome 离线混音带 gainCurve 包络)混成 WAV。不走视频编码那一步:
-      // 本机 dev server 上 exportVideoBrowser 连不含剪辑段的空项目也卡住不返回,开工前的提交 a55d8199 上同样(见报告「没做成的」)
+      // Browser path: similarly calls prepareExportSounds first like exportVideoBrowser({ sounds: true }),
+      // then follows browserExport.encodeAudio (audioPlanOf → slice per item → renderMix, Chrome offline
+      // mixing with gainCurve envelope) to mix into WAV. Skips the video encoding step: on local dev
+      // server, exportVideoBrowser hangs and does not return even on empty projects without cut segments,
+      // identical on pre-work commit a55d8199 (see report "What didn't work")
       const r = await page.evaluate(async () => {
         try {
           const { prepareExportSounds } = await import('/src/editor/io/exportSounds.ts');

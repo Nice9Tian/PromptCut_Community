@@ -1,6 +1,7 @@
 /**
- * 模型发出名字为空的工具调用(实跑见过):不能把空名原样写进历史,
- * 否则下一次请求被 Gemini 的 OpenAI 兼容口整个 400,会话从此废掉。
+ * Model emits a tool call with an empty name (observed in practice): cannot write the empty name
+ * as-is into history, otherwise the next request gets a 400 from Gemini's OpenAI-compatible endpoint,
+ * ruining the session permanently.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

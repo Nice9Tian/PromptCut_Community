@@ -1,4 +1,4 @@
-// node --test src/ai/sequences.test.mjs —— see_frames 素材模式(source: "media")的规划逻辑
+// node --test src/ai/sequences.test.mjs: planning logic for see_frames media mode (source: "media")
 import test from "node:test";
 import assert from "node:assert/strict";
 

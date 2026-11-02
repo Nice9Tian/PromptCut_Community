@@ -1,50 +1,65 @@
 /**
- * 仅供测试，生产代码不得引用。
+ * For testing only; must not be referenced by production code.
  *
- * M6b 独立渲染主机契约测试（`docs/plan/render-host-contract.md`，用例 RHC*）共用的工具。只照契约写，不看实现。
+ * Shared utilities for M6b standalone render host contract tests (`docs/plan/render-host-contract.md`,
+ * test cases RHC*). Written strictly to contract, ignoring implementation.
  *
- * # 假设的实现接口（契约没写死，主会话集成时对账；对不上只改本文件的 `loadHostModule` 与 `startHost` 两处）
+ * # Assumed implementation interface (contract leaves it open, reconciled during lead session
+ *   integration; if mismatched, only modify `loadHostModule` and `startHost` in this file)
  *
  *   server/render-host/index.mjs
  *
  *     parseHostConfig(raw, { device? }) → { entries, maxConcurrent }
- *       raw       配置文件解析后的 JSON：单个对象，或对象组成的数组（契约第 2 节，沿用 M6a 契约第 11 节的形状）
- *                 每项 { url, projectId, username, deviceId, deviceName, as: 'member', password | key, role: 'render' }
- *                 另可给 maxConcurrent（缺省 1，上限 4）。本测试假设它写在配置项里：单个对象就写在对象上，
- *                 数组时写在任何一项上都算全局值（测试只在一项上给）
- *       device    缺省设备信息（与 M6a `normalizeEntry` 的第二个参数相同），可不给
- *       entries   每项规整后的配置（字段名同上），顺序与输入相同
- *       不合格    抛 Error，`err.code` 为 'bad-host-config' 或 'bad-shared-config'（沿用 M6a）；信息里不带口令与 K
+ *       raw       Parsed JSON from configuration file: single object or array of objects
+ *                 (Contract Section 2, following the shape of M6a Contract Section 11)
+ *                 Each item { url, projectId, username, deviceId, deviceName, as: 'member',
+ *                 password | key, role: 'render' }
+ *                 maxConcurrent can also be provided (default 1, cap 4). This test assumes it is
+ *                 specified in configuration entries: for a single object, specified on the
+ *                 object; for an array, specified on any entry counts as the global value (test
+ *                 only specifies it on one entry)
+ *       device    Default device info (same as second argument of M6a `normalizeEntry`), optional
+ *       entries   Normalized configuration for each entry (same field names as above), order same
+ *                 as input
+ *       invalid   Throws Error, `err.code` is 'bad-host-config' or 'bad-shared-config' (following
+ *                 M6a); message contains no passphrase or K
  *
- *     loadHostConfig(file) → 同 parseHostConfig，读文件；读不了、不是 JSON 同样抛上面的错
+ *     loadHostConfig(file) → Same as parseHostConfig, reads file; if unreadable or not JSON,
+ *     throws the same error above
  *
  *     createRenderHost(options) → host
- *       options.entries        parseHostConfig 的 entries
- *       options.maxConcurrent  所有节点合计的并发上限
- *       options.codeVersion    本机 frameCode（node.hello 的 codeVersions 只有它）
- *       options.envFingerprint 本机探测到的指纹
- *       options.executor       契约 D.1 的执行器 { plan, render }，所有节点共用这一个
- *       options.sinkFor        ({ projectId, entry, endpoint }) → 契约 D.1 的产物库 { has, put, resultFor? }；
- *                              每个项目一个。生产里是「经 auth.ticket 取票据、推到 service.endpoints 的 asset」，
- *                              测试注入假的，不测真推送（探针测）
- *       options.tickMs         节点节拍（可选；测试给 20，缺省实现自定）
- *       options.log            (event, fields) => void（可选）
- *     host.start()             开连接、报到；可以返回 Promise
- *     host.stop()              让掉手里的认领、关连接；返回 Promise（契约第 2 节「退出」）
- *     host.describe()          契约第 3 节诊断的形状：
- *                              { nodes: [{ projectId, connected, claimed, completed, dedup, failed, lost }],
- *                                codeVersion, envFingerprint, maxConcurrent }
+ *       options.entries        entries from parseHostConfig
+ *       options.maxConcurrent  Aggregate concurrency cap across all nodes
+ *       options.codeVersion    Local frameCode (the only one in node.hello's codeVersions)
+ *       options.envFingerprint Fingerprint detected locally
+ *       options.executor       Contract D.1 executor { plan, render }, shared by all nodes
+ *       options.sinkFor        ({ projectId, entry, endpoint }) → Contract D.1 sink
+ *                              { has, put, resultFor? }; one per project. In production it is
+ *                              "fetch ticket via auth.ticket, push to asset of service.endpoints";
+ *                              test injects fake, does not test real push (tested by probe)
+ *       options.tickMs         Node tick (optional; test gives 20, default implementation determines
+ *                              itself)
+ *       options.log            (event, fields) => void (optional)
+ *     host.start()             Open connections, check in; may return a Promise
+ *     host.stop()              Yield held claims, close connections; returns Promise (Contract
+ *                              Section 2 "Exit")
+ *     host.describe()          Shape of Contract Section 3 diagnostics:
+ *                              { nodes: [{ projectId, connected, claimed, completed, dedup,
+ *                                failed, lost }], codeVersion, envFingerprint, maxConcurrent }
  *
- *   连接用 M5a 的 `createWsEndpoint`（缺省取全局 `WebSocket`），凭 M6a 的 `sharedProtocols(entry, { role: 'render' })`
- *   每次连前现取证明。测试在起主机前把全局 `WebSocket` 换成记录用的子类（`recordWebSocket`），据此看主机发出的
- *   `node.hello`，不要求实现多开注入口。
+ *   Connections use M5a `createWsEndpoint` (defaults to global `WebSocket`), obtaining proof
+ *   freshly before each connection via M6a `sharedProtocols(entry, { role: 'render' })`. Before
+ *   starting the host, test replaces global `WebSocket` with a recording subclass
+ *   (`recordWebSocket`) to observe `node.hello` emitted by the host, without requiring
+ *   implementation to expose extra injection points.
  *
- * # 用到的 M6a / M5 已有接口（真实存在，照用）
+ * # Existing M6a / M5 interfaces used (truly existing, used as is)
  *
- *   fake-shared-env.mjs     startSharedService / createProject / join（托管端，isLoopback 缺省全当远端）
- *   render-queue、render-node 的公共出口、fake-loopback-transport、fake-render-queue-env
- *   文档服务 `service.describe().modules['render-queue']`：有共享空间时带 `spaces: { <projectId>: 队列 describe }`
- *   （M6a 报告第 5 节第 18 条）
+ *   fake-shared-env.mjs     startSharedService / createProject / join (hosted side, isLoopback
+ *                           treats all as remote by default)
+ *   public exports of render-queue and render-node, fake-loopback-transport, fake-render-queue-env
+ *   Document service `service.describe().modules['render-queue']`: when shared space exists,
+ *   includes `spaces: { <projectId>: queue describe }` (M6a Report Section 5 Item 18)
  */
 import assert from 'node:assert/strict';
 import { sleep, waitFor } from './fake-ws-kit.mjs';
@@ -58,23 +73,36 @@ export const CODE_VERSION = 'cv-host-test-0001';
 export const FINGERPRINT = 'fp-host-test-0001';
 export const PROTOCOL = 'promptcut.v1';
 
-// ------------------------------------------------------------------ 假设的实现接口
+// ------------------------------------------------------------------ Assumed implementation interface
 
 /*
- * 集成对账（2026-09-26，claude/m6-integ2）：实际接口在 `server/render-node/host.mjs`，与上面的假设对不上的地方由下面的
- * 胶水 `adaptHostModule` 接上，用例与断言不动：
- *   - parseHostConfig(raw, { device? })  实际同名同形，直接用；
- *   - loadHostConfig(file)               实际是 loadHostConfig(env)，读 env.PROMPTCUT_SHARED_CONFIG；胶水把文件路径放进
- *                                         环境变量对象，并清掉 PROMPTCUT_HOST_MAX_CONCURRENT（只测文件里的值）；
- *   - createRenderHost(options)          实际不自己开连接、不开计时器：`connect(entry, index)` 回 { endpoint, executor, sink }，
- *                                         调用方按节拍调 `tick()`，退出是 `shutdown()` + `settled()` + 调用方关连接，诊断是 `nodes()`。
- *                                         胶水照预渲染进程里的接线（`vite-plugin-frames.ts` 的 `startHostNode`）拼：
- *                                         每项一个 `createWsEndpoint`（凭 `sharedProtocols(entry, { role: 'render' })`），
- *                                         执行器共用测试给的那一个，产物库 `sinkFor({ projectId, entry, endpoint })`；
- *                                         start = host.start() + 每 tickMs 调 host.tick()；
- *                                         stop = host.shutdown() → 等 settled（最多 5 s）→ 关全部连接；
- *                                         describe = { nodes: host.nodes(), codeVersion, envFingerprint, maxConcurrent }
- *                                         （nodes 每项原样带实现多给的字段，与 HTTP 诊断口同源）。
+ * Integration reconciliation (2026-09-26, claude/m6-integ2): The actual interface is in
+ * `server/render-node/host.mjs`; mismatches with the above assumptions are bridged by the
+ * `adaptHostModule` glue below, keeping test cases and assertions intact:
+ *   - parseHostConfig(raw, { device? })  Actually same name and shape, used directly;
+ *   - loadHostConfig(file)               Actually loadHostConfig(env), reading
+ *                                        env.PROMPTCUT_SHARED_CONFIG; glue puts the file path into
+ *                                        the environment variable object and clears
+ *                                        PROMPTCUT_HOST_MAX_CONCURRENT (only tests values from the
+ *                                        file);
+ *   - createRenderHost(options)          Actually does not open connections or timers itself:
+ *                                        `connect(entry, index)` returns { endpoint, executor,
+ *                                        sink }, caller calls `tick()` per tick, exit is
+ *                                        `shutdown()` + `settled()` + caller closes connections,
+ *                                        diagnostics is `nodes()`. Glue wires it together following
+ *                                        the wiring in the prerender process (`startHostNode` in
+ *                                        `vite-plugin-frames.ts`): one `createWsEndpoint` per entry
+ *                                        (via `sharedProtocols(entry, { role: 'render' })`),
+ *                                        executor shares the one provided by the test, sink
+ *                                        `sinkFor({ projectId, entry, endpoint })`;
+ *                                        start = host.start() + call host.tick() every tickMs;
+ *                                        stop = host.shutdown() → wait for settled (up to 5 s) →
+ *                                        close all connections;
+ *                                        describe = { nodes: host.nodes(), codeVersion,
+ *                                        envFingerprint, maxConcurrent } (each entry in nodes
+ *                                        preserves extra fields provided by the implementation as
+ *                                        is, sharing the same source as the HTTP diagnostic
+ *                                        endpoint).
  */
 async function adaptHostModule() {
   const real = await import('../render-node/host.mjs');
@@ -93,7 +121,8 @@ async function adaptHostModule() {
         now: Date.now,
         nodeIdOf: (_entry, index) => `host:rhc/p${index}`,
         connect: (entry) => {
-          // 连接层的事件（ws.open / ws.error / ws.connect-failed / ws.retry）也记进 logs，用例等不到报到时能看出卡在哪
+          // Also record connection layer events (ws.open / ws.error / ws.connect-failed / ws.retry) into logs
+          // so you can see where it gets stuck when a test doesn't receive a check-in
           const endpoint = createWsEndpoint({ url: entry.url, protocols: sharedProtocols(entry, { role: 'render' }), log });
           endpoints.push(endpoint);
           return { endpoint, executor, sink: sinkFor({ projectId: entry.projectId, entry, endpoint }) };
@@ -121,7 +150,7 @@ async function adaptHostModule() {
 }
 
 let hostModPromise = null;
-/** 载入主机模块（经上面的胶水）；缺模块、缺导出时断言失败（只让用到它的用例失败） */
+/** Load host module (via glue above); assert failure on missing module/export (fails only tests using it) */
 export async function loadHostModule() {
   hostModPromise ??= adaptHostModule();
   let mod;
@@ -137,17 +166,18 @@ export async function loadHostModule() {
   return mod;
 }
 
-/** 配置项里给 maxConcurrent 的假设写法：给在第一项上 */
+/** Hypothetical syntax for maxConcurrent in config entries: set on the first item */
 export function withMaxConcurrent(entries, maxConcurrent) {
   if (maxConcurrent === undefined) return entries;
   return entries.map((e, i) => (i === 0 ? { ...e, maxConcurrent } : e));
 }
 
 /**
- * 起一个主机（进程内），用例结束时 stop。
+ * Start a host (in-process), and stop when the test ends.
  * @param {import('node:test').TestContext} t
  * @param {{ entries: object[], maxConcurrent?: number, codeVersion?: string, envFingerprint?: string,
- *           executor: object, sinkFor?: Function, tickMs?: number }} o  entries 是原始配置项（先经 parseHostConfig）
+ *           executor: object, sinkFor?: Function, tickMs?: number }} o  entries are raw config entries
+ *           (processed by parseHostConfig first)
  */
 export async function startHost(t, { entries, maxConcurrent, codeVersion = CODE_VERSION, envFingerprint = FINGERPRINT, executor, sinkFor, tickMs = 20 }) {
   const { parseHostConfig, createRenderHost } = await loadHostModule();
@@ -174,11 +204,13 @@ export async function startHost(t, { entries, maxConcurrent, codeVersion = CODE_
   return { host, stop, logs, parsed };
 }
 
-// ------------------------------------------------------------------ 执行器与产物库（契约 D.1 的形状）
+// ------------------------------------------------------------------ Executor and artifact store (shape of contract D.1)
 
 /**
- * 可控的执行器：每次 render 进来就挂起，等测试放行（`releaseAll` / `releaseOne`），或 `autoMs` 后自己完成。
- * 记录同时在跑的最大数、render 过的任务 id、plan 被调用的次数。中止信号到了就立即拒绝。
+ * Controllable executor: suspends on every incoming render, waiting for test release
+ * (`releaseAll` / `releaseOne`), or completes on its own after `autoMs`.
+ * Records maximum running concurrently, rendered task ids, and number of times plan was called.
+ * Immediately rejects when abort signal arrives.
  */
 export function createGateExecutor({ autoMs = null } = {}) {
   const waiting = [];
@@ -215,7 +247,7 @@ export function createGateExecutor({ autoMs = null } = {}) {
   };
 }
 
-/** 假产物库：`has` 按 `dedupKeys` 回 true，`put` 一律收全 */
+/** Fake artifact store: `has` returns true by `dedupKeys`, `put` accepts everything */
 export function createFakeSink({ dedupKeys = new Set() } = {}) {
   const puts = [];
   return {
@@ -226,9 +258,12 @@ export function createFakeSink({ dedupKeys = new Set() } = {}) {
   };
 }
 
-// ------------------------------------------------------------------ 共享项目的文档服务
+// ------------------------------------------------------------------ Document service for shared projects
 
-/** 起托管端文档服务（全当远端来源），建若干自由进入的项目。用例结束时关掉 */
+/**
+ * Start hosted side document service (all treated as remote sources), create several
+ * open entry projects. Shut down when test ends
+ */
 export async function sharedService(t, { projects = 1 } = {}) {
   const s = await startSharedService({ mode: 'hosted' });
   t.after(() => s.close());
@@ -241,13 +276,13 @@ export async function sharedService(t, { projects = 1 } = {}) {
   return { s, projects: list };
 }
 
-/** 主机配置项（契约第 2 节字段） */
+/** Host config entries (contract section 2 fields) */
 export function hostEntry(s, project, { username = 'rig', deviceId = 'render-host-device-0001', deviceName = 'RenderHost', password = project.password } = {}) {
   return { url: s.url, projectId: project.projectId, username, deviceId, deviceName, as: 'member', password, role: 'render' };
 }
 
 let reqSeq = 0;
-/** 发带 reqId 的消息，等同 reqId 的回包（或不带 reqId、类型在 types 里的） */
+/** Send message with reqId, wait for response with matching reqId (or without reqId whose type is in types) */
 export async function ask(c, message, types = null, ms = 3000) {
   const reqId = `rhc-${++reqSeq}`;
   c.send({ ...message, reqId });
@@ -255,7 +290,7 @@ export async function ask(c, message, types = null, ms = 3000) {
   return c.next((m) => m?.reqId === reqId || (list !== null && m?.reqId === undefined && list.includes(m?.type)), ms);
 }
 
-/** 以成员身份连上（证明由 M6a 的 client.mjs 拼） */
+/** Connect as a member (proof assembled by M6a's client.mjs) */
 export async function member(s, project, { username, role = 'page', deviceId = newDeviceId(username) } = {}) {
   const protocols = await buildAuthProtocols({
     base: s.base, projectId: project.projectId, username, deviceId, deviceName: `${username}-pc`, as: 'member', password: project.password, role,
@@ -265,7 +300,7 @@ export async function member(s, project, { username, role = 'page', deviceId = n
   return c;
 }
 
-/** 以 page 成员身份发布细任务；回 task.published */
+/** Publish a fine-grained task as a page member; returns task.published */
 export async function publishAs(s, project, username, tasks) {
   const c = await member(s, project, { username });
   const w = await ask(c, { type: 'publisher.hello', publisherId: `pub-${username}-${project.projectId}` }, 'publisher.welcome');
@@ -276,7 +311,7 @@ export async function publishAs(s, project, username, tasks) {
   return { conn: c, published: r };
 }
 
-/** 文档服务里某个共享空间的队列 describe（M6a：`modules['render-queue'].spaces[projectId]`） */
+/** Queue describe for a shared space in document service (M6a: `modules['render-queue'].spaces[projectId]`) */
 export function queueOf(s, projectId) {
   const d = s.service.describe().modules?.['render-queue'];
   assert.ok(d && typeof d === 'object', `No render-queue module in the describe of the document service: ${JSON.stringify(Object.keys(s.service.describe().modules ?? {}))}`);
@@ -284,23 +319,23 @@ export function queueOf(s, projectId) {
   return q ?? { tasks: [], nodes: [], publishers: [] };
 }
 
-/** 全部共享空间里 state 为 claimed 的任务数 */
+/** Number of tasks with state claimed across all shared spaces */
 export function claimedCount(s, projectIds) {
   let n = 0;
   for (const pid of projectIds) n += queueOf(s, pid).tasks.filter((x) => x.state === 'claimed').length;
   return n;
 }
 
-/** 某个空间里各状态的任务数 */
+/** Number of tasks for each state in a space */
 export function statesOf(s, projectId) {
   const out = {};
   for (const x of queueOf(s, projectId).tasks) out[x.state] = (out[x.state] ?? 0) + 1;
   return out;
 }
 
-// ------------------------------------------------------------------ 细任务
+// ------------------------------------------------------------------ Fine-grained tasks
 
-/** 一个合法的 snapshot 细任务（契约 A.4），requires 带代码版本与指纹 */
+/** A valid snapshot fine-grained task (contract A.4); requires includes code version and fingerprint */
 export function fineTask({ tag, from = 0, to = 29, projectId = 'demo', projectRev = 1, codeVersion = CODE_VERSION, envFingerprint = FINGERPRINT, weight = 'light' }) {
   const resultKey = `rk-${tag}`;
   return {
@@ -317,9 +352,9 @@ export function fineTask({ tag, from = 0, to = 29, projectId = 'demo', projectRe
   };
 }
 
-// ------------------------------------------------------------------ 记录主机发出的 WebSocket 消息
+// ------------------------------------------------------------------ Record WebSocket messages sent by host
 
-/** 从子协议里解出证明 JSON（`promptcut.auth.<b64url(JSON)>`）；没有回 null */
+/** Extract proof JSON from subprotocol (`promptcut.auth.<b64url(JSON)>`); returns null if absent */
 export function proofOf(protocols) {
   const list = Array.isArray(protocols) ? protocols : protocols ? [protocols] : [];
   const item = list.find((p) => typeof p === 'string' && p.startsWith('promptcut.auth.'));
@@ -328,7 +363,8 @@ export function proofOf(protocols) {
 }
 
 /**
- * 把全局 WebSocket 换成记录用的子类，用例结束时换回。记下每条连接的证明（项目、角色）与发出的每条 JSON 消息。
+ * Replace global WebSocket with a logging subclass, restore when test ends.
+ * Record proof (project, role) for each connection and every outgoing JSON message.
  * @returns {{ sockets: Array<{ url, proof, sent: object[] }>, sentBy(role): Array<{ projectId, message }> }}
  */
 export function recordWebSocket(t) {
@@ -341,7 +377,7 @@ export function recordWebSocket(t) {
       sockets.push(this.__rec);
     }
     send(data) {
-      try { this.__rec.sent.push(JSON.parse(typeof data === 'string' ? data : Buffer.from(data).toString('utf8'))); } catch { /* 不是 JSON */ }
+      try { this.__rec.sent.push(JSON.parse(typeof data === 'string' ? data : Buffer.from(data).toString('utf8'))); } catch { /* Not JSON */ }
       return super.send(data);
     }
   }

@@ -1,8 +1,9 @@
 /**
- * 时间轴工具回显与删除门槛的单测。跑：node --test src/mcp/tools/toolEcho.test.mjs
+ * Unit tests for timeline tool echo and deletion gates. Run: node --test src/mcp/tools/toolEcho.test.mjs
  *
- * 钉住的是一份真实对话复盘里的三个失败形状（见 toolEcho.ts 头注释）：
- * 删自己刚建的卡、连删一串清空重铺、拿着已删的 clipId 继续操作。
+ * Pins down three failure shapes from a real chat review (see header comment in toolEcho.ts):
+ * deleting a card just created by itself, deleting a sequence in a row to clear and repave,
+ * continuing operations with an already-deleted clipId.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -49,7 +50,7 @@ test("Stop at the Nth consecutive deletion: this is the shape of round 2 deletin
     g.noteRemoved(id);
   }
   assert.throws(() => g.checkRemove({ clipId: "d" }), /3 cards have been deleted in a row/);
-  // 中间做了别的改动就重新计数
+  // Reset count if other changes were made in between
   g.noteMutation();
   assert.deepEqual(g.checkRemove({ clipId: "d" }), {});
 });
@@ -81,33 +82,34 @@ test("timelineDigest carries only id / card or asset / start and end, without pa
 });
 
 /*
- * 项目时长和内容实际结束的位置**一起回显**。
+ * Project duration and actual content end position are **echoed together**.
  *
- * 时长缺省跟着内容走,两者平时相等;duration 比 contentEnd 小是被截断了
- * (kernel/duration.ts)。回显只照实报两个数,不互相推。
+ * Duration follows content by default, and both are normally equal; duration smaller than
+ * contentEnd indicates truncation (kernel/duration.ts). Echoing only reports both numbers
+ * truthfully without inferring one from the other.
  */
 test("timelineDigest carries the project duration and the actual end position of the content", () => {
   const p = (duration, tracks) => timelineDigest({
     version: 1, name: "p", width: 1, height: 1, fps: 30, duration, media: [], tracks,
   });
 
-  // 两个数各报各的,不拿一个去推另一个
+  // Both numbers are reported independently, without inferring one from the other
   const shrunk = p(30, [{ id: "t1", name: "s", clips: [{ id: "c1", cardId: "x", start: 0, end: 12, params: {} }] }]);
   assert.equal(shrunk.duration, 30);
   assert.equal(shrunk.contentEnd, 12);
 
-  // 截断:duration 比内容末尾短
+  // Truncated: duration is shorter than content end
   const overflow = p(30, [{ id: "t1", name: "s", clips: [{ id: "c1", cardId: "x", start: 0, end: 42.5, params: {} }] }]);
   assert.equal(overflow.contentEnd, 42.5);
 
-  // 跨轨道取最大值,不是只看第一条
+  // Takes the maximum across tracks, not just looking at the first one
   const multi = p(60, [
     { id: "t1", name: "a", clips: [{ id: "c1", cardId: "x", start: 0, end: 5, params: {} }] },
     { id: "t2", name: "b", clips: [{ id: "c2", cardId: "y", start: 5, end: 18.666, params: {} }] },
   ]);
   assert.equal(multi.contentEnd, 18.67, "Keeps two decimals, same as the start and end of a clip");
 
-  // 空时间轴是 0,不是 -Infinity(Math.max 空数组的坑)
+  // Empty timeline is 0, not -Infinity (pitfall of Math.max on empty array)
   assert.equal(p(30, []).contentEnd, 0);
   assert.equal(p(30, [{ id: "t1", name: "empty", clips: [] }]).contentEnd, 0);
 });

@@ -5,23 +5,28 @@ import { onlineUnsupported } from "../../online/onlineUnsupported";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 从用户的网盘导入素材(任务书 `docs/plan/drive-connector-task.md` 第 5 节)。
+ * Import media from the user's cloud drive (task brief `docs/plan/drive-connector-task.md`, section 5).
  *
- * # 和本地导入的差别:页面手里没有 File
+ * # Difference from local import: the page has no File
  *
- * 本地导入时字节经过页面,所以 `io/index.ts` 的 `importVideoFiles` 能用 `blob:` 探时长宽高,
- * 还能把 File 存进 io 的私有表给语音转写用。网盘这条路**字节不经过页面** —— 编辑器进程直接从网盘拉、
- * 直接入库,页面只递一个文件 id 和一张票。所以这里:
+ * In local import the bytes pass through the page, so `importVideoFiles` in `io/index.ts` can use `blob:`
+ * to probe duration and size, and can also store the File in io's private table for speech-to-text.
+ * On the cloud drive path **the bytes do not pass through the page**: the editor process pulls straight
+ * from the drive and adds to the store directly; the page only hands over a file id and a ticket. So
+ * here:
  *
- * - 探元数据改用入库后的 `/@media/<哈希>`(那时字节已经在本地内容库里了),不用 `blob:`;
- * - 不调 `registerMediaFile`,页面没有 File 可登记。**代价**:这类素材暂时不能做语音转写,
- *   `io/stt.ts` 会回「素材文件不在内存里」。这和「打开一个已有项目之后的素材」是同一种情形,
- *   不是本条路新引入的毛病;记在任务书第 9 节的待办里。
+ * - Metadata is probed through `/@media/<hash>` after it is stored (the bytes are in the local content
+ *   store by then), not through `blob:`;
+ * - `registerMediaFile` is not called; the page has no File to register. **Cost**: this kind of media
+ *   cannot be used for speech-to-text for now, and `io/stt.ts` will answer "media file is not in
+ *   memory". This is the same situation as "media after opening an existing project", not a defect
+ *   newly introduced by this path; it is noted in the to-dos of section 9 of the task brief.
  *
- * # 先占位,再填内容
+ * # Placeholder first, then the content
  *
- * 和本地导入一样:先往素材库里放一条 `pending: true` 的,用户立刻看得见「在传」;拉完入库了再把
- * 地址、哈希、两档和时长宽高补上。所有导入路径最后都汇到 `applyUploadedMedia`。
+ * Same as local import: first put an entry with `pending: true` into the media library, so the user sees
+ * at once that it is uploading; once the pull is done and stored, fill in the address, hash, the two
+ * tiers and duration and size. All import paths end up in `applyUploadedMedia`.
  */
 
 const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
@@ -30,20 +35,20 @@ export interface StorageProviderConfig {
   kind: string;
   label: string;
   configured: boolean;
-  /** 这台机器支不支持 A2（把长期授权交给它保管）。只配了前三样时为假，仍可用一次性授权 */
+  /** Whether this machine supports A2 (handing the long-term authorization over to it for safekeeping). False when only the first three are configured; one-time authorization still works */
   canManage?: boolean;
   scope?: string | null;
   clientId?: string;
   apiKey?: string;
   appId?: string;
   redirectUri?: string;
-  /** 没配好时说明为什么,直接显示给用户 */
+  /** When not configured properly, says why; shown to the user as is */
   reason?: string;
-  /** 能用一次性授权但不能托管时,说明为什么 */
+  /** When one-time authorization works but hosting does not, says why */
   manageReason?: string;
 }
 
-/** 已连接的网盘。只有元信息,没有任何令牌 */
+/** Connected cloud drives. Meta info only, no tokens at all */
 export interface StorageConnection {
   projectId: string;
   userId: string;
@@ -56,7 +61,7 @@ export interface StorageConnection {
 export interface PickedFile {
   id: string;
   name: string;
-  /** Picker 给的类型,用来预判落到哪一组;最终以服务端读到的为准 */
+  /** The type given by the Picker, used to predict which group it lands in; the final answer is what the server reads */
   mimeType?: string;
   sizeBytes?: number;
 }
@@ -66,10 +71,10 @@ export interface StorageImportResult extends UploadedMedia {
   pulled?: { bytes: number; total: number; resumedFrom: number; segments: number };
 }
 
-/** 网盘连接器在这个构建里能不能用:在线浏览器没有本机的编辑器进程,拉不了 */
+/** Whether the cloud drive connector can be used in this build: the online browser has no local editor process, so it cannot pull */
 export const storageImportSupported = !ONLINE_BUILD;
 
-/** 读服务端的公开参数。读不到就当没配,界面置灰 */
+/** Read the server's public parameters. If they cannot be read, treat it as not configured and grey out the UI */
 export async function loadStorageProviders(): Promise<StorageProviderConfig[]> {
   if (!storageImportSupported) return [];
   try {
@@ -83,18 +88,22 @@ export async function loadStorageProviders(): Promise<StorageProviderConfig[]> {
 }
 
 /**
- * 在线浏览器构建里 `/api/media/storage/*` 都没有对端:这些口由**本机编辑器进程**发,在线页面没有它。
+ * In the online browser build, `/api/media/storage/*` has no peer: these endpoints are served by the
+ * **local editor process**, which the online page does not have.
  *
- * 下面每个函数开头都内联写一遍 `if (!storageImportSupported) throw …`,**不抽成辅助函数**。
- * 抽成函数就剪不掉了:`storageImportSupported` 在在线构建里是编译期常量 `false`,内联的判断恒真、
- * 后面的代码连同 `/api/…` 字面量一起被打包器剪掉;换成函数调用,打包器没法静态判定后面不可达,
- * 字面量就留在产物里。
+ * Every function below inlines an `if (!storageImportSupported) throw …` at its start, **not extracted
+ * into a helper function**. Extracting it would make it impossible to prune: `storageImportSupported` is
+ * a compile-time constant `false` in the online build, so the inlined check is always true and the code
+ * after it, together with the `/api/…` literals, is pruned by the bundler; with a function call, the
+ * bundler cannot statically decide that what follows is unreachable, and the literals stay in the output.
  *
- * **这不只是省几行**:C10A-API-03 那道在线 API 棘轮要求「产物里的 `/api/` 路径」和
- * `server/test/c10a-online-api-paths.json` 逐条一致。2026-10-24 合入时 connect / disconnect / import
- * 三个函数漏了这道判断,字面量进了在线产物、把那道门弄红过一次;补上之后它们不再出现,清单里那三条
- * 也一并删掉(该测试同时断言清单里不许有产物中已没有的路径)。我第一次是抽成函数写的,产物里照旧有,
- * 改成内联才剪掉 —— 这就是为什么这里看着啰嗦。
+ * **This is not just about saving a few lines**: the online API ratchet C10A-API-03 requires that the
+ * "`/api/` paths in the output" match `server/test/c10a-online-api-paths.json` entry by entry. When it was
+ * merged on 2026-10-24, the connect / disconnect / import functions missed this check, the literals got
+ * into the online output, and that gate went red once; after the fix they no longer appear, and those
+ * three entries were removed from the manifest too (the test also asserts that the manifest must not
+ * contain paths that are no longer in the output). I first wrote it as a function and the output still
+ * had them; only inlining pruned them. That is why this looks verbose.
  */
 async function postJson(url: string, body: unknown): Promise<any> {
   const res = await fetch(url, {
@@ -107,7 +116,7 @@ async function postJson(url: string, body: unknown): Promise<any> {
   return data;
 }
 
-/** A2:列出已连接的网盘。读不到就当没有 */
+/** A2: list the connected cloud drives. If they cannot be read, treat it as none */
 export async function loadConnections(): Promise<StorageConnection[]> {
   if (!storageImportSupported) return [];
   try {
@@ -120,13 +129,13 @@ export async function loadConnections(): Promise<StorageConnection[]> {
   }
 }
 
-/** A2:把授权码交给编辑器进程换 refresh token。页面不碰 refresh token */
+/** A2: hand the authorization code to the editor process in exchange for a refresh token. The page never touches the refresh token */
 export async function connectStorage(provider: string, code: string, codeVerifier: string): Promise<void> {
   if (!storageImportSupported) throw new Error(onlineUnsupported(tr("Import from cloud drive")));
   await postJson("/api/media/storage/connect", { kind: provider, code, codeVerifier });
 }
 
-/** A2:断开。回包里说明网盘那边撤没撤成 */
+/** A2: disconnect. The response says whether the drive side managed to revoke */
 export async function disconnectStorage(provider: string): Promise<{ revoked: boolean; why?: string }> {
   if (!storageImportSupported) throw new Error(onlineUnsupported(tr("Import from cloud drive")));
   const data = await postJson("/api/media/storage/disconnect", { kind: provider });
@@ -138,14 +147,14 @@ function kindOf(mimeType: string | undefined, name: string): MediaAsset["kind"] 
   if (mt.startsWith("video/")) return "video";
   if (mt.startsWith("audio/")) return "audio";
   if (mt.startsWith("image/")) return "image";
-  // Picker 偶尔不给 mimeType,退回看扩展名
+  // The Picker sometimes gives no mimeType; fall back to the file extension
   const ext = name.toLowerCase().split(".").pop() || "";
   if (["mp4", "mov", "m4v", "webm", "mkv", "avi"].includes(ext)) return "video";
   if (["mp3", "wav", "m4a", "aac", "flac", "ogg"].includes(ext)) return "audio";
   return "image";
 }
 
-/** 探一下时长 / 宽高。探不到不算失败,留空交给后面按默认值处理(和本地导入同样的兜底) */
+/** Probe duration / width and height. Failing to probe is not a failure: leave it empty and let later steps use defaults (same fallback as local import) */
 function probe(url: string, kind: MediaAsset["kind"], name: string): Promise<{ duration?: number; width?: number; height?: number }> {
   return new Promise((resolve) => {
     let done = false;
@@ -155,7 +164,7 @@ function probe(url: string, kind: MediaAsset["kind"], name: string): Promise<{ d
       clearTimeout(timer);
       resolve(v);
     };
-    // 和本地导入一样给 5 秒上限:坏文件不该把导入卡死
+    // Same 5 second limit as local import: a bad file must not hang the import
     const timer = setTimeout(() => settle({}), 5000);
 
     if (kind === "image") {
@@ -179,11 +188,11 @@ function probe(url: string, kind: MediaAsset["kind"], name: string): Promise<{ d
 }
 
 /**
- * 把一份选中的网盘文件导进素材库。
+ * Import a selected cloud drive file into the media library.
  *
- * @param token 一次性 access token（A3）。传 `null` 走 A2：编辑器进程用它托管的凭据自己换票
- * @param place 视频是否顺手放到播放头处(和本地导入视频一致)
- * @returns 新素材的 id
+ * @param token One-time access token (A3). Pass `null` for A2: the editor process exchanges for a ticket itself using the credentials it hosts
+ * @param place Whether to also drop a video at the playhead (same as local video import)
+ * @returns The id of the new media
  */
 export async function importFromStorage(
   provider: string,
@@ -194,7 +203,7 @@ export async function importFromStorage(
   if (!storageImportSupported) throw new Error(onlineUnsupported(tr("Import from cloud drive")));
   const kind = kindOf(file.mimeType, file.name);
 
-  // 先占位:用户立刻看得见这条在传
+  // Placeholder first: the user sees at once that this one is uploading
   const media = actions.addMedia({ kind, name: file.name, url: "", pending: true });
 
   let uploaded: StorageImportResult;
@@ -202,7 +211,7 @@ export async function importFromStorage(
     const res = await fetch("/api/media/storage/import", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      // 不带 token 就是 A2:让编辑器进程用托管的凭据自己换票
+      // No token means A2: let the editor process exchange for a ticket itself with the hosted credentials
       body: JSON.stringify({ kind: provider, fileId: file.id, name: file.name, ...(token ? { token } : {}) }),
     });
     const data = await res.json().catch(() => null);
@@ -211,12 +220,12 @@ export async function importFromStorage(
     }
     uploaded = data as StorageImportResult;
   } catch (err) {
-    // 失败就把占位撤掉,别在素材库里留一条永远「在传」的
+    // On failure, remove the placeholder; do not leave an entry in the media library that is "uploading" forever
     actions.removeMedia(media.id);
     throw err;
   }
 
-  // 字节已经在本地内容库里,这时才探得到时长宽高
+  // The bytes are already in the local content store, so only now can duration and size be probed
   const meta = await probe(uploaded.url, kind, file.name);
   if (meta.duration !== undefined || meta.width !== undefined || meta.height !== undefined) {
     actions.updateMedia(media.id, {

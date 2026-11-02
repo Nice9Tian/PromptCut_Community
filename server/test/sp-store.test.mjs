@@ -1,10 +1,15 @@
 /**
- * SP 托管端的素材数据层（契约 `docs/plan/shared-project-contract.md` 第 1 节「fs-store 的布局选项」「磁盘满」）。
- * 跑：node --test server/test/sp-store.test.mjs
+ * Asset data layer for SP hosted side (contract `docs/plan/shared-project-contract.md` Section 1
+ * "Layout options for fs-store", "Disk full").
+ * Run: node --test server/test/sp-store.test.mjs
  *
- * - `createFsStore({ dir, shard: true })`：按哈希前两位分子目录，写入走同文件系统临时文件加改名；缺省布局不变。
- * - `ENOSPC`、`EDQUOT` 时写入回 507 `insufficient-storage`，不标记完成，已收的分片保留。用假存储注入错误，经素材服务中间件验 HTTP。
- * 只照契约写，不看实现；全件在子目录里的文件名见 `sp-kit.mjs` 假设 S1。
+ * - `createFsStore({ dir, shard: true })`: divides subdirectories by first two characters of hash,
+ *   writes use temp files on the same filesystem plus rename; default layout remains unchanged.
+ * - On `ENOSPC` and `EDQUOT`, writes return 507 `insufficient-storage`, do not mark complete,
+ *   received chunks are retained. Uses mock storage to inject errors, verifies HTTP via asset service
+ *   middleware.
+ * Written strictly according to contract without looking at implementation; see assumption S1 in
+ * `sp-kit.mjs` for whole file names in subdirectories.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -37,13 +42,13 @@ async function readAll(stream) {
   return Buffer.concat(parts);
 }
 
-// ------------------------------------------------------------------ shard 布局
+// ------------------------------------------------------------------ shard layout
 
 test('SPC1-8 fs-store shard: true: whole files land under <dir>/<first two hash chars>/; stat, read (including Range), chunks, usage and remove work as usual', async (t) => {
   const createFsStore = await loadFsStore();
   const dir = tmpDir(t);
   const store = createFsStore({ dir, shard: true, chunkSize: 1024 });
-  const bytes = randomBytes(2500); // 3 片
+  const bytes = randomBytes(2500); // 3 chunks
   const hash = await putWhole(store, bytes);
   const sub = path.join(dir, hash.slice(0, 2));
   assert.ok(fs.statSync(sub).isDirectory(), `subdirectory ${hash.slice(0, 2)}/ exists`);
@@ -74,11 +79,11 @@ test('SPC1-8 fs-store shard: true: multiple files are spread across their own tw
   for (let i = 0; i < 6; i++) hashes.push(await putWhole(s1, randomBytes(700 + i)));
   for (const h of hashes) assert.ok(fs.existsSync(path.join(dir, h.slice(0, 2))), `${h.slice(0, 2)}/ exists`);
   for (const d of fs.readdirSync(dir)) {
-    if (d.startsWith('.')) continue; // 暂存目录等
+    if (d.startsWith('.')) continue; // Staging directory, etc.
     assert.match(d, /^[0-9a-f]{2}$/, `the top level contains only two-digit hex subdirectories: ${d}`);
   }
 
-  // 传一半、换一个实例接着传
+  // Upload halfway, switch to another instance to resume upload
   const bytes = randomBytes(1500);
   const hash = sha256hex(bytes);
   assert.equal((await s1.putChunk(hash, 0, { size: bytes.length, ext: 'bin' }, body(bytes.subarray(0, 512)))).status, 'ok');
@@ -99,7 +104,7 @@ test('SPC1-8 fs-store default layout is unchanged (the local editor leaves the e
   assert.equal(fs.existsSync(path.join(dir, hash.slice(0, 2), `${hash}.bin`)), false);
 });
 
-// ------------------------------------------------------------------ 经素材服务中间件（HTTP）
+// ------------------------------------------------------------------ Via asset service middleware (HTTP)
 
 async function serveWith(t, stores) {
   const { asset } = await loadAsset();
@@ -128,7 +133,7 @@ test('SPC1-8 the asset service mounts an fs-store with the shard layout: after a
   assert.equal(sha256hex(g.buf), hash);
 });
 
-// ------------------------------------------------------------------ 磁盘满
+// ------------------------------------------------------------------ Disk full
 
 function diskFull(code) {
   const err = new Error(`${code}: no space left on device, write`);
@@ -138,7 +143,7 @@ function diskFull(code) {
   return err;
 }
 
-/** 在内存存储外面包一层：第 failAt 片（或 complete）抛磁盘满 */
+/** Wrap around memory storage: chunk failAt (or complete) throws disk full */
 async function fullStore({ code = 'ENOSPC', failChunk = null, failComplete = false } = {}) {
   const { store } = await loadAsset();
   const inner = store.createMemoryStore({ chunkSize: 1024 });
@@ -148,7 +153,7 @@ async function fullStore({ code = 'ENOSPC', failChunk = null, failComplete = fal
     chunkSize: inner.chunkSize,
     async putChunk(hash, n, meta, source) {
       if (n === failChunk) {
-        for await (const _ of source) { /* 读完请求体 */ }
+        for await (const _ of source) { /* Read request body to end */ }
         throw diskFull(code);
       }
       return inner.putChunk(hash, n, meta, source);
@@ -202,7 +207,7 @@ test('SPC1-9 other write errors (EACCES) do not return 507', async (t) => {
   const media = {
     ...inner, chunkSize: inner.chunkSize,
     async putChunk(_h, _n, _m, source) {
-      for await (const _ of source) { /* 读完 */ }
+      for await (const _ of source) { /* Read to end */ }
       const err = new Error('EACCES: permission denied'); err.code = 'EACCES'; throw err;
     },
   };

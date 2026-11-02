@@ -4,17 +4,17 @@ import { tr } from "../i18n/index.ts";
 export { diffScopes } from "../kernel/agentScopes.mjs";
 
 /**
- * 多 Agent 公告板的页面一侧(计划 agent-workflow-plan.md A3)。
+ * Page side of the multi-Agent bulletin board (plan agent-workflow-plan.md A3).
  *
- * 公告板本身在编辑器进程里(`server/agent/agent-board.mjs`,按项目一份):范围声明、改动记录、信箱都在那边,
- * `declare_scope` / `list_agents` / `send_message` / `check_messages` 由服务端答,所有 Agent 看到同一份。
- * 这里只做页面该做的:
- *   1. 收 SSE 推来的 `agent.board`(各对话的范围、未读、可自动投递的条数):页签名跟着范围改,页签上标未读;
- *   2. 把页签(对话 ID、页签名、忙不忙)报给服务端(`POST /api/agent/tabs`),公告板的名单与子 Agent 并发名额用;
- *   3. 这一页空闲时取走投给它的消息(`POST /api/agent/inbox`),由 AiPanel 作为一条用户消息发出;
- *   4. 收 SSE 推来的 `agent.spawn`(`spawn_agent` 拉起子 Agent):开一个带角色名的新页签,回 `POST /api/agent/spawned`。
+ * The bulletin board itself lives in the editor process (`server/agent/agent-board.mjs`, one per project): scope declarations, change records, and mailboxes are all there,
+ * with `declare_scope` / `list_agents` / `send_message` / `check_messages` answered by the server, so all Agents see the same copy.
+ * Here we only handle what the page should do:
+ *   1. Receive `agent.board` pushed via SSE (scopes of each chat, unread count, number of auto-deliverable messages): tab names update with scopes, tabs mark unread;
+ *   2. Report tabs (chat ID, tab name, busy state) to the server (`POST /api/agent/tabs`), used for the bulletin board list and subagent concurrency quotas;
+ *   3. When this page is idle, fetch messages delivered to it (`POST /api/agent/inbox`), sent by AiPanel as a user message;
+ *   4. Receive `agent.spawn` pushed via SSE (`spawn_agent` launches a subagent): open a new tab with the role name and reply with `POST /api/agent/spawned`.
  *
- * 在线构建没有编辑器进程,这些请求一律不发(AiPanel 在在线构建里也不挂)。
+ * Online builds do not have an editor process, so none of these requests are sent (AiPanel is also not mounted in online builds).
  */
 
 const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
@@ -23,12 +23,12 @@ export interface AgentMessage {
   from: string | null;
   fromLabel?: string;
   text: string;
-  /** 自动投递的层数:A 的消息自动触发 B 跑,B 跑时发给 A 的消息就是下一层。封顶,防止两个 Agent 无限对聊 */
+  /** Number of auto-delivery hops: A's message automatically triggers B to run, and the message sent to A while B runs is the next hop. Capped to prevent two Agents from chatting infinitely */
   hops: number;
   at?: number;
 }
 
-/** 自动投递最多连锁几层(与服务端 BOARD_DEFAULTS.MAX_AUTO_HOPS 相同) */
+/** Maximum auto-delivery chaining hops (same as server BOARD_DEFAULTS.MAX_AUTO_HOPS) */
 export const MAX_AUTO_HOPS = 3;
 
 interface BoardEntry {
@@ -54,7 +54,7 @@ export function subscribeBus(fn: () => void): () => void {
   return () => { listeners.delete(fn); };
 }
 
-/** SSE `agent.board`:整份替换;页签名跟着范围改,页签上标未读 */
+/** SSE `agent.board`: replace entirely; tab names update with scopes, tabs mark unread */
 export function applyBoard(agents: unknown): void {
   if (!Array.isArray(agents)) return;
   const next = new Map<string, BoardEntry>();
@@ -73,12 +73,12 @@ export function applyBoard(agents: unknown): void {
   emit();
 }
 
-/** 共享项目里别的成员那边的 Agent(经文档服务转来的,在线的):AI 栏里列出它们的范围 */
+/** Agents from other members in shared projects (forwarded via document service, online): lists their scopes in the AI panel */
 export function remoteAgents(): BoardEntry[] {
   return [...board.values()].filter((e) => e.remote && e.live !== false);
 }
 
-/** 取走了、但那一刻页面又忙了的消息:放回页面这边,下次空闲时先送它们 */
+/** Messages that were fetched but the page became busy at that moment: released back to the page side, delivered first next time it becomes idle */
 const stashed = new Map<string, AgentMessage[]>();
 
 export function stash(conversationId: string, msgs: AgentMessage[]): void {
@@ -91,7 +91,7 @@ export function hasAutoDeliverable(conversationId: string): boolean {
 }
 
 let taking = false;
-/** 取走投给这一页的消息;onlyAuto 只取层数没到顶的。同一时刻只取一次 */
+/** Fetch messages delivered to this page; onlyAuto only fetches those whose hop count has not reached the cap. Only fetched once at any given time */
 export async function takeInbox(conversationId: string, onlyAuto = true): Promise<AgentMessage[]> {
   const held = stashed.get(conversationId);
   if (held?.length) {
@@ -118,14 +118,14 @@ export async function takeInbox(conversationId: string, onlyAuto = true): Promis
   }
 }
 
-/** 把「来自别的 Agent 的消息」排成一条用户消息的正文 */
+/** Formats "messages from other Agents" into the body of a user message */
 export function formatInbound(msgs: AgentMessage[]): string {
   return msgs
     .map((m) => tr("[Message from {0}]\n{1}", m.fromLabel ?? `Agent ${m.from ?? tr("unknown")}`, m.text))
     .join("\n\n");
 }
 
-/* ---------------- 页签报给服务端 ---------------- */
+/* ---------------- Report tabs to the server ---------------- */
 
 let tabsTimer: ReturnType<typeof setTimeout> | null = null;
 let lastSent = "";
@@ -140,7 +140,7 @@ function sendTabs() {
   fetch("/api/agent/tabs", { method: "POST", headers: { "Content-Type": "application/json" }, body }).catch(() => { lastSent = ""; });
 }
 
-/** 页签变了就报(合并 100 ms 内的多次变化);回停止函数。SSE 重连后调 `resendTabs` 再报一次 */
+/** Reports when tabs change (debounces multiple changes within 100 ms); returns a stop function. Call `resendTabs` to report again after SSE reconnects */
 export function startTabReports(): () => void {
   if (ONLINE_BUILD) return () => {};
   const schedule = () => { if (!tabsTimer) tabsTimer = setTimeout(sendTabs, 100); };
@@ -155,9 +155,9 @@ export function resendTabs(): void {
   if (!tabsTimer) tabsTimer = setTimeout(sendTabs, 50);
 }
 
-/* ---------------- spawn_agent:开子 Agent 的页签 ---------------- */
+/* ---------------- spawn_agent: open subagent tabs ---------------- */
 
-/** SSE `agent.spawn`:开一个带角色名的新页签,回话给服务端 */
+/** SSE `agent.spawn`: opens a new tab with the role name and replies to the server */
 export async function handleSpawn(ev: any): Promise<void> {
   const reqId = typeof ev?.reqId === "string" ? ev.reqId : null;
   let ok = false;
@@ -185,7 +185,7 @@ export async function handleSpawn(ev: any): Promise<void> {
   if (ok) resendTabs();
 }
 
-/** 只给测试用 */
+/** For testing only */
 export function _resetBus(): void {
   board = new Map();
 }

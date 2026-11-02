@@ -1,34 +1,58 @@
 /**
- * 暂停和拖动时重卡贴轨道流 —— **真的编辑器**里的端到端探针(任务书「己三」;契约 `prerender-products-contract.md` 第 3.7 节)。
- * 舞台那一侧逐帧、稀疏版、留旧画面与占位符的细账在 `stream-scrub-stage-probe.mjs`;这里核父页接得对不对:
- * 哪些卡贴流、什么时候发流平面与抑制、有流不读快照、追到精确活渲以后怎么撤、起播头一拍。
+ * Heavy card track stream paste on pause and scrub: end-to-end probe in the **real editor**
+ * (task brief "Ji-3"; contract `prerender-products-contract.md` Section 3.7).
+ * Stage-side details for frame-by-frame, sparse version, retaining old visuals and placeholders
+ * are in `stream-scrub-stage-probe.mjs`; here we check whether parent page integration is correct:
+ * which cards use stream paste, when to send stream plane and suppression, do not read snapshots
+ * when stream exists, how to withdraw after catching up to exact live render, first tick on
+ * playback start.
  *
- *   node scripts/probes/scrub-stream-probe.mjs --port 26960 [--tilt] [--out <目录>] [--json <文件>] [--keep]
- *   node scripts/probes/scrub-stream-probe.mjs --origin http://127.0.0.1:26960 …   # 接一台已经起好的 dev server
+ *   node scripts/probes/scrub-stream-probe.mjs --port 26960 [--tilt] [--out <dir>] [--json <file>] [--keep]
+ *   node scripts/probes/scrub-stream-probe.mjs --origin http://127.0.0.1:26960 …   # Connect to an already running dev server
  *
- * 给 `--port` 时自己起一台隔离的编辑器(舞台端口是 +1、+2,三个连号都要空着;数据目录与产物目录指到 `--out` 下),跑完按进程号收掉。
+ * When `--port` is given, launch an isolated editor (stage ports are +1, +2, all three consecutive
+ * numbers must be free; data dir and artifact dir point under `--out`), cleaned up by PID after run.
  *
- * 流程:
- *   0. 编辑器 `?editor&nosetup=1&preview=stage`;新建项目,放一张每帧横移 10 像素的卡(`r6-stateful`),**从第 40 帧开始**
- *      (不是 15 的倍数),时长 3 秒。等它的成本记录,钉成重卡,触发预渲染,等它的轨道流全部分段满密度。
- *      另起一个渲染用的浏览器把同一份项目逐帧导出,作参照。
- *      **活渲的参照**(第 5 步):最后把这张卡放回轻卡(不贴流),点几处,量出预览里活渲的画面最像导出页的第几帧。这张探针卡是
- *      从挂载起跑的 CSS 动画,`main` 上预览的活渲就比导出页多走一帧(与流无关,见报告「顺带查到的」);前面每一处「停下以后的画面」
- *      先记下、到这时按量出来的差一起判 —— 要核的是「贴流再停下」得到的活渲和不贴流时的活渲是同一张,不是在这里判活渲与导出谁对。
- *   1. **点时间轴跳过去**(暂停着,带「停下」):几处。全程按动画帧采样:这张卡没有「活子树藏着、流又没有画面」的时刻,
- *      占位符没有显示出来,**一张快照都没有挂**(有流不读快照)。停下以后回到精确活渲:不再抑制、活子树露着、流平面藏着
- *      而且已经把这一帧解好(父页照发着流平面);截图和导出页同一帧最像。
- *   2. **按住标尺拖**(真的指针事件):十来处,含往回、非关键帧、跨分段、只挪一两帧。每一处:这张卡被抑制、活子树藏着、
- *      流平面露着,播放器画的就是这一帧,没有占位符、没有快照;**截图和导出页同一帧最像**(比前一帧、后一帧都像)。
- *      松手:回到精确活渲(同 1)。
- *   3. **暂停着起播**:逐拍记录里这张卡从头一拍起每一拍都是流的画面(没有空拍、没有占位符、没有快照);
- *      **播放中暂停**:停下以后回到精确活渲,截图和导出页停住的那一帧最像。
- *   4. 把这张卡的成本记录临时改成「只认全局时钟」再点一次:走后台整场景补跑、与可见舞台互换的那一路;
- *      互换以后同样是精确活渲,新的可见舞台上流平面藏着、这一帧已经解好。
+ * Process:
+ *   0. Editor `?editor&nosetup=1&preview=stage`; create a new project, place a card shifting
+ *      10px per frame (`r6-stateful`), **starting at frame 40** (not a multiple of 15),
+ *      duration 3 seconds. Wait for its cost record, pin as heavy card, trigger prerender, wait
+ *      for all segments of its track stream to reach full density.
+ *      Launch another browser for rendering to export the same project frame by frame as reference.
+ *      **Reference for live render** (step 5): Finally release this card back to light card (no
+ *      stream paste), click several places, measure which frame of the export page the preview's
+ *      live render looks most like. This probe card is a CSS animation running from mount, so the
+ *      live render preview on `main` runs one frame ahead of the export page (unrelated to stream,
+ *      see report "Incidental findings"); record each "frame after stopping" earlier, and evaluate
+ *      together at this point against the measured delta: what needs to be verified is that the
+ *      live render obtained from "stream paste then stop" and the live render without stream paste
+ *      are the same frame, not judging whether live render or export is right here.
+ *   1. **Click timeline to seek** (paused, with "stop"): several places. Sample across animation
+ *      frames throughout: this card has no moments where "live subtree is hidden and stream has
+ *      no frame", placeholders are not displayed, and **not a single snapshot is mounted** (with
+ *      stream, do not read snapshots). After stopping, return to exact live render: no longer
+ *      suppressed, live subtree visible, stream plane hidden and already decoded this frame
+ *      (parent page continues sending stream plane); screenshot looks most like the same frame in
+ *      the export page.
+ *   2. **Hold ruler and scrub** (real pointer events): a dozen places, including backwards,
+ *      non-keyframes, across segments, moving only one or two frames. At each place: this card is
+ *      suppressed, live subtree hidden, stream plane visible, player renders exactly this frame,
+ *      no placeholders, no snapshots; **screenshot looks most like the same frame in export page**
+ *      (more like it than previous or next frame).
+ *      Release: return to exact live render (same as 1).
+ *   3. **Start playback while paused**: in tick-by-tick records, every tick of this card from the
+ *      first tick shows stream frames (no empty ticks, no placeholders, no snapshots);
+ *      **pause during playback**: after stopping, return to exact live render, screenshot looks
+ *      most like the frame where export page stopped.
+ *   4. Temporarily change this card's cost record to "global clock only" and click again: take the
+ *      path of background whole scene catch-up run and swap with visible stage;
+ *      after swap, it is likewise exact live render, stream plane hidden on the new visible stage,
+ *      and this frame is already decoded.
  *
- * 验收:退出码 0,结果里 `fails: []`。耗时只记录。等待时限只为防卡死。
+ * Acceptance check: exit code 0, `fails: []` in results. Duration is only recorded. Timeout is
+ * only to prevent hangs.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -45,9 +69,12 @@ const GIVEN_ORIGIN = flagArg('origin', null, args);
 const PORT = Number(flagArg('port', '0', args));
 const KEEP = args.includes('--keep');
 /**
- * `--tilt`:给这张卡的外框加上三维变形(rotateY、rotateX),项目开透视。外框用了三维的独立卡单独成流,流里是变形之前的平面画面,
- * 贴的时候由包裹层做变形(`server/frame-stream.mjs` 的 `soloStreamKind`);这里核真的编辑器里它走的是同一套:点、拖、起播、暂停都贴流,
- * 截图和导出页(活的三维变形)同一帧最像。
+ * `--tilt`: adds 3D transform (rotateY, rotateX) to this card's outer frame; project enables
+ * perspective. The outer frame uses 3D standalone card to form a separate stream; the stream
+ * contains flat visuals prior to transformation, transformed by the wrapper layer during paste
+ * (`soloStreamKind` in `server/frame-stream.mjs`); here we verify the real editor uses the same
+ * mechanism: click, scrub, start playback, and pause all use stream paste; screenshot looks most
+ * like the same frame in export page (live 3D transform).
  */
 const TILT = args.includes('--tilt');
 const JSON_OUT = flagArg('json', null, args);
@@ -56,13 +83,15 @@ const OUT = path.resolve(flagArg('out', null, args) || path.join(os.tmpdir(), `p
 if (!GIVEN_ORIGIN && !PORT) { console.error('Pass --origin <dev server> or --port <start your own>'); process.exit(2); }
 
 const FPS = 30, SEG = 15;
-/** 这张卡:第 40 帧起、90 帧(第 40～129 帧);入点按秒写,落在两帧之间 */
+/** This card: starts at frame 40, 90 frames (frames 40-129); in point written in seconds, falls between two frames */
 const CLIP_START = 1.32, CLIP_SECONDS = 3;
 const FIRST = 40, LAST = 129;
-/** 点时间轴跳过去的几处 */
+/** Several points jumped to by clicking the timeline */
 const CLICKS = [57, 100, 43, 128, 85];
-/** 拖动依次到的帧:第一个是按下的位置。72 往前跨一段;48 往回;115 远跳;117 只挪两帧;100 往回、是它那个分段的第一帧(40 + 4 × 15);
- *  99 往回一帧、落到上一段最后一帧;126 往前;44 远远往回;84 非关键帧 */
+/** Frames reached in scrub sequence: first is press position. 72 spans forward a segment; 48 back;
+ *  115 far jump; 117 moves only two frames; 100 back, first frame of its segment (40 + 4 × 15);
+ *  99 back one frame, landing on last frame of previous segment; 126 forward; 44 far back;
+ *  84 non-keyframe */
 const STEPS = [57, 72, 48, 115, 117, 100, 99, 126, 44, 84];
 
 const say = (step, fields = {}) => process.stderr.write(`${JSON.stringify({ step, t: Date.now(), ...fields })}\n`);
@@ -81,9 +110,9 @@ async function until(label, fn, timeoutMs, everyMs = 100, soft = false) {
   }
 }
 
-/* ---------------------------------------------------------------- 像素 */
+/* ---------------------------------------------------------------- Pixels */
 
-/** 一幅 RGBA → 指定大小的 RGBA(每个目标像素取它盖住的那一块的平均;颜色按预乘色平均) */
+/** RGBA image → RGBA of specified size (each target pixel averages covered area; premultiplied alpha) */
 function resized(png, width, height) {
   const out = new Float32Array(width * height * 4);
   const sx = png.width / width, sy = png.height / height;
@@ -105,8 +134,12 @@ function resized(png, width, height) {
   return { width, height, data: out };
 }
 /**
- * 预览的截图(底下垫着棋盘格,不知道底色)和导出页的一帧(透明底)有多像:只在**导出这一帧完全不透明的像素**上比颜色。
- * 对的那一帧,它不透明的那一块正好盖在截图里的卡上,差很小;错一帧(这张卡每帧横移 10 像素)那一块有一条压在棋盘格和错位的字上,差明显更大。
+ * How similar preview screenshot (checkerboard underneath, background color unknown) is to a frame
+ * in export page (transparent background): compare colors only on **fully opaque pixels of this
+ * exported frame**.
+ * For the correct frame, its opaque area covers exactly the card in screenshot, difference is very
+ * small; off by one frame (this card moves 10px per frame), a strip of that area sits on the
+ * checkerboard and shifted text, difference is noticeably larger.
  */
 function opaqueDiff(shot, ref) {
   let sum = 0, n = 0;
@@ -162,7 +195,7 @@ try {
   });
   const storeT = () => page.evaluate(async () => (await import('/src/store/project.ts')).getState().t);
 
-  /* ---------------------------------------------------------------- 0. 项目 */
+  /* ---------------------------------------------------------------- 0. Project */
   const clipId = await store(`actions.newProject('scrub-stream-${RUN}');
     const c = actions.addCardClip('r6-stateful', args[0], { duration: args[1], params: {} });
     if (c && args[2]) {
@@ -213,7 +246,9 @@ try {
   const ready = await until('All segments of this card\'s track stream at full density', async () => {
     const k = await page.evaluate(async () => (await import('/src/render/dataMirror.ts')).mirrorKey());
     if (!k) return null;
-    // 每一轮都重钉、重存一次:页面测完第二趟会把这条成本记录整条重写,钉重卡那一位会被冲掉,预渲染进程就不产它了
+    // Re-pin and re-save in every round: after the page finishes the second pass of testing, it rewrites
+    // this entire cost record, the bit for pinning as heavy card gets wiped, and the prerender process
+    // no longer produces it
     await pinHeavy(true);
     await fetch(prerender.url + '/api/frames/preload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: k.session, localRev: k.localRev, lane: 'background' }) }).catch(() => {});
     const layers = await layersNow();
@@ -233,7 +268,7 @@ try {
   await sleep(500);
   check((await parentDiag())?.heavy.includes(clipId) || true, 'This card is classified as heavy in the parent page\'s dispatch table');
 
-  /* ---------------------------------------------------------------- 参照:导出页逐帧 */
+  /* ---------------------------------------------------------------- Reference: export page frame by frame */
   const emptyUrl = emptyUrlOf(origin, { width: project.width, height: project.height });
   bakery = await openBakery({ url: emptyUrl });
   await bakery.reset(project, emptyUrl);
@@ -245,13 +280,17 @@ try {
     onFrame: async (i, buf) => { exported.set(i, PNG.sync.read(Buffer.from(buf))); } });
   say('exported', { frames: exported.size });
 
-  /* ---------------------------------------------------------------- 舞台侧的观察 */
+  /* ---------------------------------------------------------------- Observations on the stage side */
   const stageBox = () => page.evaluate(() => {
     const f = [...document.querySelectorAll('iframe')].filter((el) => /stage=1/.test(el.src) && getComputedStyle(el).opacity !== '0')
       .map((el) => el.getBoundingClientRect()).find((r) => r.width > 100);
     return f ? { x: Math.round(f.left), y: Math.round(f.top), width: Math.round(f.width), height: Math.round(f.height) } : null;
   });
-  /** 截预览里那块可见舞台,和导出页的几帧比(导出帧缩放到截图的大小,只比导出帧不透明的那一块,见 `opaqueDiff`):回最像的那一帧 */
+  /**
+   * Capture visible stage in preview and compare with several export page frames (export frames
+   * scaled to screenshot size, comparing only opaque region of export frame, see `opaqueDiff`):
+   * return the most similar frame
+   */
   const refCache = new Map();
   const shootAndScore = async (candidates, saveAs = null) => {
     const f = await frontFrame();
@@ -270,7 +309,7 @@ try {
     const sorted = [...scores].sort((x, y) => x[1] - y[1]);
     return { best: sorted[0]?.[0] ?? null, mean: sorted[0]?.[1] ?? null, runnerUp: sorted[1]?.[1] ?? null, scores, size: [png.width, png.height] };
   };
-  /** 可见舞台里这张卡此刻的样子 */
+  /** Current appearance of this card in the visible stage */
   const cardState = async () => {
     const f = await frontFrame();
     if (!f) return null;
@@ -294,8 +333,9 @@ try {
     }, clipId).catch((e) => ({ error: String(e).slice(0, 200) }));
   };
   /**
-   * 逐帧采样器(两个舞台都装;只记可见的那一台):这张卡有没有「活子树藏着、流又没有画面」的时刻、活画面和流叠在一起的时刻、
-   * 占位符、快照;状态变了记一条。
+   * Frame-by-frame sampler (installed on both stages; records only the visible one): whether this
+   * card has moments where "live subtree is hidden and stream has no visuals", moments where live
+   * visuals and stream overlap, placeholders, or snapshots; records an entry when state changes.
    */
   const installSampler = async () => {
     for (const f of stageFrames()) {
@@ -356,7 +396,10 @@ try {
     total.drawn = [...new Set(total.drawn)].sort((a, b) => a - b);
     return total;
   };
-  /** 这一段采样的通用断言:没有空着的时刻、没有占位符、没有快照、活画面和流没有叠着 */
+  /**
+   * Common assertion for this sampling segment: no blank moments, no placeholders, no snapshots,
+   * live visuals and stream do not overlap
+   */
   const checkSampler = (label, s) => {
     check(s.samples > 0, `${label}: samples were collected`, s.samples);
     check(s.empty === 0, `${label}: this card never has a moment when "the live subtree is hidden and the stream has no picture"`, { empty: s.empty, runs: s.emptyRuns, log: s.log.slice(0, 40) });
@@ -365,7 +408,11 @@ try {
     check(s.both === 0, `${label}: there is no moment when the live picture and the stream are stacked together`, { both: s.both, log: s.log.slice(0, 40) });
   };
 
-  /** 停下以后:这张卡回到精确活渲 —— 不抑制、活子树露着、没有快照、没有占位符;流平面藏着、这一帧已经解好;父页照发着流平面 */
+  /**
+   * After stopping: this card returns to exact live render: unsuppressed, live subtree visible,
+   * no snapshots, no placeholders; stream plane hidden, this frame already decoded; parent page
+   * continues sending stream plane
+   */
   const waitSettled = async (label, frame) => {
     const began = Date.now();
     const state = await until(`${label}: back to the exact live render after stopping`, async () => {
@@ -377,7 +424,7 @@ try {
       return exact ? { s, p } : null;
     }, 60000, 40);
     if (!state) { say('not-settled', { card: await cardState(), parent: await parentDiag() }); return { ok: false, ms: Date.now() - began }; }
-    // 这一帧先解好(流平面藏着):等一小会儿让它解出来
+    // Decode this frame first (stream plane hidden): wait briefly for it to decode
     const warm = await until(`${label}: after stopping, the stream plane is hidden and this frame is already decoded`, async () => {
       const s = await cardState();
       return s && s.track && s.track.lastDrawn === frame && !s.planeShown && s.planes === 1 ? s : null;
@@ -389,13 +436,15 @@ try {
   };
 
   /**
-   * 停下以后的画面(精确活渲)先只记下最像导出页的哪一帧;等最后把这张卡放回轻卡、量出「不贴流时活渲比导出页差几帧」再一起判
-   * (见文件头「活渲的参照」)。
+   * For the visual after stopping (exact live render), initially only record which frame of the
+   * export page it looks most like; wait until the end when this card is released back to a light
+   * card and the delta "how many frames live render differs from export page without stream paste"
+   * is measured, then evaluate together (see "Reference for live render" in header).
    */
   const liveChecks = [];
   const noteLive = (label, frame, score) => { liveChecks.push({ label, frame, best: score.best ?? null, mean: score.mean ?? null, runnerUp: score.runnerUp ?? null, scores: score.scores }); };
 
-  /* ---------------------------------------------------------------- 1. 点时间轴跳过去 */
+  /* ---------------------------------------------------------------- 1. Click timeline to jump across */
   await store(`actions.pause(); actions.seek(args[0]);`, (FIRST + 5) / FPS);
   await waitSettled('Start', FIRST + 5);
   out.click = [];
@@ -412,7 +461,7 @@ try {
   }
   say('1-click', { clicks: out.click.map((c) => ({ frame: c.frame, settledMs: c.settledMs, drawn: c.streamDrawn, best: c.best })) });
 
-  /* ---------------------------------------------------------------- 2. 按住标尺拖 */
+  /* ---------------------------------------------------------------- 2. Hold ruler and scrub */
   const ruler = await page.evaluate(() => {
     const el = document.querySelector('[data-pc="ruler"]');
     if (!el) return null;
@@ -437,7 +486,8 @@ try {
   let xZero = head ? head.x - head.t * pxPerSec : tk0.x - tk0.sec * pxPerSec;
   out.ruler = { pxPerSec: +pxPerSec.toFixed(3), xZero: +xZero.toFixed(2) };
   check(pxPerSec / FPS >= 2, 'At least 2 pixels per frame on the ruler (the pointer lands accurately)', out.ruler);
-  // 瞄这一帧所占那一格的正中:指针位置换成时刻之后是往下取到帧格上的
+  // Target center of the cell for this frame: converting pointer position to time rounds down to
+  // the frame cell
   const xOf = (frame) => xZero + ((frame + 0.5) / FPS) * pxPerSec;
   const moveToFrame = async (frame, { down = false } = {}) => {
     let landed = null;
@@ -454,7 +504,7 @@ try {
   {
     await waitSettled('Before drag', 60);
     await installSampler();
-    await page.keyboard.down('Alt');   // 不吸附到整秒 / 片段边界,落在哪一帧由坐标定
+    await page.keyboard.down('Alt');   // Does not snap to whole seconds / clip boundaries; which frame it lands on is determined by coordinates
     const steps = [];
     let prev = frameOf(await storeT());
     for (let i = 0; i < STEPS.length; i++) {
@@ -497,7 +547,7 @@ try {
     say('2-drag', { steps: steps.map((s) => ({ target: s.target, landed: s.landed, wallMs: s.wallMs, seekMs: s.seekMs, best: s.best, mean: s.mean, runnerUp: s.runnerUp })), releaseMs: settled.ms, waitingRuns: sampler.waitingRuns });
   }
 
-  /* ---------------------------------------------------------------- 3. 暂停着起播;播放中暂停(几轮,起点和播多久都不一样) */
+  /* ---------------------------------------------------------------- 3. Start playback while paused; pause during playback (several rounds, different start points and durations) */
   out.play = [];
   for (const [round, [from, playMs]] of [[60, 900], [45, 500], [72, 1100], [50, 700]].entries()) {
     await store(`actions.pause(); actions.seek(args[0]);`, from / FPS);
@@ -528,7 +578,8 @@ try {
     noteLive(`Pause during playback in round ${round}`, stopped, score);
     const entry = { from, stoppedAt: stopped, beats: beats.length, firstBeat: beats[0] ?? null, notDense: notDense.length, settleMs: settled.ms, waitingRuns: sampler.waitingRuns, best: score.best, mean: score.mean };
     if (!(score.mean < 12 && score.runnerUp > 1.8 * score.mean)) {
-      // 哪一帧都不像:存图,放宽到前后 12 帧找它到底像哪一帧,并留下舞台和父页那一刻的样子
+      // Matches no frame: save image, expand to 12 frames before and after to find which frame it
+      // actually resembles, and preserve how the stage and parent page looked at that moment
       await sleep(400);
       const wide = await shootAndScore(Array.from({ length: 25 }, (_, i) => stopped - 12 + i), `pause-${stopped}-mismatch.png`);
       Object.assign(entry, { wideBest: [...wide.scores].sort((x, y) => x[1] - y[1]).slice(0, 3), setTimeLog: (await parentDiag()).setTimeLog.slice(-4), logTail: sampler.log.slice(-16), card: await cardState() });
@@ -537,7 +588,7 @@ try {
     say('3-play', entry);
   }
 
-  /* ---------------------------------------------------------------- 4. 只认全局时钟的卡:后台整场景补跑后互换 */
+  /* ---------------------------------------------------------------- 4. Global-clock-only cards: swap after background whole scene catch-up run */
   {
     const before = await frontId();
     await pinHeavy(false, { vtOk: false });
@@ -558,7 +609,7 @@ try {
     noteLive('After the background catch-up swap', f, score);
     await pinHeavy(false, { vtOk: out.costRecord.vtOk ?? true });
   }
-  /* ---------------------------------------------------------------- 5. 活渲的参照:放回轻卡(不贴流),量活渲比导出页差几帧,再判上面记下的每一处 */
+  /* ---------------------------------------------------------------- 5. Reference for live render: release back to light card (no stream paste), measure frame delta between live render and export page, then evaluate each recorded place above */
   {
     await pinHeavy(false, { pinnedHeavy: false, vtOk: out.costRecord.vtOk ?? true });
     await until('This card is back to a light card (the parent page no longer classifies it as heavy)', async () => { const p = await parentDiag(); return p && !p.heavy.includes(clipId) ? true : null; }, 20000, 100);
@@ -573,7 +624,7 @@ try {
         return r.best !== null && r.mean < 12 && r.runnerUp > 1.8 * r.mean ? r : null;
       }, 8000, 300, true);
       seen.push({ frame: f, best: score?.best ?? null, mean: score?.mean ?? null });
-      // 连着三处的差相同就定下来
+      // If three consecutive locations have the same delta, settle on it
       const last3 = seen.slice(-3).map((x) => (x.best === null ? null : x.best - x.frame));
       if (last3.length === 3 && last3[0] !== null && last3.every((d) => d === last3[0])) { shift = last3[0]; break; }
     }

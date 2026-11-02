@@ -1,30 +1,33 @@
 /**
- * 导出页里按**真时间**等。
+ * Wait by **real time** in the export page.
  *
- * 导出页装了导出时钟(`src/kernel/exportClock.ts`、`pinEntropy.ts`):`performance.now()` 与 `Date.now()` 都被钉在当前导出帧的毫秒数上,
- * 项目一载入就是 0,不再走动。拿它们算「等了多久」的循环永远到不了时限 —— 2026-10-16 的 `576ad0a3` 在导出页的初始化里就这样写了两处,
- * 执行闸门没开(桌面运行环境、开发服务器上的导出页没有舞台自检,闸门一直是 `checking`)时浏览器导出永远不返回
- * (`docs/reports/AGENT-browser-export-hang.md`)。导出页里凡是要设时限的等待一律走这里。
+ * The export page installs an export clock (`src/kernel/exportClock.ts`, `pinEntropy.ts`):
+ * `performance.now()` and `Date.now()` are pinned to current export frame milliseconds;
+ * initialized to 0 upon project load, no longer advancing. Loops using them to measure elapsed wait
+ * time never reach timeout: on 2026-10-16, `576ad0a3` wrote this in two places in export page init;
+ * when execution gate is not open (desktop runtime environment and dev server export page have no
+ * stage self-check, gate stays `checking`), browser export never returns
+ * (`docs/reports/AGENT-browser-export-hang.md`). All timed waits in the export page must use this.
  */
 
 type RealClockHost = { __pcRealDateNow?: () => number };
 
-/** 真墙钟毫秒:导出时钟接管 `Date` 之前存下的那份(`pinEntropy.ts` 的 `__pcRealDateNow`),没接管时就是 `Date.now()` */
+/** Real wall-clock milliseconds: the copy saved before export clock took over `Date` (`__pcRealDateNow` in `pinEntropy.ts`), or `Date.now()` when not taken over */
 export function realNow(): number {
   const real = (globalThis as RealClockHost).__pcRealDateNow;
   return typeof real === "function" ? real() : Date.now();
 }
 
 export interface WaitRealOptions {
-  /** 每隔多久再看一次(毫秒) */
+  /** Interval between checks (milliseconds) */
   tickMs?: number;
-  /** 量时间的钟(缺省 `realNow`;单测注入) */
+  /** Clock measuring time (defaults to `realNow`; injected in unit tests) */
   now?: () => number;
-  /** 睡一会儿(缺省 `setTimeout`;单测注入) */
+  /** Sleep helper (defaults to `setTimeout`; injected in unit tests) */
   sleep?: (ms: number) => Promise<void>;
 }
 
-/** 等 `ok()` 成立,最多等 `ms` 真毫秒;回 `true` = 等到了,`false` = 到时限还没成立 */
+/** Waits for `ok()` to become true, up to `ms` real milliseconds; returns `true` if satisfied, `false` if timed out before becoming true */
 export async function waitReal(ok: () => boolean, ms: number, o: WaitRealOptions = {}): Promise<boolean> {
   const now = o.now ?? realNow;
   const tick = o.tickMs ?? 20;

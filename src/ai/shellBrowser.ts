@@ -1,11 +1,14 @@
 /**
- * 桌面壳里的 agent 浏览器(主窗口里的子 webview)。
+ * The agent browser in the desktop shell (a child webview inside the main window).
  *
- * 壳(Tauri)启动时给 WebView2 开了调试端口,agent 的 puppeteer 连的就是壳里那块 webview。
- * Node 那边管不了它摆在哪 —— 它是壳的东西 —— 所以显示 / 隐藏由这里 invoke 壳的命令:
- * 把 webview 摆到主窗口里某个矩形(CSS 像素),或者挪回客户区外面。
+ * When the shell (Tauri) starts, it opens a debugging port on WebView2, and the agent's puppeteer
+ * connects to that webview inside the shell. The Node side cannot control where it is placed (it
+ * belongs to the shell), so showing / hiding is done here by invoking the shell's commands: place
+ * the webview at some rectangle in the main window (CSS pixels), or move it back outside the client
+ * area.
  *
- * 在浏览器里跑 `npm run dev` 时没有壳,这些函数一律回 false / 空,调用方退回 Chrome 窗口方案。
+ * When running `npm run dev` in a browser there is no shell, and these functions all return
+ * false / empty, so callers fall back to the Chrome window approach.
  */
 
 interface TauriGlobal {
@@ -23,11 +26,17 @@ export interface AgentWebviewInfo {
   initial_url: string;
   ready: boolean;
   visible: boolean;
-  /** 默认 true。只有用户在浮层上点喇叭才放开;收回时壳会自动静回去 */
+  /**
+   * Default true. It is released only when the user clicks the speaker on the popover; when the
+   * webview is retracted the shell mutes it again automatically
+   */
   muted: boolean;
 }
 
-/** 静音开关。agent 的页面会自动播视频,所以默认静音,只在用户接手时给放开的机会 */
+/**
+ * Mute switch. The agent's pages autoplay videos, so it is muted by default, and the chance to
+ * unmute is given only when the user takes over
+ */
 export async function muteAgentWebview(muted: boolean): Promise<boolean> {
   const call = invoke();
   if (!call) return false;
@@ -40,7 +49,10 @@ export async function muteAgentWebview(muted: boolean): Promise<boolean> {
   }
 }
 
-/** 有没有壳、壳里有没有 agent webview。没有壳直接 null,不抛 */
+/**
+ * Whether there is a shell, and whether the shell has an agent webview. With no shell it returns
+ * null directly, without throwing
+ */
 export async function agentWebviewInfo(): Promise<AgentWebviewInfo | null> {
   const call = invoke();
   if (!call) return null;
@@ -53,7 +65,10 @@ export async function agentWebviewInfo(): Promise<AgentWebviewInfo | null> {
 
 export interface Rect { x: number; y: number; w: number; h: number }
 
-/** 把 agent webview 摆到主窗口里的这个矩形(CSS 像素,和 getBoundingClientRect 一致) */
+/**
+ * Place the agent webview at this rectangle in the main window (CSS pixels, consistent with
+ * getBoundingClientRect)
+ */
 export async function showAgentWebview(rect: Rect): Promise<boolean> {
   const call = invoke();
   if (!call) return false;
@@ -68,7 +83,7 @@ export async function showAgentWebview(rect: Rect): Promise<boolean> {
   }
 }
 
-/** 挪回客户区外面 */
+/** Move it back outside the client area */
 export async function hideAgentWebview(): Promise<boolean> {
   const call = invoke();
   if (!call) return false;
@@ -81,7 +96,7 @@ export async function hideAgentWebview(): Promise<boolean> {
   }
 }
 
-/** 某个 DOM 元素占的矩形 → 壳要的 rect */
+/** The rectangle a DOM element occupies → the rect the shell wants */
 export function rectOf(el: Element): Rect {
   const r = el.getBoundingClientRect();
   return { x: r.left, y: r.top, w: r.width, h: r.height };

@@ -1,12 +1,14 @@
 /**
- * Node 24.19 在 Windows 上的测试子进程偶发以 0xC0000005 原生崩溃（nodejs/node#65756），
- * spec 报告器不打印子进程退出码。本报告器给 scripts/test-suite.mjs 留下最小事件记录：
- * 文件用例、stderr、文件级失败的退出信息，以及根 test:summary 的总数。
+ * Test subprocesses of Node 24.19 occasionally crash natively with 0xC0000005 on Windows
+ * (nodejs/node#65756), and the spec reporter does not print subprocess exit codes. This reporter
+ * leaves minimal event records for scripts/test-suite.mjs: file test cases, stderr, exit
+ * information for file-level failures, and total counts from root test:summary.
  *
- * 不序列化断言的 actual/cause 对象：它们可能循环引用。记录失败时也不抛异常；
- * 包装脚本缺少根汇总就保持失败。首次异常的诊断和最多两次重跑见 scripts/test-suite.mjs。
- * 升级到包含 nodejs/node#65778 的 Node 后可移除：v26.10.0 起，或合入回移
- * nodejs/node#66168 的 v24.x 发布版。
+ * Do not serialize assertion actual/cause objects: they may contain circular references. Do not
+ * throw exceptions when recording fails; the wrapper script remains failed if root summary is
+ * missing. See scripts/test-suite.mjs for first exception diagnosis and up to two reruns.
+ * Can be removed after upgrading to Node versions containing nodejs/node#65778: v26.10.0 and above,
+ * or a v24.x release incorporating backported nodejs/node#66168.
  */
 const asString = (value) => typeof value === 'string' ? value : undefined;
 const asNumber = (value) => typeof value === 'number' && Number.isFinite(value) ? value : undefined;
@@ -14,7 +16,7 @@ const asNumber = (value) => typeof value === 'number' && Number.isFinite(value) 
 function minimalEvent(event) {
   const { type, data } = event;
   if (type === 'test:summary') {
-    if (data?.file != null) return null; // 子文件也有 summary，只保留整个运行器的根汇总。
+    if (data?.file != null) return null; // Sub-files also have summaries; only keep the root summary of the entire runner.
     const counts = {};
     for (const key of ['tests', 'failed', 'passed', 'cancelled', 'skipped', 'todo', 'topLevel', 'suites']) {
       const value = asNumber(data?.counts?.[key]);
@@ -59,7 +61,7 @@ export default async function* testEventReporter(events) {
       const record = minimalEvent(event);
       if (record) yield `${JSON.stringify(record)}\n`;
     } catch {
-      // 单条事件即使带异常 getter/不可序列化值，也不能中断 Node 的测试运行器。
+      // Even if a single event has a throwing getter or non-serializable value, it must not interrupt Node's test runner.
       yield '{"type":"reporter:error"}\n';
     }
   }

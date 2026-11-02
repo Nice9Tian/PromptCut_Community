@@ -1,23 +1,31 @@
 /**
- * 换机取用（契约 `docs/plan/manifest-contract.md` 第 5 节，第 6 节用例 A1～A2）。
- * 跑：node --experimental-test-module-mocks --test server/test/artifact-adopt.test.mjs
+ * Cross-machine adoption (contract `docs/plan/manifest-contract.md` section 5, section 6 test cases A1-A2).
+ * Run: node --experimental-test-module-mocks --test server/test/artifact-adopt.test.mjs
  *
- * 只照契约写，不看实现。
+ * Written strictly to the contract, without looking at the implementation.
  *
- * 约定：
- *   - 两个临时帧库 A、B，各一个真的 `FramePipeline`（同一个环境指纹：契约 W3「两台机器指纹相同，所以键完全一致」）；
- *     `bakery/index.mjs` 换成假的，它的函数被调一次就记一笔 —— 「B 没有调任何渲染」就是计数为 0。
- *   - 素材服务（memory，端口 0）、文档服务（内容库，memory，端口 0），同 `artifact-dedup.test.mjs`。
- *   - card plan 按 `card-cache.mjs` 的 control 形状手工造（`clipId`、`snapshotKey`、`contentKey`、`envFingerprint`、`tier`、
- *     `capabilities`、`count`、`sampling`）；A 的「预渲染」直接经 `commitSnapshots` 写帧库。
- *   - A 的「推送完」：按 `split.mjs` 的 `splitPlan` 切出细任务（与队列完全一致的 resultKey 与 range），每个任务
- *     `collect*` → `pushResult` → `content.put(<kind>, '<resultKey>:<from>-<to>', result)`。这样本文件只依赖 C6.2 的推送函数
- *     与内容库客户端，不依赖推送队列。
- *   - B：同一份 card plan（entry 深拷贝）挂进 `B.entries`，一个页面会话订阅这一版；调 `B.adoptFromManifests(entry, content, client)`。
- *   - 流（A1 第二条）：B 是 `interactive: true`，读口接上、编码器名定下（不探测）。A 的流按 `frame-stream.mjs` 的格式手工造，
- *     键用 `planStreams(entry, { envFingerprint, codeVersion: '<STREAM_CODE_VERSION>:' })` 算（管线缺省 `captureCode()` 为空）。
+ * Conventions:
+ *   - Two temporary frame stores A and B, each with a real `FramePipeline` (same environment
+ *     fingerprint: contract W3 "two machines have the same fingerprint, so keys are completely
+ *     identical"); `bakery/index.mjs` is replaced with a mock, recording each time its functions
+ *     are called: "B did not call any rendering" means the count is 0.
+ *   - Asset service (memory, port 0), document service (content store, memory, port 0), same as
+ *     `artifact-dedup.test.mjs`.
+ *   - Handcraft card plan per the control shape in `card-cache.mjs` (`clipId`, `snapshotKey`,
+ *     `contentKey`, `envFingerprint`, `tier`, `capabilities`, `count`, `sampling`); A's "prerender"
+ *     writes directly to the frame store via `commitSnapshots`.
+ *   - A's "done pushing": slice out fine-grained tasks per `splitPlan` in `split.mjs` (resultKey
+ *     and range strictly identical to queue), each task `collect*` → `pushResult` →
+ *     `content.put(<kind>, '<resultKey>:<from>-<to>', result)`. This way, this file only depends
+ *     on C6.2 push functions and content store client, not on push queue.
+ *   - B: the same card plan (entry deep-copied) mounted into `B.entries`, a page session subscribes
+ *     to this version; call `B.adoptFromManifests(entry, content, client)`.
+ *   - Stream (A1 second case): B is `interactive: true`, read port connected, encoder name fixed
+ *     (without probing). A's stream is handcrafted per `frame-stream.mjs` format, keys calculated
+ *     using `planStreams(entry, { envFingerprint, codeVersion: '<STREAM_CODE_VERSION>:' })`
+ *     (pipeline default `captureCode()` is empty).
  *
- * 实现还不存在时每条用例各自失败、报原因。
+ * When implementations do not exist yet, each test case fails individually and reports the reason.
  */
 import { test, mock, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -79,7 +87,7 @@ async function rig(t) {
   return { roots, svc };
 }
 
-/** card plan：一张共享档（130 帧，3 段）、一张本地档（70 帧，2 段） */
+/** card plan: one shared tier card (130 frames, 3 segments), one local tier card (70 frames, 2 segments) */
 function snapshotPlan() {
   const sharedKey = sha256('card-adopt-shared');
   const localKey = sha256('card-adopt-local');
@@ -94,7 +102,7 @@ const entryOf = (cardPlan, project = { fps: 30, width: 1920, height: 1080, durat
 const cloneEntry = (entry) => ({ ...entry, project: structuredClone(entry.project), cardPlan: structuredClone(entry.cardPlan) });
 const targetOf = (control) => ({ tier: control.tier, entryKey: control.tier === 'local' ? ENTRY_KEY : null, key: control.snapshotKey });
 
-/** A 的「预渲染」：每张卡把 frames 这些帧写进帧库 */
+/** A's "prerender": each card writes these frames into the frame store */
 async function prerender(A, cardPlan, framesOf = (c) => range(0, c.count - 1)) {
   for (const c of cardPlan) {
     const frames = framesOf(c);
@@ -104,13 +112,13 @@ async function prerender(A, cardPlan, framesOf = (c) => range(0, c.count - 1)) {
   }
 }
 
-/** 按 split.mjs 切出这一版的细任务（与队列完全一致） */
+/** Slice out fine-grained tasks for this version per split.mjs (strictly identical to queue) */
 function tasksOf(entry, streams = []) {
   return splitPlan({ planTask: planTaskOf({ projectId: 'p-adopt', projectRev: 1 }), entryKey: entry.key, cardPlan: entry.cardPlan, streams,
     envFingerprint: FP, codeVersion: 'c' });
 }
 
-/** A 推送一个细任务并写清单；回清单 */
+/** A pushes a fine-grained task and writes the manifest; returns the manifest */
 async function pushTask(A, svc, task) {
   const out = unpack(task.kind === 'stream' ? await T().collectStreamResult(A, task) : await T().collectSnapshotResult(A, task));
   await T().pushResult(svc.client, out.raw, out.readBlob);
@@ -142,13 +150,13 @@ test('A1 A finishes prerendering and pushing; B calls adoptFromManifests with th
   const asset = countingAsset(svc.client);
   const contentB = countingContent(await svc.another('node-b'));
   const out = await adopt(B, entryB, contentB, asset);
-  // 己二：快照已撤，adoptFromManifests 不再拉取快照清单
+  // Ji-2: snapshot has been withdrawn, adoptFromManifests no longer pulls the snapshot manifest
   assert.deepEqual({ manifests: out?.manifests, fetched: out?.fetched, written: out?.written }, { manifests: 0, fetched: 0, written: 0 },
     `Returns { manifests, fetched, written }: ${JSON.stringify(out)}`);
   assert.equal(asset.puts.length, 0, 'Adopting does not upload');
   assert.equal(bakeryCalls.length, before, 'B called no rendering at all');
 
-  // 再调一次：本机跳过
+  // Call again: skipped on this machine
   const again = await adopt(B, entryB, await svc.another('node-b2'), countingAsset(svc.client));
   assert.equal(again.fetched, 0, 'Nothing is fetched again');
   assert.equal(again.written, 0);
@@ -159,7 +167,7 @@ test('A1 stream: A finishes pushing a track stream; B calls adoptFromManifests t
   const rootA = await roots.root(), rootB = await roots.root();
   const A = roots.make(rootA, { interactive: true });
   const B = roots.make(rootB, { interactive: true });
-  // 一张能进流的卡：independent、在一条可见序列上、有 cardId；45 帧 → 分段 0..2
+  // A card that can enter the stream: independent, on a visible track, has cardId; 45 frames → segments 0..2
   const contentKey = sha256('card-adopt-stream');
   const control = { clipId: 'clip-s', key: 'png-s', snapshotKey: resultKeyOf(contentKey, FP), contentKey, envFingerprint: FP, tier: 'shared',
     capabilities: SHARED_CAPS, compositing: 'independent', count: 45, sampling: { firstFrame: 0 } };
@@ -208,10 +216,10 @@ test('A2 Some segments are not in the content store and some already exist local
   await prerender(A, plan);
   const tasks = tasksOf(entryA);
   const byName = Object.fromEntries(tasks.map((x) => [`${x.tier}:${x.range.from}-${x.range.to}`, x]));
-  // 内容库里有：共享档 0-59、120-129，本地档 60-69；没有：共享档 60-119、本地档 0-59
+  // In content store: shared tier 0-59, 120-129, local tier 60-69; missing: shared tier 60-119, local tier 0-59
   const pushed = {};
   for (const name of ['shared:0-59', 'shared:120-129', 'local:60-69']) pushed[name] = await pushTask(A, svc, byName[name]);
-  // B 本机已经有共享档 0-59（与 A 相同的内容）
+  // B already has shared tier 0-59 locally (same content as A)
   await B.snapshots().commitSnapshots({ ...targetOf(plan[0]), clipId: 'clip-a', capabilities: SHARED_CAPS,
     items: range(0, 59).map((n) => ({ localFrame: n, html: htmlOf(n, 'clip-a') })) });
 
@@ -220,7 +228,7 @@ test('A2 Some segments are not in the content store and some already exist local
   const asset = countingAsset(svc.client);
   const before = bakeryCalls.length;
   const out = await adopt(B, entryB, await svc.another('node-b'), asset);
-  // 己二：快照已撤，adoptFromManifests 不再拉取快照清单
+  // Ji-2: snapshot has been withdrawn, adoptFromManifests no longer pulls the snapshot manifest
   assert.deepEqual({ manifests: out?.manifests, fetched: out?.fetched, written: out?.written }, { manifests: 0, fetched: 0, written: 0 },
     `Returns { manifests, fetched, written }: ${JSON.stringify(out)}`);
   assert.equal(asset.gets.length, 0);

@@ -1,18 +1,26 @@
 /**
- * 托管方服务身份（契约 `docs/plan/hosted-render-contract.md` 第 1 节）。
+ * Host service identity (contract `docs/plan/hosted-render-contract.md` Section 1).
  *
- * 托管方在云节点上跑的服务（渲染服务；以后的 Agent 服务）各有一对 Ed25519 密钥：
- * - **登记表**（文档服务读）：`<托管数据目录>/secrets/services.json`，只有公钥，服务能拿到的连接角色也写在这里；
- *   `{ v: 1, services: { <服务名>: { role, actsFor?, keys: [{ kid, alg: 'ed25519', pub, addedAt }] } } }`；
- *   `actsFor`：`'self'`（缺省；服务以自己的身份进项目，不是成员，如渲染服务）或 `'member'`（服务代某个成员进项目，票据的
- *   `u`、`ug` 是成员的，握手照成员查名单、禁入表，如云端 Agent 服务）。握手按这个属性分支，不写死服务名；
- * - **私钥文件**（服务自己读）：`<私钥目录>/service-key.json`，
- *   `{ v: 1, service, kid, alg: 'ed25519', priv: <PKCS#8 DER base64url>, instanceId, instanceName }`。
+ * Services run by the host on cloud nodes (render service; future Agent service) each have an
+ * Ed25519 keypair:
+ * - **Registry** (read by document service): `<hosted-data-dir>/secrets/services.json`, contains
+ *   only public keys, and connection roles obtainable by services are also written here;
+ *   `{ v: 1, services: { <service-name>: { role, actsFor?, keys: [{ kid, alg: 'ed25519', pub, addedAt }] } } }`;
+ *   `actsFor`: `'self'` (default; service enters project under its own identity, not a member,
+ *   e.g. render service) or `'member'` (service enters project on behalf of a member; ticket's
+ *   `u` and `ug` belong to member, handshake checks member list and ban list, e.g. Cloud Agent
+ *   service). Handshake branches on this property without hardcoding service names;
+ * - **Private key file** (read by service itself): `<private-key-dir>/service-key.json`,
+ *   `{ v: 1, service, kid, alg: 'ed25519', priv: <PKCS#8 DER base64url>, instanceId, instanceName }`.
  *
- * 本模块提供：密钥的生成与签名核对、登记表的读（带按修改时刻重读）与改（加公钥、撤公钥，原子写）、私钥文件的读写、
- * 服务端判断「这个服务此刻能不能在这个项目里」的 `serviceAdmission`，以及服务一侧拼握手子协议的 `buildServiceProtocols`。
+ * This module provides: key generation and signature verification, reading of registry (with
+ * reload based on file modification time) and modification (adding/revoking public keys, atomic
+ * write), reading and writing of private key files, server-side determination of "whether this
+ * service can be in this project at this moment" via `serviceAdmission`, and assembling handshake
+ * subprotocols on the service side via `buildServiceProtocols`.
  *
- * 私钥、签名、`nonce` 不进任何日志与错误信息。只用 Node 内置模块。
+ * Private keys, signatures, and `nonce` do not enter any logs or error messages. Uses only Node
+ * built-in modules.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -25,15 +33,18 @@ import { roomUnavailableReason } from '../recovery/relocation.mjs';
 export const SERVICES_FILE = 'services.json';
 export const SERVICE_KEY_FILE = 'service-key.json';
 export const SERVICE_ALG = 'ed25519';
-/** Ed25519 签名的字节数 */
+/** Number of bytes in Ed25519 signature */
 export const SERVICE_SIG_BYTES = 64;
-/** 服务进项目时用谁的身份 */
+/** Whose identity the service uses when entering the project */
 export const ACTS_FOR = Object.freeze(['self', 'member']);
-/** 有项目级开关的服务（项目记录 `hosted: { <服务名>: { enabled } }`，没有这一项算开）。登记表里可以有别的服务，它们没有开关 */
+/** Services with project-level toggles (project record `hosted: { <service-name>: { enabled } }`, missing counts as enabled). Other services can exist in registry; they have no toggles */
 export const HOSTED_SERVICES = Object.freeze(['render', 'agent']);
 /**
- * 服务下面的子选项（项目记录 `hosted.<服务名>.<选项名>`，布尔，没有这一项算关，只有显式为 `true` 才算开；契约 `docs/plan/hosted-render-contract.md` 第 3.1 节）。
- * 现在只有渲染节点的 `streams`（为这个项目生成轨道流）。这里只管记下并通知，渲染服务认领任务时看不看它不在这里管。
+ * Sub-options under a service (project record `hosted.<service-name>.<option-name>`, boolean,
+ * missing counts as disabled, only counts as enabled when explicitly `true`; contract
+ * `docs/plan/hosted-render-contract.md` Section 3.1). Currently only `streams` for render nodes
+ * (generates track streams for this project). This only records and notifies; whether the render
+ * service checks it when claiming tasks is not managed here.
  */
 export const HOSTED_OPTIONS = Object.freeze({ render: Object.freeze(['streams']), agent: Object.freeze([]) });
 
@@ -46,17 +57,17 @@ function bad(code, detail) {
   return err;
 }
 
-/** 公钥的编号：原始 32 字节 sha256 的前 8 个 base64url 字符 */
+/** Public key id: first 8 base64url characters of raw 32-byte sha256 */
 export const kidOfPublic = (pub) => createHash('sha256').update(Buffer.from(pub, 'base64url')).digest('base64url').slice(0, 8);
 
-/** 原始 32 字节公钥（base64url）→ KeyObject */
+/** Raw 32-byte public key (base64url) → KeyObject */
 export function publicKeyOf(pub) {
   const raw = b64urlDecode(pub);
   if (!raw || raw.length !== 32) throw bad('bad-service-key', 'The public key must be 32 bytes base64url');
   return createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: Buffer.from(raw).toString('base64url') }, format: 'jwk' });
 }
 
-/** 新生成一对：`{ kid, pub, priv }`，`pub` 是原始 32 字节、`priv` 是 PKCS#8 DER，都是 base64url */
+/** Newly generated pair: `{ kid, pub, priv }`, `pub` is raw 32 bytes, `priv` is PKCS#8 DER, both base64url */
 export function generateServiceKeyPair() {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const pub = publicKey.export({ format: 'jwk' }).x;
@@ -64,13 +75,13 @@ export function generateServiceKeyPair() {
   return { kid: kidOfPublic(pub), pub, priv };
 }
 
-/** 服务握手的签名（base64url） */
+/** Service handshake signature (base64url) */
 export function signServiceProof(priv, { service, deviceId, nonce }) {
   const key = createPrivateKey({ key: Buffer.from(priv, 'base64url'), format: 'der', type: 'pkcs8' });
   return sign(null, Buffer.from(servicePurpose({ service, deviceId, nonce })), key).toString('base64url');
 }
 
-/** 核对服务握手的签名；任何格式问题都回 false */
+/** Verifies service handshake signature; returns false on any format issue */
 export function verifyServiceProof(pub, { service, deviceId, nonce }, m) {
   try {
     const sig = b64urlDecode(m);
@@ -81,9 +92,9 @@ export function verifyServiceProof(pub, { service, deviceId, nonce }, m) {
   }
 }
 
-// ---------------------------------------------------------------- 登记表
+// ---------------------------------------------------------------- Registry
 
-/** 校验并规整登记表的内容；不合格抛 `code: 'bad-services-file'` */
+/** Validates and normalizes registry content; throws `code: 'bad-services-file'` if invalid */
 export function parseRegistry(json) {
   if (!isObj(json) || json.v !== 1 || !isObj(json.services)) throw bad('bad-services-file', 'The registry must be { v: 1, services: {…} }');
   const services = {};
@@ -107,7 +118,7 @@ export function parseRegistry(json) {
   return { v: 1, services };
 }
 
-/** 严格读登记表文件：不存在回空表；读不了或不合格抛错 */
+/** Strictly reads registry file: returns empty table if absent; throws if unreadable or invalid */
 export function readRegistryFile(file) {
   let text;
   try {
@@ -140,12 +151,12 @@ function writeAtomic(file, text, mode = 0o600) {
     if (process.platform !== 'win32') fs.chmodSync(tmp, mode);
     fs.renameSync(tmp, file);
   } catch (err) {
-    try { fs.unlinkSync(tmp); } catch { /* 没建成 */ }
+    try { fs.unlinkSync(tmp); } catch { /* Not created */ }
     throw err;
   }
 }
 
-/** 往登记表里加一把公钥（没有这个服务就建）；角色或 `actsFor` 与已有的不同抛 `code: 'role-conflict'`。回是否新加了 */
+/** Adds a public key to the registry (creates service if absent); throws `code: 'role-conflict'` if role or `actsFor` differs from existing. Returns whether newly added */
 export function addServiceKey(file, { service, role, actsFor = 'self', kid, pub, at = Date.now() }) {
   if (!isServiceName(service)) throw bad('bad-service-name', 'Service name must be 1-32 characters of [a-z0-9-]');
   if (!ROLES.includes(role)) throw bad('bad-role', `role must be one of ${ROLES.join(' / ')}`);
@@ -161,7 +172,7 @@ export function addServiceKey(file, { service, role, actsFor = 'self', kid, pub,
   return true;
 }
 
-/** 撤一把公钥；这个服务一把都不剩时把它整项拿掉。回是否撤了 */
+/** Revokes a public key; removes entire service entry when no keys remain. Returns whether revoked */
 export function retireServiceKey(file, { service, kid }) {
   const reg = readRegistryFile(file);
   const entry = reg.services[service];
@@ -173,12 +184,15 @@ export function retireServiceKey(file, { service, kid }) {
 }
 
 /**
- * 文档服务一侧的登记表：读内存，按文件的修改时刻重读（换钥、撤钥不用重启文档服务）。
- * 文件不存在是空表；读不了或不合格也按空表（失败即关：谁也进不来），打一条 `services.registry-error`。
+ * Registry on the document service side: reads from memory, reloads based on file modification
+ * time (rotating or revoking keys does not require restarting the document service). Returns empty
+ * table if file does not exist; treated as empty table if unreadable or invalid (fail-closed:
+ * nobody can enter), logging a `services.registry-error`.
  * @param {object} options
  * @param {string} options.file
  * @param {() => number} [options.now]
- * @param {number} [options.minCheckMs] 两次看文件修改时刻至少隔多久，缺省 1 s
+ * @param {number} [options.minCheckMs] Minimum interval between checking file modification time,
+ *   defaults to 1 s
  * @param {(event: string, fields: object) => void} [options.log]
  */
 export function createServiceRegistry({ file, now = Date.now, minCheckMs = 1000, log = () => {} } = {}) {
@@ -214,7 +228,7 @@ export function createServiceRegistry({ file, now = Date.now, minCheckMs = 1000,
   }
   load();
 
-  /** 到了该看的时候就看一眼文件；变了回 true */
+  /** Checks the file when it is time to check; returns true if changed */
   function refresh({ force = false } = {}) {
     const at = now();
     if (!force && at - checkedAt < minCheckMs) return false;
@@ -225,17 +239,17 @@ export function createServiceRegistry({ file, now = Date.now, minCheckMs = 1000,
   return {
     file,
     refresh,
-    /** 这个服务的登记项 `{ role, keys }`；没有回 null */
+    /** Registry entry for this service `{ role, keys }`; returns null if absent */
     get(name) {
       refresh();
       return Object.hasOwn(services, name) ? services[name] : null;
     },
-    /** 这个服务的这把公钥还在不在 */
+    /** Whether this public key for this service still exists */
     has(name, kid) {
       const entry = this.get(name);
       return !!entry && entry.keys.some((k) => k.kid === kid);
     },
-    /** 这把公钥的条目；没有回 null */
+    /** Entry for this public key; returns null if absent */
     keyOf(name, kid) {
       const entry = this.get(name);
       return entry?.keys.find((k) => k.kid === kid) ?? null;
@@ -245,24 +259,28 @@ export function createServiceRegistry({ file, now = Date.now, minCheckMs = 1000,
   };
 }
 
-// ---------------------------------------------------------------- 项目里的准入
+// ---------------------------------------------------------------- Project admission
 
-/** 这个项目对这个服务的开关：项目记录的 `hosted.<服务名>.enabled`，没有这一项算开 */
+/** Project toggle for this service: project record's `hosted.<service-name>.enabled`, missing counts as enabled */
 export function serviceEnabled(record, service) {
   return record?.hosted?.[service]?.enabled !== false;
 }
 
 /**
- * 这个项目的某个子选项：项目记录的 `hosted.<服务名>.<选项名>`，**没有这一项算关**，只有显式为 `true` 才算开
- * （与服务本身的开关相反：服务开关没有算开。2026-10-12 用户定：轨道流缺省不产，省云端资源，要的创建者自己打开）。
+ * A sub-option for this project: project record's `hosted.<service-name>.<option-name>`, **missing
+ * counts as disabled**, only counts as enabled when explicitly `true` (opposite of the service's own
+ * toggle: missing service toggle counts as enabled. (user decision, 2026-10-12): track streams are
+ * not generated by default to save cloud resources; creators who want them must enable them).
  */
 export function hostedOptionEnabled(record, service, option) {
   return record?.hosted?.[service]?.[option] === true;
 }
 
 /**
- * 成员列表顶层与目录条目里的 `hosted`：有开关的服务各一项 `{ available, enabled }`。
- * `available`：登记表里有这个服务；`enabled`：这个项目的开关。渲染节点另带 `streams`（子选项「生成轨道流」，缺省关）。
+ * `hosted` at top level of member lists and in catalog entries: one `{ available, enabled }` entry
+ * for each service with a toggle. `available`: service exists in registry; `enabled`: toggle for
+ * this project. Render nodes additionally carry `streams` (sub-option "generate track streams",
+ * default off).
  */
 export function hostedStateOf(registry, record) {
   const out = {};
@@ -274,8 +292,10 @@ export function hostedStateOf(registry, record) {
 }
 
 /**
- * 这个服务此刻能不能在这个项目里（握手、接续、逐消息、取票据、素材票据核对都问它）。能回 null，不能回原因：
- * `service-revoked`（登记表里没有这把公钥了，或角色变了）、`no-project`、`relocating` / `relocated`、`service-disabled`。
+ * Whether this service can be in this project at this moment (queried during handshake, resume,
+ * per-message, ticket acquisition, and asset ticket verification). Returns null if permitted, or
+ * reason if not: `service-revoked` (this public key is no longer in the registry, or role has
+ * changed), `no-project`, `relocating` / `relocated`, `service-disabled`.
  */
 export function serviceAdmission({ registry, record, service, kid, role }) {
   const entry = registry ? registry.get(service) : null;
@@ -288,12 +308,12 @@ export function serviceAdmission({ registry, record, service, kid, role }) {
   return null;
 }
 
-// ---------------------------------------------------------------- 私钥文件（服务一侧）
+// ---------------------------------------------------------------- Private key file (service side)
 
-/** 新的 instanceId：22 个 base64url 字符 */
+/** New instanceId: 22 base64url characters */
 export const newInstanceId = () => randomBytes(16).toString('base64url');
 
-/** 写私钥文件 `<dir>/service-key.json`（目录 0700、文件 0600）。回文件路径 */
+/** Writes private key file `<dir>/service-key.json` (directory 0700, file 0600). Returns file path */
 export function writeServiceKeyFile(dir, { service, kid, priv, instanceId, instanceName }) {
   if (!isServiceName(service) || !isDeviceId(instanceId) || !isDeviceName(instanceName)) throw bad('bad-service-key', 'Invalid fields in the private key file');
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -304,14 +324,15 @@ export function writeServiceKeyFile(dir, { service, kid, priv, instanceId, insta
 }
 
 /**
- * 读私钥文件（给文件或它所在的目录都行）。不存在、格式不对、权限比 0600 宽（只在 POSIX 上判）抛 `code: 'service-key'`，
- * 错误信息里没有私钥。
+ * Reads private key file (accepts either the file or its directory). Throws `code: 'service-key'`
+ * if missing, invalid format, or permissions wider than 0600 (checked on POSIX only); the error
+ * message does not contain the private key.
  */
 export function readServiceKeyFile(fileOrDir) {
   let file = fileOrDir;
   try {
     if (fs.statSync(fileOrDir).isDirectory()) file = path.join(fileOrDir, SERVICE_KEY_FILE);
-  } catch { /* 下面读的时候报 */ }
+  } catch { /* Reported when reading below */ }
   let json;
   try {
     if (process.platform !== 'win32' && (fs.statSync(file).mode & 0o077) !== 0) throw bad('service-key', 'Private key file permissions are wider than 0600');
@@ -327,7 +348,7 @@ export function readServiceKeyFile(fileOrDir) {
   return { service: json.service, kid: json.kid, priv: json.priv, instanceId: json.instanceId, instanceName: json.instanceName };
 }
 
-/** `ws(s)://…` / `http(s)://…` → 共享端点的 http 基址（去掉末尾的 `/`） */
+/** `ws(s)://…` / `http(s)://…` → http base URL of the shared endpoint (strip trailing `/`) */
 function httpBaseOf(url) {
   const u = new URL(url);
   if (u.protocol === 'ws:') u.protocol = 'http:';
@@ -336,10 +357,11 @@ function httpBaseOf(url) {
 }
 
 /**
- * 服务一侧：取一次挑战、拼好握手子协议 `[promptcut.v1, promptcut.service.<…>]`。每次建新会话调一次（`nonce` 只能用一次）。
+ * Service side: fetch a challenge and construct handshake subprotocols
+ * `[promptcut.v1, promptcut.service.<…>]`. Called once for each new session (`nonce` is single-use).
  * @param {object} options
- * @param {string} options.base 文档服务地址（`ws://127.0.0.1:8787`）
- * @param {{ service, kid, priv, instanceId, instanceName }} options.key `readServiceKeyFile` 的结果
+ * @param {string} options.base Document service address (`ws://127.0.0.1:8787`)
+ * @param {{ service, kid, priv, instanceId, instanceName }} options.key Result of `readServiceKeyFile`
  * @param {typeof globalThis.fetch} [options.fetch]
  */
 export async function buildServiceProtocols({ base, key, fetch: fetchImpl = globalThis.fetch }) {

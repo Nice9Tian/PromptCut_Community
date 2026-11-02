@@ -4,10 +4,12 @@ import "./ProbeGate.css";
 import { tr } from "../i18n/index.ts";
 
 /**
- * 只有一个舞台时界限搜索的加载遮罩(`costSearch.ts`)。与桌面的 `ProbeGate` 同一套样式(只用主题变量):
- * 只在真要在舞台里测的时候出现 —— 取记录、判定、本地复用全命中都不出现。
- * 只有一个舞台,测量时画面被拨到缩水项目上;遮罩挡住这段画面和编辑操作
- * (语义 `product/rendering.md`「测量」:打开项目时在加载遮罩下测)。
+ * The loading mask for boundary search when there is only one stage (`costSearch.ts`). It uses the
+ * same styles as the desktop `ProbeGate` (theme variables only): it appears only when a real
+ * measurement in the stage is needed; it does not appear when fetching records, classifying, or
+ * when local reuse hits everything. With only one stage, the picture is switched to the shrunk
+ * project during measurement; the mask blocks this stretch of picture and editing operations
+ * (semantics `product/rendering.md`, "Measurement": measure under the loading mask when the project opens).
  */
 export function CostSearchGate() {
   const [s, setS] = useState<CostSearchState>(costSearchState);

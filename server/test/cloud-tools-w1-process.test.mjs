@@ -1,16 +1,31 @@
 /**
- * 云端 Agent 的浏览器进程:怎么认「还活着」、怎么认「是不是我们的浏览器」(`server/web/hosted/session.mjs`)。
- * 跑:npm test -- server/test/cloud-tools-w1-process.test.mjs
+ * Browser processes for Cloud Agent: how to identify "still alive" and "is it our browser"
+ * (`server/web/hosted/session.mjs`).
+ * Run: npm test -- server/test/cloud-tools-w1-process.test.mjs
  *
- * 不起浏览器。Linux 上才走得到的分支(读 /proc、进程组、锁文件)用注入的假 /proc 目录与假进程表在任何平台上验。
+ * Does not launch browsers. Branches reachable only on Linux (reading /proc, process groups, lock
+ * files) are verified across all platforms using an injected mock /proc directory and mock process
+ * table.
  *
- *   W1-PROC-01  僵尸按已退算:`/proc/<进程号>/stat` 的状态是 Z 的进程查得到但不算活着;进程名里带空格和括号也读得对
- *   W1-PROC-02  进程组:组里只剩僵尸 = 整棵树退了;还有一个活的(进程表里列不出来的 zygote)= 没退;组已经不在 = 退了;
- *               Windows 没有进程组,回「不知道」
- *   W1-PROC-03  认「是不是我们的浏览器」只看命令行里有没有完整的 `--user-data-dir=<这份目录>`;目录名是别人的前缀、子目录都不算
- *   W1-PROC-04  清残留不误杀:锁文件里的进程号活着、但那是别的进程(渲染服务的浏览器、文档服务)——不杀,过期的锁删掉;
- *   W1-PROC-05  起它的服务进程还活着的浏览器(滚动重启的重叠期):启动清扫不动;旧服务进程不在了才清;真要在这个对话起新浏览器时照清
- *               (下面接 W1-PROC-04 的说明)登记文件里的进程号被别的对话的浏览器占了——不杀;确实是这份目录的浏览器——杀;Windows 上锁被独占却认不出是谁——照实报还占着
+ *   W1-PROC-01  Zombies counted as exited: processes whose state in `/proc/<pid>/stat` is Z are
+ *               queryable but not considered alive; process names with spaces and parentheses are
+ *               also parsed correctly
+ *   W1-PROC-02  Process groups: only zombies left in group = whole tree exited; one alive remains
+ *               (a zygote not listed in process table) = not exited; group no longer exists =
+ *               exited; Windows has no process groups, returns "unknown"
+ *   W1-PROC-03  Identifying "is it our browser" only checks whether command line contains full
+ *               `--user-data-dir=<this-directory>`; directory name being a prefix of another or a
+ *               subdirectory does not count
+ *   W1-PROC-04  Cleaning residue without false kills: pid in lock file is alive, but belongs to
+ *               another process (render service browser, document service): do not kill, delete
+ *               stale locks;
+ *   W1-PROC-05  Browsers whose launching service process is still alive (rolling restart overlap
+ *               period): startup cleanup leaves them untouched; only cleaned once old service
+ *               process is gone; still cleaned when genuinely launching a new browser in this chat
+ *               (Continued from W1-PROC-04 explanation below) pid in registry file occupied by
+ *               browser of another chat: do not kill; confirmed to be browser for this directory:
+ *               kill; on Windows, lock is held exclusively but owner cannot be identified: report
+ *               faithfully as still occupied
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,7 +34,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { procStat, pidLive, liveGroupMembers, browserGroupLive, processCommandLine, commandLineUsesProfile, browserHoldsProfile, reapOrphan } from '../web/hosted/session.mjs';
 
-/** 造一个假的 /proc:`{ 进程号: { comm, state, ppid, pgrp, cmdline? } }` */
+/** Creates a mock /proc: `{ pid: { comm, state, ppid, pgrp, cmdline? } }` */
 export function fakeProc(t, table) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-w1-proc-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -35,14 +50,14 @@ export function fakeProc(t, table) {
 test('W1-PROC-01 zombies count as exited', (t) => {
   const procRoot = fakeProc(t, {
     100: { comm: 'chrome-headless', state: 'S', pgrp: 100 },
-    101: { comm: 'chrome) (evil S 1 1', state: 'Z', pgrp: 100 },   // 进程名里塞了括号和空格:从最后一个 ) 往后读
+    101: { comm: 'chrome) (evil S 1 1', state: 'Z', pgrp: 100 },   // Parentheses and spaces inside process name: read after the last )
     102: { comm: 'chrome', state: 'R', pgrp: 100 },
     103: { comm: 'chrome', state: 'X', pgrp: 100 },
   });
   assert.deepEqual(procStat(100, { procRoot }), { state: 'S', pgrp: 100 });
   assert.deepEqual(procStat(101, { procRoot }), { state: 'Z', pgrp: 100 });
   assert.equal(procStat(999, { procRoot }), null);
-  const alive = () => true;                                       // 「查得到」:僵尸也查得到
+  const alive = () => true;                                       // "Queryable": zombies are also queryable
   assert.equal(pidLive(100, { platform: 'linux', procRoot, alive }), true);
   assert.equal(pidLive(101, { platform: 'linux', procRoot, alive }), false, 'Zombie: can be found, but does not count as alive');
   assert.equal(pidLive(103, { platform: 'linux', procRoot, alive }), false);
@@ -54,12 +69,12 @@ test('W1-PROC-01 zombies count as exited', (t) => {
 
 test('W1-PROC-02 process group: only zombies left counts as exited, a live process that the process table cannot list counts as not exited', (t) => {
   const zombiesOnly = fakeProc(t, {
-    200: { state: 'Z', pgrp: 200 },                               // 主进程:已死,还没被收走
+    200: { state: 'Z', pgrp: 200 },                               // Main process: dead, not yet reaped
     201: { comm: 'chrome_zygote', state: 'Z', pgrp: 200 },
-    300: { comm: 'node', state: 'S', pgrp: 300 },                 // 别的组的活进程:不相干
+    300: { comm: 'node', state: 'S', pgrp: 300 },                 // Live processes in other groups: irrelevant
   });
   const zygoteAlive = fakeProc(t, {
-    201: { comm: 'chrome_zygote', state: 'S', pgrp: 200 },         // 主进程没了,zygote 还活着
+    201: { comm: 'chrome_zygote', state: 'S', pgrp: 200 },         // Main process is gone, zygote is still alive
     202: { state: 'Z', pgrp: 200 },
   });
   const groupThere = () => true;
@@ -90,7 +105,7 @@ test('W1-PROC-03 recognizing "is this our browser" looks only at the complete --
   assert.equal(commandLineUsesProfile('"C:\\x\\chrome.exe" "--user-data-dir=C:\\Data Dir\\web\\p\\c\\profile" --remote-debugging-pipe', 'c:\\data dir\\web\\p\\c\\profile', 'win32'), true, 'Windows: case-insensitive, with quotes');
   assert.equal(commandLineUsesProfile(`/opt/chrome --user-data-dir=${dir.toUpperCase()}`, dir, 'linux'), false, 'Linux is case-sensitive');
 
-  // 经假的 /proc 读命令行
+  // Read command line via mock /proc
   const procRoot = fakeProc(t, {
     500: { cmdline: ['/opt/chrome-headless-shell', '--headless', `--user-data-dir=${dir}`, '--remote-debugging-pipe'] },
     501: { cmdline: ['/opt/render/chrome', '--user-data-dir=/srv/render/profile'] },
@@ -109,7 +124,7 @@ test('W1-PROC-03 recognizing "is this our browser" looks only at the complete --
 test('W1-PROC-04 cleaning up leftovers does not kill other processes by mistake', async (t) => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-w1-reap-'));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
-  /** 一个对话目录:带登记文件与(假的)过期锁 */
+  /** A chat directory: with registry file and (mock) expired lock */
   const makeSession = (name, owner) => {
     const sessionDir = path.join(base, name);
     const profile = path.join(sessionDir, 'profile');
@@ -118,7 +133,7 @@ test('W1-PROC-04 cleaning up leftovers does not kill other processes by mistake'
     if (owner) fs.writeFileSync(path.join(sessionDir, 'owner.json'), JSON.stringify(owner));
     return { sessionDir, profile };
   };
-  /** 假进程表:进程号 → 命令行;被杀的记下来并从表里去掉 */
+  /** Mock process table: pid → command line; killed processes are recorded and removed from table */
   const world = (table) => {
     const killed = [];
     const trees = [];
@@ -135,7 +150,8 @@ test('W1-PROC-04 cleaning up leftovers does not kill other processes by mistake'
     };
   };
 
-  /* 锁里写的进程号活着,但那是渲染服务的浏览器(浏览器被强杀后锁留在盘上,号被系统分给了别人) */
+  /* Pid written in lock is alive, but that is a render service browser (after browser was
+     force-killed, lock remained on disk and pid was reassigned by system to another process) */
   {
     const { sessionDir, profile } = makeSession('reused-lock', { servicePid: 1, browserPid: 4242, pids: [4242, 4243] });
     const w = world({ 4242: '/opt/render/chrome --user-data-dir=/srv/render/profile', 4243: 'node /srv/doc/main.mjs' });
@@ -147,7 +163,8 @@ test('W1-PROC-04 cleaning up leftovers does not kill other processes by mistake'
     assert.equal(fs.existsSync(path.join(sessionDir, 'owner.json')), false);
   }
 
-  /* 锁里的号是别人,登记文件里的号也是别人(别的对话的浏览器,目录名以这份目录开头) */
+  /* Pid in lock belongs to another, and pid in registry file also belongs to another process
+     (browser for another chat whose directory name starts with this directory) */
   {
     const { sessionDir, profile } = makeSession('reused-owner', { servicePid: 1, browserPid: 5001, pids: [5001] });
     const w = world({ 5001: `/opt/chrome-headless-shell --user-data-dir=${profile}-2 --remote-debugging-pipe`, 5002: 'sshd: admin' });
@@ -157,7 +174,7 @@ test('W1-PROC-04 cleaning up leftovers does not kill other processes by mistake'
     assert.deepEqual(w.trees, []);
   }
 
-  /* 确实是这份目录的浏览器(锁里的号对):杀它,只杀它 */
+  /* Confirmed to be browser for this directory (pid in lock matches): kill it, and only kill it */
   {
     const { sessionDir, profile } = makeSession('real-orphan', { servicePid: 1, browserPid: 6001, pids: [6001, 6002] });
     const w = world({ 6001: `/opt/chrome-headless-shell --headless --user-data-dir=${profile} --remote-debugging-pipe`, 6002: 'node /srv/doc/main.mjs' });
@@ -168,7 +185,8 @@ test('W1-PROC-04 cleaning up leftovers does not kill other processes by mistake'
     assert.equal(fs.existsSync(path.join(sessionDir, 'owner.json')), false);
   }
 
-  /* chrome-headless-shell 不拿锁:只有登记文件里的号,命令行对得上就杀 */
+  /* chrome-headless-shell does not acquire locks: only has pid in registry file; kill if
+     command line matches */
   {
     const { sessionDir, profile } = makeSession('shell-orphan', { servicePid: 1, browserPid: 7001, pids: [7001] });
     const w = world({ 7001: `/opt/chrome-headless-shell --headless --user-data-dir=${profile}` });
@@ -176,7 +194,8 @@ test('W1-PROC-04 cleaning up leftovers does not kill other processes by mistake'
     assert.deepEqual(result.killed, [7001]);
   }
 
-  /* 杀不掉的(进程表里一直在):照实报还占着,登记留着下次再清 */
+  /* Unkillable ones (always present in the process table): report truthfully as still held;
+   * keep the registration to clean up next time */
   {
     const { sessionDir, profile } = makeSession('stubborn', { servicePid: 1, browserPid: 8001, pids: [8001] });
     const table = { 8001: `/opt/chrome --user-data-dir=${profile}` };
@@ -185,7 +204,9 @@ test('W1-PROC-04 cleaning up leftovers does not kill other processes by mistake'
     assert.equal(fs.existsSync(path.join(sessionDir, 'owner.json')), true);
   }
 
-  /* Windows:锁文件被谁独占着,登记的号是个不相干的活进程——不杀,照实报「还被占着」;锁没被占时把过期登记清掉 */
+  /* Windows: lock file is exclusively held by someone, and the registered id is an unrelated live
+   * process: do not kill, report truthfully as "still held"; clear expired registrations when the lock
+   * is not held */
   {
     const { sessionDir } = makeSession('win-unknown-holder', { servicePid: 1, browserPid: 9001, pids: [9001] });
     const w = world({ 9001: '"C:\\Program Files\\nodejs\\node.exe" server.mjs' });
@@ -219,16 +240,19 @@ test('W1-PROC-05 a browser whose launching service process is still alive: the s
     } });
     return { result, killed, sessionDir };
   };
-  // 滚动重启的重叠期:旧服务进程(77)还活着,它的浏览器在用——新进程的启动清扫不杀
+  // Rolling restart overlap period: the old service process (77) is still alive and its browser is in
+  // use: do not kill during new process startup cleanup
   const overlap = await run('overlap', 77, { respectLiveOwner: true });
   assert.deepEqual(overlap.killed, []);
   assert.equal(overlap.result.liveOwner, true);
   assert.equal(overlap.result.found, false);
   assert.equal(fs.existsSync(path.join(overlap.sessionDir, 'owner.json')), true, 'The registry entry stays');
-  // 旧服务进程已经不在:是真的残留,清扫时杀
+  // The old service process is gone: it is a true leftover, kill during cleanup
   assert.deepEqual((await run('dead-owner', 78, { respectLiveOwner: true })).killed, [7101]);
-  // 登记的就是本进程自己(不会发生在清扫时,防一手):照杀
+  // The registered one is this process itself (won't happen during cleanup, just a precaution):
+  // kill anyway
   assert.deepEqual((await run('self-owner', 4000, { respectLiveOwner: true })).killed, [7101]);
-  // 要在这个对话里起新浏览器(不带开关):旧进程活着也清——同一份目录不能两个浏览器用,文档服务这时已经只认新进程
+  // Starting a new browser in this chat (without flags): clean up even if the old process is alive:
+  // two browsers cannot use the same directory, and document service now only recognizes the new process
   assert.deepEqual((await run('launch-time', 77, {})).killed, [7101]);
 });

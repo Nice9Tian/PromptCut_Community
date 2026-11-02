@@ -1,7 +1,9 @@
 /**
- * 带共享项目的文档服务，真端口（0）跑（实现方自测；契约 `docs/plan/auth-contract.md` 第 4～10 节）：
- * HTTP 端点、空间隔离、成员列表、创建者操作、票据、角色限制、管理接口限制、挂载模式。
- * 跑：node --test server/test/auth-impl-service.test.mjs
+ * Document service with shared projects, running on real port (0) (implementer self-test;
+ * contract `docs/plan/auth-contract.md` sections 4-10):
+ * HTTP endpoints, space isolation, member list, creator operations, tickets, role restrictions,
+ * admin interface restrictions, attached mode.
+ * Run: node --test server/test/auth-impl-service.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,7 +21,7 @@ const post = (base, route, body, headers = {}) => fetch(`${httpBaseOf(base)}/sha
 const cred = () => ({ salt: crypto.randomBytes(16).toString('base64url'), key: crypto.randomBytes(32).toString('base64url') });
 const createBody = (name, extra = {}) => ({ name, mode: 'free', kdf: FAST_KDF, creator: { username: 'alice', ...cred() }, project: cred(), ...extra });
 
-/** 在一条连接上做一次创建者操作：取挑战、按口令派生 K、算证明 */
+/** Perform a creator operation on a connection: fetch challenge, derive K from passphrase, compute proof */
 async function adminOp(c, { projectId, creator = 'alice', password = 'creator-pw', op, fields = {}, reqId = `adm-${op}-${Math.random()}` }) {
   c.send({ type: 'shared.challenge', reqId: `${reqId}-ch` });
   const ch = await c.next(byReq(`${reqId}-ch`));
@@ -91,7 +93,7 @@ test('HTTP: hosted side allows 10 per hour from the same source, the 11th return
   assert.equal((await post(s2.base, 'create', createBody('b'))).status, 201);
   assert.equal((await post(s2.base, 'create', createBody('c'))).status, 429, 'the whole service reaches the cap');
 
-  // 冷却：错 5 次之后挑战回 429
+  // Cooldown: challenge returns 429 after 5 failures
   const s3 = await startSharedService({ mode: 'hosted' });
   t.after(() => s3.close());
   const p = await createProject(s3.base, { password: 'right' });
@@ -285,14 +287,15 @@ test('creator operations: no proof, wrong proof, and a non-creator passphrase ar
   const ch = await bob.next(byReq('c'));
   bob.send({ type: 'shared.admin', reqId: 'y', op: 'delete', proof: { nonce: ch.nonce, m: crypto.randomBytes(32).toString('base64url') } });
   assert.equal((await bob.next(byReq('y'))).reason, 'forbidden', 'wrong proof');
-  // 证明对，但 nonce 是别的连接取的：不认
+  // Proof is correct, but nonce was fetched by another connection: rejected
   alice.send({ type: 'shared.challenge', reqId: 'c2' });
   const ch2 = await alice.next(byReq('c2'));
   const key = await deriveKey('creator-pw', ch2.salt, ch2.kdf);
   bob.send({ type: 'shared.admin', reqId: 'z', op: 'unban', username: 'q', deviceId: newDeviceId('q'), proof: { nonce: ch2.nonce, m: await adminProof({ key, projectId: p.projectId, username: 'alice', op: 'unban', nonce: ch2.nonce }) } });
   assert.equal((await bob.next(byReq('z'))).reason, 'forbidden', 'nonce must be fetched by the same connection');
 
-  // 知道创建者口令的普通成员：证明对就成功（特权绑口令，不绑连接的身份）
+  // Regular member who knows creator passphrase: succeeds if proof is correct (privilege is bound
+  // to passphrase, not connection identity)
   const gen = s.store.peek(p.projectId).generation;
   const np = await makeCredential('pw2', FAST_KDF);
   assert.equal((await adminOp(bob, { projectId: p.projectId, op: 'set-password', fields: { project: np } })).type, 'shared.admin.ok');
@@ -305,7 +308,8 @@ test('creator operations: no proof, wrong proof, and a non-creator passphrase ar
   good.close();
   assert.equal((await adminOp(alice, { projectId: p.projectId, op: 'set-list', fields: { list: [] } })).reason, 'bad-message', 'open entry has no list');
 
-  // kick：连接以 4003 关闭、票据立即失效、再进 401；unban 后能进
+  // kick: connection closes with 4003, ticket is invalidated immediately, subsequent entry gets 401;
+  // can enter after unban
   bob.send({ type: 'auth.ticket', reqId: 'at', kind: 'asset', access: 'rw' });
   const bobTicket = (await bob.next(byReq('at'))).ticket;
   const verifier = createAssetTicketVerifier({ store: s.store });
@@ -322,7 +326,7 @@ test('creator operations: no proof, wrong proof, and a non-creator passphrase ar
   await back.opened;
   back.close();
 
-  // delete：全空间 4004、记录与数据删掉、名字释放
+  // delete: entire space 4004, records and data deleted, name released
   alice.send({ type: 'content.put', reqId: 'cp', kind: 'card-source', key: 'k', body: 1 });
   await alice.next(byReq('cp'));
   const tenantDir = path.join(s.dir, 'tenants', p.projectId);
@@ -359,8 +363,9 @@ test('creator operations: set-list under restricted entry removes someone (their
   const again = await join(s.base, { projectId: p.projectId, username: 'bob', deviceId: devBob, password: 'bpw' });
   await assert.rejects(again.opened);
   assert.equal((await adminOp(alice, { projectId: p.projectId, op: 'set-password', fields: { project: await makeCredential('x', FAST_KDF) } })).reason, 'bad-message', 'restricted entry has no project passphrase');
-  // 冷却：同一来源（测试里都是同一个地址）上面 bob 名单外的一次握手算一次失败，再错 4 次创建者证明就进冷却，
-  // 之后取挑战回 rate-limited
+  // Cooldown: from the same origin (all the same address in tests), a handshake outside the list for
+  // bob counts as one failure; 4 more creator proof failures trigger cooldown, after which fetching
+  // challenges returns rate-limited
   for (let i = 0; i < 4; i++) assert.equal((await adminOp(carol, { projectId: p.projectId, op: 'unban', password: 'nope', fields: { username: 'q', deviceId: newDeviceId('q') } })).reason, 'forbidden');
   carol.send({ type: 'shared.challenge', reqId: 'cool' });
   assert.equal((await carol.next(byReq('cool'))).reason, 'rate-limited');

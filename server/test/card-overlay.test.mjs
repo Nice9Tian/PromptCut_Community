@@ -1,12 +1,17 @@
 /**
- * 用户卡与改动层(M8 之前的两处遗留,报告 `docs/archive/agent-reports/AGENT-card-overlay.md`)。
+ * User cards and overlay layer (two leftovers before M8, report
+ * `docs/archive/agent-reports/AGENT-card-overlay.md`).
  *
- *   CO1  create_card 带 overwrite:改动层里有这张卡的旧版时,新内容要生效(以前写进底版,被改动层的旧版盖住)
- *   CO2  有改动层时主机不写检出目录:本机原来没有的用户卡(内容库同步、打开 .proc、create_card)一律写进改动层,
- *        检出里的 `src/cards/user/` 不多一个文件;按 id 找卡、源码闭包、代码身份都认改动层里的用户卡
- *   CO3  没有改动层(开发期)照旧写检出目录
+ *   CO1  create_card with overwrite: when the overlay layer contains an older version of this card,
+ *        new content must take effect (previously written to base, obscured by old overlay version).
+ *   CO2  Host does not write to checkout directory when overlay layer exists: user cards not
+ *        originally on this machine (content store sync, open .proc, create_card) are all written
+ *        to overlay layer; `src/cards/user/` in checkout does not gain extra files; finding cards
+ *        by id, source closure, and code identity all recognize user cards in overlay layer.
+ *   CO3  Without overlay layer (development phase), writes to checkout directory as usual.
  *
- * 改动层只由环境变量决定(`card-overrides.mjs` 的 `overridesRoot` 每次现读),按用例临时设上。
+ * Overlay layer is determined solely by environment variables (`overridesRoot` in `card-overrides.mjs`
+ * is re-read each time), set temporarily per test case.
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -49,7 +54,7 @@ export const priceTag: CardDef<Params> = {
 `;
 const USER_KEY = 'src/cards/user/price-tag.tsx';
 
-/** 一个最小的「检出」:内核文件、用户卡装载入口 */
+/** A minimal checkout: core files, user card loading entrypoint */
 function checkout(prefix, extra = {}) {
   const root = tmp(prefix);
   put(root, 'src/kernel/types.ts', 'export type CardDef<T> = any;\nexport type CardProps<T> = any;\n');
@@ -96,20 +101,20 @@ test('CO2 with an overlay layer, a user card that did not exist on this machine 
   const history = tmp('pc-co2-history-');
   const before = userDirFiles(root);
   withOverlay(overlay, () => {
-    // 内容库同步(独立渲染主机、编辑器都走这条)
+    // Content store sync (standalone render host and editor both take this path)
     const synced = cards.installSyncedFile({ root, historyDir: history, rel: USER_KEY, source: cardSource('v1') });
     assert.equal(synced.ok, true, synced.error);
     assert.equal(synced.status, 'written');
     assert.equal(synced.written, path.join(overlay, USER_KEY));
     assert.equal(fs.readFileSync(path.join(overlay, USER_KEY), 'utf8'), cardSource('v1'));
-    // 再装同一份:按生效内容比对,不动
+    // Load the same copy again: compare by effective content, untouched
     assert.equal(cards.installSyncedFile({ root, historyDir: history, rel: USER_KEY, source: cardSource('v1') }).status, 'unchanged');
-    // 用户卡用到的文件(本机没有的)同样只进改动层
+    // Files used by user cards (not on this machine) also only go into overlay layer
     const dep = cards.installSyncedFile({ root, historyDir: history, rel: 'src/cards/user/price-tag-util.ts', source: 'export const k = 1;\n' });
     assert.equal(dep.ok, true, dep.error);
     assert.equal(fs.existsSync(path.join(overlay, 'src/cards/user/price-tag-util.ts')), true);
 
-    // 打开 .proc
+    // Open .proc
     const [bundled] = cards.installBundledCards({ root, historyDir: history, cards: [{ id: 'coupon', source: cardSource('c1').replace('"price-tag"', '"coupon"') }], existingIds: [] });
     assert.equal(bundled.status, 'written', bundled.error);
     assert.equal(fs.existsSync(path.join(overlay, 'src/cards/user/coupon.tsx')), true);
@@ -133,7 +138,8 @@ test('CO2b a user card in the overlay layer (absent from the base copy): can be 
     const id1 = cards.cardCodeIdentity(root, 'price-tag');
     assert.ok(id1, 'the definition can be found');
     assert.equal(id1.custom, true);
-    // 与「同一份源码放在检出里」算出同一个身份:两台节点一台装在检出、一台装在改动层,仍认同一份代码
+    // Computes same identity as "same source placed in checkout": between two nodes, one installed
+    // in checkout and one in overlay layer, still recognized as same code
     const other = checkout('pc-co2b-other-', { [USER_KEY]: cardSource('v1', 'import { k } from "./price-tag-util";\n'), 'src/cards/user/price-tag-util.ts': 'export const k = 1;\n' });
     const id2 = withOverlay(null, () => cards.cardCodeIdentity(other, 'price-tag'));
     assert.equal(id1.version, id2.version);
@@ -170,7 +176,8 @@ test('CO4 the user card loading entry can see cards in the overlay layer: the ma
   put(overlay, 'src/cards/user/_scopes.json', '{}');
   const posix = (p) => p.split(path.sep).join('/');
 
-  // 没有改动层:清单是空表(磁盘上的 src/cards/userOverlay.ts),解析一律交给 Vite
+  // Without overlay layer: manifest is empty (src/cards/userOverlay.ts on disk), resolution left
+  // entirely to Vite
   withOverlay(null, () => {
     assert.match(cards.userOverlayModuleCode(root), /export const overlayModules = \{  \};/);
     assert.equal(cards.resolveOverlayOnly(root, '/src/cards/user/price-tag.tsx'), null);
@@ -178,7 +185,8 @@ test('CO4 the user card loading entry can see cards in the overlay layer: the ma
 
   withOverlay(overlay, () => {
     const code = cards.userOverlayModuleCode(root);
-    // 底版有的(in-base)不列:glob 收它,加载钩子交出改动层那一份;归属表不是源码,不列
+    // What exists in base (in-base) is not listed: glob collects it, load hook yields the overlay
+    // layer copy; ownership table is not source code, not listed
     assert.doesNotMatch(code, /in-base|_scopes/);
     assert.match(code, /import \* as m\d+ from "\/src\/cards\/user\/price-tag\.tsx";/);
     assert.match(code, /import r\d+ from "\/src\/cards\/user\/price-tag\.tsx\?raw";/);

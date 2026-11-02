@@ -1,6 +1,7 @@
 /**
- * 开启「放云端」时页面把项目里已有的素材交给上传队列(C10a 集成返工,`assetTiers.ts` 的 `enqueueExistingMedia`)。
- * 跑:node --test src/editor/media/enqueueExisting.test.mjs
+ * When enabling "Move to the cloud", page hands existing assets in project to upload queue
+ * (C10a integration rework, `enqueueExistingMedia` in `assetTiers.ts`).
+ * Run: node --test src/editor/media/enqueueExisting.test.mjs
  */
 import "../../testing/registerTs.mjs";
 import test, { beforeEach } from "node:test";
@@ -70,10 +71,11 @@ test("EQE-4 gatekeeper: assets without a hash must not be skipped silently: they
     { id: "bad", name: "bad.mp3" },
     { id: "up", name: "uploading.mp3", pending: true },
   ]);
-  // 只有没哈希的:不等上传目标,直接回空队列 + skipped
+  // Only items without hashes: returns empty queue + skipped directly without waiting for upload
+  // target
   const onlyOld = await T.enqueueExistingMedia([media[1]], { post: async () => { throw new Error("Should not be sent"); }, timeoutMs: 50 });
   assert.deepEqual(onlyOld, { queued: [], missing: [], skipped: [{ id: "old", name: "voice-old.mp3" }] });
-  // 有可入队的:发完之后结果里照样带 skipped
+  // There are enqueueable items: after sending, the result still includes skipped
   const link = { request: async () => ({ type: "auth.ticket.ok", ticket: "rw-1", exp: Date.now() + 15 * 60_000 }) };
   const stop = T.startUploadTarget(link, "http://h/api/asset", { post: async () => {}, setTimer: () => 0, clearTimer: () => {} });
   const r = await T.enqueueExistingMedia(media, { post: async () => ({ queued: [h("a")], missing: [] }), timeoutMs: 5_000 });

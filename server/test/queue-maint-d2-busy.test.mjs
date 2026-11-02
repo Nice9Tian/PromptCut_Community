@@ -1,23 +1,37 @@
 /**
- * 任务 D（`claude/queue-maint`）：页面只是忙，不被 D2（队列锁闲置接手，M7 契约第 3.4 节）接手。
- * 出处：`docs/reports/REPORT-M7.md` 第 11 节第 1 行 ——「锁闲置只看产出，不看页面是在忙还是走了」。
+ * Task D (`claude/queue-maint`): Page is only busy, not taken over by D2 (queue lock idle takeover,
+ * M7 contract Section 3.4).
+ * Origin: `docs/reports/REPORT-M7.md` Section 11 line 1: "Lock idle only looks at output, not
+ * whether page is busy or gone".
  *
- * 改法（M7 D2 补充〔裁〕）：`node.welcome` 带 `activeIntervalMs`；节点忙着（生成别的卡、后台舞台在测量或补跑）时发
- * `node.active { busy }`；锁记下最后为它产出的节点，那个节点此刻连着、指纹没变、报过忙时，回包的 `lockIdleMs` 按
- * 「最后一次产出或报忙」算。页面断开、停报、从没报过（旧页面）时只看产出，同改动之前。
+ * Fix (M7 D2 addendum [ruling]): `node.welcome` includes `activeIntervalMs`; when a node is busy
+ * (generating other cards, background stage measuring or catching up), it sends
+ * `node.active { busy }`; lock records last node that produced output for it; when that node is
+ * currently connected, its fingerprint hasn't changed, and it reported busy, `lockIdleMs` in
+ * response is calculated based on "the last output or reported busy". When page disconnects, stops
+ * reporting, or never reported (legacy page), only output is checked, same as before change.
  *
- *   QM-D-01 welcome 带间隔，且间隔远小于接手门槛
- *   QM-D-02 页面忙（在报 node.active、这张卡没产出）：闲置不涨，切分方判不接手（发布回包、认领回包两条路）
- *   QM-D-03 页面断开：报过的忙立即不作数，闲置按最后一次产出算，照旧接手
- *   QM-D-04 页面连着但停报忙：从最后一次报忙起算，超 30 s 照旧接手
- *   QM-D-05 页面恢复产出：锁续上（仍在它的指纹上、闲置归零、记的节点仍是它）
- *   QM-D-06 旧页面（不报 node.active）：两个队列实例、同一串消息，回包与改动前的算法一致
- *   QM-D-07 别的节点报忙不作数：同指纹的另一个节点、换了指纹重新报到的原节点
- *   QM-D-08 消息格式：busy 不是字符串 / 太长回 bad-message；不是节点的连接回 not-registered；成功不回包
- *   QM-D-09 describe：报过忙的节点才多 activeAt / activeBusy
- *   QM-D-10 进程内（真队列 + 真切分方）：浏览器锁着卡、忙 60 s 不产出，新一版计划不被接手；随后断开，再下一版被 pc 接手
+ *   QM-D-01 welcome includes interval, and interval is far smaller than takeover gate
+ *   QM-D-02 Page busy (reporting node.active, no output for this card): idle does not increase,
+ *           splitter determines not to take over (both publish response and claim response paths)
+ *   QM-D-03 Page disconnects: reported busy immediately invalidated, idle calculated from last
+ *           output, takeover proceeds as usual
+ *   QM-D-04 Page connected but stops reporting busy: calculated from last reported busy, takeover
+ *           proceeds as usual after 30 s
+ *   QM-D-05 Page resumes output: lock renewed (still on its fingerprint, idle resets to zero,
+ *           recorded node remains this node)
+ *   QM-D-06 Legacy page (does not report node.active): two queue instances, same message sequence,
+ *           response matches algorithm before change
+ *   QM-D-07 Reporting busy from other nodes does not count: another node with same fingerprint, or
+ *           original node checking in again with new fingerprint
+ *   QM-D-08 Message format: if busy is not a string / too long, return bad-message; connections not
+ *           from a node return not-registered; no response on success
+ *   QM-D-09 describe: only nodes that reported busy get extra activeAt / activeBusy
+ *   QM-D-10 In-process (real queue + real splitter): browser locks card, busy for 60 s without
+ *           output, new plan revision not taken over; subsequently disconnects, next plan revision
+ *           taken over by pc
  *
- * 跑：node --test server/test/queue-maint-d2-busy.test.mjs
+ * Run: node --test server/test/queue-maint-d2-busy.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -39,7 +53,7 @@ function snap(ck, fp, from = 0) {
   return makeTaskInput({ projectId: 'p1', kind: 'snapshot', resultKey: rk(ck, fp), range: [from, from + 59], input: { clipId: `clip-${ck}`, contentKey: ck }, requires: { envFingerprint: fp } });
 }
 
-/** 发布方 p、切分节点 pc（P）、同用户的浏览器节点 bw（B，watch p1） */
+/** Publisher p, splitter node pc (P), browser node bw for same user (B, watch p1) */
 function setup() {
   const h = createQueueHarness(createRenderQueue);
   h.publisher('p', 'pub-p');
@@ -49,14 +63,14 @@ function setup() {
   return h;
 }
 const active = (h, conn, busy = 'bake') => h.handle(conn, { type: 'node.active', ...(busy === undefined ? {} : { busy }) });
-/** pc 照自己的指纹发一份被锁在 B 上的卡：回包（card-locked，带 lockIdleMs / lockUndone） */
+/** pc sends card locked on B with its own fingerprint: response (card-locked, with lockIdleMs / lockUndone) */
 const probe = (h, ck = 'ck1') => {
   const out = h.publish('p', [snap(ck, P, 0)]);
   return out.one('p', 'task.published').results[0];
 };
 const takes = (r) => idleLockTakeover(`snapshot:${'ck1'}`, r.lockedBy, r);
 
-/** 浏览器锁住 ck1（认领第一段、报一次进度），第二段还 open */
+/** Browser locks ck1 (claims first segment, reports progress once); second segment remains open */
 function lockOnBrowser(h, before = []) {
   const br0 = snap('ck1', B, 0), br1 = snap('ck1', B, 60);
   h.publish('p', [...before, br0, br1]);
@@ -77,7 +91,7 @@ test('QM-D-01 node.welcome carries activeIntervalMs (the new queue recognizes no
 
 test('QM-D-02 page busy: holds the lock on ck1 while working on something else (reports node.active every 10 s), and produces nothing for ck1 for 60 s: the idle time does not grow, and the splitter does not take over', () => {
   const h = setup();
-  const own1 = snap('ck1', P, 60);   // 切分方那份在上锁之前就发过（不带 dual，上锁后留着、被锁挡住）
+  const own1 = snap('ck1', P, 60);   // Splitter's copy was sent before locking (without dual; kept after locking, blocked by lock)
   lockOnBrowser(h, [own1]);
   for (let i = 0; i < 6; i++) { h.advance(NODE_ACTIVE_INTERVAL_MS); active(h, 'bw', 'bake'); }
   h.advance(4_000);
@@ -87,7 +101,7 @@ test('QM-D-02 page busy: holds the lock on ck1 while working on something else (
   assert.equal(r.lockIdleMs, 4_000, 'counted from the last busy report');
   assert.equal(r.lockUndone, 1, 'the second segment is not done yet');
   assert.equal(takes(r), false, 'the splitter decides not to take over');
-  // 认领回包那条路（切分方拿着旧视图来认领被锁的卡）同样按报忙算
+  // Claim response path (splitter claims locked card with old view) also calculates by reported busy
   const rej = h.claim('pc', own1.id, 1).one('pc', 'task.claim-rejected');
   assert.deepEqual([rej.reason, rej.lockIdleMs], ['card-locked', 4_000]);
   assert.equal(h.describe().locks.find((l) => l.lockKey === 'snapshot:ck1').envFingerprint, B, 'The lock is still on the browser');
@@ -101,7 +115,7 @@ test('QM-D-03 page disconnects: busy reports already made stop counting immediat
   const r = probe(h);
   assert.equal(r.lockIdleMs, 4 * NODE_ACTIVE_INTERVAL_MS, 'after the disconnect only output counts (the segment completed 40 s ago)');
   assert.equal(takes(r), true, 'takes over as before');
-  // 宽限期内重连回来又报忙：重新作数（页面没走）
+  // Reconnecting within grace period and reporting busy again: valid again (page hasn't left)
   h.node('bw2', 'node-bw', { profile: 'browser', watch: ['p1'], hello: { envFingerprint: B } });
   active(h, 'bw2');
   h.advance(1_000);
@@ -166,7 +180,8 @@ test('QM-D-07 busy reports from other nodes do not count: another page with the 
   h.node('bw3', 'node-bw3', { profile: 'browser', userId: 'u2', watch: ['p1'], hello: { envFingerprint: B } });
   for (let i = 0; i < 4; i++) { h.advance(NODE_ACTIVE_INTERVAL_MS); active(h, 'bw2'); active(h, 'bw3'); }
   assert.equal(probe(h).lockIdleMs, 40_000, 'the lock is recorded for node-bw; busy reports from other nodes do not count');
-  // node-bw 换了指纹重新报到：它再报忙也不作数（锁在 B 上，它已不是 B 的环境）
+  // node-bw checks in again with new fingerprint: reporting busy no longer counts
+  // (locked on B, it is no longer B's environment)
   h.hello('bw', 'node-bw', { profile: 'browser', envFingerprint: X });
   active(h, 'bw');
   h.advance(1_000);
@@ -198,7 +213,7 @@ test('QM-D-09 describe: a node that has reported busy gets extra activeAt / acti
   assert.equal('activeAt' in h.nodeInfo('node-pc'), false);
 });
 
-/* ------------------------------------------------------------------ 进程内：真队列 + 真切分方 */
+/* ------------------------------------------------------------------ In-process: real queue + real splitter */
 
 const flush = async (n = 20) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
 const weightOf = () => ({ class: 'medium', estMs: null });
@@ -229,7 +244,7 @@ function pcSplitter(env, cardPlan) {
     nodeId: 'pc-1', node: { profile: 'pc', envFingerprint: P, codeVersions: [CV] }, endpoint, now: env.now, codeVersion: CV,
     executor: { plan: async () => ({ entryKey: 'entry-1', cardPlan, weightOf, anchorFrames: [] }), render: async () => null },
     sink: { has: async () => false, put: async () => ({ complete: true }) },
-    // 细任务不让 pc 做：只切分，锁的走向由测试掌握
+    // Do not let pc execute fine-grained tasks: split only, lock transitions are controlled by test
     isIdle: () => local.session.known().some((t) => t.kind === 'plan'), takeoverLocked: idleLockTakeover,
   });
   local.start();
@@ -258,7 +273,8 @@ test('QM-D-10 in-process: the browser holds the lock on a card and is busy with 
   br.send({ type: 'task.progress', id: brTasks[0].id, token, done: 60 });
   br.send({ type: 'task.complete', id: brTasks[0].id, token, result: {} });
 
-  // 页面在忙别的（别的卡、测量）：60 s 没为这张卡产出，但每 10 s 报一次忙
+  // Page is busy with other work (other cards, measurement): no output for this card for 60 s,
+  // but reports busy every 10 s
   for (let i = 0; i < 6; i++) { env.advance(NODE_ACTIVE_INTERVAL_MS); br.send({ type: 'node.active', busy: 'stage' }); }
   const plan2 = clipsPlanTaskOf({ projectId: 'p1', projectRev: 2, clips: ['a'], codeVersion: CV });
   const mark = env.log.length;
@@ -273,7 +289,8 @@ test('QM-D-10 in-process: the browser holds the lock on a card and is busy with 
   assert.ok(!env.log.slice(mark).some((e) => e.connId === 'pc' && e.m.type === 'task.published' && e.m.results.some((r) => r.created && r.id.includes(rk('ck-a', P)))),
     'pc did not start a separate set of keys under its own fingerprint');
 
-  // 浏览器走了：断开，宽限期过后下一版计划由 pc 接手整张卡
+  // Browser is gone: disconnects; after grace period expires, pc takes over whole card in next
+  // plan revision
   env.q.disconnect('br');
   env.advance(11_000);
   env.advance(5_000);

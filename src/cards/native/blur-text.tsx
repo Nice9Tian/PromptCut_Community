@@ -55,7 +55,8 @@ export const blurText: CardDef<Params> = {
   useWhen: "When the narration contains emphasis phrases such as \"Remember\", \"The key is\", \"Essentially\", \"The core is\", turn the whole sentence into word chunks that fade in from blur one by one. **You must split word chunks manually with `|`**; without splits the whole sentence appears at once. Words wrapped in `*asterisks*` are highlighted in the primary color. The font is very large, so keep it within 15 characters.",
   tags: ["emphasis","quotable line","fade-in","key point"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,

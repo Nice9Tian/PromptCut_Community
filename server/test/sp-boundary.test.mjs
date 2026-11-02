@@ -1,12 +1,16 @@
 /**
- * SP2 令牌的边界（契约 `docs/plan/shared-project-contract.md` 第 5 节、第 7 节 SP2；计划 SP2 的每一条）。
- * 跑：node --test server/test/sp-boundary.test.mjs
+ * Boundaries of SP2 tokens (contract `docs/plan/shared-project-contract.md` Section 5, Section 7
+ * SP2; every item in plan SP2).
+ * Run: node --test server/test/sp-boundary.test.mjs
  *
- * 进程内起服务（M6a 已集成的 `createSharedDocService`，经 `auth-kit.mjs` 的 hostFor），非回环来源用 `__remote` 改对端地址。
- * 托管端的子进程版本在 `sp-hosted.test.mjs`（SPC2-1、SPC2-2）。
+ * Starts services in-process (`createSharedDocService` integrated in M6a, via hostFor in
+ * `auth-kit.mjs`); non-loopback sources use `__remote` to change peer address.
+ * The child process version on the hosted side is in `sp-hosted.test.mjs` (SPC2-1, SPC2-2).
  *
- * 计划 SP2：`page`、`agent`、`render` 三种角色以及独立主机，都不带集群令牌，凭项目凭证进入：成功。凭证错：被拒。
- * 托管端的管理接口不带令牌：401。局域网主机的管理接口从局域网另一台机器访问：连不上；从本机访问，不带令牌：成功。
+ * Plan SP2: Three roles `page`, `agent`, `render` as well as standalone hosts enter with project
+ * credentials without cluster tokens: success. Wrong credentials: rejected.
+ * Hosted-side management interface without token: 401. LAN host management interface accessed from
+ * another machine on the LAN: connection fails; accessed from this machine without token: success.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

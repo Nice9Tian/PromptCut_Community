@@ -22,7 +22,7 @@ export interface ProbeSummary {
   rasterMs: number;
   serializeMs: number;
   catchUpMs: number;
-  /** 以下只进诊断 / 报告 */
+  /** The following only goes into diagnostics / reports */
   samples: number;
   stepP50: number;
   stepP90: number;

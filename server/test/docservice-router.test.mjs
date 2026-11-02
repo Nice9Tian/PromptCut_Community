@@ -1,10 +1,14 @@
 /**
- * 文档服务通用化：核心路由与模块挂载（契约 `docs/plan/render-queue-contract.md` G.1～G.4，用例 R1、R2、R3、R5、R6、R7）。
- * R4（`docservice.test.mjs` 一字不改全过）由 `npm test` 覆盖，这里不重复写。
- * 跑：node --test server/test/docservice-router.test.mjs
+ * Document service generalization: core routing and module mounting (contract
+ * `docs/plan/render-queue-contract.md` G.1 to G.4, test cases R1, R2, R3, R5, R6, R7).
+ * R4 (all pass without changing a word in `docservice.test.mjs`) is covered by `npm test`, not
+ * repeated here.
+ * Run: node --test server/test/docservice-router.test.mjs
  *
- * 只照契约写，不看实现。被测模块用动态 import 取，模块缺失时每条用例各自失败、原因写清楚。
- * 端口一律由系统分配；需要节拍的用 `autoTick: false` 加手动 `service.tick()`（G.4）。
+ * Written strictly against contract, ignoring implementation. Tested module is retrieved via
+ * dynamic import; each test case fails individually with a clear reason when module is missing.
+ * Ports are always system-allocated; those needing ticks use `autoTick: false` plus manual
+ * `service.tick()` (G.4).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,7 +25,7 @@ async function loadRouter() {
   return import('../docservice/router.mjs');
 }
 
-/** 起一个服务（端口 0），日志收进数组。mount=true 时挂真队列。 */
+/** Start a service (port 0), collect logs into an array. Mount real queue when mount=true. */
 async function startService({ mount = false, ...options } = {}) {
   const logs = [];
   const service = createDocService({ log: (event, fields) => logs.push({ event, ...fields }), autoTick: false, ...options });
@@ -35,8 +39,8 @@ async function startService({ mount = false, ...options } = {}) {
 }
 
 /**
- * 与渲染无关的示例模块 `text.`（G.9 R1）：`text.count { text }` → `text.counted { lines, chars }`。
- * `seen` 记下它处理过的全部消息类型，`calls` 记 connect / disconnect。
+ * Non-rendering example module `text.` (G.9 R1): `text.count { text }` → `text.counted { lines, chars }`.
+ * `seen` records all message types it has processed, `calls` records connect / disconnect.
  */
 function textModule({ name = 'text', types = ['text.'] } = {}) {
   const conns = new Set();
@@ -69,7 +73,7 @@ function textModule({ name = 'text', types = ['text.'] } = {}) {
   };
 }
 
-/** 最小模块：只认 types，handle 回 `<name>.ok`。 */
+/** Minimal module: only recognizes types, handle returns `<name>.ok`. */
 function bareModule(name, types, extra = {}) {
   return {
     name, types,
@@ -110,20 +114,20 @@ test('R1 the sample module text. and the queue online at the same time: messages
   const tc2 = await c1.next(byReq('t2'));
   assert.deepEqual([tc2.type, tc2.lines, tc2.chars], ['text.counted', 0, 0]);
 
-  // 第二条连接只用文本模块
+  // Second connection only uses text module
   c2.send({ type: 'text.count', reqId: 'u1', text: 'x' });
   const tu = await c2.next(byReq('u1'));
   assert.deepEqual([tu.type, tu.lines, tu.chars], ['text.counted', 1, 1]);
 
-  // 文本模块只见过自己的类型；队列不知道文本消息
+  // Text module has only seen its own types; queue is unaware of text messages
   assert.ok(text.seen.length === 3 && text.seen.every((ty) => ty === 'text.count'), `the text module received: ${text.seen}`);
   const qd = queue.describe();
   assert.deepEqual(qd.publishers.map((p) => p.publisherId), ['page-1']);
   assert.deepEqual(qd.nodes.map((n) => n.nodeId), ['node-1']);
-  // c2 没收到任何队列消息
+  // c2 did not receive any queue messages
   assert.ok(c2.all.every((m) => m.type === 'text.counted'), `c2 received: ${JSON.stringify(c2.all)}`);
 
-  // describe：角色字段来自队列模块，textSeen 来自文本模块
+  // describe: role field comes from queue module, textSeen from text module
   const d = service.describe();
   const conn1 = d.conns.find((c) => c.publisherId === 'page-1');
   assert.ok(conn1, JSON.stringify(d.conns));
@@ -179,17 +183,17 @@ test('R3 all three kinds of type conflict throw at mount time, and already-mount
   router.mount(bareModule('q', ['q.z']));
   router.mount(bareModule('r', ['r.a.']));
 
-  // 1. 精确名相同
+  // 1. Exact names are identical
   assert.throws(() => router.mount(bareModule('b', ['a.x'])), 'identical exact name');
-  // 2. 一方的精确名以另一方的前缀开头（两个方向）
+  // 2. One side's exact name starts with the other's prefix (both directions)
   assert.throws(() => router.mount(bareModule('c', ['p.y'])), 'a new exact name falls inside an already-mounted prefix');
   assert.throws(() => router.mount(bareModule('d', ['q.'])), 'a new prefix covers an already-mounted exact name');
-  // 3. 两个前缀里有一个以另一个开头（两个方向）
+  // 3. One of the two prefixes starts with the other (both directions)
   assert.throws(() => router.mount(bareModule('e', ['p.sub.'])), 'a new prefix lies inside an already-mounted prefix');
   assert.throws(() => router.mount(bareModule('f', ['r.'])), 'a new prefix encloses an already-mounted prefix');
-  // 模块名重复
+  // Duplicate module name
   assert.throws(() => router.mount(bareModule('a', ['zz.'])), 'duplicate module name');
-  // 一个模块里只要有一个冲突就整个不挂
+  // If there is any conflict in a module, do not mount the whole module
   assert.throws(() => router.mount(bareModule('g', ['g.ok', 'a.x'])));
 
   assert.deepEqual(router.modules(), ['a', 'p', 'q', 'r']);
@@ -206,18 +210,19 @@ test('R3 field conflicts throw at mount time (with core fields, with already-mou
   const { service, url, queue } = await startService({ mount: true, modules: [text] });
   t.after(() => service.close());
 
-  // describeConn 与核心字段重名
+  // describeConn has duplicate name with core field
   assert.throws(() => service.mount(bareModule('dc1', ['dc1.'], { describeConn: () => ({ connId: 'x' }) })));
   assert.throws(() => service.mount(bareModule('dc2', ['dc2.'], { describeConn: () => ({ principal: null }) })));
-  // health 与核心字段重名
+  // health has duplicate name with core field
   assert.throws(() => service.mount(bareModule('h1', ['h1.'], { health: () => ({ ok: false }) })));
   assert.throws(() => service.mount(bareModule('h2', ['h2.'], { health: () => ({ modules: [] }) })));
-  // 与已挂模块的字段重名：文本模块的 textSeen / textCounted；队列模块的 roles / epoch
+  // Duplicate field name with already mounted module: textSeen / textCounted of text module;
+  // roles / epoch of queue module
   assert.throws(() => service.mount(bareModule('h3', ['h3.'], { health: () => ({ textCounted: 0 }) })));
   assert.throws(() => service.mount(bareModule('dc3', ['dc3.'], { describeConn: () => ({ textSeen: false }) })));
   assert.throws(() => service.mount(bareModule('dc4', ['dc4.'], { describeConn: () => ({ roles: [] }) })));
   assert.throws(() => service.mount(bareModule('h4', ['h4.'], { health: () => ({ epoch: 'x' }) })));
-  // 与队列类型冲突
+  // Conflict with queue types
   assert.throws(() => service.mount(bareModule('tq', ['task.'])));
   assert.throws(() => service.mount(bareModule('nh', ['node.hello'])));
 
@@ -268,7 +273,7 @@ test('R5 a module handle throws synchronously or returns a rejected Promise: rep
   const e2 = await c.next(byReq(7));
   assert.deepEqual([e2.type, e2.reason, e2.reqId], ['error', 'internal', 7]);
 
-  // 同一连接照常：同模块的正常消息、别的模块、队列
+  // Same connection as normal: normal messages of the same module, other modules, queue
   c.send({ type: 'boom.other', reqId: 'b3' });
   assert.equal((await c.next(byReq('b3'))).type, 'boom.fine');
   c.send({ type: 'text.count', reqId: 't', text: 'q' });
@@ -312,7 +317,7 @@ test('R6 after unmounting, these types reply unsupported; mounting and unmountin
   assert.deepEqual([e1.type, e1.reason, e1.reqId], ['error', 'unsupported', 'after']);
   assert.ok(!(await (await fetch(`http://127.0.0.1:${new URL(url).port}/healthz`)).json()).modules.includes('text'));
 
-  // 卸载后可以再挂
+  // Can be mounted again after unmounting
   const again = textModule();
   service.mount(again);
   c.send({ type: 'text.count', reqId: 'again', text: 'x' });

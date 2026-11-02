@@ -1,6 +1,7 @@
 /**
- * 帧库的使用索引、上限、淘汰与清理缓存(`server/frame-library-storage.mjs`,存储占用计划 B 部分)。
- * 全部在临时目录里造帧库,不碰用户的 Videos\PromptCut。
+ * Usage index, limits, eviction, and cache cleanup for frame store
+ * (`server/frame-library-storage.mjs`, storage footprint plan part B).
+ * All frame stores are created in temp directories, not touching the user's Videos\PromptCut.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -32,14 +33,18 @@ async function tempRoot(t) {
   return { dir, root, data };
 }
 
-/** 造一个键目录:一个 `bytes` 字节的文件,整棵的修改时刻设成 `mtime` */
+/**
+ * Creates a key directory: a file of `bytes` bytes, with modification time of the entire tree
+ * set to `mtime`
+ */
 async function makeKey(root, rel, bytes, mtime, file = 'mov/frames/000000.png') {
   const dir = relDir(root, rel);
   const full = path.join(dir, file);
   await fs.mkdir(path.dirname(full), { recursive: true });
   await fs.writeFile(full, Buffer.alloc(bytes, 1));
   const seconds = mtime / 1000;
-  // 从叶子往上设,免得建子目录又把父目录的时刻刷新
+  // Set from leaves upward to avoid creating subdirectories that refresh parent directory
+  // timestamps
   let current = full;
   while (current.length >= dir.length) {
     await fs.utimes(current, seconds, seconds);
@@ -144,7 +149,8 @@ test('index: the first run rescans by directory, the last-used time takes the mo
   assert.ok(summary.scannedAt);
   await m.close();
 
-  // 索引在:新实例直接读,不重扫(记下的使用时刻保留)
+  // Index present: new instance reads directly without rescanning (recorded usage timestamps
+  // preserved)
   const m2 = manager(root, data, { now: () => clock });
   await m2.check({ force: true });
   m2.touch([k1], clock);
@@ -155,14 +161,14 @@ test('index: the first run rescans by directory, the last-used time takes the mo
   assert.equal(m3.snapshot()[k1].at, clock, 'after the index is read back, the recorded usage is still there');
   await m3.close();
 
-  // 坏了:重建
+  // Corrupted: rebuild
   await fs.writeFile(path.join(root, INDEX_FILE), 'not json');
   const m4 = manager(root, data, { now: () => clock });
   await m4.check({ force: true });
   assert.equal(Object.keys(m4.snapshot()).length, 3);
   await m4.close();
 
-  // 丢了:重建
+  // Missing: rebuild
   await fs.rm(path.join(root, INDEX_FILE));
   const m5 = manager(root, data, { now: () => clock });
   await m5.check({ force: true });
@@ -199,14 +205,14 @@ test('eviction: N projects with different last-used times are deleted from oldes
   const projects = [];
   for (let i = 0; i < 6; i++) {
     const entry = key(`p${i}`), card = key(`card${i}`);
-    const at = clock - (10 - i) * HOUR;          // p0 最旧
+    const at = clock - (10 - i) * HOUR;          // p0 is oldest
     await makeKey(root, entry, 1000, at);
     await makeKey(root, `controls-local/${entry}`, 200, at, `${card}/0.html`);
     await makeKey(root, `controls-html/${card}`, 300, at, '0.html');
     projects.push({ entry, card, at });
   }
-  // 总量 6 × 1500 = 9000;上限 6000 → 删到 5400 以下:p0、p1 两个项目(3000)之后还差 600,
-  // 再删 p2 的整场景单元(整场景 1000 + 本地档 200)就到 4800,p2 的共享档留着
+  // Total 6 × 1500 = 9000; limit 6000 → delete below 5400: after two projects p0 and p1 (3000), 600 left,
+  // delete p2's whole scene unit (whole scene 1000 + local tier 200) to reach 4800; p2's shared tier remains
   await writeStorageSettings(data, { frameLibraryCapBytes: 6000 });
   const m = manager(root, data, { now: () => clock });
   const result = await m.check({ force: true });
@@ -214,7 +220,7 @@ test('eviction: N projects with different last-used times are deleted from oldes
   const order = result.evicted.removedUnits.map(u => u.unit);
   const expected = [];
   for (const p of projects.slice(0, 3)) expected.push(`entry:${p.entry}`, `controls-html/${p.card}`);
-  // 按最近使用时刻从旧到新:p0 的两个单元、p1 的两个、p2 的一个
+  // From oldest to newest by last used time: p0's two units, p1's two, p2's one
   assert.equal(order.length, 5);
   assert.deepEqual(new Set(order.slice(0, 2)), new Set(expected.slice(0, 2)), 'delete the oldest p0 first');
   assert.deepEqual(new Set(order.slice(2, 4)), new Set(expected.slice(2, 4)), 'then delete p1');
@@ -317,11 +323,11 @@ test('links and unrecognized directories: always left alone', async t => {
   const linkKey = key('link'), innerKey = key('inner');
   await fs.mkdir(path.join(root, 'controls-html'), { recursive: true });
   await fs.symlink(outside, path.join(root, 'controls-html', linkKey), 'junction');
-  // 键目录本身是真目录,里面有一处链接:整个跳过
+  // Key directory itself is a real directory with a link inside: skip entirely
   const inner = await makeKey(root, `controls/${innerKey}`, 100, clock - 5 * HOUR);
   await fs.symlink(outside, path.join(inner, 'escape'), 'junction');
   await fs.utimes(inner, (clock - 5 * HOUR) / 1000, (clock - 5 * HOUR) / 1000);
-  // 认不出的:形状不对的名字、别的族、根下的文件
+  // Unrecognized: malformed names, other families, files under root
   await makeKey(root, key('ok'), 10, clock - 5 * HOUR);
   await fs.mkdir(path.join(root, 'controls-html', 'not-a-key'), { recursive: true });
   await fs.mkdir(path.join(root, 'controls-lock'), { recursive: true });
@@ -391,7 +397,7 @@ test('multiple processes: only one main process writes the index; other processe
   const result = await a.clearCache();
   assert.deepEqual(result.removedUnits.map(u => u.unit), [`entry:${key('old')}`], 'what another process just used is not deleted');
   assert.equal(a.snapshot()[k].at, clock - 1000);
-  // 那个进程不在了:并完删文件
+  // That process is gone: delete files after merging
   const a2 = manager(root, data, { now: () => clock, pid: process.pid, alive: pid => pid === process.pid });
   await a.close();
   await a2.check({ force: true });
@@ -468,7 +474,7 @@ test('merge: the exports entry of /api/storage (createExportSummary) follows the
   await mk('export-20260929-101010-2', { 'parts/a.mov': 300 });
   await mk('export-20260929-101010-13', { 'preview.mp4': 7 });
   await mk('export-vision-123-abc', { x: 999 });
-  // 名字对、但是个链接(junction):两边都不认
+  // Name matches but is a link (junction): neither side recognizes it
   await fs.mkdir(path.join(dir, 'elsewhere'), { recursive: true });
   await fs.writeFile(path.join(dir, 'elsewhere', 'big.bin'), Buffer.alloc(5000));
   await fs.symlink(path.join(dir, 'elsewhere'), path.join(exportsDir, 'export-20260929-111111'), 'junction');
@@ -506,18 +512,18 @@ test('stale usage number: refreshIfStale measures once in the background (scanni
   const { root, data } = await tempRoot(t);
   let clock = Date.now();
   await makeKey(root, key('old'), 3000, clock - 5 * HOUR);
-  await writeStorageSettings(data, { frameLibraryCapBytes: 1000 });   // 远低于总量:要是淘汰就会删
+  await writeStorageSettings(data, { frameLibraryCapBytes: 1000 });   // Well below total: would be deleted if evicted
   const m = manager(root, data, { now: () => clock });
   await m.rescan('test');
   assert.equal((await m.summary()).bytes, 3000);
-  // 预渲染刚写完一批:新目录,索引还不知道
+  // Prerender just finished writing a batch: new directory, index unaware yet
   await makeKey(root, key('new'), 5000, clock);
   assert.equal((await m.summary()).bytes, 3000, 'the number is stale before the check');
   assert.equal(m.refreshIfStale(), true, 'never checked: start one');
   const during = await m.summary();
   assert.equal(during.scanning, true, 'the response carries scanning: true');
   assert.equal(m.refreshIfStale(), true, 'calling again while measuring does not start another');
-  await m.flush();   // 串行链:排在那一趟后面
+  await m.flush();   // Serial chain: queued behind that pass
   await new Promise(resolve => setImmediate(resolve));
   const after = await m.summary();
   assert.equal(after.scanning, false);
@@ -564,7 +570,7 @@ test('relOfPath: a file in the frame store maps to its key directory', () => {
   assert.equal(relOfPath(root, path.join(root, '..', 'elsewhere', k)), null);
 });
 
-/** 在一个键目录里造遗留文件与正常文件;回 { dir, leftoverBytes } */
+/** Creates leftover and normal files in a key directory; returns { dir, leftoverBytes } */
 async function seedLeftovers(root, rel, dead = 424242) {
   const dir = relDir(root, rel);
   await fs.mkdir(path.join(dir, 'mov'), { recursive: true });
@@ -607,7 +613,7 @@ test('merge: leftovers are also cleaned before clearing the cache; nothing is cl
   const m = manager(root, data, { now: () => Date.now() });
   await m.rescan('test');
   await m.clearCache();
-  // 刚写的目录在清理缓存的保护窗里,留着;遗留照删
+  // Newly written directory is in cache cleanup protection window, keep it; delete leftovers as usual
   assert.equal(await exists(path.join(relDir(root, k), 'mov', 'full-424242.tmp.mov')), false);
   assert.equal((await m.summary()).leftoverBytes, 0);
   assert.equal(await exists(path.join(root, '.storage')), true, '.storage is still there');

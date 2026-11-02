@@ -1,28 +1,31 @@
 /**
- * pinAnimations 的单测。跑:node --test src/render/pinAnimations.test.mjs
+ * Unit test for pinAnimations. Run: node --test src/render/pinAnimations.test.mjs
  *
- * 钉死 R3 新加的三条(K3 / K5):
- *   - `sync(nowMs, skip)` 跳过 skip 里那些包裹层子树的动画(正在追帧 / 被抑制的片段不能被全局时钟拨回去);
- *   - `syncIn(el, stageMs)` 只钉子树,**锚点和全局 sync 同一份**、时间基同样是全局舞台毫秒 ——
- *     追完之后交回全局 sync 必须天然连续;
- *   - `resetIn(el)` 只丢这个子树的锚点,别的卡的锚点不动(整份 reset 会让别的卡入场动画重播一遍)。
+ * Pins down three items newly added in R3 (K3 / K5):
+ *   - `sync(nowMs, skip)` skips animations of wrapper layer subtrees in skip (clips catching up
+ *     frames / suppressed cannot be wound back by global clock);
+ *   - `syncIn(el, stageMs)` only pins subtree, **shares same anchor as global sync**,
+ *     timebase is also global stage milliseconds:
+ *     handing back to global sync after catch-up must be naturally continuous;
+ *   - `resetIn(el)` only drops anchor for this subtree, leaves anchors of other cards untouched
+ *     (full reset replays entrance animations of other cards).
  *
- * 没有 DOM:`Animation` / `Element` 都用最小假件,只实现被读到的那几样。
+ * No DOM: `Animation` / `Element` both use minimal fakes, implementing only read properties.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createAnimationPinner } from "./pinAnimations.ts";
 
-/** 假包裹层:closest('[data-pc-clip]') 回它自己;子元素往上指到它 */
+/** Fake wrapper layer: closest('[data-pc-clip]') returns itself; child elements point up to it */
 function fakeWrapper(id) {
   const wrap = { id, closest: (sel) => (sel === "[data-pc-clip]" ? wrap : null) };
   return wrap;
 }
-/** 包裹层里的一个目标元素 */
+/** A target element in wrapper layer */
 const fakeTarget = (wrap) => ({ closest: (sel) => (sel === "[data-pc-clip]" ? wrap : null) });
 
-/** 假动画。endTime 给 Infinity 就永不 finish */
+/** Fake animation. Setting endTime to Infinity will never finish */
 function fakeAnim(wrap, endTime = 1000) {
   return {
     playState: "running",
@@ -34,7 +37,7 @@ function fakeAnim(wrap, endTime = 1000) {
   };
 }
 
-/** 假 document / 假宿主元素:各自交出一组动画 */
+/** Fake document / fake host element: each yields a set of animations */
 const host = (list) => ({ getAnimations: () => list });
 const fakeDoc = (list) => ({ getAnimations: () => list });
 
@@ -67,7 +70,7 @@ test("sync(skip): animations in the wrapper-layer subtree listed in skip are not
   p.sync(300, new Set([w1]));
   assert.equal(a1.currentTime, 0, "the skipped one stays at its previous value");
   assert.equal(a2.currentTime, 300);
-  // 从 skip 里拿掉之后接着钉,锚点没丢(还是 0),所以是 400 不是 0
+  // Continue pinning after removing from skip, anchor is not lost (still 0), so it is 400 not 0
   p.sync(400);
   assert.equal(a1.currentTime, 400);
 });
@@ -86,13 +89,13 @@ test("syncIn: pins only the subtree, the time base is global stage milliseconds,
   const a1 = fakeAnim(w1, Infinity);
   const a2 = fakeAnim(w2, Infinity);
   const p = createAnimationPinner(fakeDoc([a1, a2]));
-  // 全局先走一拍:两条都拿到锚点 0
+  // Global advances one tick first: both get anchor 0
   p.sync(0);
-  // c1 自己按子树追帧(全局时钟不动),全局这一拍跳过它
+  // c1 catches up frames by subtree itself (global clock does not advance), global tick skips it
   for (let ms = 100; ms <= 500; ms += 100) p.syncIn(host([a1]), ms);
   assert.equal(a1.currentTime, 500);
   assert.equal(a2.currentTime, 0, "syncIn does not touch other clips");
-  // 追上之后交回全局:锚点本来就在全局基上,600 直接接得上
+  // Hand back to global after catching up: anchor was on global base all along, 600 connects directly
   p.sync(600);
   assert.equal(a1.currentTime, 600);
   assert.equal(a2.currentTime, 600);
@@ -104,7 +107,7 @@ test("resetIn: drops only the anchors of this subtree, anchors of other cards st
   const a1 = fakeAnim(w1, Infinity);
   const a2 = fakeAnim(w2, Infinity);
   const p = createAnimationPinner(fakeDoc([a1, a2]));
-  p.sync(1000); // 两条锚点都是 1000
+  p.sync(1000); // Both anchors are 1000
   p.resetIn(host([a1]));
   p.sync(1500);
   assert.equal(a1.currentTime, 0, "anchor re-recorded as 1500");
@@ -117,14 +120,17 @@ test("resetIn / syncIn are no-ops on null", () => {
   p.syncIn(undefined, 10);
 });
 
-/* ---------------- 结束回调当场交付(渲染重构「推帧一致性」) ---------------- */
+/* ---------------- Finish callback delivered immediately (render refactor "frame-push consistency") ---------------- */
 
-// 浏览器里现成的构造器;这里只要能 new、带上类型和时刻
+// Existing constructor in the browser; here only needs to be new-able with type and timestamp
 globalThis.AnimationPlaybackEvent ??= class AnimationPlaybackEvent {
   constructor(type, init = {}) { this.type = type; this.currentTime = init.currentTime ?? null; this.timelineTime = init.timelineTime ?? null; }
 };
 
-/** 带 `onfinish` 的假动画:`finish()` 像浏览器一样**不**当场调回调;`browserFinishEvent()` 模拟浏览器下一次出帧时补发的那一次 */
+/**
+ * Fake animation with `onfinish`: `finish()` does **not** invoke callback immediately like
+ * the browser; `browserFinishEvent()` simulates retroactive emission on the next browser frame
+ */
 function fakeAnimWithHandler(endTime, log, name) {
   const a = fakeAnim(fakeWrapper(name), endTime);
   a.name = name;
@@ -142,7 +148,7 @@ test("seek to the end: the finish callback is invoked on the spot within this sy
   p.sync(150);
   assert.equal(a.playState, "finished");
   assert.deepEqual(log, [["a", true, "finish"]]);
-  // 已经结束的动画之后不再钉、不再调
+  // Finished animations are no longer pinned or invoked afterwards
   p.sync(200);
   assert.equal(log.length, 1);
 });
@@ -152,7 +158,8 @@ test("seek to the end: delivery happens only after everything is pinned: other a
   const a = fakeAnim(fakeWrapper("a"), 100);
   const b = fakeAnim(fakeWrapper("b"), Infinity);
   a.onfinish = () => { seen.push(b.currentTime); };
-  // a 排在 b 前面:要是边钉边调,回调里 b 还停在上一帧
+  // a is ordered before b: if invoked while pinning, b would still be paused on the previous
+  // frame in callback
   const p = createAnimationPinner(fakeDoc([a, b]));
   p.sync(0);
   p.sync(150);
@@ -171,7 +178,8 @@ test("the finish event that the browser re-fires is swallowed, the callback runs
   a.browserFinishEvent();
   assert.equal(log.length, 1, "the re-fired event no longer calls the callback");
   assert.equal(a.onfinish, original);
-  // 换回原样以后,浏览器自己发的结束事件(不是舞台拨出来的)照常送到
+  // After restoring, finish events dispatched by the browser itself (not dialed by stage)
+  // are delivered as usual
   a.browserFinishEvent();
   assert.equal(log.length, 2);
 });
@@ -183,7 +191,7 @@ test("the same animation is replayed and then seeked to the end again: each fini
   const p = createAnimationPinner(fakeDoc([a]));
   p.sync(0);
   p.sync(150);
-  // 回调的主人把它重播(浏览器那一次还没补发)
+  // Owner of callback replays it (browser has not retroactively dispatched yet)
   a.playState = "running";
   p.sync(300);
   assert.equal(log.length, 2);
@@ -203,7 +211,7 @@ test("onfinish replaced inside the callback itself: counted by the newly attache
   p.sync(150);
   assert.deepEqual(log, ["first"]);
   assert.equal(a.onfinish, next);
-  // 回调里摘掉(Motion 的 attachTimeline 会置 null)也一样:不换回去
+  // Same when detached in callback (Motion's attachTimeline sets it to null): do not restore
   const b = fakeAnim(fakeWrapper("b"), 100);
   b.onfinish = () => { b.onfinish = null; };
   const q = createAnimationPinner(fakeDoc([b]));

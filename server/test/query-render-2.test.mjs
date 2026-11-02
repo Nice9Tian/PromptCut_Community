@@ -1,14 +1,19 @@
 /*
- * 查询渲染的第二轮(报告 `docs/reports/AGENT-query-render-2.md`;语义 `docs/semantics/mechanism/rendering.md`「查询渲染与预渲染进程」)。
+ * Second round of query render (report `docs/reports/AGENT-query-render-2.md`; semantics
+ * `docs/semantics/mechanism/rendering.md` "Query render and prerender process").
  *
- *   QR2-M-*  预渲染进程的三种模式(`server/prerender-mode.mjs`,`PROMPTCUT_PRERENDER_MODE`):各自建哪些 lane、
- *            模式不接的请求当场回什么(不挂住)、编辑器进程拉起时选哪种。
- *   QR2-C-*  队列模式的认领闸(`server/queue-agent-spare.mjs` + 节点会话的 `claimLimit`):Agent 专用实例开着且空闲时
- *            本机节点多认领一项、交给专用实例做;Agent 任务来了不排在它后面、也不排在排队中的预渲染后面;专用实例没开时
- *            不多认领、不为它开实例。
+ *   QR2-M-*  Three modes of prerender process (`server/prerender-mode.mjs`, `PROMPTCUT_PRERENDER_MODE`):
+ *            which lanes each creates, what requests not accepted by the mode return on the spot
+ *            (without hanging), and which to select when the editor process starts up.
+ *   QR2-C-*  Claim gate in queue mode (`server/queue-agent-spare.mjs` + node session's `claimLimit`):
+ *            when Agent dedicated instance is open and idle, this machine's node claims one extra
+ *            item and hands it to dedicated instance; when an Agent task arrives, it does not queue
+ *            behind it, nor behind queued prerenders; when dedicated instance is not open, does not
+ *            claim extra, and does not open an instance for it.
  *
- * 浏览器全部替掉(`openBakery` 一调就抛:谁想开新 Chrome 用例就挂),lane 上预先放假的预渲染间。
- * 跑法:`node --experimental-test-module-mocks --test server/test/query-render-2.test.mjs`
+ * Browsers are completely mocked out (`openBakery` throws on call: test fails if anything tries to
+ * open a new Chrome), mock prerender rooms pre-populated on lanes.
+ * Run: `node --experimental-test-module-mocks --test server/test/query-render-2.test.mjs`
  */
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -60,7 +65,7 @@ function tmpRoot() {
 }
 test.after(() => { for (const dir of tmpRoots) fs.rmSync(dir, { recursive: true, force: true }); });
 
-/** 同 `query-render.test.mjs` 的 harness,多一个 `mode` */
+/** Same harness as `query-render.test.mjs`, with an extra `mode` */
 function harness({ mode = 'full', agentOpen = false, queueOpen = true, interactive = true } = {}) {
   const log = [];
   const svc = new FramePipeline({ root: tmpRoot(), origin: () => 'http://127.0.0.1:1', interactive, mode });
@@ -88,7 +93,7 @@ function harness({ mode = 'full', agentOpen = false, queueOpen = true, interacti
   return { svc, log, bakeries, task, agentTask };
 }
 
-/** 在 `ms` 之内落定(不挂住);回落定的结果 `{ ok, value | error }` */
+/** Settles within `ms` (without hanging); returns the settled result `{ ok, value | error }` */
 async function settlesWithin(promise, ms = 500) {
   const timer = sleep(ms).then(() => ({ timeout: true }));
   const result = await Promise.race([promise.then(value => ({ ok: true, value }), error => ({ ok: false, error })), timer]);
@@ -96,7 +101,7 @@ async function settlesWithin(promise, ms = 500) {
   return result;
 }
 
-/* ------------------------------------------------------------------ 模式 */
+/* ------------------------------------------------------------------ Mode */
 
 test('QR2-M-1 mode value: three values are recognized, case and whitespace are ignored; an unset or unrecognized value in the prerender process is treated as full; when launched by the editor the default is full (this machine always has an Agent), and an explicit value is used as given', () => {
   assert.equal(modeLib.parsePrerenderMode(' Agent '), 'agent');
@@ -132,7 +137,7 @@ test('QR2-M-2 full mode (default): all three chains are built, and both Agent qu
 
 test('QR2-M-3 user mode: no Agent lane is built; Agent queries (see_frames, runAgentTask, layout) immediately return 503 NO_AGENT_LANE and are not retryable; prerender proceeds as usual, and the dedicated instance takes no jobs', async () => {
   const { svc, log, task, agentTask } = harness({ mode: 'user' });
-  // 就算 lanes 里有个 'agent'(不会有),也不借它
+  // Even if lanes contains an 'agent' (which won't happen), do not borrow it
   svc.lanes.set('agent', { bakery: fakeBakery('agent', log) });
   try {
     assert.deepEqual([...svc.laneChains.keys()].sort(), ['background', 'user']);
@@ -144,7 +149,7 @@ test('QR2-M-3 user mode: no Agent lane is built; Agent queries (see_frames, runA
       assert.ok(!result.ok && noAgent(result.error), String(result.error?.code ?? result.value));
     }
     assert.equal(svc.agentPending, 0, 'nothing is left in the Agent queue');
-    // 预渲染照做:操作预览、普通预渲染都在 queue lane 上
+    // Prerender proceeds as normal: operation previews and normal prerenders are both on the queue lane
     const hold = gate();
     const a = task('A', { hold });
     const b = task('B');
@@ -182,7 +187,7 @@ test('QR2-M-4 agent mode: only the Agent lane is built; prerender requests immed
       const result = await settlesWithin(Promise.resolve().then(call));
       assert.ok(!result.ok && noPrerender(result.error), `${name}:${result.error?.code ?? JSON.stringify(result.value)}`);
     }
-    // 后台那一趟借 'background' 时同样拒,并标 cancelled(照让路收手)
+    // Also rejects when background pass borrows 'background', marked cancelled (backs off per yield)
     const bg = await settlesWithin(svc.acquire('background', project));
     assert.ok(!bg.ok && bg.error.code === 'NO_PRERENDER' && bg.error.cancelled === true);
     assert.equal(svc.queueTasks.length, 0, 'not queued in the regular prerender queue');
@@ -192,7 +197,7 @@ test('QR2-M-4 agent mode: only the Agent lane is built; prerender requests immed
     assert.equal(svc.userPool.length, 0, 'no warm pool of interactive frames is kept');
     assert.equal(opened, openedBefore, 'no Chrome was opened');
     assert.equal(svc.agentSpareSlot(), false, 'there is no prerender to pick up');
-    // Agent 查询照常
+    // Agent queries proceed as usual
     assert.equal(await agentTask('X'), 'X');
     const frames = await svc.see_frames(project, [0.5, 1]);
     assert.equal(frames.size, 2);
@@ -227,7 +232,7 @@ test('QR2-M-6 source check: when the editor launches the prerender process it pa
   assert.match(frames, /reason: `prerender-mode-\$\{prerenderMode\}`/, 'agent mode does not act as an automatic render node');
 });
 
-/* ------------------------------------------------------------------ 认领闸 */
+/* ------------------------------------------------------------------ Claim gate */
 
 test('QR2-C-1 agentSpareSlot: true only in full mode, with the dedicated instance open and not expired, the Agent queue empty, no job in hand, and no pending item it could take', async () => {
   const closed = harness({ agentOpen: false });
@@ -241,14 +246,14 @@ test('QR2-C-1 agentSpareSlot: true only in full mode, with the dedicated instanc
     svc.backgroundLeaseUntil = Date.now() + 10_000;
     assert.equal(svc.agentSpareSlot(), false, 'while yielding to playback');
     svc.backgroundLeaseUntil = 0;
-    // Agent 任务在做:不开
+    // Agent task in progress: do not open
     const hold = gate();
     const x = svc.runAgentTask(async lease => { await lease(project); await hold.p; return 'X'; });
     await until(() => svc.agentPending === 1);
     assert.equal(svc.agentSpareSlot(), false, 'Agent queue is not empty');
     hold.open();
     await x;
-    // queue lane 忙、队列里还有它能接的待办:专用实例自己会接,不用多认领
+    // queue lane is busy with pending tasks it can take: dedicated instance takes them, no extra claim
     const holdA = gate(), holdB = gate();
     const a = task('A', { hold: holdA });
     const b = task('B', { hold: holdB });
@@ -302,7 +307,7 @@ test('QR2-C-3 slots of the claim gate: the regular slot accepts anything; the ex
   assert.equal(g.canClaim({ id: 'plan:1', kind: 'plan' }, { held: 0 }), true, 'regular slot: plan is accepted too');
   assert.equal(g.canClaim({ id: 'stream:1', kind: 'stream' }, { held: 1 }), false, 'the extra slot does not take streams (it would open an extra stream Chrome)');
   assert.equal(g.canClaim({ id: 'plan:1', kind: 'plan' }, { held: 1 }), false, 'the extra slot does not take plan');
-  // 手里在做 card-a:同一张卡的另一段不接,别的卡接
+  // Currently working on card-a: do not take another segment of the same card; take other cards
   let release;
   const running = g.wrap({ render: () => new Promise(r => { release = r; }) }).render(snap('card-a'), {});
   assert.equal(g.canClaim(snap('card-a'), { held: 1 }), false);
@@ -323,16 +328,16 @@ test('QR2-C-4 dedicated instance is open and idle: the extra claimed item runs o
   const g = createAgentSpareGate({ pipeline: svc, base: 1 });
   try {
     const holdA = gate(), holdB = gate();
-    // 平时那一格:A 在 queue lane 上做
+    // Normal slot: A is processed on the queue lane
     const a = task('A', { hold: holdA, tag: 'card:a' });
     await until(() => log.includes('A:start@queue'));
     assert.equal(g.claimLimit(), 2, 'dedicated instance open and idle, queue lane busy: one more slot');
     assert.equal(g.canClaim({ id: 'snapshot:b', kind: 'snapshot', input: { contentKey: 'b' } }, { held: 1 }), true);
-    // 多认领的 B(另一张卡)排进来,专用实例接走
+    // Extra-claimed B (another card) queues up, dedicated instance takes it
     const b = task('B', { hold: holdB, tag: 'card:b' });
     await until(() => log.includes('B:start@agent'));
     assert.equal(g.claimLimit(), 1, 'dedicated instance has a job in hand: the slot is taken back');
-    // 再来一项 C 排着(比如别的来源的普通预渲染),然后 Agent 任务 X 到达
+    // Another item C queues up (e.g. normal prerender from another source), then Agent task X arrives
     const c = task('C', { tag: 'card:c' });
     const x = agentTask('X');
     await sleep(15);

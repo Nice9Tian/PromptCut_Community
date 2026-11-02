@@ -1,5 +1,6 @@
-// 在 Windows PowerShell 5.1 中执行真实补丁的关闭段；进程与时钟由假对象隔离。
-// PSCustomObject 的标量 .Count 是 $null，不能因此跳过唯一残留进程。
+// Execute the shutdown block of real patches in Windows PowerShell 5.1; processes and clocks are
+// isolated with fake objects.
+// Scalar .Count on PSCustomObject is $null, which must not cause skipping the sole remaining process.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs';

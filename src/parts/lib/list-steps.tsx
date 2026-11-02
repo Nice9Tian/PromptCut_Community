@@ -4,9 +4,10 @@ import { easeExpoOut, accentOf } from "../../cards/native/hud";
 import { fitOr } from "../fit";
 
 /**
- * 步骤时间线:横向伸展的时间线和逐个点亮的步骤圈。
- * 从 step-timeline 拆出,不含外壳玻璃板。
- * 进场:线条展开的同时按顺序点亮圆圈,最后一个圆圈会有循环呼吸动画。
+ * Step timeline: a horizontally stretching timeline and sequentially illuminated step circles.
+ * Extracted from step-timeline, without shell glass board.
+ * Entrance: while lines expand, circles light up in sequence, and the last circle has a looping
+ * breathing animation.
  */
 interface Params {
   steps: string;

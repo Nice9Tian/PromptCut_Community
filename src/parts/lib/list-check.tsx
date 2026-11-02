@@ -5,8 +5,8 @@ import "../../cards/native/hud.css";
 import { fitOr } from "../fit";
 
 /**
- * 逐条打勾的清单:从 checklist 卡片拆出。
- * 每条带圆圈和打勾动画，行间隔决定进场和打勾时机。
+ * Checklist with item-by-item checkmarks: extracted from checklist card.
+ * Each item has a circle and checkmark animation; line interval determines entrance and checkmark timing.
  */
 interface Params {
   items: string;

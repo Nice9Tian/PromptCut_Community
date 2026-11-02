@@ -6,16 +6,18 @@ import {
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 「动画」分区「卡片筛选」浮层里那一行筛选钮:**基础 / 自定义 / 项目**。
+ * The row of filter buttons in the "Animations" section's "card filter" popover: **Basic / Custom / Project**.
  *
- * 这三个钮对应卡片的三档来源(见 editor/cardScope.ts):
- *   基础   内置的三组(自家库 / 第三方 / Lottie·粒子),随包发,永远在
- *   自定义 标了「共享」的定制卡,跨项目可见
- *   项目   只属于当前项目的定制卡
+ * These three buttons correspond to the three source tiers of cards (see editor/cardScope.ts):
+ *   Basic   the three built-in groups (built-in library / third-party / Lottie·particles), shipped with the package, always present
+ *   Custom  custom cards marked "shared", visible across projects
+ *   Project custom cards that belong only to the current project
  *
- * 「基础」这一钮还能点开一个小面板,单独开关它下面那三组 —— 比如「这条片子只用自家库」。
- * 关掉哪一档,**卡库和 Agent 的 list_cards 同时生效**:面板是给人看的,
- * 而 Agent 看到什么才是这套东西真正要解决的问题(定制卡从上个项目串过来)。
+ * The "Basic" button can also open a small panel to toggle the three groups under it individually, e.g.
+ * "this video uses only the built-in library".
+ * Whichever tier you turn off, **it takes effect on both the card library and the Agent's list_cards**: the
+ * panel is for people, but what the Agent sees is the real problem this whole thing is meant to solve
+ * (custom cards leaking over from the previous project).
  */
 export function CardScopeBar({ onChange }: { onChange: (v: CardVisibility) => void }) {
   const [v, setV] = useState<CardVisibility>(() => readVisibility());
@@ -28,7 +30,7 @@ export function CardScopeBar({ onChange }: { onChange: (v: CardVisibility) => vo
     onChange(next);
   };
 
-  // 点面板外面就收起来:这种小浮层不收会挡住下面的卡
+  // Clicking outside the panel closes it: a small popover like this would block the cards below if it stayed open
   useEffect(() => {
     if (!groupsOpen) return;
     const onDown = (e: MouseEvent) => {
@@ -56,7 +58,7 @@ export function CardScopeBar({ onChange }: { onChange: (v: CardVisibility) => vo
         {tr("Base{0}", v.base && enabledGroups < ALL_GROUPS.length ? ` ${enabledGroups}/3` : "")}
       </button>
 
-      {/* 分组开关藏在一个小三角里:三组不是常用开关,平时不该占位置 */}
+      {/* The group toggles are hidden behind a small triangle: the three groups are not frequently used toggles and shouldn't take up space normally */}
       <button
         type="button"
         data-pc="scope-groups"

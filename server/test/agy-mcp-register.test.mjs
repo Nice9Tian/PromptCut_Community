@@ -1,6 +1,8 @@
 /**
- * agy 的 MCP 登记是全局的:登记里不能写死端口,否则同一份代码的两个实例(不同端口)会互相踩,
- * agy 的工具调用一直打到已经关掉、或者被别的程序占着的端口上。端口改由每次起 agy 时的环境变量带。
+ * agy's MCP registration is global: the port cannot be hardcoded in registration, otherwise two
+ * instances of the same codebase (different ports) collide, and agy's tool calls keep hitting
+ * ports that are closed or occupied by other programs. Port is now passed via environment variables
+ * each time agy starts.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

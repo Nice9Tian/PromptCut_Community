@@ -1,8 +1,12 @@
 /**
- * 越权探测卡的配套夹具：**只有项目甲才有**的一张用户卡（测试夹具，防御性测试，不是攻击代码）。
+ * Supporting fixture for overreach probe card: a user card that **exists only in Project Jia**
+ * (test fixture, defensive test, not attack code).
  *
- * 它什么都不探，只在模块顶层留一个记号（一段假凭证形状的占位字符串，探针知道它）。隔离探针用它验「渲完甲换去渲乙时，
- * 乙的页面里不存在甲的卡片代码」：乙的越权探测卡在自己的页面里找这个记号、试着取这个文件，都不该得到。
+ * It probes nothing, only leaving a marker at module top level (a placeholder string shaped like a
+ * fake credential, known to probe). Isolation probe uses it to verify "when switching to render Yi
+ * after rendering Jia, Jia's card code does not exist in Yi's page": Yi's overreach probe card
+ * looks for this marker in its own page and tries to fetch this file, neither of which should
+ * succeed.
  */
 import type { CardDef } from "../../kernel/types";
 

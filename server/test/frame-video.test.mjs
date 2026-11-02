@@ -1,11 +1,13 @@
-// 预览视频的像素活挪到 worker 线程(`server/bakery/frame-video.mjs`,`docs/archive/agent-reports/AGENT-uc-latency.md`):结果与主线程上做的逐字节相同
+// Preview video pixel work moved to worker thread (`server/bakery/frame-video.mjs`,
+// `docs/archive/agent-reports/AGENT-uc-latency.md`): result is byte-for-byte identical to the
+// main thread
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PNG } from 'pngjs';
 import { createConverter } from '../bakery/frame-video.mjs';
 import { opaqueFrame } from '../bakery/frame-video-worker.mjs';
 
-/** 一张带透明、半透明与不透明像素的 PNG */
+/** A PNG with transparent, translucent, and opaque pixels */
 function samplePng(width, height, seed) {
   const png = new PNG({ width, height });
   for (let y = 0; y < height; y++) {
@@ -31,7 +33,7 @@ test('FV1 frames produced on the worker thread are byte-for-byte identical to op
       const back = PNG.sync.read(out[i]);
       for (let p = 3; p < back.data.length; p += 4) assert.equal(back.data[p], 255, 'opaque after processing');
     }
-    // 调用方的 Buffer 没被转交走,之后还能用
+    // Caller's Buffer was not transferred away and can still be used afterwards
     assert.ok(frames[0].length > 0 && PNG.sync.read(frames[0]).width === 96);
   } finally {
     await converter.close();

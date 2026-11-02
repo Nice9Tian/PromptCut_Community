@@ -1,27 +1,32 @@
 /**
- * 两条侧边 rail 的自由布局:纯逻辑(不碰 React、localStorage、DOM),模块级 store 在 railStore.ts。
- * 测试:node --experimental-test-module-mocks --test src/editor/dock/railLayout.test.mjs
+ * Free layout of the two side rails: pure logic (no React, localStorage or DOM); the module-level store is in
+ * railStore.ts.
+ * Test: node --experimental-test-module-mocks --test src/editor/dock/railLayout.test.mjs
  *
- * rail 上的项:左栏五个分区、剧本页、每个 Agent 分页(`agent:<tabId>`)、剪辑组(`cuts`)。任何一项都能拖到任意一条 rail 的任意位置;
- * 每一侧的抽屉 / 面板显示这一侧当前选中的那一项。Agent 分页的增删仍归 ai/agentTabs.ts,布局只记位置。
+ * Items on a rail: the five left rail sections, the script tab, every Agent tab (`agent:<tabId>`), and the cut
+ * group (`cuts`). Any item can be dragged to any position on either rail;
+ * the drawer / panel on each side shows the item currently selected on that side. Adding and removing Agent
+ * tabs still belongs to ai/agentTabs.ts; the layout only records positions.
  *
- * 剪辑组不是页面:它是一整块(所有剪辑 + 新建),在 rail 上就地切换剪辑,没有抽屉可开。
- * 所以它永远不当选中项,拖动时整组一起挪;一侧只剩它时,这一侧算没有页面(抽屉收起)。
+ * The cut group is not a page: it is one whole block (all cuts + create new), switching cuts in place on the
+ * rail, with no drawer to open.
+ * So it is never the selected item, and the whole group moves together when dragged; when it is the only item
+ * left on a side, that side counts as having no page (drawer collapsed).
  *
- * 数据形状(localStorage `pc.rail.layout.v1`):
+ * Data shape (localStorage `pc.rail.layout.v1`):
  *   { left: ItemId[], right: ItemId[], active: { left: ItemId | null, right: ItemId | null } }
- * 一项只在一侧出现一次;一侧为空时那一侧的 active 是 null。
+ * An item appears on one side only once; when a side is empty its active is null.
  */
 
 export type Side = "left" | "right";
 export const SIDES: readonly Side[] = ["left", "right"];
 
 export type SectionId = "library" | "animations" | "effects" | "edit" | "captions";
-/** 左栏分区的固定顺序:缺了的分区按这个顺序补回左边末尾 */
+/** Fixed order of the left rail sections: missing sections are added back at the end of the left side in this order */
 export const SECTION_IDS: readonly SectionId[] = ["library", "animations", "effects", "edit", "captions"];
 
 export type AgentItemId = `agent:${string}`;
-/** 剪辑组:时间轴的所有剪辑整组放在 rail 上 */
+/** Cut group: all cuts of the timeline placed on the rail as one group */
 export const CUTS_ITEM = "cuts";
 export type ItemId = SectionId | "script" | AgentItemId | typeof CUTS_ITEM;
 
@@ -37,7 +42,7 @@ export function agentItem(tabId: string): AgentItemId {
   return `${AGENT_PREFIX}${tabId}`;
 }
 
-/** `agent:<id>` → id;不是 Agent 项返回 null */
+/** `agent:<id>` → id; returns null if it is not an Agent item */
 export function agentIdOf(item: string): string | null {
   return item.startsWith(AGENT_PREFIX) && item.length > AGENT_PREFIX.length ? item.slice(AGENT_PREFIX.length) : null;
 }
@@ -50,12 +55,12 @@ export function isSectionItem(item: string): item is SectionId {
   return (SECTION_IDS as readonly string[]).includes(item);
 }
 
-/** 有页面(能被选中、在抽屉里显示)的项。剪辑组没有 */
+/** Items that have a page (can be selected and shown in the drawer). The cut group has none */
 export function isPageItem(item: string): boolean {
   return item !== CUTS_ITEM;
 }
 
-/** AI 类项:剧本和 Agent */
+/** AI items: script and Agent */
 export function isAiItem(item: string): boolean {
   return item === "script" || isAgentItem(item);
 }
@@ -71,15 +76,18 @@ export function sideOf(layout: RailLayout, item: string): Side | null {
 }
 
 /**
- * 这一侧 rail 上画出来的项(全部;两侧永远显示,拖空的 rail 也留着当落点)。
+ * Items drawn on this side's rail (all of them; both sides are always shown, and an emptied rail stays as a
+ * drop target).
  */
 export function visibleItems(items: readonly ItemId[]): ItemId[] {
   return items.slice();
 }
 
 /**
- * 这一侧此刻真正选中(抽屉里显示)的项。记下的 active 不在这一侧(或是没有页面的剪辑组)时,
- * 退到这一侧第一个有页面的项 —— 只是显示上退,不改记下的值。
+ * The item actually selected on this side right now (shown in the drawer). When the recorded active is not on
+ * this side (or is the cut group, which has no page),
+ * fall back to the first item with a page on this side. This only falls back in display; the recorded value
+ * is not changed.
  */
 export function effectiveActive(layout: RailLayout, side: Side): ItemId | null {
   const shown = visibleItems(layout[side]).filter(isPageItem);
@@ -88,8 +96,9 @@ export function effectiveActive(layout: RailLayout, side: Side): ItemId | null {
 }
 
 /**
- * 「+」画在哪一项后面:这一侧最后一个 Agent 项的下标;没有 Agent 项返回 -1(不画「+」)。
- * 传进来的是画出来的那份列表(visibleItems),Agent 在两种模式下都看得见,所以结果一样。
+ * After which item the "+" is drawn: the index of the last Agent item on this side; returns -1 if there is no
+ * Agent item (no "+" drawn).
+ * The input is the drawn list (visibleItems); Agents are visible in both modes, so the result is the same.
  */
 export function plusAnchor(items: readonly ItemId[]): number {
   for (let i = items.length - 1; i >= 0; i--) if (isAgentItem(items[i])) return i;
@@ -97,17 +106,21 @@ export function plusAnchor(items: readonly ItemId[]): number {
 }
 
 /**
- * 从 old 里拿掉一些项之后,原来 index 处那一项的「相邻项」:
- * 先往上找(和 agentTabs.closeTab 关页后切到左边那页一个方向),再往下找;
- * 拿掉的是 Agent 项时先在剩下的 Agent 项里找(关掉 Agent 1 要切到别的 Agent,不跳到剧本或分区,2026-10-20 实测),找不到再放宽;
- * 给了 isVisible 就先在看得见的项里找,找不到再放宽。都没有返回 null。
+ * After removing some items from old, the "neighbor" of the item that was at index:
+ * look upward first (the same direction as switching to the left tab after agentTabs.closeTab closes a tab),
+ * then downward;
+ * when the removed item is an Agent item, look among the remaining Agent items first (closing Agent 1 should
+ * switch to another Agent, not jump to the script or a section; verified by testing, 2026-10-20), and widen
+ * the search if none is found;
+ * if isVisible is given, look among visible items first, and widen the search if none is found. Returns null
+ * if there is none.
  */
 function neighborOf(old: readonly ItemId[], index: number, keep: ReadonlySet<ItemId>, isVisible?: (id: ItemId) => boolean): ItemId | null {
   const kinds: ((id: ItemId) => boolean)[] = isAgentItem(old[index]) ? [isAgentItem, () => true] : [() => true];
   const visible = isVisible ? [isVisible, () => true] : [() => true];
   const passes = kinds.flatMap(kind => visible.map(vis => (id: ItemId) => kind(id) && vis(id)));
   for (const pass of passes) {
-    // 剪辑组不能当选中项
+    // The cut group cannot be the selected item
     const ok = (id: ItemId) => isPageItem(id) && pass(id);
     for (let i = index - 1; i >= 0; i--) if (keep.has(old[i]) && ok(old[i])) return old[i];
     for (let i = index + 1; i < old.length; i++) if (keep.has(old[i]) && ok(old[i])) return old[i];
@@ -115,26 +128,27 @@ function neighborOf(old: readonly ItemId[], index: number, keep: ReadonlySet<Ite
   return null;
 }
 
-/** 两侧列表 + active 重新拼一份(不改传进来的对象) */
+/** Reassemble the lists of both sides + active into a new one (does not modify the passed-in object) */
 function withLists(layout: RailLayout, lists: Record<Side, ItemId[]>, active: Record<Side, ItemId | null>): RailLayout {
   return { left: lists.left, right: lists.right, active: { left: active.left, right: active.right } };
 }
 
 export interface LegacyState {
-  /** 旧键 pc.left.section */
+  /** Old key pc.left.section */
   section?: string | null;
-  /** 旧键 pc.right.page:"script" / "agent" */
+  /** Old key pc.right.page: "script" / "agent" */
   rightPage?: string | null;
-  /** agentTabs 当前激活的页 */
+  /** The page currently active in agentTabs */
   activeTabId?: string | null;
 }
 
 /**
- * 默认布局 = 改版前的布局:左边五个分区,右边剧本 + 各 Agent。
- * 选中项沿用旧键,老用户升级后停在原来那一页。
+ * Default layout = the layout before the redesign: five sections on the left, script + all Agents on the
+ * right.
+ * The selected items reuse the old keys, so after upgrading, existing users stay on the page they were on.
  */
 export function defaultLayout(agentIds: readonly string[], legacy: LegacyState = {}): RailLayout {
-  // 剪辑组 2026-10-20 撤掉(入口挪到素材库剪辑组与时间轴上方标签栏),默认布局里不再有它
+  // The cut group was removed on 2026-10-20 (its entry moved to the media library cut group and the tab bar above the timeline), so the default layout no longer has it
   const left: ItemId[] = [...SECTION_IDS];
   const right: ItemId[] = ["script", ...agentIds.map(agentItem)];
   const section: SectionId = legacy.section && isSectionItem(legacy.section) ? legacy.section : "library";
@@ -144,8 +158,8 @@ export function defaultLayout(agentIds: readonly string[], legacy: LegacyState =
 }
 
 /**
- * 新 Agent 放哪一侧(没有「从哪一侧的 + 点出来的」提示时):
- * 右边有 Agent 就放右边,否则左边有就放左边,都没有放右边。
+ * Which side a new Agent goes to (when there is no hint of "which side's + it was opened from"):
+ * the right if the right has an Agent, otherwise the left if the left has one, and the right if neither does.
  */
 function placementSide(layout: RailLayout): Side {
   if (layout.right.some(isAgentItem)) return "right";
@@ -153,12 +167,12 @@ function placementSide(layout: RailLayout): Side {
   return "right";
 }
 
-/** 这一侧有没有页面项(只剩剪辑组也算没有) */
+/** Whether this side has any page item (having only the cut group counts as none) */
 export function hasPages(items: readonly ItemId[]): boolean {
   return items.some(isPageItem);
 }
 
-/** 把 Agent 项插到这一侧最后一个 Agent 项后面(这一侧没有 Agent 就放末尾) */
+/** Insert an Agent item after the last Agent item on this side (put it at the end if this side has no Agent) */
 export function insertAgent(layout: RailLayout, side: Side, item: AgentItemId): RailLayout {
   if (sideOf(layout, item)) return layout;
   const list = layout[side].slice();
@@ -171,7 +185,7 @@ export function insertAgent(layout: RailLayout, side: Side, item: AgentItemId): 
   return withLists(layout, lists, active);
 }
 
-/** 选中某一项(它在哪一侧就改哪一侧的 active);不在布局里原样返回 */
+/** Select an item (changes the active of whichever side it is on); returns the input as is if it is not in the layout */
 export function withActive(layout: RailLayout, item: ItemId): RailLayout {
   const side = sideOf(layout, item);
   if (!side || !isPageItem(item) || layout.active[side] === item) return layout;
@@ -180,18 +194,20 @@ export function withActive(layout: RailLayout, item: ItemId): RailLayout {
 
 export interface SyncResult {
   layout: RailLayout;
-  /** 新补进来的 Agent 项,按 agentIds 顺序 */
+  /** Newly added Agent items, in agentIds order */
   added: AgentItemId[];
-  /** 这次因为删掉 Agent 而变空的侧 */
+  /** Sides that became empty this time because Agents were deleted */
   emptied: Side[];
 }
 
 /**
- * 让布局里的 Agent 项和 agentTabs 对齐:
- *   - 已经关掉的 Agent 项拿掉;它是那一侧的选中项就改选相邻一项(先上后下),那一侧空了 active 置 null;
- *   - 布局里还没有的 Agent 补进去:给了 hint(从那一侧的「+」新建)就插在那一侧最后一个 Agent 后面并选中它,
- *     没给就按 placementSide 放。
- * 什么都没变时返回的 layout 就是传进来的那个对象。
+ * Align the Agent items in the layout with agentTabs:
+ *   - Agent items that are already closed are removed; if one was the selected item of its side, the adjacent
+ *     item is selected instead (up first, then down), and if that side becomes empty its active is set to null;
+ *   - Agents not yet in the layout are added: if a hint is given (created from that side's "+"), insert it
+ *     after the last Agent on that side and select it,
+ *     otherwise place it by placementSide.
+ * When nothing changed, the returned layout is the very object that was passed in.
  */
 export function syncAgents(layout: RailLayout, agentIds: readonly string[], hint: Side | null = null): SyncResult {
   const alive = new Set(agentIds.map(agentItem));
@@ -224,11 +240,14 @@ export function syncAgents(layout: RailLayout, agentIds: readonly string[], hint
 }
 
 /**
- * 读出来的布局要校验:
- *   - 只认识的项留下(已经不存在的 Agent 拿掉),重复的只留第一次出现;
- *   - 缺的左栏分区按固定顺序补回左边末尾,缺的剧本补回右边顶上,缺的 Agent 按 syncAgents 的规则放;
- *   - active 不在那一侧就退回 fallback 的选中项(还在那一侧的话),再退回那一侧第一项。
- * 形状根本不对(不是对象、left / right 不是数组)直接用 fallback。
+ * A layout that was read back must be validated:
+ *   - keep only known items (remove Agents that no longer exist), and keep only the first occurrence of
+ *     duplicates;
+ *   - missing left rail sections are added back at the end of the left side in the fixed order, a missing
+ *     script is added back at the top of the right side, and missing Agents are placed by the syncAgents rules;
+ *   - if active is not on that side, fall back to the selected item of fallback (if it is still on that side),
+ *     then to the first item on that side.
+ * If the shape is plainly wrong (not an object, left / right not arrays), use fallback directly.
  */
 export function validateLayout(raw: unknown, agentIds: readonly string[], fallback: RailLayout = defaultLayout(agentIds)): RailLayout {
   if (!raw || typeof raw !== "object") return fallback;
@@ -241,7 +260,7 @@ export function validateLayout(raw: unknown, agentIds: readonly string[], fallba
     for (const v of arr) {
       if (typeof v !== "string" || seen.has(v)) continue;
       const agent = agentIdOf(v);
-      // 老布局里存着的剪辑组(CUTS_ITEM)读进来就丢掉:2026-10-20 起左右栏都没有它
+      // A cut group (CUTS_ITEM) stored in an old layout is dropped when read: neither rail has it since 2026-10-20
       if (!(isSectionItem(v) || v === "script" || (agent !== null && known.has(agent)))) continue;
       seen.add(v);
       out.push(v as ItemId);
@@ -269,8 +288,10 @@ export function validateLayout(raw: unknown, agentIds: readonly string[], fallba
 }
 
 /**
- * rail 上的落点下标(只数画出来的项,含被拖的那一项)换成完整列表里的插入位置。
- * 落在两项之间 = 插到后面那一项前面;落在最后 = 插到最后一个画出来的项后面(隐藏着的分区不跟着挪)。
+ * Convert a drop index on the rail (counting only drawn items, including the dragged item) into an insert
+ * position in the full list.
+ * Dropping between two items = insert before the latter item; dropping at the end = insert after the last
+ * drawn item (hidden sections do not move along).
  */
 export function gapToFullIndex(full: readonly ItemId[], shown: readonly ItemId[], gap: number): number {
   if (shown.length === 0) return full.length;
@@ -283,15 +304,19 @@ export interface MoveResult {
   layout: RailLayout;
   from: Side;
   to: Side;
-  /** 源侧因此变空(要收起那一侧的抽屉) */
+  /** The source side thereby becomes empty (its drawer must be collapsed) */
   emptied: Side | null;
 }
 
 /**
- * 把一项放到 toSide 列表的 gapIndex 处(gapIndex 按「被拖项还在原位」的列表数,和拖动时看到的落点一致)。
- *   - 被拖的项成为目标侧的选中项(剪辑组不是页面,不当选中项,目标侧选中项不变);
- *   - 跨侧时它原来是源侧的选中项,源侧改选相邻一项(先上后下,isVisible 看得见的优先);源侧没有页面项了 active 置 null、报 emptied。
- * 项不在布局里返回 null。
+ * Put an item at gapIndex of the toSide list (gapIndex counts the list as if the dragged item were still in
+ * its original place, consistent with the drop position seen while dragging).
+ *   - The dragged item becomes the selected item of the target side (the cut group is not a page and is not
+ *     selected, so the target side's selected item stays unchanged);
+ *   - When crossing sides and it was the selected item of the source side, the source side selects an adjacent
+ *     item (up first, then down, preferring visible ones per isVisible); if the source side has no page item
+ *     left, active is set to null and emptied is reported.
+ * Returns null if the item is not in the layout.
  */
 export function moveItem(
   layout: RailLayout,
@@ -330,7 +355,7 @@ export function moveItem(
   return { layout: withLists(layout, lists, active), from, to: toSide, emptied };
 }
 
-/** 两份布局内容是否一样(存盘前判断要不要写) */
+/** Whether two layouts have the same content (to decide whether to write before saving) */
 export function sameLayout(a: RailLayout, b: RailLayout): boolean {
   return (
     a.active.left === b.active.left &&

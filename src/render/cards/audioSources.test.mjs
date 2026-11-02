@@ -11,7 +11,7 @@ const withSources = async (fn) => {
 const HASH = "a".repeat(64);
 const SR = 48000;
 
-/** /@media/<hash>/pcm 的假服务端:记下每次的查询串,回 count × 2 × 4 字节 */
+/** Fake server for /@media/<hash>/pcm: records each query string, returns count × 2 × 4 bytes */
 function stubFetch(log) {
   globalThis.fetch = async (url) => {
     const query = new URL(url, "http://local").searchParams;
@@ -22,7 +22,7 @@ function stubFetch(log) {
   };
 }
 
-/** 一段裁过的素材(mediaOffset = 2 秒)+ 一张接它的音频素材效果卡 */
+/** A trimmed asset (mediaOffset = 2 seconds) + an audio media effect card connected to it */
 const project = {
   media: [{ id: "m", kind: "video", name: "clip.mp4", url: `/@media/${HASH}`, hash: HASH }],
   tracks: [{ id: "t", clips: [
@@ -66,7 +66,7 @@ test("chunk cache hits by (hash, position, count), limit 32 chunks", async () =>
   assert.equal(log.length, 2, "a different position is a different chunk");
 
   assert.equal(AUDIO_BLOCK_CACHE_LIMIT, 32);
-  // 再灌 32 块把最早那两块挤出去
+  // Feed another 32 chunks to push out the earliest two chunks
   for (let i = 1; i <= AUDIO_BLOCK_CACHE_LIMIT; i++) await blockOf(ctx, { clipId: "src" }, i * 10000, 480);
   const before = log.length;
   await blockOf(ctx, { clipId: "src" }, 0, 480);
@@ -99,13 +99,14 @@ test("media effect card input recursively calls its audio(), instance parameters
   const out = await evaluateCardAudio(ctx, "n2", { start: 0, count: 4, sampleRate: SR });
   assert.equal(out.length, 8);
   assert.deepEqual(seen.map((s) => s.card), ["mix", "gain"], "n2 → n1 → media");
-  // n1 被片段 "gain" 指着(clip.nodeId === 'n1'),参数以 clip.params 为准:3,不是节点上的 1
+  // n1 is referenced by clip "gain" (clip.nodeId === 'n1'), parameters take clip.params as
+  // authoritative: 3, not 1 on the node
   assert.equal(seen.find((s) => s.card === "gain").params.gain, 3);
-  // 素材那一跳:0 + 0.5×48000 + 2×48000
+  // The asset hop: 0 + 0.5×48000 + 2×48000
   assert.equal(log[0].start, 120000);
   assert.equal(out[0], 120000 * 3);
 
-  // 直接从 n1 起跳也一样(blockOf 对素材效果卡节点就是递归求值)
+  // Jumping directly from n1 is also the same (blockOf evaluates media effect card nodes recursively)
   const direct = await blockOf(ctx, { nodeId: "n1" }, 4, 4);
   assert.equal(direct.length, 8);
 }));
@@ -140,10 +141,14 @@ test('audio-visual in the same clip uses the source clock and the explicit input
 }));
 
 /* ------------------------------------------------------------------ *
- * 变速的素材段当声音输入(2026-10-23 用户定「放开。」):随倍率变速变调
+ * Speed-changed media clip as audio input (user decision, 2026-10-23: "Allow."):
+ * speed and pitch change with rate
  * ------------------------------------------------------------------ */
 
-/** 回一条斜坡:第 k 帧(素材上的绝对帧号)两个声道都是 k。线性插值在斜坡上是精确的,可以逐个采样对数 */
+/**
+ * Returns a ramp: both channels at frame k (absolute frame number on asset) are k.
+ * Linear interpolation is exact on a ramp, allowing sample-by-sample checking
+ */
 function rampFetch(log) {
   globalThis.fetch = async (url) => {
     const query = new URL(url, "http://local").searchParams;
@@ -166,7 +171,7 @@ test("Speed-changed media clip (clip input): downstream sample i = media sample 
     const local = 100 + 0.5 * SR, mediaStart = 2 * SR;
     assert.equal(log.length, 1, "one request");
     assert.equal(log[0].start, Math.floor(mediaStart + local * speed));
-    // 读「时长 × 倍率」那么长的素材(多 1~2 帧给插值)
+    // Read asset of length "duration × rate" (1-2 extra frames for interpolation)
     assert.ok(Math.abs(log[0].count - 480 * speed) <= 2, `fetched ${log[0].count} frames, expected about ${480 * speed}`);
     for (const i of [0, 1, 7, 239, 479]) {
       const want = mediaStart + (local + i) * speed;
@@ -196,7 +201,7 @@ test("Speed-changed media clip (composited media node): rate on the node takes p
     assert.equal(out[0], 2 * SR + 20);
     assert.equal(out[2 * 99], 2 * SR + 2 * 109);
   }
-  // 1 倍:还是原来那一次请求,位置、长度一个不差
+  // 1x: still that same original request, exact position and length without difference
   const log = []; rampFetch(log); clearAudioBlockCache();
   const plain = { ...project, cardNodes: nodes };
   await blockOf({ graph: projectCardGraph(plain), project: plain, getCard: () => undefined, sampleRate: SR }, { nodeId: "@clip/src/source" }, 10, 100);

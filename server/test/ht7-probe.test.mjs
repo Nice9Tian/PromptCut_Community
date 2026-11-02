@@ -1,11 +1,14 @@
 /**
- * HT7 探针 `scripts/probes/ht7-probe.mjs` 自身的用例（阿里云上的真核对由主会话在部署后跑）。
- * 跑：node --test server/test/ht7-probe.test.mjs
+ * Test cases for HT7 probe `scripts/probes/ht7-probe.mjs` itself (real verification on Alibaba Cloud
+ * is run by the lead session after deployment).
+ * Run: node --test server/test/ht7-probe.test.mjs
  *
- * - 不给 `--base`：不连任何地址，退出码 2；
- * - 对着本机的托管组合（`PROMPTCUT_TRUST_LOOPBACK=0` 加集群令牌）：五项全过，退出码 0；
- * - 对着信任回环的托管组合（`=1`）：从回环敲当然不被拒，探针报失败，退出码 1（说明它真能分辨）。
- * 后两条要本机信任开关到位（假设 H13）。
+ * - Without `--base`: does not connect to any address, exit code 2;
+ * - Against the local hosted bundle (`PROMPTCUT_TRUST_LOOPBACK=0` plus cluster token): all five
+ *   items pass, exit code 0;
+ * - Against the hosted bundle that trusts loopback (`=1`): hitting from loopback is naturally not
+ *   rejected, probe reports failure, exit code 1 (showing it can truly distinguish).
+ * The latter two require the local trust switch to be in place (assumption H13).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

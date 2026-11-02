@@ -1,4 +1,4 @@
-/** `agentScopes.mjs` 的类型(页面与服务端共用的范围口径) */
+/** Types for `agentScopes.mjs` (scope definition shared between page and server) */
 export function cutNameOf(project: unknown): string;
 export function diffScopes(before: unknown, after: unknown): string[];
 export function splitScopes(text: unknown): string[];
@@ -23,7 +23,7 @@ export interface ParkedCutsIndex {
 }
 export function parkedCutsIndex(project: unknown, opts?: ParkedCutsIndexOptions): ParkedCutsIndex | null;
 export function otherCutsHint(project: unknown): { cuts: { cutId: string; name: string; clipCount: number }[]; hint: string } | null;
-/** see_frames 的 cutId:那条剪辑当激活的项目视图,只在出这一次图时用 */
+/** cutId for see_frames: that cut serves as the active project view, used only for this render */
 export function cutLookView<P>(project: P, cutId: string | undefined | null): {
   project: P; cut: { id: string; name: string }; active: boolean; parkedT: number | null;
 };

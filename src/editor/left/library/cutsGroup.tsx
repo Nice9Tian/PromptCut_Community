@@ -13,13 +13,18 @@ import { tr } from "../../../i18n/index.ts";
 import { shownName } from "../../../i18n/names.ts";
 
 /**
- * 素材库的「剪辑」组(`workflow/materials.md`「素材库里的剪辑」,2026-10-20 用户定)。
+ * The "Cuts" group of the media library (`workflow/materials.md` "Cuts in the media library",
+ * user decision, 2026-10-20).
  *
- * 项目里的每条剪辑一格,显示名字与时长:
- *   - 单击:在时间轴上方打开它的标签并激活(`openCutInTimeline`);
- *   - 拖到时间轴的序列上:在激活剪辑里放一个引用它的剪辑段(放进自己、会循环引用时落点预览写明原因、不接受);
- *   - 悬停按钮 / 右键:改名、删除(最后一条不能删;被别的剪辑引用着时先说明被哪些剪辑用着,确认后连同引用它的剪辑段一起删,可撤销);
- *   - 组详情顶上「新建剪辑」。
+ * One cell for each cut in the project, showing name and duration:
+ *   - Click: open its tab above the timeline and activate it (`openCutInTimeline`);
+ *   - Drag onto a track of the timeline: place a cut segment referencing it in the active cut
+ *     (dropping into itself would create a circular reference, so the drop preview states the
+ *     reason and does not accept it);
+ *   - Hover button / right-click: rename, delete (the last one cannot be deleted; if it is
+ *     referenced by other cuts, first state which cuts use it, and after confirmation delete it
+ *     together with the cut segments referencing it, undoable);
+ *   - "New cut" at the top of the group details.
  */
 
 type Row = ReturnType<typeof listCuts>[number];
@@ -30,7 +35,7 @@ function describeRefs(row: Row): string {
 
 export function useCutsGroup(q: string, flash: (text: string, ms?: number) => void): { data: GroupData; overlay: React.ReactNode } {
   const project = useStore((s) => s.project);
-  // 这个项目只给了只读权限(游客):新建 / 改名 / 删除 / 打开(切换激活的剪辑)/ 拖进时间轴都是写
+  // This project grants only read-only access (guest): new / rename / delete / open (switch the active cut) / drag into the timeline are all writes
   const ro = useReadOnly();
   const [ctx, setCtx] = useState<{ x: number; y: number; id: string } | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -126,7 +131,7 @@ function CutThumb({ row }: { row: Row }) {
 
 function CutTile({ row, canDelete, renaming, locked, why, onRename, onRenamed, onDelete, onContextMenu }: {
   row: Row; canDelete: boolean; renaming: boolean;
-  /** 只读项目(游客):不接点击 / 拖动 / 改名 / 删除;why 是置灰说明 */
+  /** Read-only project (guest): clicking / dragging / renaming / deleting are not accepted; why is the text explaining the greyed-out state */
   locked: boolean; why: string;
   onRename: () => void; onRenamed: () => void; onDelete: () => void;
   onContextMenu: (e: React.MouseEvent) => void;

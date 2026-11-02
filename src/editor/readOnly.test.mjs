@@ -1,8 +1,10 @@
 /**
- * 只读界面（`readOnly.ts` 一族）里不依赖 React 的几处：判断本身、快捷键闸、拖放载荷、总时长自动对齐。
- * 组件怎么画见 `readOnlyRender.test.mjs`；真浏览器里的整页表现见 `scripts/probes/guest-readonly-ui-probe.mjs`。
+ * Parts of the read-only UI (`readOnly.ts` family) that do not depend on React: the check itself,
+ * shortcut gate, drag-and-drop payload, and total duration auto-alignment. How components render:
+ * see `readOnlyRender.test.mjs`; full-page behavior in a real browser: see
+ * `scripts/probes/guest-readonly-ui-probe.mjs`.
  *
- * 跑：node --test src/editor/readOnly.test.mjs
+ * Run: node --test src/editor/readOnly.test.mjs
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import test from "node:test";
@@ -12,7 +14,7 @@ const vo = await import("./io/viewOnly.ts");
 const core = await import("./readOnlyCore.ts");
 const keys = await import("./readOnlyKeys.ts");
 
-/** 假的 location：`?observe=1` 那条路在 Node 里没有页面地址，借它模拟 */
+/** Fake location: the `?observe=1` path has no page URL in Node, simulated using this */
 function withLocation(search, fn) {
   const had = Object.hasOwn(globalThis, "location");
   const prev = globalThis.location;
@@ -41,7 +43,7 @@ test("RO2 The old ?observe=1 path is not merged in: it does not count as \"this 
     assert.equal(core.memberReadOnlyNow(), false, "The newly added UI lock does not cover it: it behaves as before");
     assert.equal(core.readOnlyState(core.memberReadOnlyNow()).locked, false);
   });
-  // 两个来源同时有：权限那条优先(游客打开了带 observe 的地址)
+  // Both sources present: permissions take precedence (guest opened a URL with observe)
   withLocation("?observe=1", () => {
     vo.setProjectAccess("r");
     assert.equal(vo.viewOnlyReason(), "read-only-member");
@@ -69,7 +71,7 @@ test("RO3 The grayed-out explanation is always viewOnlyText(); when not locked, 
 
 test("RO4 Shortcut gate: when read-only, Delete / Backspace / undo / redo do not reach the editor; the space key and keys typed in input boxes are not blocked", () => {
   const press = (init) => ({ key: "", ctrlKey: false, metaKey: false, shiftKey: false, target: { tagName: "DIV" }, ...init });
-  // 纯判断：哪些键是「改项目的键」(不看锁)
+  // Pure check: which keys are "project modification keys" (without checking locks)
   assert.equal(keys.isProjectEditKey(press({ key: "Delete" })), true);
   assert.equal(keys.isProjectEditKey(press({ key: "Backspace" })), true);
   assert.equal(keys.isProjectEditKey(press({ key: "z", ctrlKey: true })), true);
@@ -80,7 +82,8 @@ test("RO4 Shortcut gate: when read-only, Delete / Backspace / undo / redo do not
   assert.equal(keys.isProjectEditKey(press({ key: "Delete", target: { tagName: "INPUT" } })), false, "The delete key in an input box belongs to the input box");
   assert.equal(keys.isProjectEditKey(press({ key: "z", ctrlKey: true, target: { tagName: "TEXTAREA" } })), false);
 
-  // 装在一个假的 window 上:只读时 preventDefault + stopImmediatePropagation，没锁时什么都不做
+  // Attached to a fake window: preventDefault + stopImmediatePropagation when read-only, does nothing
+  // when unlocked
   const handlers = [];
   const fakeWindow = { addEventListener: (type, fn, opts) => handlers.push({ type, fn, opts }) };
   keys.installReadOnlyKeyGuard(fakeWindow);
@@ -128,7 +131,7 @@ test("RO6 Automatic total-duration alignment is a write: not done in a read-only
   const load = () => {
     actions.newProject("Duration");
     const p = getState().project;
-    // 内容末尾 4 秒，但项目里记的总时长是 10 秒：对齐的话会改成 4
+    // Content ends at 4s, but total duration recorded in project is 10s: aligning will change it to 4
     stateCore.setProject({ ...p, tracks: [{ ...p.tracks[0], clips: [clip("a", 0, 2), clip("b", 2, 4)] }], duration: 10 }, { undoable: false });
     stateCore.set({ durationManual: null });
   };

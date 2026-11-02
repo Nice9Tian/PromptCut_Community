@@ -1,22 +1,23 @@
 /**
  * node --test server/test/api-effort.test.mjs
  *
- * API 直连的思考强度。
+ * Thinking effort for direct API.
  *
- * 之前这条路是断的:CLI 那三家各自把 effort 翻译成命令行参数(claude 的 --effort、
- * codex 的 -c model_reasoning_effort、agy 的 --effort),而 API 直连从头到尾没读过它 ——
- * 界面上那个档位对 API 是死的(modelOptions 里 api 档的 efforts 干脆是空数组,
- * 连选都选不了)。
+ * Previously this path was broken: the three CLI providers each translated effort into CLI flags
+ * (claude's --effort, codex's -c model_reasoning_effort, agy's --effort), while direct API never
+ * read it at all: that tier in the UI was dead for API (efforts for the api tier in modelOptions
+ * was simply an empty array, so it could not even be selected).
  *
- * 走 OpenAI 兼容口径的中转站是收 `reasoning_effort` 的。这里从 provider 的**请求体**验:
- * 光把值传进 cfg 不够,发不出去一样是断的。
+ * Relay services following OpenAI-compatible conventions accept `reasoning_effort`. Verified here
+ * from provider's **request body**: merely passing the value into cfg is not enough; if it cannot
+ * be sent out, it is still broken.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const { createProvider } = await import('../harness/providers/openai.mjs');
 
-/** 拦下请求体,再回一段最小的 SSE 让 stream() 正常收尾 */
+/** Intercept request body, then return minimal SSE to let stream() finish normally */
 function spyFetch(seen) {
   return async (url, options) => {
     seen.url = url;
@@ -41,7 +42,7 @@ async function requestBodyFor(cfg) {
     { fetchImpl: spyFetch(seen) },
   );
   for await (const _ of p.stream([{ role: 'user', content: [{ type: 'text', text: 'hi' }] }], [], '', undefined)) {
-    /* 跑完就行,事件内容这条测试不关心 */
+    /* Just needs to finish; this test does not care about event contents */
   }
   return seen.body;
 }
@@ -67,10 +68,12 @@ test('Adding reasoning_effort does not affect the existing fields', async () => 
 });
 
 /*
- * 上面验的是 provider 那一头。下面验 runner 那一头:opts.effort 有没有真的走到 cfg 里。
- * 两头分开验是有原因的 —— 任何一头断了,现象都是「档位选了没反应」,而只测一头看不出来。
+ * The above verifies the provider end. Below verifies the runner end: whether opts.effort actually
+ * makes it into cfg.
+ * Testing both ends separately has a reason: if either end is broken, the symptom is "selecting a tier
+ * has no effect", which cannot be seen by testing only one end.
  */
-/** 跑一次 mock 驱动,把 configuration 那条诊断事件捞出来 */
+/** Run mock driver once and extract that configuration diagnostic event */
 async function configDiagnostic(effort) {
   const api = await import('../runners/api.mjs');
   const events = [];

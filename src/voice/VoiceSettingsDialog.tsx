@@ -6,20 +6,20 @@ import { closeVoiceSettings, useVoiceSettingsState } from "../ai/voiceSettingsSt
 import { tr } from "../i18n/index.ts";
 
 /**
- * 「配音设置」子窗口。开始页的配音卡和编辑台顶栏的按钮都开它,两处各挂一份
- * (开始页和编辑台不会同时在屏幕上)。挂在 body 上,不受外层 overflow 裁切。
+ * "Voiceover settings" subwindow. Opened by both the voiceover card on the start page and the button in the editor top bar; each mounts an instance
+ * (the start page and the editor are never on screen at the same time). Mounted on body so it is not clipped by outer overflow.
  */
 export function VoiceSettingsDialog(): JSX.Element | null {
   const st = useVoiceSettingsState();
   if (!st.open) return null;
-  // key 用 seq:每次打开都重新读一遍设置,不带着上次没保存的改动
+  // key uses seq: re-reads settings every time it opens, without carrying over unsaved changes from last time
   return <Dialog key={st.seq} />;
 }
 
 function Dialog(): JSX.Element {
   const dirty = useRef(false);
 
-  // 有没保存的改动时关窗先问一句,免得调了半天一个 Esc 全没了
+  // When there are unsaved changes, prompt before closing the window to avoid losing adjustments to an accidental Esc
   const close = useCallback(() => {
     if (dirty.current && !confirm(tr("You have unsaved changes. Discard them and close?"))) return;
     closeVoiceSettings();
@@ -32,7 +32,7 @@ function Dialog(): JSX.Element {
   }, [close]);
 
   return createPortal(
-    // 只认在遮罩本身上按下的点击:在输入框里拖选文字拖出窗口外松手,不该把窗口关了
+    // Only recognize clicks initiated on the overlay itself: dragging text in an input box and releasing outside the window should not close the window
     <div className="vsd-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
       <div className="vsd-dialog" role="dialog" aria-modal="true" aria-label={tr("Voiceover settings")}>
         <div className="vsd-head">

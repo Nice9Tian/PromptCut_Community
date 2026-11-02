@@ -1,5 +1,5 @@
 /**
- * 素材格子、缩略卡上的真画面(规则见 `thumbs.ts` 文件头)。取到之前、取不到时什么都不画,外层的取色底色照旧露着。
+ * The real picture on media cells and thumbnail cards (rules in the header of `thumbs.ts`). Before it is obtained, or when it cannot be, nothing is drawn, and the outer sampled-color background stays visible as before.
  */
 import { useEffect, useRef, useState } from "react";
 import type { MediaAsset } from "../kernel/project";
@@ -10,17 +10,20 @@ import { createThumbLoader, fetchableNow, grabFrame, thumbKey, type ThumbKind } 
 
 const loader = createThumbLoader({ grab: grabFrame });
 
-/** 进了视口附近(上下左右各多看一屏的一小截)才去取 */
+/** Fetch only once it is near the viewport (a small margin of one extra screen in every direction) */
 const NEAR = "120px";
 /**
- * 取不到时隔一会儿再试(刚导入的素材还在上传,素材服务先答 404):2、4、8、15、15、15 秒,试满就停,
- * 等格子下次出现(面板重开)或素材上传完(`pending` 变了)再从头试。只为不让刚导入的格子一直是底色。
+ * When a fetch fails, wait a bit and retry (a freshly imported asset is still uploading, so the asset service
+ * answers 404): 2, 4, 8, 15, 15, 15 seconds, then stop. Start over from the beginning when the cell
+ * shows up again (panel reopened) or the asset finishes uploading (`pending` changed). This only keeps
+ * freshly imported cells from staying on the base color forever.
  */
 const RETRY_MS = [2000, 4000, 8000, 15000, 15000, 15000];
 
 /**
- * 给一个素材(和取帧时刻)拿缩略图。返回挂到 <img> 上的 ref 与地址:地址为 null 时别显示。
- * 声音、没有素材、预览地址是 ""(在线页面远程地址还没就绪、确认缺失)时一律 null,不发请求。
+ * Get a thumbnail for an asset (and a frame time). Returns a ref to attach to an <img> and a URL: when the URL
+ * is null, show nothing. Always null, with no request sent, for audio, no asset, or a preview URL of "" (the
+ * remote URL of the online page is not ready yet, or confirmed missing).
  */
 export function useThumb(media: MediaAsset | null | undefined, t = 0): { ref: React.RefObject<HTMLImageElement | null>; src: string | null } {
   const kind: ThumbKind | null = media?.kind === "video" ? "video" : media?.kind === "image" ? "image" : null;
@@ -29,7 +32,7 @@ export function useThumb(media: MediaAsset | null | undefined, t = 0): { ref: Re
   const key = kind && url ? thumbKey(url, kind, t) : "";
   const [attempt, setAttempt] = useState(0);
   const pending = !!media?.pending;
-  // 素材服务还没收全这份就先不取(否则刚导入时控制台一串 404);收全了轮询结果一变就开始取
+  // Do not fetch until the asset service has received all of this one (otherwise a run of 404s in the console right after import); once complete, start fetching as soon as the polling result changes
   const tiers = useTierHashes();
   const canFetch = !!url && fetchableNow(url, tiers, pending, media ? originalHashOf(media) : null);
   useEffect(() => setAttempt(0), [key, pending]);
@@ -58,14 +61,14 @@ export function useThumb(media: MediaAsset | null | undefined, t = 0): { ref: Re
     }, { rootMargin: NEAR });
     io.observe(el);
     return () => { io.disconnect(); stop(); };
-    // url 里的票据会轮换,key 不变就不重取
+    // The ticket in the url rotates; if the key is unchanged, do not refetch
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, attempt, pending, canFetch]);
 
   return { ref, src: got && got.key === key ? got.src : null };
 }
 
-/** 盖在格子 / 缩略卡底色上的那张图;没取到时透明占位(留着让视口观察器量得到它) */
+/** The image laid over the cell / thumbnail card base color; a transparent placeholder when nothing was fetched (kept so the viewport observer can still measure it) */
 export function ThumbImg({ thumb }: { thumb: { ref: React.RefObject<HTMLImageElement | null>; src: string | null } }) {
   return <img ref={thumb.ref} className="thumb-img" alt="" draggable={false} data-pcm="thumb-img" data-ready={thumb.src ? "1" : undefined}
     src={thumb.src ?? undefined} style={thumb.src ? undefined : { opacity: 0 }} />;

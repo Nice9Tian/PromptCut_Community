@@ -1,11 +1,15 @@
 /**
- * C6.6 两档生成（`docs/plan/c66-design.md` 第 2 节、第 8 节「素材小尺寸命令」「faststart 判定」，验收 T1、T6 的生成一侧）。
- * 跑：node --test server/test/c66-tiers.test.mjs
+ * C6.6 two-tier generation (`docs/plan/c66-design.md` Sections 2 and 8 "small-size asset command"
+ * and "faststart check", generation side for acceptance check T1 and T6).
+ * Run: node --test server/test/c66-tiers.test.mjs
  *
- * 只照设计稿写，没看实现。被测模块的名字与形状是假设 K1（见 `c66-kit.mjs` 文件头）。
- * 样本用 ffmpeg 现场生成（1080p 2 s、晚置 moov、ProRes、MKV、120 fps、奇数尺寸、显示旋转、无音轨、图片、音频）。
- * 检查一律用测试自己的办法（ffprobe、自写的顶层 box 解析、按流包数据 md5），不用被测模块的判定。
- * 被测模块不存在时每条用例各自失败、报原因。
+ * Written purely against the design doc without inspecting implementation. Name and shape of the
+ * module under test are assumption K1 (see file header of `c66-kit.mjs`).
+ * Samples are generated on the fly with ffmpeg (1080p 2 s, delayed moov, ProRes, MKV, 120 fps,
+ * odd dimensions, display rotation, no audio track, image, audio).
+ * Checks strictly use the test's own methods (ffprobe, custom top-level box parsing, stream
+ * packet data md5), without relying on the check from the module under test.
+ * When the module under test is absent, each test case fails individually and reports the reason.
  */
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,7 +35,7 @@ let seq = 0;
 const work = () => { const d = path.join(DIR, `w${++seq}`); fs.mkdirSync(d, { recursive: true }); return d; };
 const fpsOf = (s) => { const [a, b] = String(s || '0/1').split('/').map(Number); return b ? a / b : 0; };
 
-/** 素材小尺寸的共同要求：≤ 800×600、偶数、H.264、yuv420p、mp4 容器、faststart */
+/** Common requirements for small-size asset: ≤ 800×600, even dimensions, H.264, yuv420p, mp4 container, faststart */
 function assertSmallBasics(p, file, what) {
   assert.ok(p.video, `${what}: the small-size asset must have a video stream`);
   assert.equal(p.video.codec_name, 'h264', `${what}: the small-size asset is H.264`);
@@ -54,7 +58,7 @@ async function small(input, what) {
   return { p, output };
 }
 
-// ------------------------------------------------------------------ T1 素材小尺寸参数
+// ------------------------------------------------------------------ T1 small-size asset parameters
 
 test('C66-T1-01 1080p → small-size asset ≤ 800×600 with even dimensions, H.264 yuv420p, faststart, proportional scaling, frame rate follows the original-size asset, AAC about 64k', async () => {
   const s = samples();
@@ -103,7 +107,7 @@ test('C66-T1-05 1080p with a display rotation of 90° → the rotation is baked 
   assert.equal(Number(rot) % 360, 0, `the small-size asset no longer carries a display rotation: ${rot}`);
 });
 
-// ------------------------------------------------------------------ T1 faststart 判定
+// ------------------------------------------------------------------ T1 faststart check
 
 test('C66-T1-06 faststart detection follows the top-level box order: leading moov → true, trailing → false, MKV / image → not applicable (null)', async () => {
   const s = samples();
@@ -124,24 +128,24 @@ test('C66-T1-07 faststart detection hops through the top-level boxes one by one:
     return Buffer.concat([h, payload]);
   };
   const ftyp = box('ftyp', Buffer.from('isom\0\0\x02\0isomiso2', 'latin1'));
-  // mdat 用 64 位 largesize，后面才是 moov
+  // mdat uses 64-bit largesize, followed by moov
   const large = Buffer.alloc(16 + 8);
   large.writeUInt32BE(1, 0); large.write('mdat', 4, 'latin1'); large.writeBigUInt64BE(24n, 8);
   const f1 = path.join(d, 'large.mp4');
   fs.writeFileSync(f1, Buffer.concat([ftyp, large, box('moov', Buffer.alloc(8))]));
   assert.equal(await hasFaststart(f1), false, 'the largesize mdat comes before moov');
-  // moov 在前，mdat 的 size = 0（到文件尾）
+  // moov comes first, mdat size = 0 (extends to end of file)
   const zero = Buffer.alloc(8 + 32); zero.writeUInt32BE(0, 0); zero.write('mdat', 4, 'latin1');
   const f2 = path.join(d, 'zero.mp4');
   fs.writeFileSync(f2, Buffer.concat([ftyp, box('moov', Buffer.alloc(8)), zero]));
   assert.equal(await hasFaststart(f2), true, 'moov first, mdat running to the end of the file');
-  // mdat 的负载里出现 "moov" 四个字：只按 box 跳读才判得对
+  // The four characters "moov" appear in mdat payload: only skipping by box checks it correctly
   const f3 = path.join(d, 'fake.mp4');
   fs.writeFileSync(f3, Buffer.concat([ftyp, box('mdat', Buffer.from('xxxx\0\0\0\x08moovyyyy', 'latin1')), box('moov', Buffer.alloc(8))]));
   assert.equal(await hasFaststart(f3), false, 'the text "moov" inside the mdat payload does not count');
 });
 
-// ------------------------------------------------------------------ T1 素材原尺寸：只重封装
+// ------------------------------------------------------------------ T1 original-size asset: remux only
 
 test('C66-T1-08 ensureFaststart: an existing faststart is left alone; a trailing moov is remuxed into a new file (encoding unchanged, source file untouched); MKV is not handled', async () => {
   const s = samples();
@@ -169,7 +173,7 @@ test('C66-T1-09 remux failure (ffmpeg fails to start / errors) → does not thro
   const s = samples();
   const { ensureFaststart } = await loadTiers();
   const before = sha256File(s.lateMoov);
-  // 拿 node 当 ffmpeg：它不认 ffmpeg 的参数，必然非零退出
+  // Using node as ffmpeg: it does not recognize ffmpeg arguments and inevitably exits non-zero
   const r = await ensureFaststart({ ffmpeg: process.execPath, input: s.lateMoov, workDir: work() });
   assert.equal(path.resolve(r.path), path.resolve(s.lateMoov), 'on failure the original-size asset is the source file');
   assert.equal(r.remuxed, false);
@@ -178,7 +182,7 @@ test('C66-T1-09 remux failure (ffmpeg fails to start / errors) → does not thro
   assert.equal(path.resolve(r2.path), path.resolve(s.lateMoov), 'the source file is likewise kept when ffmpeg does not exist');
 });
 
-// ------------------------------------------------------------------ T1 整条：tiers 两个哈希
+// ------------------------------------------------------------------ T1 end-to-end: tiers two hashes
 
 test('C66-T1-10 prepareTiers (1080p that already has faststart): the original-size asset is the source file bytes, the small-size asset has a different hash; both hashes are the sha256 of their files', async () => {
   const s = samples();
@@ -221,7 +225,7 @@ test('C66-T1-12 video only: images and audio have no small-size asset', async ()
   assert.equal(aud.original.hash, sha256File(aud.original.path));
 });
 
-// ------------------------------------------------------------------ T6 生成一侧：ProRes
+// ------------------------------------------------------------------ T6 generation side: ProRes
 
 test('C66-T6-01 ProRes MOV: the original-size asset is not transcoded (still ProRes, same packet data), plus an H.264 small-size asset', async () => {
   const s = samples();

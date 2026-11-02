@@ -1,15 +1,19 @@
 /**
- * 「配音设置」窗口的开关。
+ * The switch of the "Voiceover settings" window.
  *
- * 要从两处打开:开始页「拓展功能」里的配音卡、编辑台顶栏的「配音设置」按钮。
- * 两处不在同一棵组件树的同一层,开关放在模块级,组件用 useSyncExternalStore 订阅
- * (和 collectLoginStore 一个路数)。
+ * It has to be opened from two places: the voiceover card under "Extension features" on the start
+ * page, and the "Voiceover settings" button in the editor's top bar. The two are not at the same
+ * level of the same component tree, so the switch lives at module level and components subscribe
+ * with useSyncExternalStore (the same approach as collectLoginStore).
  */
 import { useSyncExternalStore } from "react";
 
 export interface VoiceSettingsState {
   open: boolean;
-  /** 打开的序号,每开一次加一,窗口用它重置内部状态(重新读一次设置) */
+  /**
+   * The open sequence number, incremented on every open; the window uses it to reset its internal
+   * state (re-read the settings once)
+   */
   seq: number;
 }
 

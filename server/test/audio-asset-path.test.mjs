@@ -1,21 +1,36 @@
 /**
- * Agent 读素材的路径(`docs/plan/TODO.md`「语义与代码的差距」;语义 `docs/semantics/product/agent.md`「素材与产物」):
- * 测响度 `measure_audio`(`/api/audio/measure`)与自定义测量 `measure_audio_js`(`/api/audio/measure-js`)
- * 经素材服务的 HTTP 接口取字节,不按素材目录找文件。
+ * Agent path for reading assets (`docs/plan/TODO.md` "Gap between semantics and code"; semantics
+ * `docs/semantics/product/agent.md` "Assets and outputs"):
+ * Loudness measurement `measure_audio` (`/api/audio/measure`) and custom measurement
+ * `measure_audio_js` (`/api/audio/measure-js`) fetch bytes via the asset service HTTP interface,
+ * not by looking up files in the asset catalog.
  *
- * 用例 AR-1～AR-8:
- *   AR-1  解析器:取不到素材服务地址 / 连不上 / 拒绝读取 → AssetSourceError(写明地址与原因);404 → null;2xx → 地址;
- *   AR-2  素材记录 → 地址(vite-plugin-audio.ts 的 audioMediaUrl):哈希、文件名、老绝对路径、导出目录;请求体里的 path 不用来读盘;
- *   ── 以下起真的素材服务(server/asset-service.ts + 媒体中间件,fs 内容库)与真的 ffmpeg ──
- *   AR-3  测响度:素材 / 片段 / 时间轴三档,经素材服务取的与直接读文件(改前的读法)回包逐字相同;
- *         素材记录里的 path 指向不存在的目录(素材目录不可读),照常出结果;素材服务确实被请求过(Range);
- *   AR-4  自定义测量:解出的 PCM 与直接读文件的逐字节相同(单文件、片段窗口、时间轴混音、mono);经沙箱的 measureJs 结果相同;
- *   AR-5  大文件与分段取:约 35 MB 的 wav(5 个分片入库),片段档测 150 秒处 2 秒,经素材服务传过来的字节远小于整个文件;
- *   AR-6  素材服务不可达:测响度回 502 与写明原因的错,自定义测量回 kind asset-service;时间轴档也不当成「跳过」;
- *   AR-7  素材服务上没有这份素材(404):仍是「素材文件不存在」/ no-media,时间轴档跳过那一段;
- *   AR-8  单进程形态:素材服务就在本进程里,ffprobe 走异步,不卡事件循环(测量期间本进程的定时器照常转)。
+ * Test cases AR-1 to AR-8:
+ *   AR-1  Resolver: cannot get asset service address / cannot connect / read refused →
+ *         AssetSourceError (states address and reason); 404 → null; 2xx → address;
+ *   AR-2  Asset record → address (audioMediaUrl in vite-plugin-audio.ts): hash, filename, legacy
+ *         absolute path, export directory; path in request body is not used to read from disk;
+ *   -- Below starts real asset service (server/asset-service.ts + media middleware, fs content store)
+ *      and real ffmpeg --
+ *   AR-3  Loudness measurement: three tiers (asset / clip / timeline), responses fetched via asset
+ *         service match reading file directly (pre-change behavior) verbatim; path in asset record
+ *         points to a non-existent directory (asset catalog unreadable), still yields results as
+ *         usual; asset service was indeed requested (Range);
+ *   AR-4  Custom measurement: decoded PCM is byte-for-byte identical to direct file reading (single
+ *         file, clip window, timeline mix, mono); results via sandbox measureJs are identical;
+ *   AR-5  Large files and segmented fetching: ~35 MB wav (stored as 5 chunks), clip tier measures
+ *         2 seconds at 150 seconds, bytes transmitted via asset service are far fewer than the
+ *         entire file;
+ *   AR-6  Asset service unreachable: loudness measurement returns 502 with error stating reason,
+ *         custom measurement returns kind asset-service; timeline tier is not treated as "skipped";
+ *   AR-7  Asset missing on asset service (404): still "asset file does not exist" / no-media,
+ *         timeline tier skips that segment;
+ *   AR-8  Single-process mode: asset service is in the same process, ffprobe runs asynchronously
+ *         without blocking event loop (timers in this process continue ticking normally during
+ *         measurement).
  *
- * 跑:node --test server/test/audio-asset-path.test.mjs(要 ffmpeg;找不到时 AR-3 起跳过)
+ * Run: node --test server/test/audio-asset-path.test.mjs (requires ffmpeg; skips from AR-3 onward if
+ * not found)
  */
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
@@ -47,16 +62,16 @@ const closeServer = (s) => new Promise((resolve) => { s.closeAllConnections?.();
 
 test('AR-1 resolver: unreachable, refused, 404 and 2xx are told apart', async () => {
   const toUrl = (m, o) => (m?.hash ? `${o}/@media/${m.hash}` : null);
-  // 取不到地址
+  // Cannot resolve address
   const noOrigin = createAssetSourceResolver({ origin: () => null, toUrl });
   await assert.rejects(noOrigin({ hash: 'a' }), (e) => e instanceof AssetSourceError && /cannot get the asset service address/.test(e.message));
-  // 连不上:起一个端口再关掉
+  // Cannot connect: open a port then close it
   const gone = await listen(() => {});
   await closeServer(gone.server);
   const refused = createAssetSourceResolver({ origin: () => gone.origin, toUrl });
   await assert.rejects(refused({ hash: 'a' }), (e) => e instanceof AssetSourceError && e.message.includes(`Asset service unreachable (${gone.origin})`));
-  // 超时
-  const hang = await listen(() => { /* 不答 */ });
+  // Timeout
+  const hang = await listen(() => { /* Does not respond */ });
   const slow = createAssetSourceResolver({ origin: () => hang.origin, toUrl, timeoutMs: 300 });
   await assert.rejects(slow({ hash: 'a' }), (e) => e instanceof AssetSourceError && /No response/.test(e.message));
   await closeServer(hang.server);
@@ -89,7 +104,7 @@ test('AR-2 media record → URL on the asset service; the path in the request bo
   assert.equal(mod.audioMediaUrl({ hash: h, path: 'C:\\Windows\\win.ini' }, o), `${o}/@media/${h}`);
   assert.equal(mod.audioMediaUrl({ url: `/@media/${h}.wav` }, o), `${o}/@media/${h}.wav`);
   assert.equal(mod.audioMediaUrl({ url: '/@media/%E9%85%8D%E4%B9%90.mp3' }, o), `${o}/@media/${encodeURIComponent('配乐.mp3')}`);
-  // 只剩一个绝对路径:只取文件名,指不到素材服务存储以外
+  // Only an absolute path remains: takes only filename, cannot point outside asset service storage
   assert.equal(mod.audioMediaUrl({ path: 'D:\\secret\\x.wav' }, o), `${o}/@media/x.wav`);
   const legacy = '/api/media/file?path=C%3A%2FUsers%2Fu%2Fa.wav';
   assert.equal(mod.audioMediaUrl({ url: legacy }, o), `${o}${legacy}`);
@@ -97,7 +112,7 @@ test('AR-2 media record → URL on the asset service; the path in the request bo
   assert.equal(mod.audioMediaUrl({ url: 'blob:http://x/1' }, o), null);
 });
 
-/* ------------------------------------------------------------------ 真的素材服务 + ffmpeg */
+/* ------------------------------------------------------------------ Real asset service + ffmpeg */
 
 const FFMPEG = findFfmpeg();
 const FFPROBE = FFMPEG ? path.join(path.dirname(FFMPEG), 'ffprobe' + path.extname(FFMPEG)) : null;
@@ -109,7 +124,7 @@ const gen = (out, lavfiArgs, codecArgs) => {
   return out;
 };
 
-/** 起素材服务(fs 内容库),前面挂一个计数的转发:数请求、数经它传出去的字节;stop() 模拟不可达 */
+/** Start asset service (fs content store) with a counting forwarder in front: counts requests and transmitted bytes; stop() simulates unreachable */
 async function startService() {
   const asset = await harness.asset();
   const svc = await harness.serve({ stores: 'default' });
@@ -118,7 +133,8 @@ async function startService() {
     const up = http.request(new URL(req.url, svc.origin), { method: req.method, headers: req.headers }, (r) => {
       stats.requests.push({ method: req.method, url: req.url, range: req.headers.range || null, status: r.statusCode });
       res.writeHead(r.statusCode, r.headers);
-      // 数真正交给客户端的字节;客户端(ffmpeg)读够了断开,上游这条也跟着断
+      // Count bytes actually delivered to client; when client (ffmpeg) disconnects after reading enough,
+      // upstream connection also closes
       r.on('data', (d) => { if (!res.destroyed) stats.bytes += d.length; });
       res.on('close', () => r.destroy());
       r.pipe(res);
@@ -158,7 +174,7 @@ if (FFMPEG) {
   files.mono = gen(path.join(TMP, 'mono.wav'), ['-f', 'lavfi', '-i', 'sine=frequency=1000:sample_rate=44100:duration=5'], ['-c:a', 'pcm_s16le']);
   files.mp4 = gen(path.join(TMP, 'clip.mp4'), ['-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=25:d=5', '-f', 'lavfi', '-i', 'sine=frequency=660:sample_rate=48000:duration=5'], ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest']);
   files.silent = gen(path.join(TMP, 'silent.mp4'), ['-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=25:d=2'], ['-c:v', 'libx264', '-pix_fmt', 'yuv420p']);
-  // 大文件:3 分钟 48 kHz 立体声 s16 ≈ 34.6 MB,入库 5 个分片
+  // Large file: 3 minutes 48 kHz stereo s16 ~ 34.6 MB, stored in 5 chunks
   files.big = gen(path.join(TMP, 'long.wav'), noise(180), [...mixStereo, '-c:a', 'pcm_s16le']);
 }
 before(async () => {
@@ -168,11 +184,11 @@ before(async () => {
 });
 after(() => service?.stop());
 
-/** 项目里的素材记录:path 指向一个不存在的目录(素材目录不可读),只有 hash / url 可用 */
+/** Asset record in project: path points to a non-existent directory (asset catalog unreadable), only hash / url are usable */
 const GONE = path.join(TMP, 'nonexistent-asset-dir');
 const mediaOf = (k) => ({ id: `m-${k}`, name: path.basename(files[k]), url: `/@media/${hashes[k]}${path.extname(files[k])}`, hash: hashes[k], path: path.join(GONE, path.basename(files[k])) });
 const viaService = () => createAssetSourceResolver({ origin: () => service.origin, toUrl: (m, o) => `${o}/@media/${m.hash}` });
-/** 改前的读法:直接交本地文件路径(原来 mediaFileOf 返回的就是这个) */
+/** Pre-change read method: pass local file path directly (what mediaFileOf originally returned) */
 const direct = (m) => files[Object.keys(files).find((k) => hashes[k] === m?.hash)] ?? null;
 
 test('AR-3 loudness measurement: for all three tiers the response body through the asset service is identical character for character to the one read from the file directly; results still come out when the asset catalog is unreadable', { skip, timeout: 180_000 }, async () => {
@@ -182,8 +198,10 @@ test('AR-3 loudness measurement: for all three tiers the response body through t
     { scope: 'media', media: mediaOf('mp3'), series: false },
     { scope: 'clip', media: mediaOf('m4a'), offset: 1.25, duration: 3.5, series: true },
     { scope: 'clip', media: mediaOf('mp4'), offset: 0.5, duration: 2 },
-    // 时间轴档的几段都放到时间轴结尾:有一段先结束时,ffmpeg 9 的 amix 偶发给之后的帧 NOPTS 时间戳(ebur128 打出
-    // t: -192153584101141.06,即 INT64_MIN / 48000),逐秒曲线在那之后缺点。这是改前就有的偶发,与读法无关,见报告
+    // All clips in the timeline tier are placed at the end of the timeline: when one clip ends first,
+    // ffmpeg 9 amix occasionally gives subsequent frames NOPTS timestamps (ebur128 outputs
+    // t: -192153584101141.06, i.e. INT64_MIN / 48000), and the per-second curve misses points after that.
+    // This is an occasional issue present before the change, unrelated to the read method, see report.
     {
       scope: 'timeline', duration: 7, entries: [
         { clipId: 'c1', media: mediaOf('wav'), start: 2, dur: 5, offset: 1, volume: 1, fadeIn: 0.5, fadeOut: 0 },
@@ -226,7 +244,8 @@ test('AR-4 custom measurement: the decoded PCM is byte-for-byte identical to rea
   await same('timeline mix window', (src) => timelinePcmArgs(entries(src), { total: 5, offset: 0.5, duration: 3, sampleRate: 16000, channels: 2 }), { channels: 2, sampleRate: 16000 });
   await same('timeline mix mono', (src) => timelinePcmArgs(entries(src), { total: 5, sampleRate: 8000, channels: 1 }), { channels: 1, sampleRate: 8000 });
 
-  // 整条 measureJs(沙箱里算 PCM 的指纹):经素材服务与直接读文件结果相同
+  // Full measureJs (calculating PCM fingerprint in sandbox): via asset service yields identical
+  // results to reading the file directly
   const sandbox = createAudioSandbox();
   try {
     const FNV = `
@@ -266,11 +285,12 @@ test('AR-5 large files and fetching in parts: the clip tier fetches only the par
   assert.equal(JSON.stringify(now), JSON.stringify(before));
   const ranged = service.stats.requests.filter((r) => r.range && r.range !== 'bytes=0-0');
   assert.ok(ranged.length >= 1, 'ffmpeg seeks using Range:' + JSON.stringify(service.stats.requests));
-  // 请求可能是开放区间(bytes=N-),ffmpeg 读够就断开;真正传过来的字节远小于整个文件
+  // Requests may be open ranges (bytes=N-), and ffmpeg disconnects once it has read enough; the
+  // actual transferred bytes are far fewer than the entire file
   t.diagnostic(`file ${size} bytes; ${service.stats.bytes} bytes transferred through the asset service; requests ${JSON.stringify(service.stats.requests.map((r) => r.range))}`);
   assert.ok(service.stats.bytes < size / 4, `${service.stats.bytes} bytes transferred through the asset service, file ${size} bytes`);
 
-  // 自定义测量同一段:PCM 逐字节相同
+  // Custom measurement of the same clip: PCM is byte-for-byte identical
   const args = (src) => filePcmArgs({ file: src, offset: 150, duration: 2, sampleRate: 48000, channels: 2 });
   const a = await decodePcm(FFMPEG, args(files.big), { channels: 2, sampleRate: 48000 });
   const b = await decodePcm(FFMPEG, args(`${service.origin}/@media/${hashes.big}`), { channels: 2, sampleRate: 48000 });

@@ -1,10 +1,13 @@
 /**
- * 开始页自动取的项目名怎么避开重名(`src/start/format.ts`)。跑:npm test -- src/start/format.test.mjs
+ * How auto-generated project names on start page avoid duplicate names (`src/start/format.ts`).
+ * Run: npm test -- src/start/format.test.mjs
  *
- * 背景:项目名在这个服务里是全站唯一的(`server/auth/protocol.mjs` 的 `nameKey`),开始页「新建项目」
- * 和「说一句话」的名字都是机器取的,撞名时用户无从改起。2026-10-23 线上实测:全新游客点「新建项目」
- * 必定回 409 `name-taken`(名字恒为「未命名」,第一个人建完之后所有人都被挡死)。
- * 这里盯的就是「撞了自动换一个再试,别的错不许吞」。
+ * Background: project names in this service are site-wide unique (`nameKey` in
+ * `server/auth/protocol.mjs`). Names for "New project" and "Say a sentence" on start page are
+ * machine-generated, leaving users no way to change them upon collision. 2026-10-23 online testing:
+ * a brand-new guest clicking "New project" invariably returned 409 `name-taken` (the name was
+ * always "Untitled", blocking everyone after the first person created one).
+ * What is verified here is "automatically try another on collision; do not swallow other errors".
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

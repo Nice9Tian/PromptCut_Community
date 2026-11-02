@@ -1,52 +1,66 @@
 /**
- * 成本记录的 `device` 串（K1 / J4）：**一处拼，两条路共用。**
+ * The `device` string of cost records (K1 / J4): **assembled in one place, shared by both paths.**
  *
- * `costs-store.mjs` 的去重键是 `${identityKey} ${device}`，所以这个串的每一个字节都在
- * 决定「谁和谁是同一条成绩」。今天有两条路会写成本记录：
+ * The deduplication key in `costs-store.mjs` is `${identityKey} ${device}`, so every single byte
+ * of this string determines "which entries are the same benchmark result". Today, two paths write
+ * cost records:
  *
- *   - 离线探针 `scripts/probe-card-costs.mjs`（Node + 一张宿主页）；
- *   - 常驻探针 `src/editor/probeRunner.ts`（编辑器主文档，`ProbeGate` 遮罩下跑）。
+ *   - Offline probe `scripts/probe-card-costs.mjs` (Node + one host page);
+ *   - Resident probe `src/editor/probeRunner.ts` (editor main document, runs under `ProbeGate` overlay).
  *
- * 两条路各拼一遍的话，任何一处顺序、空格、`true` / `false` 的写法不一致，测出来的记录
- * 就互相看不见：常驻探针每次开项目都会把离线探针刚测完的 62 张卡再测一遍，而且两套记录
- * 同时躺在 `out/card-costs.json` 里谁也用不上谁（R4a 报告 §8 第 10 条点名要抽出来）。
- * 所以拼法只留这一份，两端都 `import` 它。
+ * If each path assembled it separately, any discrepancy in ordering, whitespace, or `true` / `false`
+ * formatting would make measured records invisible to each other: every time a project is opened,
+ * the resident probe would re-measure all 62 cards that the offline probe just tested, and both
+ * sets of records would sit in `out/card-costs.json` unable to use each other (singled out by R4a
+ * report §8 item 10 for extraction). Therefore, only this single assembly format is kept,
+ * and both sides `import` it.
  *
- * # 串里有什么、为什么
+ * # What is in the string and why
  *
- *   `<UA> | <GPU renderer> | lowMemory=<bool> | offscreenGl=<bool> | glRoute=<路线> | mode=<dev|build> | stepP=<百分位> | stepN=<最少样本>`
+ *   `<UA> | <GPU renderer> | lowMemory=<bool> | offscreenGl=<bool> | glRoute=<route> | mode=<dev|build> | stepP=<percentile> | stepN=<minSamples>`
  *
- *   第三段的字段名是历史名（2026-10-07 撤销的旧档位），**只为旧记录的键一个字节不变**留着（桌面版恒为 `false`，
- *   改名会让每台桌面版升级后把项目里的卡全部重测一遍）；现在它的值是「只有一个舞台」（`compact`：在线页面舞台闸门停在第一级、
- *   最低一档），同一台设备单舞台与双舞台测出来的数不混。
+ *   The field name of the third segment is a historical name (an old tier revoked on 2026-10-07),
+ *   kept **solely to preserve every single byte of old record keys** (constantly `false` in desktop app;
+ *   renaming it would cause every desktop app to re-measure all cards in projects after upgrading);
+ *   its current value is "only one stage" (`compact`: online page stage gate stops at level one,
+ *   the lowest tier), ensuring numbers measured from single-stage and dual-stage setups on the same
+ *   device do not mix.
  *
- * - **UA + GPU renderer**：换机器、换显卡，同一张卡的耗时完全不是一回事（K1）。
- * - **`compact` / `offscreenGl` / `glRoute`**（J4）：共享 WebGL 渲染器走哪条路线会改变
- *   canvas 卡的成本；`glRoute` 取**生效值**（在线页面按舞台闸门，桌面按项目选项、缺省路线 1，3.6）。
- * - **`mode`**（3.1）：桌面版跑的就是 vite dev server，dev 的数才是真实运行环境；
- *   build 的数是给将来的在线浏览器模式的。不拼进去两组会互相覆盖。
- * - **`stepP` / `stepN`**（K2「可调系数」）：它们决定 `stepMs` 怎么从样本里取，
- *   改了它们等于**换了量法**，旧成绩不该再用 —— 拼进去旧记录自然不命中、会被重测。
- *   **`COST_SCALE` 不拼**：它只影响怎么用这些数（判重和权重），不影响量出来的数本身。
+ * - **UA + GPU renderer**: Switching machines or graphics cards makes elapsed time for the same card
+ *   a completely different story (K1).
+ * - **`compact` / `offscreenGl` / `glRoute`** (J4): Which route the shared WebGL renderer takes
+ *   changes canvas card costs; `glRoute` takes the **effective value** (online page follows the stage
+ *   gate; desktop app follows project options, defaulting to route 1, 3.6).
+ * - **`mode`** (3.1): The desktop app runs on the vite dev server, so dev numbers represent the real
+ *   runtime environment; build numbers are for the future online browser mode. If not included, the
+ *   two sets would overwrite each other.
+ * - **`stepP` / `stepN`** (K2 "tunable coefficients"): They determine how `stepMs` is sampled;
+ *   changing them is equivalent to **changing the measurement method**, and old results should no
+ *   longer be used: by including them, old records naturally miss and will be re-measured.
+ *   **`COST_SCALE` is not included**: it only affects how these numbers are used (classification
+ *   as heavy and weights), not the measured numbers themselves.
  *
- * # 纯函数
+ * # Pure function
  *
- * `costDeviceString` 不读文件、不看环境变量、不碰 DOM，输入一样输出就一样 ——
- * Node 和浏览器各调一次必然逐字节相同。要摸 DOM 的那两样（GPU 串、UA）单独拿出来，
- * 由调用方在自己那一侧读好再传进来。
+ * `costDeviceString` does not read files, inspect environment variables, or touch the DOM; identical
+ * inputs produce identical outputs: calling it once in Node and once in the browser is guaranteed
+ * to be byte-for-byte identical. The two items that need to touch the DOM (GPU string, UA) are
+ * separated out to be read by callers on their own side and passed in.
  */
 
 import { resolveTuning } from './pipelineTuning.mjs';
 
-/** 字段之间的分隔符。改它等于让全部旧记录失效，所以单独拎出来当常量提醒一下 */
+/** Separator between fields. Changing it invalidates all old records, so it is singled out as a constant reminder */
 export const COST_DEVICE_SEPARATOR = ' | ';
 
-/** 第三段的字段名（历史名，见文件头）。改它等于让全部旧记录失效 */
+/** Field name of the third segment (historical name, see file header). Changing it invalidates all old records */
 export const COST_DEVICE_COMPACT_FIELD = 'lowMemory';
 
 /**
- * 共享 WebGL 渲染器的两条路线（3.6 / M2）：给了合法的路线就用它，否则用 `fallback`（缺省路线 1 `perDocument`）。
- * 桌面版：项目选项优先、缺省路线 1；在线页面：调用方把舞台闸门定的路线当 `glRoute` 传进来（`online/onlineTier.ts` 的 `tierGlRoute`）。
+ * Two routes for the shared WebGL renderer (3.6 / M2): use the valid route if provided, otherwise
+ * use `fallback` (default route 1 `perDocument`).
+ * Desktop app: project options take precedence, defaulting to route 1; online page: caller passes
+ * the route determined by the stage gate as `glRoute` (`tierGlRoute` in `online/onlineTier.ts`).
  */
 export function resolveGlRoute(glRoute, fallback = 'perDocument') {
   if (glRoute === 'perDocument' || glRoute === 'shared') return glRoute;
@@ -54,16 +68,16 @@ export function resolveGlRoute(glRoute, fallback = 'perDocument') {
 }
 
 /**
- * 拼一条 `device` 串。
+ * Assemble a `device` string.
  *
  * @param {object} parts
  * @param {string} parts.ua           `navigator.userAgent`
- * @param {string} parts.renderer     WebGL 的 `UNMASKED_RENDERER_WEBGL`（读不出来给 `'unknown'`）
- * @param {boolean} parts.compact     J4 的宿主能力：只有一个舞台（写在历史字段名下，见文件头）
- * @param {boolean} parts.offscreenGl J4 的宿主能力
- * @param {string} [parts.glRoute]    生效路线；不给就是路线 1
- * @param {string} parts.mode         `'dev' | 'build'`；别的值一律当 `'dev'`（R1 之前的记录就是 dev）
- * @param {object} [parts.tuning]     K2 系数（已解析或裸覆盖值都收，`resolveTuning` 幂等）
+ * @param {string} parts.renderer     WebGL's `UNMASKED_RENDERER_WEBGL` (provide `'unknown'` if unreadable)
+ * @param {boolean} parts.compact     J4 host capability: only one stage (written under historical field name, see file header)
+ * @param {boolean} parts.offscreenGl J4 host capability
+ * @param {string} [parts.glRoute]    Effective route; defaults to route 1 if omitted
+ * @param {string} parts.mode         `'dev' | 'build'`; all other values are treated as `'dev'` (records prior to R1 are dev)
+ * @param {object} [parts.tuning]     K2 coefficients (accepts both resolved and raw override values, `resolveTuning` is idempotent)
  */
 export function costDeviceString(parts) {
   const p = parts && typeof parts === 'object' ? parts : {};
@@ -82,12 +96,14 @@ export function costDeviceString(parts) {
 }
 
 /**
- * 读本机 GPU 的 `UNMASKED_RENDERER_WEBGL`。**在调用方那个文档里开一张一次性画布**，
- * 不碰舞台自己那个共享 WebGL 上下文（M2 的路线 1 每个文档只许有一个）；读完立刻
- * `WEBGL_lose_context` 还回去，免得占着一个上下文名额（Chrome 每个文档 16 个封顶）。
+ * Read the local GPU's `UNMASKED_RENDERER_WEBGL`. **Creates a one-off canvas in caller's document**,
+ * without touching the stage's own shared WebGL context (route 1 of M2 permits only one per
+ * document); immediately releases it via `WEBGL_lose_context` after reading, avoiding taking up
+ * a context slot (Chrome caps at 16 per document).
  *
- * 读不出来回 `'unknown'` —— 软件渲染、`--disable-gpu`、扩展被关掉都会走到这一支，
- * 那时 `device` 串里就是 `unknown`，同一台机器上仍然自洽。
+ * Returns `'unknown'` if unreadable: software rendering, `--disable-gpu`, or disabled extensions
+ * will all hit this branch, in which case the `device` string contains `unknown`, remaining
+ * self-consistent on the same machine.
  */
 export function readGpuRenderer(doc = typeof document === 'undefined' ? null : document) {
   if (!doc) return 'unknown';
@@ -97,7 +113,7 @@ export function readGpuRenderer(doc = typeof document === 'undefined' ? null : d
     if (!gl) return 'unknown';
     const ext = gl.getExtension('WEBGL_debug_renderer_info');
     const value = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
-    try { gl.getExtension('WEBGL_lose_context')?.loseContext(); } catch { /* 还不回去也不算失败 */ }
+    try { gl.getExtension('WEBGL_lose_context')?.loseContext(); } catch { /* Not getting back does not count as a failure either */ }
     return value;
   } catch {
     return 'unknown';

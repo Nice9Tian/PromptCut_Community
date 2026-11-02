@@ -1,35 +1,43 @@
 /*
- * 局域网默认实现的**入口注册**（归 `lan` 类，见 `server/test/community-ownership.mjs`）。
+ * **Entry registration** of the default LAN implementation (belongs to the `lan` class, see `server/test/community-ownership.mjs`).
  *
- * ── 为什么要有这个文件 ──
+ * ── Why this file exists ──
  *
- * 公开侧（社区版）的「成员源」和「加入源」是**替换型接缝**的缺省实现：局域网共享项目有一整套
- * 完整的凭证、成员与邀请码机制，所以缺省不是抛异常的桩，而是能真跑的局域网实现
- * （`lanMemberSource.ts`）。云端那一侧由 `cloud/account/ui-manifest.tsx` 注册真实现覆盖它。
+ * On the public side (community edition), the "member source" and the "join source" are default implementations of
+ * **replaceable seams**: LAN shared projects have a complete set of credential, member and invite code mechanisms,
+ * so the default is not a stub that throws, but a LAN implementation that really runs (`lanMemberSource.ts`). On the
+ * cloud side, `cloud/account/ui-manifest.tsx` registers the real implementation that overrides it.
  *
- * 原来这两处注册写在**模块顶层**，谁 import 到那个面板就顺带注册了：
- *   `src/editor/sync/MembersPanel.tsx`  顶层 `if (!ONLINE) setDefaultLanMemberSource(...)`
- *   `src/start/JoinPanel.tsx`           顶层 `if (!ONLINE) setDefaultLanJoinSource(...)`
+ * These two registrations used to be written at **module top level**, so whoever imported that panel registered them
+ * as a side effect:
+ *   `src/editor/sync/MembersPanel.tsx`  top level `if (!ONLINE) setDefaultLanMemberSource(...)`
+ *   `src/start/JoinPanel.tsx`           top level `if (!ONLINE) setDefaultLanJoinSource(...)`
  *
- * 这么写有两个问题，用户 2026-10-28 要求改掉：
+ * This had two problems, and the user asked on 2026-10-28 to remove it:
  *
- * 1. **它靠巧合生效。** 2026-10-28 的审查算过 import 闭包：从 `src/mobile/MobileApp.tsx` 出发
- *    这两个面板**都不在闭包里**，而 `src/mobile/useMembers.ts` 就在调 `getMemberSource()`。
- *    今天不坏，只因为 `src/Shell.tsx` 静态 import 了 `Editor` / `StartPage`（它们的闭包里有这两个
- *    面板），而 `MobileApp` 自己是 `lazy()`。**将来谁为了瘦身把 `Editor` 改成 lazy，手机端的成员
- *    列表就静默变空** —— 缺省成员源回 `null`、`memberAdmin` 抛「当前项目未开启网站账号成员管理」。
- * 2. **Lite 版裁不干净。** Lite（只有本地、没有局域网）要从社区版裁出来，而注册点散在两个面板的
- *    顶层，就等于「谁 import 到就有局域网」。注册集中在入口之后，Lite 只要不走这一行即可。
+ * 1. **It worked by coincidence.** The review on 2026-10-28 worked out the import closure: starting from
+ *    `src/mobile/MobileApp.tsx`, **neither panel is in the closure**, yet `src/mobile/useMembers.ts` calls
+ *    `getMemberSource()`. It does not break today only because `src/Shell.tsx` statically imports `Editor` /
+ *    `StartPage` (whose closures contain these two panels), while `MobileApp` itself is `lazy()`. **If someone later
+ *    makes `Editor` lazy to slim the bundle, the member list on mobile silently becomes empty**: the default member
+ *    source returns `null`, and `memberAdmin` throws "Member management for website accounts is not enabled for
+ *    the current project".
+ * 2. **The Lite edition cannot be trimmed cleanly.** Lite (local only, no LAN) has to be cut out of the community
+ *    edition, but the registration points are scattered across the top levels of two panels, which amounts to
+ *    "whoever imports it gets LAN". With registration centralized after the entry point, Lite only needs to skip this
+ *    one line.
  *
- * ── 这是 core → lan 唯一的一条边 ──
+ * ── This is the only core → lan edge ──
  *
- * `src/main.tsx`（core）调 `registerLanDefaults()`，这是共享树里核心代码指向局域网代码的
- * **唯一一处**。方向规则本来是「core 不许 import lan」，这一条是故意留的、也是 Lite 要剪的那一刀
- * （剪法现成：`server/vite-plugin-online-prune.ts` 那套 load 换空桩）。
- * **别在别处再加第二条** —— 要用局域网的东西，让它从这里注册进去的接缝拿。
+ * `src/main.tsx` (core) calls `registerLanDefaults()`, which is the **only place** in the shared tree where core code
+ * points at LAN code. The direction rule is normally "core must not import lan"; this one is left deliberately, and is
+ * also the cut Lite has to make (the way to cut is ready-made: the load-swaps-in-an-empty-stub approach of
+ * `server/vite-plugin-online-prune.ts`). **Do not add a second one elsewhere**: to use LAN things, go through the seam
+ * registered from here.
  *
- * 相对 import 一律带 `.ts` 后缀：本文件会被 Node 单测直接载入（`lanBoot.test.mjs`），
- * 不带后缀 raw Node 解析不了（`recoveryAssociation.ts` 那次就是这么崩的）。
+ * Relative imports always carry the `.ts` suffix: this file is loaded directly by a Node unit test
+ * (`lanBoot.test.mjs`), and raw Node cannot resolve imports without the suffix (that is how `recoveryAssociation.ts`
+ * crashed that time).
  */
 import { setDefaultLanJoinSource, setDefaultLanMemberSource } from "./accountExtensions.ts";
 import { createLanJoinSource, createLanMemberSource } from "./lanMemberSource.ts";
@@ -40,10 +48,10 @@ import { adminOp, ensureDevice, enterShared, getSyncView } from "./syncManager.t
 let registered = false;
 
 /**
- * 把局域网的缺省成员源与加入源登记上。幂等，入口调一次就够。
+ * Register the LAN default member source and join source. Idempotent: one call from the entry point is enough.
  *
- * 调用方自己判在线与否（`main.tsx` 用 `ONLINE`）：在线浏览器模式里没有局域网，
- * 成员与加入都由云端那张表注册的真实现负责。
+ * The caller decides whether it is online (`main.tsx` uses `ONLINE`): in online browser mode there is no LAN, and
+ * both members and joining are handled by the real implementation registered from the cloud-side table.
  */
 export function registerLanDefaults(): void {
   if (registered) return;
@@ -61,7 +69,7 @@ export function registerLanDefaults(): void {
   );
 }
 
-/** 只给单测用：让下一次 `registerLanDefaults()` 重新注册 */
+/** For unit tests only: lets the next `registerLanDefaults()` register again */
 export function resetLanDefaultsForTest(): void {
   registered = false;
 }

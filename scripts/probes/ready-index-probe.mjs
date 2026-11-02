@@ -1,31 +1,39 @@
 /**
- * R6/R8 数据面的端到端探针。起编辑器进程 + 预渲染进程,载入一个含 stateful DOM 卡、
- * canvas 卡、`unknown` 卡、超限卡的项目(四张固定卡在 `src/cards/_probe/r6.tsx`),
- * 适配己二撤快照后「就绪索引只发 stream 层、帧库只写 streams/<streamKey>」:
+ * End-to-end probe for R6/R8 data plane. Starts an editor process + prerender process, loads a project
+ * containing a stateful DOM card, canvas card, `unknown` card, and over-limit card (four fixed cards
+ * in `src/cards/_probe/r6.tsx`), adapting to Ji-2 snapshot removal where "ready index only sends stream
+ * layer, frame store only writes streams/<streamKey>":
  *
- *   1. SSE 第一条是 reset,随后收到 done 和各重卡的 stream 层;
- *   2. stream 层的 ranges 随分段生产增长;
- *   3. GET /api/frames/stream/${key}/manifest 取到的清单 JSON 与磁盘 streams/<key>/stream.json 一致;
- *   6. clip-unknown 出现在 clip-unknown/stream(streamKind === 'below' 依赖下层的流),
- *      clip-stateful 和 clip-canvas 出现在单卡 stream 层;且帧库下没有 controls-html / controls-local 目录;
- *   7. 杀掉预渲染进程再自动拉起后:没人发 preload,编辑器进程照会话版本登记重放 preload,
- *      服务端重放会话版本后先发 reset(localRev: 1) 再通过 streamProducer().rescan() 重建全部 stream 层;
- *   9. 在所有位置都判轻的卡不产流、不进就绪索引(pinned 渲染 9)——
- *      给一张 stateful 卡写一条便宜的成本记录,它就从预渲染集合里掉出去;删掉它的 streams/<key> 目录后重跑,判轻的目录不长回来;
- *  10. 环境指纹进结果键(M4,契约 E.7):诊断里的指纹是 16 位十六进制,
- *      每个带 snapshotKey 的 control 满足 snapshotKey === resultKeyOf(contentKey, envFingerprint)。
+ *   1. The first SSE message is reset, followed by done and stream layers for each heavy card;
+ *   2. ranges in stream layer grow as segments are produced;
+ *   3. Manifest JSON fetched via GET /api/frames/stream/${key}/manifest matches streams/<key>/stream.json on disk;
+ *   6. clip-unknown appears in clip-unknown/stream (streamKind === 'below' below-dependent stream),
+ *      clip-stateful and clip-canvas appear in single-card stream layer; and there are no
+ *      controls-html / controls-local directories under frame store;
+ *   7. After killing the prerender process and having it automatically restart: no one sends preload,
+ *      the editor process replays preload per session revision registry, and the server replays the
+ *      session revision, first sending reset (localRev: 1) and then rebuilding all stream layers via streamProducer().rescan();
+ *   9. Cards classified as light in all positions do not produce streams and do not enter the ready
+ *      index (pinned render 9): write a cheap cost record for a stateful card and it drops out of the
+ *      prerender set; delete its streams/<key> directory and rerun, and the classified-as-light
+ *      directory does not grow back;
+ *  10. Environment fingerprint enters result key (M4, contract E.7): the fingerprint in diagnostics
+ *      is 16-character hex, and every control with snapshotKey satisfies snapshotKey === resultKeyOf(contentKey, envFingerprint).
  *
- * 成本记录也隔离在临时目录(`PROMPTCUT_DATA_DIR`),不碰仓库的 `out/card-costs.json`。
+ * Cost records are also isolated in a temporary directory (`PROMPTCUT_DATA_DIR`), without touching
+ * the repo's `out/card-costs.json`.
  *
  *   node scripts/probes/ready-index-probe.mjs [--port 5231] [--out <dir>] [--keep]
  *
- * `--keep-out` 保留本次临时产物、不保留 dev server;`--keep` 是旧调试开关。
- * 默认成功后清理,失败会留一份限长且过滤敏感值的诊断证据。
+ * `--keep-out` preserves current temporary artifacts but not dev server; `--keep` is a legacy debug flag.
+ * Cleans up by default on success; on failure, leaves length-limited and sensitive-value-filtered diagnostic evidence.
  *
- * 耗时只记录(verification.md「耗时只记录,不当闸门」):这支探针没有时间门槛;每一处等待等到的用时记进
- * `TIMINGS` 行与结果的 `timings`。等待时限只为防卡死,不到 120 秒的一律按 120 秒等;等到头没有结果仍算不过。
+ * Duration recorded only (verification.md "duration recorded only, not used as gate"): this probe has
+ * no time gate; elapsed time for each wait is recorded into the `TIMINGS` line and `timings` in the
+ * result. Wait timeouts exist only to prevent hanging; any timeout under 120s waits for 120s; timing
+ * out with no result is still counted as failure.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -47,10 +55,10 @@ const EDITOR = `http://127.0.0.1:${PORT}`;
 const EXPORT_DIR = path.resolve(args.includes('--out') ? args[args.indexOf('--out') + 1]
   : path.join(os.tmpdir(), `pc-r6-probe-${Date.now().toString(36)}`));
 const LIBRARY = path.join(EXPORT_DIR, 'frame-library');
-/** 成本记录（`card-costs.json`）也落在临时目录里，见 `startEditor` */
+/** Cost records (`card-costs.json`) also land in the temporary directory; see `startEditor` */
 const DATA_DIR = path.join(EXPORT_DIR, 'data');
 fsSync.mkdirSync(DATA_DIR, { recursive: true });
-/** ⑨ 自己写的成本记录挂在这个假 device 上（服务端只当不透明字符串用） */
+/** (9) Self-written cost record is attached to this fake device (server treats it only as an opaque string) */
 const PROBE_DEVICE = 'r6-probe-device';
 
 const fails = [];
@@ -77,7 +85,7 @@ function serviceErrorExcerpt() {
 
 const SESSION = `r6-${Date.now().toString(36)}`;
 const FPS = 30;
-/** 2 秒 = 60 帧。第四张卡从 1 秒起 —— 它的挂载帧把前三张卡切成两段(C4 的「区间」) */
+/** 2 seconds = 60 frames. The fourth card starts at 1 second: its mount frame splits the first three cards into two segments (C4's "ranges"). */
 const PROJECT = {
   id: `r6-probe-${SESSION}`, name: 'R6 data plane probe', width: 1920, height: 1080, fps: FPS, duration: 2,
   themeId: 'dark', camera3dFov: 50, media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
@@ -96,9 +104,10 @@ const json = async (url, init) => {
 };
 const postJson = (url, body) => json(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
-/** 等一个条件成立;超时回 false(探针自己判,不抛) */
+/** Wait for a condition to hold; return false on timeout (probe decides itself, does not throw). */
 async function until(label, fn, timeoutMs = 120000, everyMs = 300) {
-  // 等待时限只为防卡死(verification.md「耗时只记录,不当闸门」):不到 WAIT_FLOOR_MS 的一律提到它;等到的用时只记录
+  // Wait timeout is only to prevent hangs (verification.md "duration is only recorded, not used as a gate"):
+  // anything below WAIT_FLOOR_MS is bumped up to it; elapsed time waited is only recorded
   const startedAt = Date.now();
   const deadline = startedAt + Math.max(timeoutMs, WAIT_FLOOR_MS);
   for (;;) {
@@ -111,8 +120,8 @@ async function until(label, fn, timeoutMs = 120000, everyMs = 300) {
 }
 
 /**
- * SSE 读客户端。不用 `EventSource`(Node 上要实验开关),直接读 body 流 ——
- * 探针要的是「第一条是不是 `reset`」这种顺序,自己解析最清楚。
+ * SSE read client. Do not use `EventSource` (requires experimental flag on Node), read body stream directly:
+ * the probe needs ordering like "whether the first message is `reset`", parsing it directly is clearest.
  */
 function openReady(base, onMessage, session = SESSION) {
   const controller = new AbortController();
@@ -133,7 +142,7 @@ function openReady(base, onMessage, session = SESSION) {
             const message = JSON.parse(line.slice(5).trim());
             messages.push(message);
             onMessage?.(message);
-          } catch { /* 半条消息 */ }
+          } catch { /* Partial message */ }
         }
       }
     }
@@ -141,7 +150,7 @@ function openReady(base, onMessage, session = SESSION) {
   return { messages, close: () => { controller.abort(); return done; } };
 }
 
-/** 索引里某一层此刻的样子(从收到的消息里重放,和页面侧 `applyReadyMessage` 一个口径) */
+/** What a layer in the index looks like right now (replayed from received messages, same logic as `applyReadyMessage` on the page side). */
 function indexOf(messages) {
   const table = new Map();
   for (const message of messages) {
@@ -152,8 +161,8 @@ function indexOf(messages) {
   return table;
 }
 
-/** 这个工作副本没有自己的 node_modules(Node 往上走到主仓库那一份),所以按模块解析;
- *  vite 的 `exports` 不放行 `./bin/vite.js`,解析主入口再回到包根。 */
+/** This working copy has no node_modules of its own (Node walks up to the main repo's copy), so resolve by module;
+ *  vite's `exports` does not allow `./bin/vite.js`, resolve main entrypoint then back to package root. */
 function viteBin() {
   const local = path.join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js');
   if (fsSync.existsSync(local)) return local;
@@ -167,9 +176,9 @@ const editorLog = [];
 async function startEditor() {
   editor = spawn(process.execPath, [viteBin(),
     '--port', String(PORT), '--strictPort', '--host', '127.0.0.1'], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
-    // 冷缓存:产物落在一个新建的临时目录,预渲染子进程继承这个变量
-    // 成本记录也隔离到临时目录:⑨ 要自己写几条记录,不能污染仓库的 out/card-costs.json,
-    // 也不能让仓库里 R1 / R4 留下的记录影响「没有记录时按声明兜底」那一条
+    // Cold cache: outputs land in a newly created temp directory, prerender child process inherits this variable
+    // Cost records are also isolated to temp directory: (9) must write a few records itself, cannot pollute repo's
+    // out/card-costs.json, nor let records left by R1 / R4 in repo affect "fallback to declaration when no records"
     env: { ...process.env, PROMPTCUT_EXPORT_DIR: EXPORT_DIR, PROMPTCUT_DATA_DIR: DATA_DIR } });
   const keep = c => { const text = c.toString(); editorLog.push(text); if (editorLog.length > 400) editorLog.shift(); };
   editor.stdout.on('data', keep);
@@ -178,12 +187,12 @@ async function startEditor() {
 }
 function stopEditor() {
   if (!editor || editor.exitCode !== null || !editor.pid) return;
-  // 编辑器进程还拉着预渲染进程和 Chrome,只杀它会留孤儿
+  // The editor process also holds the prerender process and Chrome; killing only it will leave orphans
   if (process.platform === 'win32') spawn('taskkill', ['/PID', String(editor.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
   else editor.kill('SIGKILL');
 }
 
-/** 预渲染进程此刻的地址(它崩了会换一个新的空闲端口) */
+/** Address of the prerender process right now (it picks a new free port if it crashes). */
 const prerenderUrl = async () => {
   const info = await json(EDITOR + '/api/prerender/info');
   return info.body?.ready && info.body.url ? info.body.url : null;
@@ -195,12 +204,12 @@ try {
   out.prerender = base;
   if (!base) throw new Error('The prerender process did not start');
 
-  /* ---- 项目进镜像(编辑器进程收下、原样转发给预渲染进程) ---- */
+  /* ---- Project enters mirror (editor process receives it and forwards it as-is to prerender process) ---- */
   const pushed = await postJson(EDITOR + '/api/data/project', { session: SESSION, localRev: 1, project: PROJECT });
   check(pushed.ok, 'Project pushed to the mirror', pushed.body);
   await until('Prerender process holds this version of the project', async () => (await json(`${base}/api/data/project?session=${SESSION}&localRev=1`)).ok || null, 30000);
 
-  /* ---- 连 SSE,再开预渲染 ---- */
+  /* ---- Connect SSE, then start prerender ---- */
   const ready = openReady(base);
   await until('SSE connected and first message received', () => ready.messages.length > 0 || null, 30000);
   out.firstMessage = ready.messages[0];
@@ -209,7 +218,7 @@ try {
   const preload = await postJson(`${base}/api/frames/preload`, { session: SESSION, localRev: 1 });
   check(preload.ok, 'Prerender started', preload.body);
 
-  /* ---- ① SSE 第一条是 reset，随后收到 done 和各重卡的 stream 层 ---- */
+  /* ---- (1) First SSE message is reset, followed by done and stream layers for each heavy card ---- */
   const doneAt = await until('Received done', () => ready.messages.findIndex(m => m.type === 'done') + 1 || null, 300000);
   check(!!doneAt, '① received a done message', { doneAt });
   const hasStreamLayers = await until('Received the stream layers of each heavy card', () => {
@@ -218,7 +227,7 @@ try {
   }, 300000, 500);
   check(!!hasStreamLayers, '① received the stream layers of each heavy card (including clip-stateful, clip-canvas, clip-unknown, clip-huge)', hasStreamLayers ? [...hasStreamLayers.keys()] : []);
 
-  /* ---- ② stream 层的 ranges 随分段生产增长 ---- */
+  /* ---- (2) stream layer ranges grow with segment production ---- */
   const grew = await until('A layer\'s ranges grow as segments are produced', () => {
     const table = indexOf(ready.messages);
     const layer = table.get('clip-stateful/stream');
@@ -228,7 +237,7 @@ try {
   check(!!grew, '② the stream layer\'s ranges grow as segments are produced', grew);
   check(ready.messages.filter(m => m.type === 'layer' && m.kind === 'stream').length > 1, '② received multiple stream layers');
 
-  /* ---- ③ GET /api/frames/stream/${statefulLayer.key}/manifest 取到的清单 JSON 与磁盘一致 ---- */
+  /* ---- (3) Manifest JSON fetched via GET /api/frames/stream/${statefulLayer.key}/manifest matches disk ---- */
   const table = indexOf(ready.messages);
   const statefulLayer = table.get('clip-stateful/stream');
   if (statefulLayer) {
@@ -251,7 +260,7 @@ try {
     check(out.streamManifest.sameJson, '③ the manifest JSON fetched matches stream.json on disk', { ...out.streamManifest, diskBytes: onDisk?.length ?? null });
   } else check(false, '③ no stream layer for clip-stateful, cannot compare the manifest');
 
-  /* ---- ⑥ clip-unknown 进 below 流, stateful/canvas 进单卡流, 且无 controls-html/controls-local ---- */
+  /* ---- (6) clip-unknown enters below stream, stateful/canvas enters single-card stream, no controls-html/controls-local ---- */
   const unknownLayer = table.get('clip-unknown/stream');
   const canvasLayer = table.get('clip-canvas/stream');
   out.kinds = [...table.keys()].sort();
@@ -263,7 +272,7 @@ try {
   const controlsLocalExists = fsSync.existsSync(path.join(LIBRARY, 'controls-local'));
   check(!controlsHtmlExists && !controlsLocalExists, '⑥ no controls-html / controls-local directories under the frame store', { controlsHtmlExists, controlsLocalExists });
 
-  /* ---- ⑩ M4:环境指纹进结果键(契约 E.7「探针」) ---- */
+  /* ---- (10) M4: environment fingerprint enters result key (contract E.7 "Probes") ---- */
   const diagnostics = await json(`${base}/api/frames/diagnostics`);
   {
     const d = diagnostics.body || {};
@@ -277,13 +286,13 @@ try {
     check(bad.length === 0, '⑩ snapshotKey of plans[].controls[] === resultKeyOf(contentKey, envFingerprint), and envFingerprint is this process\'s fingerprint', bad);
   }
 
-  /* ---- ⑦ F5:杀掉预渲染进程再起来 ---- */
+  /* ---- (7) F5: kill prerender process and bring it back up ---- */
   const beforeKill = indexOf(ready.messages);
   out.layersBeforeKill = beforeKill.size;
   await ready.close();
   const oldBase = base;
   const pid = await (async () => {
-    // 预渲染进程是编辑器进程拉起来的,所以是我们自己起的那一棵。按端口找它的 PID。
+    // Prerender process was spawned by editor process, so it is the tree we started. Find its PID by port.
     const port = new URL(oldBase).port;
     const { execSync } = await import('node:child_process');
     try {
@@ -297,7 +306,7 @@ try {
   if (check(!!pid, '⑦ the PID of the prerender process can be found (it was spawned by the editor process)')) {
     if (process.platform === 'win32') spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
     else process.kill(pid, 'SIGKILL');
-    // 崩完等编辑器把它拉起来(vite-plugin-prerender 的 MAX_RESTARTS 路)
+    // After crash, wait for editor to bring it back up (MAX_RESTARTS path in vite-plugin-prerender)
     const fresh = await until('Prerender process restarts automatically', async () => {
       const next = await prerenderUrl();
       return next && next !== oldBase ? next : null;
@@ -309,9 +318,10 @@ try {
       out.afterRestartFirst = after.messages[0];
       check(after.messages[0]?.type === 'reset', '⑦ reset is received first on reconnect', after.messages[0]);
       /*
-       * **服务端自己恢复**(Item 4 方案 A):探针这里不发 preload,页面也不会发(它早就就绪了)。
-       * 编辑器进程拉起预渲染进程、补推镜像之后,照「会话版本登记」把这个会话的 preload 重放一遍 ——
-       * 会话的版本回来(reset 带 localRev 1)、card plan 重算出来,层才按键重建。
+       * **Server recovers on its own** (Item 4 Plan A): probe sends no preload here, nor will page
+       * (ready long ago). After editor process brings up prerender process and re-pushes mirror,
+       * it replays this session's preload per "session version registry": session version returns
+       * (reset with localRev 1), card plan is recomputed, and layers are rebuilt by key.
        */
       const rebuilt = await until('Index rebuilt by key and layers re-emitted (nobody sent preload)', () => {
         const t = indexOf(after.messages);
@@ -320,23 +330,25 @@ try {
       out.layersAfterRebuild = rebuilt ? [...rebuilt.keys()].sort() : null;
       check(!!rebuilt, '⑦ nobody sent preload; after the server replays, the index is rebuilt by key and the layer count is not lower than before the crash', { before: [...beforeKill.keys()].sort(), after: out.layersAfterRebuild });
       if (rebuilt) {
-        // 项目到位之前不发 layer:第一条 layer 一定在「会话版本回来」的那条 reset(localRev 1)之后
+        // Do not send layer before project is in place:
+        // the first layer must follow reset (localRev 1) when "session version returns"
         const resetIndex = after.messages.findIndex(m => m.type === 'reset' && m.localRev === 1);
         const firstLayer = after.messages.findIndex(m => m.type === 'layer');
         out.recoveryReset = resetIndex;
         check(resetIndex >= 0 && resetIndex < firstLayer, '⑦ the session version comes back first (reset carries localRev 1), then all layers are sent', { resetIndex, firstLayer });
-        // 区间和崩之前一致(扫盘是按 index.json 重建的,不是从头再产)
+        // Ranges match pre-crash state (disk scan rebuilds from index.json, not re-produced from scratch)
         const same = [...beforeKill].every(([id, layer]) => JSON.stringify(rebuilt.get(id)?.ranges ?? null) !== 'null');
         check(same, '⑦ every layer that existed before the crash is present after the rebuild', { before: [...beforeKill.keys()].sort(), after: out.layersAfterRebuild });
       }
       await after.close();
     }
   }
-  /* ---- ⑨ pinned 渲染 9:在所有位置都判轻的卡不产流、不进就绪索引 ---- */
-  // ⑦ 重启过一次,预渲染进程换了端口 —— 这里重新取一次地址
+  /* ---- (9) pinned render 9: cards classified as light everywhere produce no stream and skip ready index ---- */
+  // Restarted once in (7), prerender process changed port: fetch address again here
   const base9 = (await until('⑨ prerender process address', prerenderUrl, 60000)) || base;
   out.prerender9 = base9;
-  // 第一阶段一条成本记录都没有 → `prerenderSetOfPlan` 按声明兜底,四张 stateful 卡都在集合里。
+  // Phase 1 has no cost records at all → `prerenderSetOfPlan` falls back to declaration,
+  // all four stateful cards are in the set.
   const diag0 = await json(`${base9}/api/frames/diagnostics`);
   const plan0 = (diag0.body?.plans || []).find(p => (p.controls || []).some(c => c.clipId === 'clip-stateful'));
   out.planBefore = plan0 ? { key: plan0.key, prerenderSet: plan0.prerenderSet } : null;
@@ -350,8 +362,9 @@ try {
   const canvasDir = canvasKey ? path.join(LIBRARY, 'streams', canvasKey) : null;
   check(!!canvasDir && fsSync.existsSync(canvasDir), '⑨ when classified as heavy, clip-canvas did produce a stream directory', canvasDir);
 
-  // 给 clip-stateful 写一条「便宜的随机访问卡」记录 → 每个位置都判轻;其余三张钉死为重,
-  // 这样成本记录非空(不走声明兜底),而集合里只少了 clip-stateful 这一张。
+  // Write a "cheap random-access card" record for clip-stateful → classified as light at every position;
+  // other three pinned as heavy, so cost records are non-empty (no declaration fallback),
+  // and the set only lacks clip-stateful.
   const records = [];
   for (const control of plan0?.controls || []) {
     if (!control.costKey) continue;
@@ -370,10 +383,12 @@ try {
   }, 60000);
 
   /*
-   * 再推一版项目、再开一趟预渲染。`frameIdentity` **不看 `id` / `name`**,所以
-   * `entry.key` 和第一版是同一个(卡和片段一字没动)。后台代次按页面会话分(Item 4:owner =
-   * `session:<id>`),所以换一个会话来发 preload —— 不会走「同一个 entry 直接返回」那条早退,
-   * 而是对同一个 entry 重跑一趟:`adoptCardPlan` 按**新的 costs** 重算 `prerenderSet`,这正是要验的东西。
+   * Push another project version and start another prerender pass. `frameIdentity` **ignores `id` / `name`**,
+   * so `entry.key` is the same as in the first version (cards and clips are completely untouched).
+   * Background generation is partitioned by page session (Item 4: owner = `session:<id>`), so sending
+   * preload from a different session avoids the early return of "same entry returns directly":
+   * it re-runs a pass for the same entry: `adoptCardPlan` recalculates `prerenderSet` with **new costs**,
+   * which is exactly what we want to verify.
    */
   const SESSION_B = `${SESSION}-b`, SESSION_C = `${SESSION}-c`;
   const PROJECT_B = { ...PROJECT, id: `${PROJECT.id}-b`, name: 'R6 data plane probe (second version)' };
@@ -383,7 +398,7 @@ try {
   const preloadB = await postJson(`${base9}/api/frames/preload`, { session: SESSION_B, localRev: 1 });
   check(preloadB.ok, '⑨ second version started', preloadB.body);
 
-  // 按「clip-stateful 这张卡没被挑中」找,不按 entry.key 找(它和第一版是同一个)
+  // Look for "clip-stateful card was not picked", not by entry.key (it is identical to the first version)
   const planB = await until('Prerender set recomputed from the new costs', async () => {
     const d = await json(`${base9}/api/frames/diagnostics`);
     out.plansSeen = (d.body?.plans || []).map(p => ({ key: p.key, set: p.prerenderSet }));
@@ -396,7 +411,7 @@ try {
   check(!!planB && !planB.prerenderSet.includes('clip-stateful'), '⑨ cards classified as light are not in the prerender set', out.planAfter);
   check(!!planB && planB.prerenderSet.includes('clip-canvas'), '⑨ cards classified as heavy are still in the set', out.planAfter);
 
-  // 等生产者完成更新并移除 clip-stateful、所有在跑的编码器结束
+  // Wait for producer to finish updating and remove clip-stateful, and all running encoders to exit
   await until('Prerender producer updates its plan (without clip-stateful)', async () => {
     const d = await json(`${base9}/api/frames/diagnostics`);
     const ss = d.body?.streams?.streams || [];
@@ -404,8 +419,10 @@ try {
   }, 180000, 500);
 
   /*
-   * 「不产流」:**重算之后且生产者已卸下轻卡**才删那棵流目录。
-   * 删完再等第三版跑起来，判重的那张还在，判轻的那张目录不长回来、也不进就绪索引。
+   * "No stream produced": delete that stream directory only **after recomputation and once producer
+   * has unloaded light cards**. After deletion, wait for the third version to run: the card classified
+   * as heavy remains, while directory for the card classified as light does not grow back and does
+   * not enter ready index.
    */
   if (statefulDir) await fs.rm(statefulDir, { recursive: true, force: true });
   await delay(500);

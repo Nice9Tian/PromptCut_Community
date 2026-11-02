@@ -1,42 +1,55 @@
 /**
- * 新建与打开共享项目时的路由（契约 `docs/plan/shared-project-contract.md` 第 3 节、验收 SP5）。
+ * Routing when creating and opening shared projects (contract `docs/plan/shared-project-contract.md`
+ * section 3, acceptance check SP5).
  *
- * 浏览器与 Node 通用：只引 `client.mjs`（WebCrypto、`fetch`）与 `hosted-default.mjs`，不引任何 Node 模块。
- * 浏览器不能发 UDP，所以**局域网发现由调用方注入**：Node 侧传 `lan.discover`（`server/lan/discovery.mjs` 的 `discoverLan`），
- * 浏览器侧不传，只走手填地址 `lan.manual` 与托管端（C10）。
+ * Universal across browser and Node: imports only `client.mjs` (WebCrypto, `fetch`) and
+ * `hosted-default.mjs`, importing no Node modules. Browsers cannot send UDP, so **LAN discovery is
+ * injected by caller**: Node side passes `lan.discover` (`discoverLan` in
+ * `server/lan/discovery.mjs`), browser side does not pass it, only using manually entered addresses
+ * `lan.manual` and hosted side (C10).
  *
  * - `findSharedProject({ name, hostedUrl, lan: { discover, manual, timeoutMs }, fetch })`
- *   回 `{ candidates: [{ where: 'lan' | 'hosted', base, projectId, name, mode, hostDeviceName?, asset?, via? }], errors: [{ where, reason, … }] }`：
- *   - 局域网发现限时 3 s；托管端 `GET shared/lookup?name=`；手填地址直接 `GET /docservice/shared/lookup?name=`。
- *     三路同时进行（契约写「先……再……」，两边的结果都列出、谁也不挑，同时进行只是省时间，结果相同）；
- *   - 两边都有就都列出，谁也不挑；局域网里同名的多个主机并列，带主机设备名，由用户挑；
- *   - 托管端连不上、局域网发现超时（谁也没应答），都进 `errors`，不抛异常；托管端 404 不算错误，只是没有候选；
- *   - `hostedUrl`：不给（`undefined`）按覆盖顺序取（`resolveHostedUrl`：界面值 → `PROMPTCUT_HOSTED_URL` → 缺省）；
- *     给 `null` 或 `false` 表示这一次不问托管端（局域网模式的探针用它保证全程不连托管端）；
- *   - `base` 统一写成文档服务的 http 地址、以 `/` 结尾（契约第 11 节裁定）：局域网 `http://<ip>:<端口>/docservice/`，
- *     托管端 `http://<主机>:<端口>/`。`client.mjs` 的 `buildAuthProtocols({ base })` 直接收；要连 WebSocket 时用 `wsBaseOf(base)`；
- *   - 手填与发现到的局域网候选按 `base` 去重（同一地址只列一次，发现的在前）；同一项目经几块网卡被发现时，
- *     发现这一路自己只列一次（按 `projectId`，保留先见到的）。
- * - `pickRoute(result)`：只有一个候选 → `{ action: 'enter', candidate }`；多个 → `{ action: 'choose', candidates }`；
- *   没有 → `{ action: 'not-found', errors }`（「找不到」由调用方说）。
- * - `createSharedProject({ where: 'hosted' | 'lan', … })`：托管端向托管地址 `POST shared/create`；
- *   局域网向本机编辑器的文档服务 `POST /docservice/shared/create`（只有本机回环能建，M6a）。
- *   建成后编辑器开始广播（`vite-plugin-docservice.ts`，第 4 节），这里不管广播。
+ *   Returns `{ candidates: [{ where: 'lan' | 'hosted', base, projectId, name, mode, hostDeviceName?, asset?, via? }], errors: [{ where, reason, … }] }`:
+ *   - LAN discovery timeout 3 s; hosted side `GET shared/lookup?name=`; manual address directly
+ *     `GET /docservice/shared/lookup?name=`. All three paths run concurrently (the contract states
+ *     "first... then...", both sides' results are listed without preference; running concurrently
+ *     simply saves time with identical results);
+ *   - Listed on both sides if present on both, without preference; multiple hosts with the same
+ *     name on LAN are listed side-by-side with host device names for the user to choose;
+ *   - Unreachable hosted side and LAN discovery timeout (no responders) are added to `errors`
+ *     without throwing exceptions; hosted side 404 is not an error, simply having no candidate;
+ *   - `hostedUrl`: if omitted (`undefined`), resolved by override order (`resolveHostedUrl`: UI
+ *     value → `PROMPTCUT_HOSTED_URL` → default); passing `null` or `false` means skipping hosted
+ *     side this time (LAN mode probe uses this to ensure never connecting to hosted side);
+ *   - `base` is normalized to document service http address ending with `/` (contract section 11
+ *     ruling): LAN `http://<ip>:<port>/docservice/`, hosted side `http://<host>:<port>/`. Directly
+ *     accepted by `buildAuthProtocols({ base })` in `client.mjs`; use `wsBaseOf(base)` when
+ *     connecting to WebSocket;
+ *   - Manual and discovered LAN candidates are deduplicated by `base` (same address listed once,
+ *     discovered comes first); when the same project is discovered across multiple network
+ *     adapters, discovery itself lists it once (by `projectId`, keeping the first seen).
+ * - `pickRoute(result)`: single candidate → `{ action: 'enter', candidate }`; multiple →
+ *   `{ action: 'choose', candidates }`; none → `{ action: 'not-found', errors }` ("not found" is
+ *   stated by the caller).
+ * - `createSharedProject({ where: 'hosted' | 'lan', … })`: hosted side sends `POST shared/create` to
+ *   hosted address; LAN sends `POST /docservice/shared/create` to local editor document service
+ *   (creatable only via local loopback, M6a). After creation, the editor starts broadcasting
+ *   (`vite-plugin-docservice.ts`, section 4); broadcasting is not handled here.
  */
 import { lookupProject, createSharedProject as createOn } from './client.mjs';
 import { resolveHostedUrl } from './hosted-default.mjs';
 import { tr } from '../i18n.mjs';
 
 export const ROUTE_DEFAULTS = Object.freeze({
-  /** 局域网发现的时限（契约第 3 节） */
+  /** LAN discovery timeout (contract section 3) */
   LAN_TIMEOUT_MS: 3_000,
-  /** 托管端与手填地址查名字的时限 */
+  /** Timeout for looking up names via hosted side and manual addresses */
   LOOKUP_TIMEOUT_MS: 5_000,
 });
 
 const LAN_DOC_PATH = '/docservice';
 
-/** 地址 → 文档服务的 WebSocket 地址：`http:` 换 `ws:`、`https:` 换 `wss:`，路径保留、去掉末尾斜杠 */
+/** Address → document service WebSocket address: replace `http:` with `ws:`, `https:` with `wss:`, preserve path, strip trailing slash */
 export function wsBaseOf(url) {
   const u = new URL(url);
   if (u.protocol === 'http:') u.protocol = 'ws:';
@@ -46,8 +59,9 @@ export function wsBaseOf(url) {
 }
 
 /**
- * 手填的局域网地址 → 文档服务地址。收 `http://192.168.x.y:port`（编辑器地址，补 `/docservice`）、
- * 带路径的 `http://…/docservice`、`ws://…/docservice`，以及不带协议的 `192.168.x.y:port`。
+ * Manually entered LAN address → document service address. Accepts `http://192.168.x.y:port`
+ * (editor address, appends `/docservice`), `http://…/docservice` with path, `ws://…/docservice`,
+ * and `192.168.x.y:port` without protocol.
  */
 export function manualBaseOf(address) {
   let text = String(address ?? '').trim();
@@ -59,8 +73,9 @@ export function manualBaseOf(address) {
 }
 
 /**
- * 候选的 `base`（契约第 11 节裁定）：文档服务的 http(s) 地址，路径保留、以 `/` 结尾。
- * `ws://192.168.1.5:5190/docservice` → `http://192.168.1.5:5190/docservice/`；`http://h:8787` → `http://h:8787/`。
+ * Candidate `base` (contract section 11 ruling): document service http(s) address, preserving path
+ * and ending with `/`. `ws://192.168.1.5:5190/docservice` → `http://192.168.1.5:5190/docservice/`;
+ * `http://h:8787` → `http://h:8787/`.
  */
 export function candidateBaseOf(url) {
   const u = new URL(wsBaseOf(url));
@@ -70,13 +85,13 @@ export function candidateBaseOf(url) {
 
 const nameKey = (name) => String(name).normalize('NFC').toLowerCase();
 
-/** 给 `client.mjs` 用的 fetch：每个请求带时限 */
+/** fetch wrapper for `client.mjs`: each request has a timeout */
 function timedFetch(fetchImpl, ms) {
   const f = fetchImpl ?? globalThis.fetch;
   return (url, init = {}) => f(url, { ...init, signal: AbortSignal.timeout(ms) });
 }
 
-/** `lookupProject` 的失败 → `{ reason, status? }`；404 回 null（没有这个项目，不算错误） */
+/** `lookupProject` failure → `{ reason, status? }`; 404 returns null (project does not exist, not considered an error) */
 function lookupFailure(err) {
   if (err?.status === 404) return null;
   if (Number.isInteger(err?.status)) return { reason: `http-${err.status}`, status: err.status };
@@ -95,15 +110,15 @@ const TIMED_OUT = Symbol('timeout');
 
 /**
  * @param {object} options
- * @param {string} options.name 项目名（不分大小写，与服务端相同按 NFC 小写比）
+ * @param {string} options.name Project name (case-insensitive, compared via NFC lowercase same as server)
  * @param {string | null | false} [options.hostedUrl]
- * @param {string | null} [options.uiHostedUrl] 界面上改过的托管地址（`hostedUrl` 不给时参与覆盖顺序）
+ * @param {string | null} [options.uiHostedUrl] Modified hosted address from UI (participates in override order when `hostedUrl` is omitted)
  * @param {object} [options.lan]
  * @param {(o: { name: string, timeoutMs: number }) => Promise<Array<object> | { hosts: object[], errors?: object[] }>} [options.lan.discover]
  * @param {string[]} [options.lan.manual]
- * @param {number} [options.lan.timeoutMs] 缺省 3000
+ * @param {number} [options.lan.timeoutMs] Defaults to 3000
  * @param {typeof globalThis.fetch} [options.fetch]
- * @param {number} [options.lookupTimeoutMs] 缺省 5000
+ * @param {number} [options.lookupTimeoutMs] Defaults to 5000
  */
 export async function findSharedProject({
   name, hostedUrl, uiHostedUrl, lan = {}, fetch, lookupTimeoutMs = ROUTE_DEFAULTS.LOOKUP_TIMEOUT_MS,
@@ -137,7 +152,7 @@ export async function findSharedProject({
     }
     const matched = hosts.filter((h) => h && typeof h.name === 'string' && nameKey(h.name) === wanted && typeof h.docservice === 'string');
     if (hosts.length === 0 && !fatal) errors.push({ where: 'lan', reason: 'timeout' });
-    // 同一项目经几块网卡被发现：只列一次，保留先见到的（发现这一路自己的合并）
+    // Same project discovered across multiple network adapters: listed once, keeping first seen (discovery path merge)
     const byProject = new Set();
     const once = [];
     for (const h of matched) {
@@ -177,7 +192,7 @@ export async function findSharedProject({
     let url;
     try {
       url = typeof hostedUrl === 'string' && hostedUrl.trim() !== '' ? hostedUrl.trim() : resolveHostedUrl({ ui: uiHostedUrl });
-      if (!url) return null; // 这一版没有托管端，也没人填过地址：不找
+      if (!url) return null; // No hosted side in this version and no address entered: do not search
       url = wsBaseOf(url);
     } catch (err) {
       errors.push({ where: 'hosted', reason: 'bad-address', message: String(err?.message ?? err) });
@@ -196,20 +211,22 @@ export async function findSharedProject({
   const [lanFound, manualFound, hostedFound] = await Promise.all([discovered, manual, hosted]);
   const candidates = [];
   const seen = new Set();
-  // 手填与发现按 base 去重（契约第 11 节裁定），发现的在前
+  // Manual entry and discovery deduplicated by base (contract section 11 ruling), discovered comes first
   for (const c of [...lanFound, ...manualFound.filter(Boolean)]) {
     if (seen.has(c.base)) continue;
     seen.add(c.base);
     candidates.push(c);
   }
   if (hostedFound) candidates.push(hostedFound);
-  // 手填地址查到了，局域网发现的「超时」就不算数了（发现被防火墙或 AP 隔离挡住是手填存在的理由）
+  // If manual address lookup succeeds, LAN discovery "timeout" is ignored (discovery blocked by
+  // firewall or AP isolation is why manual entry exists)
   const lanOk = candidates.some((c) => c.where === 'lan');
   return { candidates, errors: lanOk ? errors.filter((e) => !(e.where === 'lan' && e.reason === 'timeout')) : errors };
 }
 
 /**
- * 打开时怎么走（SP5）：只有局域网有、只有托管有 → 直接进；两边都有（或局域网里同名多个）→ 并列供挑；都没有 → 找不到。
+ * Routing on open (SP5): only on LAN or only hosted → enter directly; present on both (or multiple
+ * with same name on LAN) → list side-by-side to choose; neither → not found.
  * @param {{ candidates: object[], errors?: object[] }} result
  */
 export function pickRoute(result) {
@@ -219,7 +236,7 @@ export function pickRoute(result) {
   return { action: 'choose', candidates };
 }
 
-/** 浏览器里本机编辑器的文档服务地址；Node 里没有 `location`，回 null */
+/** Document service address of the local editor in the browser; Node has no `location`, returns null */
 function localEditorBase() {
   const loc = globalThis.location;
   if (!loc || typeof loc.origin !== 'string' || !/^https?:/.test(loc.origin)) return null;
@@ -227,20 +244,22 @@ function localEditorBase() {
 }
 
 /**
- * 新建共享项目。
+ * Creates a new shared project.
  * @param {object} options
  * @param {'hosted' | 'lan'} options.where
  * @param {string} options.name
  * @param {'free' | 'restricted'} options.mode
  * @param {{ username: string, password: string }} options.creator
- * @param {string} [options.password] 自由进入的项目口令
- * @param {Array<{ username: string, password: string }>} [options.list] 限定进入的名单
+ * @param {string} [options.password] Project passphrase for open entry
+ * @param {Array<{ username: string, password: string }>} [options.list] List for restricted entry
  * @param {object} [options.kdf]
- * @param {string} [options.hostedUrl] 托管端地址；不给按覆盖顺序取
+ * @param {string} [options.hostedUrl] Hosted side address; if omitted, resolved by override order
  * @param {string | null} [options.uiHostedUrl]
- * @param {string} [options.lanBase] 本机编辑器的文档服务地址（Node 里必给，如 `ws://127.0.0.1:5190/docservice`；浏览器缺省当前页面的源）
+ * @param {string} [options.lanBase] Document service address of the local editor (required in Node,
+ *   e.g. `ws://127.0.0.1:5190/docservice`; browser defaults to current page origin)
  * @param {typeof globalThis.fetch} [options.fetch]
- * @returns {Promise<{ where, base, projectId, name, mode }>} 失败抛出 `client.mjs` 的错误（带 `status`、`reason`，如 409 `name-taken`）
+ * @returns {Promise<{ where, base, projectId, name, mode }>} Throws a `client.mjs` error on failure
+ *   (with `status`, `reason`, e.g. 409 `name-taken`)
  */
 export async function createSharedProject({ where, hostedUrl, uiHostedUrl, lanBase, ...rest } = {}) {
   let base;

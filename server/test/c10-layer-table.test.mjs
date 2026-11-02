@@ -1,15 +1,21 @@
 /**
- * C10 层表与环境（`docs/plan/c10-contract.md` 第 5 节；语义 `product/rendering.md`「不同环境的结果不混用」）。
- * 跑：node --test server/test/c10-layer-table.test.mjs
+ * C10 layer table and environment (`docs/plan/c10-contract.md` Section 5; semantics
+ * `product/rendering.md` "results from different environments are not mixed").
+ * Run: node --test server/test/c10-layer-table.test.mjs
  *
- *   C10-LT-01 层表带共享档的内容键与产出环境的指纹，对得上的层回这两样（页面按它找清单）；
- *   C10-LT-02 缺内容键或缺环境指纹的层（节点代码版本对不上）按「没有预渲染结果」处理：回空、不抛；
- *   C10-LT-03 层表坏了（null、字符串、没有 layers、layers 里混着坏项）：回空、不抛，好的那一层照常；
- *   C10-LT-04 层表里没有这一层：回空；
- *   C10-LT-05 一层只取一种环境：同一层在层表里出现两种指纹时，回的只有一种，且每次相同（或按对不上回空）；
- *   C10-LT-06 页面不算键：层表所在的模块不引 `resultKeyOf`、`snapshotCode`、`cardCostKey`（分布式队列设计 Q1）。
+ *   C10-LT-01 Layer table carries content key of shared tier and fingerprint of producing
+ *             environment; matching layer returns both (page uses them to find manifest);
+ *   C10-LT-02 Layers missing content key or environment fingerprint (node code version mismatch)
+ *             treated as "no prerender output": returns empty, does not throw;
+ *   C10-LT-03 Malformed layer table (null, string, missing layers, corrupted items mixed into
+ *             layers): returns empty, does not throw, valid layers work as usual;
+ *   C10-LT-04 Layer absent in layer table: returns empty;
+ *   C10-LT-05 Layer only takes one environment: when two fingerprints appear for same layer in layer
+ *             table, only one is returned, same each time (or returns empty on mismatch);
+ *   C10-LT-06 Page does not compute keys: module where layer table resides does not import
+ *             `resultKeyOf`, `snapshotCode`, `cardCostKey` (distributed queue design Q1).
  *
- * 假设见 `c10-kit.mjs` 的 K4。实现不在时整组 skip。
+ * Assumptions see K4 in `c10-kit.mjs`. Skip entire group when implementation is absent.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

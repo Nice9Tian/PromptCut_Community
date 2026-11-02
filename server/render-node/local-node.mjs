@@ -6,71 +6,95 @@ import { LOCK_IDLE_TAKEOVER_MS, QUEUE_DEFAULTS } from '../render-queue/constants
 import { exportIndexOf, isExportOnlyPlan } from './export-plan.mjs';
 
 /**
- * 本机渲染节点的编排(分布式预渲染 M3,契约 `docs/plan/render-queue-contract.md` D 节)。
+ * Local render node arrangement (distributed prerender M3, contract
+ * `docs/plan/render-queue-contract.md` Section D).
  *
- * 生产编排模块:把节点会话(`session.mjs`)、切分(`split.mjs`)、细任务编排(`task-runner.mjs`)和注入进来的三样东西串起来:
+ * Production arrangement module: strings together node session (`session.mjs`), splitting
+ * (`split.mjs`), fine-grained task arrangement (`task-runner.mjs`), and three injected items:
  *
- *   endpoint  到队列的一条连接(进程内是环回端点,M5 起是 WebSocket 适配层)
- *   executor  真正干活的:算计划、渲染一段
- *   sink      产物库:先推送、确认收全,再报完成(设计 4.4,语义 `mechanism/asset-service.md`)
+ *   endpoint  A connection to the queue (in-process loopback endpoint, WebSocket adapter layer
+ *             starting from M5)
+ *   executor  The actual worker: computes plans, renders a segment
+ *   sink      Artifact store: push first, confirm fully received, then report complete (design 4.4,
+ *             semantics `mechanism/asset-service.md`)
  *
- * 只认这些注入接口,不引网络、不碰文件系统、不读环境变量、不开计时器,也不认识任何真实存储。
- * 环回传输、假执行器、假产物库只在 `server/test/`(仅供测试与进程内集成),生产代码不得引用。
- * 节拍由调用方驱动:按间隔调 `tick()`。
+ * Only recognizes these injected interfaces; does not import network, does not touch the file
+ * system, does not read environment variables, does not start timers, and does not recognize any
+ * real storage. Loopback transport, mock executor, and mock artifact store exist only in
+ * `server/test/` (for testing and in-process integration only); production code must not import them.
+ * Ticks are driven by caller: call `tick()` at intervals.
  *
- * # 认领到任务之后
+ * # After claiming a task
  *
- * 开工先同步报一次进度 0,让队列的停滞规则也管得到卡死、从不报进度的执行器。
+ * Before starting work, synchronously report progress 0 once, so that queue stall rules also cover
+ * frozen executors that never report progress.
  *
- *   plan    executor.plan → splitPlan → task.publish 细任务(带 reqId)→ 等同一 reqId 的
- *           task.published → (有 card-locked 就照锁重切重发)→ complete 这个 plan
- *           (带片段清单的计划任务:预渲染集合换成它的片段清单;流只按清单里的片段切;预渲染重试计划(backfill)不切流、细任务标 backfill,见 `listPlanOverrides`)
- *   细任务   sink.has 为真就直接 complete(dedup,带 sink.resultFor 的清单);否则 executor.render →
- *            sink.put → 收全才 complete(带 put 回的清单),没收全 fail(可重试)。
- *            sink 收到的 ref 带任务的 input 与 requires(契约 J.3)。这一段在同构的 `task-runner.mjs` 里
- *            (M7 D11:页面的纯浏览器节点共用,不牵进 split.mjs 与 node:crypto),行为与原来相同
- *   M7       plan 的认领回包带 `browserFingerprints`(D1)时交给切分,浏览器可做的卡另出一份;
- *            切分完成后把最终发布成功的细任务交给 `executor.afterSplit`(可选,写层表 v 3,D12);
- *            `takeoverLocked` 收到发布回包里锁的描述 `{ lockIdleMs, lockedByProfile, lockUndone }`(D2),
- *            pc 与独立渲染主机传 `idleLockTakeover`
- *   出错     fail,`error.retryable === false` 才不可重试
+ *   plan    executor.plan → splitPlan → task.publish fine-grained tasks (with reqId) → wait for
+ *           task.published with the same reqId → (if card-locked, re-split and resend according to
+ *           lock) → complete this plan (plan tasks with a clip manifest: prerender set is replaced
+ *           with its clip manifest; streams are only split by clips in the manifest; prerender
+ *           retry plans (backfill) do not split streams, fine-grained tasks are marked backfill,
+ *           see `listPlanOverrides`)
+ *   fine-grained task  If sink.has is true, directly complete (dedup, with sink.resultFor
+ *           manifest); otherwise executor.render → sink.put → complete only when fully received
+ *           (with manifest returned from put), fail if not fully received (retryable). ref received
+ *           by sink includes task input and requires (contract J.3). This section is in isomorphic
+ *           `task-runner.mjs` (M7 D11: shared by pure browser nodes in pages, without pulling in
+ *           split.mjs and node:crypto), behavior remains the same as before
+ *   M7      When claim response for plan includes `browserFingerprints` (D1), hand over to
+ *           splitting, producing another copy for cards the browser can do; after splitting
+ *           completes, pass fine-grained tasks that were ultimately published successfully to
+ *           `executor.afterSplit` (optional, writes layer table v 3, D12); `takeoverLocked` receives
+ *           lock description `{ lockIdleMs, lockedByProfile, lockUndone }` in publish response (D2),
+ *           PC and standalone render host pass `idleLockTakeover`
+ *   error   fail, non-retryable only when `error.retryable === false`
  *
- * 发布必须先于完成:派生任务继承 plan 的用户与订阅者(契约 A.4 末段),条件是发布那一刻
- * plan 仍由本节点认领。所以等发布回包回来、确认发布已生效,才 complete(契约 F.7 第 5 条)。
+ * Publishing must precede completion: derived tasks inherit plan user and subscribers (contract
+ * A.4, last paragraph), provided that the plan is still claimed by this node at the moment of
+ * publishing. Therefore, complete only after publish response returns and publishing is confirmed
+ * effective (contract F.7 item 5).
  *
- * # 发布被锁拒绝(契约 F.7)
+ * # Publishing rejected by lock (contract F.7)
  *
- * 队列拒建被别的指纹锁定的卡,回包对应项是 `{ id, error: 'card-locked', lockedBy: X }`。
- * 这些项的锁键和 X 并进 `cardLocks` 重跑 `splitPlan`,只重发这些锁键的任务:
- * `takeoverLocked` 命中的带 `takeover` 按本节点指纹重发,其余照 X 出键。最多重来
- * `RELOCK_ROUNDS` 轮,还被拒的放弃;有过重发就报 `plan-relocked { id, lockKeys, gaveUp }`。
- * `complete` 的 `derived` 只列最终发布成功(回包项没有 `error`)的 id。
+ * The queue rejects creating cards locked by other fingerprints; corresponding response item is
+ * `{ id, error: 'card-locked', lockedBy: X }`. Merge lock keys of these items and X into `cardLocks`
+ * and rerun `splitPlan`, resending only tasks for these lock keys: items matched by `takeoverLocked`
+ * are resent with `takeover` using this node's fingerprint; the rest emit keys according to X. Retry
+ * at most `RELOCK_ROUNDS` rounds, and give up if still rejected; if any resend occurred, report
+ * `plan-relocked { id, lockKeys, gaveUp }`. `derived` in `complete` only lists ids ultimately
+ * published successfully (response item has no `error`).
  *
- * 等回包不开计时器,只由收到的消息推进:回包、带同一 reqId 的 `error`(按可重试失败处理)、
- * 中止信号(丢认领、让路、stop)。`start()` 重连时,仍持有的 plan 把在等的发布按原 reqId
- * 重发一次(发布是幂等的,合并进已有任务);回包丢了又不重连时,续约的进度停在 0,
- * 由队列的停滞规则回收。
+ * Waiting for responses does not start timers, but is driven only by received messages: responses,
+ * `error` with the same reqId (treated as retryable failure), and abort signals (lost claim, yield,
+ * stop). On `start()` reconnect, still-held plans resend pending publishes once using the original
+ * reqId (publishing is idempotent, merged into existing tasks); if responses are lost without
+ * reconnecting, lease renewal progress stays at 0 and is reclaimed by queue stall rules.
  *
- * # 「仍持有」与迟到的结果
+ * # "Still held" and late results
  *
- * 每个认领开一次「执行」(run),带自己的令牌和 AbortController。执行里每个 await 落定后,
- * 往队列发任何消息之前都要重新判一次仍持有:
+ * Each claim starts one "execution" (run), with its own token and AbortController. In execution,
+ * after each await settles and before sending any message to the queue, recheck whether it is still
+ * held:
  *
- *   没有 stop、本次执行没被中止、在跑表里的仍是这一次执行,且 `session.held()` 里有
- *   同 id、同令牌的持有
+ *   Not stopped, current execution not aborted, running table still points to this execution, and
+ *   `session.held()` has a hold with the same id and same token
  *
- * 判完到发消息之间不 await,中间不会插进别的消息。会话的 `complete` / `fail` / `progress`
- * 用的是会话**此刻**持有的令牌,所以「令牌相同」这一条保证旧的执行绝不会拿新令牌去完成任务:
- * 同一 id 被本节点重新认领到新令牌时,旧的执行已经被 `onLost` 中止,而且它的令牌对不上。
- * 判不过就丢弃结果、报 `discarded`,不发任何消息。已经推到产物库的产物不回收:按内容寻址,
- * 下一个认领者查 `has` 会直接完成。
+ * No await between check and message send, so no other message can intervene. Session `complete` /
+ * `fail` / `progress` uses the token held by the session **at this moment**, so the "same token"
+ * rule guarantees an old execution will never complete a task with a new token: when the same id is
+ * reclaimed by this node under a new token, the old execution has already been aborted by `onLost`
+ * and its token does not match. If the check fails, discard the result and report `discarded` without
+ * sending any message. Artifacts already pushed to artifact store are not reclaimed:
+ * content-addressed, so the next claimer checking `has` will complete directly.
  *
- * `start(resume)` 只接续本实例在跑表里、令牌相同的项:接续只用于同一实例的重连。
+ * `start(resume)` only resumes items in the running table of this instance with matching tokens:
+ * resume is only used for reconnects of the same instance.
  *
- * 对注入接口的每次等待都和中止信号赛跑:执行器或产物库不理会中止、一直不返回,这次执行也会
- * 在中止时落定(`settled()` 不会被卡死的执行器拖住),之后它再返回什么都被丢弃。
+ * Every wait on an injected interface races with the abort signal: if executor or artifact store
+ * ignores abort and never returns, this execution still settles on abort (`settled()` will not be
+ * held up by a stuck executor), and whatever it returns afterwards is discarded.
  *
- * @typedef {object} PlanContext  executor.plan 的结果,原样喂给 splitPlan(契约 B.4、F.2)
+ * @typedef {object} PlanContext Result of executor.plan, fed as-is to splitPlan (contracts B.4, F.2)
  * @property {string} entryKey
  * @property {object[]} cardPlan
  * @property {Set<string>} [prerenderSet]
@@ -81,42 +105,51 @@ import { exportIndexOf, isExportOnlyPlan } from './export-plan.mjs';
  * @property {(control: object) => boolean} [isUserCard]
  * @property {(control: object) => boolean} [isGraphCard]
  * @property {Map<string, string> | Record<string, string>} [cardLocks]
- *   卡片级指纹锁(契约 F.2):锁键 `<kind>:<input.contentKey>` → 锁指纹。被别的指纹锁定的卡
- *   按锁指纹出键,剩余帧只给同指纹的节点
+ *   Per-card fingerprint lock (contract F.2): lock key `<kind>:<input.contentKey>` → lock
+ *   fingerprint. Cards locked by other fingerprints emit keys according to the lock fingerprint,
+ *   and remaining frames are only given to nodes with the same fingerprint
  * @property {boolean | Set<string> | ((lockKey: string) => boolean)} [takeover]
- *   要接手哪些被别的指纹锁定的卡:按本节点指纹出键,任务带 `takeover: true`
+ *   Which cards locked by other fingerprints to take over: emit keys according to this node's
+ *   fingerprint, task includes `takeover: true`
  * @property {string | null} [localMedia]
- *   本地档能力闸(M6c X2):这一版项目里有没有内容哈希的素材时,发布方的 nodeId。`usesLocalMedia` 判真的
- *   细任务写 `requires.localMedia`,只有那个节点能认领
- * @property {(control: object) => boolean} [usesLocalMedia]  哪些 control 的输入用到这些素材(缺省全部)
+ *   Local tier capability gate (M6c X2): publisher nodeId when this project revision contains
+ *   assets without content hashes. Fine-grained tasks where `usesLocalMedia` returns true set
+ *   `requires.localMedia`, which only that node can claim
+ * @property {(control: object) => boolean} [usesLocalMedia]
+ *   Which control inputs use these assets (all by default)
  *
- * @typedef {object} Executor  执行器(契约 D.1)
+ * @typedef {object} Executor Executor (contract D.1)
  * @property {(planTask: object, opts: { signal: AbortSignal }) => Promise<PlanContext>} plan
- *   算这一版项目的计划。planTask 是 TaskView
+ *   Computes the plan for this project revision. planTask is TaskView
  * @property {(task: object, opts: { signal: AbortSignal, progress: (done: number) => void }) => Promise<unknown>} render
- *   渲染一段。task 是 TaskView;progress(done) 报进度;返回的 artifacts 不透明,原样交给 sink.put。
- *   抛出的错误带 `retryable === false` 时按不可重试处理,否则可重试
+ *   Renders a segment. task is TaskView; progress(done) reports progress; returned artifacts are
+ *   opaque and passed as-is to sink.put. Errors thrown with `retryable === false` are treated as
+ *   non-retryable, otherwise retryable
  * @property {(planTask: object, info: { tasks: object[], derived: string[] }) => unknown} [afterSplit]
- *   (M7 D12)切分完成、发布回包都回来之后调一次,`tasks` 是最终发布成功的细任务(TaskInput)。不等它,出错只记事件
+ *   (M7 D12) Called once after splitting completes and all publish responses return; `tasks` are the
+ *   fine-grained tasks (TaskInput) ultimately published successfully. Does not wait for it; errors
+ *   only log events
  *
  * @typedef {object} SinkRef
  * @property {string} resultKey
  * @property {'snapshot' | 'stream'} kind
- * @property {'shared' | 'local' | null} tier   流任务是 null
+ * @property {'shared' | 'local' | null} tier Stream tasks are null
  * @property {{ unit: string, from: number, to: number }} range
- * @property {object} [input]      任务的 input,原样(契约 J.3;C6.2 第 11 节第 3 条)
- * @property {object} [requires]   任务的 requires,原样
+ * @property {object} [input] Task input, as-is (contract J.3; C6.2 Section 11 item 3)
+ * @property {object} [requires] Task requires, as-is
  *
- * @typedef {object} Sink  产物库(契约 D.1;M5 起由素材服务实现)
- * @property {(ref: SinkRef) => Promise<boolean>} has   这一段是否已经收全
+ * @typedef {object} Sink Artifact store (contract D.1; implemented by asset service starting from M5)
+ * @property {(ref: SinkRef) => Promise<boolean>} has Whether this segment has been fully received
  * @property {(entry: SinkRef & { artifacts: unknown, meta: { taskId: string, nodeId: string, token: number } }) => Promise<{ complete: boolean, result?: object }>} put
- *   推送一段;`complete !== true` 表示没收全。meta 供记账(设计第 7 节「节点信任」)。
- *   回包带 `result`(任务清单)时,展开进 `task.complete` 的结果(契约 J.3)
+ *   Pushes a segment; `complete !== true` indicates not fully received. meta is for accounting
+ *   (design Section 7 "Node trust"). When response includes `result` (task manifest), spreads into
+ *   `task.complete` result (contract J.3)
  * @property {(ref: SinkRef) => Promise<object | null>} [resultFor]
- *   `has` 回 true 之后取这一段的清单(C6.4 第 3 节);去重完成时展开进结果。没有这个方法、
- *   回 null 或抛错时,只带 `{ ranges, dedup: true }` 完成(契约 J.10)
+ *   Fetches manifest of this segment after `has` returns true (C6.4 Section 3); spreads into result
+ *   on dedup completion. If this method is absent, returns null, or throws, completes with only
+ *   `{ ranges, dedup: true }` (contract J.10)
  *
- * @typedef {object} Endpoint  到队列的一条连接
+ * @typedef {object} Endpoint A connection to the queue
  * @property {(message: object) => void} send
  * @property {(handler: (message: object) => void) => void} onMessage
  *
@@ -126,22 +159,28 @@ import { exportIndexOf, isExportOnlyPlan } from './export-plan.mjs';
  * @property {(reason?: string) => number} yieldAll
  * @property {() => void} stop
  * @property {() => string[]} running
- * @property {() => { id: string, kind: string, phase: string }[]} occupying  还没走到推送的执行(契约 A.12〔裁〕)
+ * @property {() => { id: string, kind: string, phase: string }[]} occupying
+ *   Executions that have not yet reached push (contract A.12 [ruling])
  * @property {() => Promise<void>} settled
  * @property {ReturnType<typeof createNodeSession>} session
  */
 
 const noop = () => {};
 
-/** 发布被 card-locked 拒绝后最多重来几轮(契约 F.7 第 5 条)。 */
+/** Maximum retry rounds after publish is rejected by card-locked (contract F.7 item 5). */
 const RELOCK_ROUNDS = 2;
 
 /**
- * 锁闲置接手的判定(M7 契约 D2,第 13 节裁定):给 `createLocalNode({ takeoverLocked })` 用,pc 与独立渲染主机都传它。
- * 发布回包说这张卡锁在别的环境上时:锁定方闲置**严格超过** 30 s(`lockIdleMs > LOCK_IDLE_TAKEOVER_MS`,与本机锁库
- * `server/card-lock.mjs` 的 `CARD_LOCK_IDLE_MS` 同一个数),且锁定方这张卡还有没做完的(`lockUndone` 不是 0;
- * 没带这一项按「不知道」算,不挡)才接手 —— 语义「还缺帧、而锁定方已经有一段时间没有再产出，就用自己的指纹接手整张卡」
- * (`mechanism/rendering.md`)。回包里没有 `lockIdleMs`(旧队列)一律不接手。纯函数。
+ * Determination of lock idle takeover (M7 contract D2, Section 13 ruling): used for
+ * `createLocalNode({ takeoverLocked })`, passed by both PC and standalone render host.
+ * When publish response indicates this card is locked on another environment: take over only if
+ * locking party has been idle for **strictly more than** 30 s
+ * (`lockIdleMs > LOCK_IDLE_TAKEOVER_MS`, same value as `CARD_LOCK_IDLE_MS` in local lock store
+ * `server/card-lock.mjs`), and locking party still has unfinished work for this card
+ * (`lockUndone` is not 0; treated as "unknown" if missing, does not block): semantics: "still
+ * missing frames, and the locking party has not produced for some time, so take over the entire
+ * card with own fingerprint" (`mechanism/rendering.md`). Never take over if `lockIdleMs` is
+ * absent in response (legacy queue). Pure function.
  *
  * @param {string} lockKey
  * @param {string} lockedBy
@@ -155,8 +194,10 @@ export function idleLockTakeover(lockKey, lockedBy, info = {}) {
 }
 
 /**
- * `takeoverLocked`(布尔或 `(lockKey, lockedBy, info) => boolean`)→ 判定函数;只认 `=== true`。
- * `info` 是发布回包里这把锁的描述 `{ lockIdleMs, lockedByProfile, lockUndone }`(M7 D2;旧队列没有)。
+ * `takeoverLocked` (boolean or `(lockKey, lockedBy, info) => boolean`) → predicate function; only
+ * recognizes `=== true`.
+ * `info` is description of this lock `{ lockIdleMs, lockedByProfile, lockUndone }` in publish
+ * response (M7 D2; absent in legacy queues).
  */
 function takeoverLockedTest(takeoverLocked) {
   if (takeoverLocked === true) return () => true;
@@ -164,7 +205,7 @@ function takeoverLockedTest(takeoverLocked) {
   return () => false;
 }
 
-/** `cardLocks`(Map、普通对象或缺省)复制成 Map,再并进新的锁。 */
+/** Copies `cardLocks` (Map, plain object, or omitted) into a Map, then merges new locks. */
 function mergedLocks(cardLocks, extra) {
   const out = new Map();
   if (cardLocks != null) {
@@ -178,37 +219,67 @@ function mergedLocks(cardLocks, extra) {
 }
 
 /**
- * 带片段清单的计划任务:预渲染重试计划(c10a 契约第 17 节;(旧页面的 `backfill` 档;2026-10-07 起在线页面一律发普通优先级的清单计划,这一档没有新的发布方,留着只为认部署切换期间的老页面))与在线页面的清单计划
- * (C10 契约第 7 节、第 18 节第 9 条)。清单里的片段当重卡算键 —— 预渲染集合换成清单(与本机的判重无关)。
- * 细任务的档跟着 plan:预渲染重试计划的一律标 `backfill`,清单计划照 normal 的名次。不是带清单的 plan 时回空对象,切分照旧。
+ * Plan tasks with a clip manifest: prerender retry plan (c10a contract Section 17; (legacy page
+ * `backfill` tier; online pages always send normal-priority manifest plans starting from 2026-10-07,
+ * this tier has no new publishers and is kept only to recognize legacy pages during deployment
+ * transitions)) and online page manifest plans (C10 contract Section 7, Section 18 item 9). Clips
+ * in the manifest calculate keys as heavy cards: prerender set is replaced with the manifest
+ * (independent of local classification as heavy).
+ * The tier of fine-grained tasks follows plan: prerender retry plans are all marked `backfill`,
+ * and manifest plans follow normal ranking. Returns an empty object when not a plan with a
+ * manifest, splitting as before.
  *
- * 轨道流(`docs/plan/browser-stream-task.md` 第一处;任务书 `docs/plan/render-refactor-task.md`「甲三」):
- *   - 预渲染重试计划照旧不切流(发它的老页面不消费流);
- *   - 在线页面的清单计划:执行器给了 `browserStreamsFor`(按清单里的片段算流,`frame-pipeline.mjs` 的 `planForQueue`)时,
- *     这些流给浏览器出一份(单卡流、浏览器做得了的才出)。**切分方自己的那一份**看执行器给的 `ownListStreams`:
- *       - 为真(本机此刻能产流;托管方的渲染节点另要这个项目的「生成轨道流」开着,由执行器按项目收,`prerender-executor.mjs` 的 `plan`):单卡流连自己的那一份一起出,
- *         与浏览器那一份照 `splitPlan` 的规矩成对(`input.dual`,谁先认领谁得);
- *       - 不为真而执行器给了 `ownListSparseStreams: true`(托管方的渲染节点能产流、这个项目的「生成轨道流」关着):单卡流标 `ownSparseOnly`,
- *         切分方自己的那一份只出稀疏流任务(`splitPlan` 文件头「稀疏流任务」),浏览器那一份照常;
- *       - 都不为真(本机不能产流、旧执行器):照旧只给浏览器出(`browserOnly`),切分方自己不产。
- *     组流任何时候都只标 `browserOnly`(浏览器画不了,等于不出):组流的内容键跟着「清单里还有哪些片段」变,流任务回来时
- *     对不回这一版,层表也列不出它(`frame-pipeline.mjs` 的 `issuedStreamSpecs` 只认单卡流和依赖下层的流)。
- *     **依赖下层的流**(`kind: 'below'`,任务书「戊二」的「下层四」):照单卡流同一套开关办 —— `ownListStreams` 为真出切分方自己的那一份
- *     (稀疏、满密度两种任务),只有 `ownListSparseStreams` 时标 `ownSparseOnly`,都不为真标 `browserOnly`。浏览器那一份 `splitPlan`
- *     本来就不出(浏览器做不了:要隔离工程加差分取层),所以这种流只按切分方自己的指纹出、由切分方自己产;标了 `browserOnly` 就一份都不出。
- *     它的内容键只由目标卡和它下面的层决定,与清单里还有哪些片段无关,流任务回来时按目标卡现算一条就对得回(`prerender-executor.mjs` 的 `matchStream`)。
- *     执行器没给 `browserStreamsFor`(旧执行器、测试替身)就不切流,与原来相同。
+ * Track streams (`docs/plan/browser-stream-task.md` first occurrence; task brief
+ * `docs/plan/render-refactor-task.md` "Jia-3"):
+ *   - Prerender retry plan does not split streams as before (legacy pages that send it do not
+ *     consume streams);
+ *   - Online page manifest plans: when executor provides `browserStreamsFor` (computes streams
+ *     from clips in the manifest, `planForQueue` in `frame-pipeline.mjs`), produce a copy of these
+ *     streams for browser (single-card streams, produced only if browser can do them). **Splitter's
+ *     own copy** depends on `ownListStreams` provided by executor:
+ *       - If true (this machine can produce streams at this moment; host render nodes additionally
+ *         require "generate track streams" enabled for this project, collected per project by
+ *         executor, `plan` in `prerender-executor.mjs`): emit single-card streams together with its
+ *         own copy, paired with browser copy according to `splitPlan` rules (`input.dual`, first to
+ *         claim gets it);
+ *       - If false and executor provides `ownListSparseStreams: true` (host render nodes can produce
+ *         streams, "generate track streams" is disabled for this project): mark single-card
+ *         streams as `ownSparseOnly`, splitter's own copy emits only sparse stream tasks (file
+ *         header "Sparse stream tasks" in `splitPlan`), and browser copy proceeds as usual;
+ *       - If neither is true (this machine cannot produce streams, legacy executor): emit only for
+ *         browser as before (`browserOnly`), splitter itself does not produce.
+ *     Group streams are marked `browserOnly` at all times (browser cannot draw them, equivalent to
+ *     not emitting): content key of group streams changes with "which clips remain in the
+ *     manifest", does not match back to this revision when stream tasks return, and layer table
+ *     cannot list it (`issuedStreamSpecs` in `frame-pipeline.mjs` only recognizes single-card
+ *     streams and below-dependent streams).
+ *     **Below-dependent streams** (`kind: 'below'`, task brief "Wu-2" under "Lower layer 4"):
+ *     handled with the same switches as single-card streams: emit splitter's own copy when
+ *     `ownListStreams` is true (both sparse and full density tasks), mark `ownSparseOnly` when only
+ *     `ownListSparseStreams` is present, and mark `browserOnly` when neither is true. `splitPlan`
+ *     never emits browser copy to begin with (browser cannot do it: requires isolated project plus
+ *     differential layer extraction), so such streams are emitted only under splitter's own
+ *     fingerprint and produced by splitter itself; marking `browserOnly` emits nothing. Its
+ *     content key is determined solely by the target card and layers beneath it, independent of
+ *     which clips remain in the manifest, and can be matched back upon stream task return by
+ *     computing one on the fly for the target card (`matchStream` in `prerender-executor.mjs`).
+ *     If executor does not provide `browserStreamsFor` (legacy executor, test double), do not
+ *     split streams, same as before.
  *
- * 只为导出的清单计划(`input.exportOnly: true`,在线浏览器导出时为本页不执行的卡发的;`../export-frames.mjs`):
- *   预渲染集合是空的(不切快照)、不切轨道流,只按清单里的片段出导出位图任务(`exportStreams`,执行器的 `exportStreamsFor` 给;
- *   出不了的片段和原因在 `exportUnsupported`)。执行器没给 `exportStreamsFor`(旧执行器)时全部记成出不了(`no-executor`)。
+ * Manifest plans for export only (`input.exportOnly: true`, sent during online browser export for
+ * cards not executed on this page; `../export-frames.mjs`):
+ *   Prerender set is empty (does not split snapshots) and does not split track streams; only emits
+ *   export bitmap tasks (`exportStreams`, provided by executor's `exportStreamsFor`) according to
+ *   clips in the manifest; unsupported clips and reasons are in `exportUnsupported`. When executor
+ *   does not provide `exportStreamsFor` (legacy executor), records all as unsupported (`no-executor`).
  */
 export function listPlanOverrides(task, plan) {
   if (!isListPlan(task)) return {};
   const clips = Array.isArray(task.input?.clips) ? task.input.clips.filter(id => typeof id === 'string' && id) : [];
   if (isExportOnlyPlan(task)) {
     let found = null;
-    // `input.exportSalt`:页面上一次失败之后重新导出带的标识,导出键跟着换(`../export-frames.mjs` 的 `exportSaltOf`)
+    // `input.exportSalt`: identifier carried when re-exporting after a previous page failure,
+    // export key changes accordingly (`exportSaltOf` in `../export-frames.mjs`)
     if (typeof plan?.exportStreamsFor === 'function') { try { found = plan.exportStreamsFor(new Set(clips), task.input?.exportSalt); } catch { found = null; } }
     const exportStreams = Array.isArray(found?.streams) ? found.streams.filter(s => s && typeof s === 'object') : [];
     const exportUnsupported = found ? (Array.isArray(found.unsupported) ? found.unsupported : []) : clips.map(clipId => ({ clipId, reason: 'no-executor' }));
@@ -220,7 +291,8 @@ export function listPlanOverrides(task, plan) {
     const own = plan.ownListStreams === true;
     const sparseOwn = !own && plan.ownListSparseStreams === true;
     const single = s => s.kind === 'card' && s.plane === 'local' && Array.isArray(s.clipIds) && s.clipIds.length === 1;
-    // 依赖下层的流:只有目标卡一个成员、按舞台坐标;切分方自己的那一份照单卡流同一套开关出
+    // Below-dependent streams: only one member (the target card), in stage coordinates; splitter's own
+    // copy is emitted following the same switches as single-card streams
     const below = s => s.kind === 'below' && s.plane === 'stage' && Array.isArray(s.clipIds) && s.clipIds.length === 1;
     const ownable = s => single(s) || below(s);
     try {
@@ -231,7 +303,7 @@ export function listPlanOverrides(task, plan) {
   return { prerenderSet: new Set(clips), streams, lane: backfill ? 'backfill' : 'normal' };
 }
 
-/** 发布回包里一把锁的描述(M7 D2):没有的项不带 */
+/** Description of a lock in publish response (M7 D2): omitted if not present */
 function lockInfoOf(result) {
   const info = {};
   for (const k of ['lockIdleMs', 'lockedByProfile', 'lockUndone']) if (result?.[k] !== undefined) info[k] = result[k];
@@ -241,8 +313,9 @@ function lockInfoOf(result) {
 /**
  * @param {object} options
  * @param {string} options.nodeId
- * @param {string} [options.publisherId]  缺省等于 nodeId;切分出的细任务以它发布
- * @param {object} options.node           契约 B.2 的节点描述
+ * @param {string} [options.publisherId]  Defaults to nodeId; fine-grained tasks split out are
+ *   published with it
+ * @param {object} options.node           Node description from contract B.2
  * @param {Endpoint} options.endpoint
  * @param {() => number} options.now
  * @param {() => number} [options.random]
@@ -250,15 +323,20 @@ function lockInfoOf(result) {
  * @param {number} [options.maxConcurrent]
  * @param {object} [options.constants]
  * @param {string[] | 'all'} [options.projects]
- * @param {string} [options.codeVersion]  切分细任务时写进 requires.codeVersion
+ * @param {string} [options.codeVersion]  Written to requires.codeVersion when splitting fine-grained
+ *   tasks
  * @param {Executor} options.executor
  * @param {Sink} options.sink
  * @param {boolean | ((lockKey: string, lockedBy: string, info: object) => boolean)} [options.takeoverLocked]
- *   发布被 card-locked 拒绝时要不要接手(契约 F.7):缺省 false,照锁定方的指纹重发;pc 与独立渲染主机传
- *   `idleLockTakeover`(M7 D2)
- * @param {(event: object) => void} [options.onEvent]  诊断用
- * @param {(task: object, info: { held: number }) => boolean} [options.canClaim]  这个任务此刻能不能开工(会话认领前过一遍;独立渲染主机用,契约 A.12〔裁〕)
- * @param {() => number} [options.claimLimit]  此刻最多持有几项(认领闸;缺省恒为 maxConcurrent,见 session.mjs)
+ *   Whether to take over when publication is rejected with card-locked (contract F.7): defaults to
+ *   false, resend using locking party's fingerprint; pc and standalone render host pass
+ *   `idleLockTakeover` (M7 D2)
+ * @param {(event: object) => void} [options.onEvent]  For diagnostics
+ * @param {(task: object, info: { held: number }) => boolean} [options.canClaim]  Whether this task
+ *   can start right now (checked once before session claim; used by standalone render host,
+ *   contract A.12 [ruling])
+ * @param {() => number} [options.claimLimit]  Maximum items held at this moment (claim gate; always
+ *   defaults to maxConcurrent, see session.mjs)
  * @returns {LocalNode}
  */
 export function createLocalNode({
@@ -280,26 +358,30 @@ export function createLocalNode({
   canClaim,
   claimLimit,
 }) {
-  /** 在等回包的发布:reqId → { run, message, resolve, reject } */
+  /** Publications awaiting responses: reqId → { run, message, resolve, reject } */
   const publishes = new Map();
   let publishSeq = 0;
-  /** 队列认不认稀疏流任务(`node.welcome.sparseStreams`;旧队列不带):为真才切稀疏流任务(`splitPlan` 的 `sparseStreams`) */
+  /**
+   * Whether the queue recognizes sparse stream tasks (`node.welcome.sparseStreams`; omitted by older
+   * queues): only split sparse stream tasks when true (`sparseStreams` in `splitPlan`)
+   */
   let sparseStreams = false;
   let attached = false;
   const takesOverLocked = takeoverLockedTest(takeoverLocked);
 
-  // 诊断回调出错不能打断协议流程(它可能在消息处理器里被调到)
+  // Diagnostic callback errors must not interrupt protocol flow (it may be called inside message handlers)
   const emit = event => {
-    try { onEvent(event); } catch { /* 诊断回调的异常吞掉 */ }
+    try { onEvent(event); } catch { /* Swallow exceptions from diagnostic callbacks */ }
   };
 
-  // 细任务的编排在同构模块里(M7 D11);plan 的切分只在这里(要 split.mjs)
+  // Arrangement of fine-grained tasks is in isomorphic modules (M7 D11); plan splitting is only
+  // here (requires split.mjs)
   // eslint-disable-next-line prefer-const
   let session;
   const runner = createTaskRunner({ nodeId, session: () => session, executor, sink, emit, executePlan, now });
   const { holding } = runner;
 
-  // undefined 不传,让会话用它自己的缺省值
+  // Do not pass undefined, letting the session use its own default value
   const sessionOptions = { nodeId, node, send: message => endpoint.send(message), now, constants, onTask: runner.onTask, onLost: runner.onLost };
   if (random !== undefined) sessionOptions.random = random;
   if (isIdle !== undefined) sessionOptions.isIdle = isIdle;
@@ -310,16 +392,17 @@ export function createLocalNode({
   session = createNodeSession(sessionOptions);
 
   /**
-   * 发一条 `task.publish`(带本实例唯一的 reqId),等同一 reqId 的 `task.published` 回来,
-   * 回它的 `results`。同一 reqId 回的是 `error`(如 bad-message)就按可重试的错误拒绝。
-   * 不开计时器;和中止信号赛跑,中止或落定后都撤掉等待。
+   * Sends a `task.publish` (with a reqId unique to this instance) and waits for `task.published`
+   * with the same reqId to return, returning its `results`. If `error` returns for the same reqId
+   * (such as bad-message), reject with a retryable error.
+   * Do not start a timer; races with abort signal, canceling waiting after aborting or settling.
    */
   function publishAndWait(run, tasks) {
     publishSeq += 1;
     const reqId = `${publisherId}#publish-${publishSeq}`;
     const message = { type: 'task.publish', tasks, reqId };
     const waiting = () => new Promise((resolve, reject) => {
-      // 先登记再发:同步传输下回包可能在 send 返回之前就到了
+      // Register before sending: under synchronous transport, the response may arrive before send returns
       publishes.set(reqId, { run, message, resolve, reject });
       endpoint.send(message);
     });
@@ -327,27 +410,32 @@ export function createLocalNode({
   }
 
   /**
-   * 切分并发布派生任务,处理 card-locked 拒建(契约 F.7 第 5 条)。
-   * → `{ derived: 发布成功的 id, published: 发布成功的细任务(TaskInput,层表按它写,M7 D12),
-   *      relocked: 重发过的锁键(升序), gaveUp: 最后仍被拒的锁键(升序) }`。
-   * 「发布成功」= 回包项没有 `error`、状态不是 failed。
-   * 每次等回包之后仍持有才继续;不再持有时提前返回,由调用方丢弃。
+   * Splits and publishes derived tasks, handling card-locked creation rejection (contract F.7 item 5).
+   * → `{ derived: successfully published ids, published: successfully published fine-grained tasks
+   *      (TaskInput, layer table is written from it, M7 D12), relocked: resent lock keys (ascending),
+   *      gaveUp: lock keys still rejected in the end (ascending) }`.
+   * "Successfully published" = response item has no `error` and status is not failed.
+   * After waiting for each response, only continue if still held; return early when no longer held,
+   * to be discarded by caller.
    */
   async function publishDerived(run, base, ctxLocks) {
     const derived = [];
     const seen = new Set();
-    const published = new Map();   // id → TaskInput(最后一次发布成功的那一份)
+    const published = new Map();   // id → TaskInput (the copy from the last successful publish)
     const relocked = new Set();
-    const learned = new Map();   // 回包告诉我们的锁:lockKey → lockedBy,逐轮累加
+    const learned = new Map();   // Locks reported by responses: lockKey → lockedBy, accumulated round by round
     let gaveUp = [];
     let tasks = splitPlan(base);
     for (let round = 0; tasks.length > 0; round += 1) {
       const results = await publishAndWait(run, tasks);
       if (!holding(run)) break;
       const byId = new Map(tasks.map(t => [t.id, t]));
-      /** 这一轮被拒的:lockKey → { lockedBy, info } */
+      /** Rejected in this round: lockKey → { lockedBy, info } */
       const rejected = new Map();
-      /** 这一轮照别的指纹的锁发布成功、回包带着锁的描述的(M7-A10):lockKey → { lockedBy, info, ids } */
+      /**
+       * Successfully published in this round under locks with other fingerprints, where responses carry
+       * lock descriptions (M7-A10): lockKey → { lockedBy, info, ids }
+       */
       const followed = new Map();
       for (const r of Array.isArray(results) ? results : []) {
         if (r?.id == null) continue;
@@ -357,7 +445,8 @@ export function createLocalNode({
           const task = byId.get(r.id);
           const fp = task?.requires?.envFingerprint;
           const lockKey = lockKeyOf(task);
-          // 锁在别的环境上:照锁出键的(fp 不是自己的)、或已有的任务合并进来而回包带 lockedBy 的(没被拒,F.7)
+          // Locks on other environments: keyed by lock (fp is not self), or existing tasks merged in with
+          // response carrying lockedBy (not rejected, F.7)
           const lockedBy = typeof r.lockedBy === 'string' && r.lockedBy ? r.lockedBy : fp;
           if (r.lockIdleMs !== undefined && lockKey != null && typeof lockedBy === 'string' && lockedBy && lockedBy !== node?.envFingerprint) {
             const entry = followed.get(lockKey) ?? { lockedBy, info: lockInfoOf(r), ids: [] };
@@ -366,14 +455,17 @@ export function createLocalNode({
           }
           continue;
         }
-        // limit 等其它错误:没建成,不进 derived,也不做锁处理(F.7 第 4 条)
+        // limit and other errors: not created, excluded from derived, and skip lock handling (F.7 item 4)
         if (r.error !== 'card-locked') continue;
         const lockKey = lockKeyOf(byId.get(r.id));
         if (lockKey == null || typeof r.lockedBy !== 'string' || r.lockedBy === '') continue;
         rejected.set(lockKey, { lockedBy: r.lockedBy, info: lockInfoOf(r) });
       }
-      // M7-A10:照锁出键的卡(本机锁库说锁在别的环境上,发布不会被拒)同样按 D2 判接手:锁定方闲置超时、还没做完,
-      // 就当这张卡被拒,下面按本节点指纹带 takeover 重发;照锁发出去的那几份随即被队列作废,不算发布成功
+      // M7-A10: Cards keyed by lock (local lock store says locked on another environment, publish will
+      // not be rejected) are likewise evaluated for takeover per D2: if locking party idle timed out and
+      // not yet finished, treat this card as rejected, and resend below with takeover using this node's
+      // fingerprint; copies sent per lock are immediately invalidated by queue, not counted as
+      // successful publish
       for (const [lockKey, entry] of followed) {
         if (rejected.has(lockKey) || !takesOverLocked(lockKey, entry.lockedBy, entry.info)) continue;
         rejected.set(lockKey, { lockedBy: entry.lockedBy, info: entry.info });
@@ -394,32 +486,43 @@ export function createLocalNode({
       const cardLocks = mergedLocks(ctxLocks, learned);
       const takeover = lockKey => rejected.has(lockKey)
         && takesOverLocked(lockKey, rejected.get(lockKey).lockedBy, rejected.get(lockKey).info);
-      // 只重发这一轮被拒的锁键;其余任务已经发布过,不重复发
+      // Only resend lock keys rejected in this round; remaining tasks have already been published and
+      // are not resent
       tasks = splitPlan({ ...base, cardLocks, takeover }).filter(t => rejected.has(lockKeyOf(t)));
     }
     return { derived, published: [...published.values()], relocked: [...relocked].sort(), gaveUp };
   }
 
-  /** plan 任务:算计划 → 切分 → 发布(等回包)→ 交给执行器写层表 → complete。异常由 runner 收(fail) */
+  /**
+   * plan task: compute plan → split → publish (await response) → hand over to executor to write
+   * layer table → complete. Exceptions are caught by runner (fail)
+   */
   async function executePlan(run, task, ctx = {}) {
     const { id } = run;
     const { signal } = run.controller;
     const discard = () => emit({ type: 'discarded', id });
     const plan = await untilAborted(() => executor.plan(task, { signal }), signal);
     if (!holding(run)) return discard();
-    // plan 放在前面:切分节点自己的指纹、plan 与代码版本一定生效(设计 2.1);
-    // plan 带的 cardLocks / takeover 随展开原样传给切分(契约 F.2)。
-    // M7 D1:认领回包带的浏览器指纹(文档服务上本项目在线、同一用户的纯浏览器节点)交给切分
+    // Put plan first: splitting node's own fingerprint, plan, and code version definitely take effect
+    // (design 2.1); cardLocks / takeover carried by plan are passed as-is to splitting along with
+    // expansion (contract F.2).
+    // M7 D1: Browser fingerprints in claim response (pure browser nodes of the same user online for
+    // this project on document service) are handed to splitting
     const browserFingerprints = Array.isArray(ctx.browserFingerprints) ? ctx.browserFingerprints : [];
-    // 块 N:本页(同一用户)能运行哪些用户卡、素材效果卡——页面自报在清单计划的 `input.browser`,文档服务给的 `browserCardEnvFingerprints`
-    // 是「确实有这样一台在线节点」的凭据;两边对得上才给浏览器出用户卡、素材效果卡的那一份(`splitPlan` 的 `browserCards`)
+    // Chunk N: Which user cards and media effect cards this page (same user) can run: page self-reports
+    // in manifest plan's `input.browser`, and `browserCardEnvFingerprints` from document service is
+    // credential that "such an online node indeed exists"; only when both match is browser given copies
+    // for user cards and media effect cards (`browserCards` of `splitPlan`)
     const browserCards = browserCardsOf(task?.input?.browser);
     const browserCardEnvFingerprints = Array.isArray(ctx.browserCardEnvFingerprints) ? ctx.browserCardEnvFingerprints : [];
-    // 执行器按别的版本切的(项目往前走了,契约 J.15):细任务的 `source.projectRev` 写实际那一版;`derivedFrom` 仍是这个 plan
+    // Executor split by another version (project moved forward, contract J.15): fine-grained task's
+    // `source.projectRev` records the actual revision; `derivedFrom` remains this plan
     const cutBy = Number.isSafeInteger(plan?.actualRev) && plan.actualRev !== task?.source?.projectRev
       ? { ...task, source: { ...task.source, projectRev: plan.actualRev } }
       : task;
-    // 只切分、不认领细任务的节点(`planOnly`,仅供测试,filter.mjs 规则 8)不出自己的那一份流:它不会去做,出了只是多一个永远没人产的候选
+    // Nodes that only split and do not claim fine-grained tasks (`planOnly`, test only, filter.mjs
+    // rule 8) do not emit their own stream copy: they will not do it, and emitting it only adds
+    // a candidate that no one will ever produce
     const listPlan = node?.planOnly === true && (plan?.ownListStreams === true || plan?.ownListSparseStreams === true)
       ? { ...plan, ownListStreams: false, ownListSparseStreams: false } : plan;
     const base = { ...plan, planTask: cutBy, envFingerprint: node?.envFingerprint, codeVersion, constants, browserFingerprints, browserCards, browserCardEnvFingerprints, sparseStreams,
@@ -428,7 +531,8 @@ export function createLocalNode({
     if (!holding(run)) return discard();
     const { derived, published, relocked, gaveUp } = outcome;
     if (relocked.length > 0) emit({ type: 'plan-relocked', id, lockKeys: relocked, gaveUp });
-    // M7 D12:切分完成后写一次层表(每层的候选按最终出键),交给执行器;不等它、失败只记事件
+    // M7 D12: Write layer table once after splitting completes (candidates in each layer follow final
+    // emitted keys), and hand to executor; do not await it, failures only log events
     if (typeof executor.afterSplit === 'function') {
       try {
         Promise.resolve(executor.afterSplit(task, { tasks: published, derived })).catch(error => {
@@ -438,7 +542,8 @@ export function createLocalNode({
         emit({ type: 'after-split-failed', id, error: String(error?.message ?? error) });
       }
     }
-    // 只为导出的计划:把每条导出位图的键与形状随完成一起回给页面(页面从 `task.done` 读,`export-plan.mjs` 的 `exportIndexOf`)
+    // Export-only plan: return key and shape of each export bitmap to page upon completion (page reads
+    // from `task.done`, `exportIndexOf` in `export-plan.mjs`)
     const exportIndex = isExportOnlyPlan(task)
       ? exportIndexOf({ exportStreams: base.exportStreams, exportUnsupported: base.exportUnsupported, published, projectRev: cutBy?.source?.projectRev,
         segmentsPerTask: constants?.STREAM_SEGMENTS ?? QUEUE_DEFAULTS.STREAM_SEGMENTS })
@@ -469,12 +574,16 @@ export function createLocalNode({
       attached = true;
     }
     endpoint.send({ type: 'publisher.hello', publisherId });
-    // 只接续本实例真在跑、令牌也对得上的认领:别的项没有执行去完成它,接续了只会一直续约、
-    // 占住 maxConcurrent。新进程的实例在跑表是空的,等于不接续(契约 D.2〔裁〕)
+    // Only resume claims that this instance is actually running with matching tokens: other items have
+    // no execution to complete them, so resuming them only repeatedly renews leases, holding
+    // maxConcurrent. The running table of a new process instance is empty, equivalent to not resuming
+    // (contract D.2 [ruling])
     const resumable = (resume ?? []).filter(entry => entry && runner.tokenOf(entry.id) === entry.token);
     session.start(resumable);
-    // 接续下来的 plan 若还在等发布回包:旧连接上的回包不会再来,按原 reqId 重发一次。
-    // 发布是幂等的(已有的任务只合并订阅者),而且此刻 plan 仍由本节点认领,继承条件照样成立
+    // If resumed plan is still awaiting publish responses: responses on old connection will not
+    // arrive, so resend once with original reqId.
+    // Publishing is idempotent (existing tasks only merge subscribers), and at this point plan is
+    // still claimed by this node, so inheritance condition still holds
     for (const waiter of [...publishes.values()]) {
       if (holding(waiter.run)) endpoint.send(waiter.message);
     }

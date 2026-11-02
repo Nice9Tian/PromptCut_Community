@@ -1,13 +1,19 @@
 /**
- * 时间轴档测响度的逐秒曲线偶发缺点(AGENT-maint-3 第 2 项)。
+ * Timeline-tier loudness measurement per-second curve occasionally drops points (item 2 of
+ * AGENT-maint-3).
  *
- * 有一段先于时间轴结尾结束时,ffmpeg 9 的 amix 偶发给之后的帧打 NOPTS,ebur128 打出 `t: -192153584101141.06`,
- * `parseEbur128` 认不出负数,逐秒曲线在那之后缺点。修法:混音(含 atrim)之后、ebur128 之前加 `asetpts=N/SR/TB`。
+ * When a clip ends before timeline end, ffmpeg 9 amix occasionally stamps subsequent frames with
+ * NOPTS, ebur128 outputs `t: -192153584101141.06`, `parseEbur128` does not recognize negative
+ * numbers, and per-second curve drops points thereafter. Fix: add `asetpts=N/SR/TB` after mixing
+ * (including atrim) and before ebur128.
  *
- *   MNT3-L-1  参数:asetpts 在 amix / atrim 之后、ebur128 之前;不带 duration 时也有;
- *   MNT3-L-2  真 ffmpeg:同一条时间轴(四段,有两段先结束)重复 40 次,逐秒曲线每次都是 0..6、没有负的 t,
- *             汇总值与逐秒曲线每次逐字相同,并与去掉 asetpts 的改前参数里没缺点的那几次逐字相同。
- *             修前在本机实测同一配置 100 次缺点 13 次。
+ *   MNT3-L-1  Arguments: asetpts is after amix / atrim and before ebur128; present even without
+ *             duration;
+ *   MNT3-L-2  Real ffmpeg: same timeline (four clips, two end early) repeated 40 times, per-second
+ *             curve is 0..6 every time with no negative t, summary values and per-second curves are
+ *             verbatim identical every time, and verbatim identical to defect-free runs with pre-fix
+ *             arguments removing asetpts. Before fix, 13 out of 100 runs dropped points for the
+ *             same configuration on this machine.
  */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -73,7 +79,8 @@ test('MNT3-L-2 measuring a timeline on which one segment ends first, repeated 40
     fixed.add(r.all);
   }
   assert.equal(fixed.size, 1, 'The result is identical every time');
-  // 改前的参数(去掉 asetpts):挑没缺点的那几次比,汇总值与逐秒曲线逐字相同
+  // Pre-fix arguments (asetpts removed): comparing runs without missing points, summary values and
+  // per-second curve are verbatim identical
   const pre = args.map(a => a.replace(',asetpts=N/SR/TB', ''));
   let compared = 0;
   for (let i = 0; i < 10 && compared < 3; i++) {

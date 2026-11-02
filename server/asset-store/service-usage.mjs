@@ -1,22 +1,43 @@
 /**
- * 托管方渲染服务写成的块的容量记账（契约 `docs/plan/hosted-render-contract.md` 第 6 节；HR21）。
+ * Capacity accounting for chunks written by the host render service (contract
+ * `docs/plan/hosted-render-contract.md` section 6; HR21).
  *
- * 云节点上的渲染服务凭带 `sv: 'render'` 的素材票据往 `snap`、`px` 两个命名空间写预渲染产物（`asset-service.ts` 认票据里的服务名）。
- * 这些块单独记账，上限到了只拦渲染服务的写入，成员的写入不受影响。成员写的块不记、不归这里管。
+ * The render service on cloud nodes writes prerender outputs to the `snap` and `px` namespaces
+ * using asset tickets with `sv: 'render'` (`asset-service.ts` recognizes the service name in the
+ * ticket). These chunks are accounted for separately; when the cap is reached, only writes from the
+ * render service are blocked, while member writes are unaffected. Chunks written by members are not
+ * tracked and are not managed here.
  *
- * - **记账单位**：块 `{ ns, hash, size }` 与它归属的项目集合（同一块被几个项目写到，内容相同，就记几个项目）。
- *   新块在收尾成功时记；写之前它已经入库（成员写的，或渲染服务为别的项目写的）：别人写的不记，自己写过的只补项目归属；
- *   之后成员写了同一个块（内容相同，字节没有再写）：从这里摘掉，它不再「只归渲染服务」。
- * - **持久化**：`<托管数据目录>/assets/.service-usage/render.ndjson`，追加写，启动时回放成内存表；行数明显多于存活条目时启动时压缩重写。
- *   行：`{"op":"add","ns","hash","size","projectId","at"}`、`{"op":"drop-project","projectId","at"}`、`{"op":"drop-block","ns","hash","at"}`。
- * - **上限**：`min(20 GiB, 托管数据目录所在盘总容量的四分之一)`，环境变量 `PROMPTCUT_HOSTED_RENDER_CAP_BYTES` 可改（见 `serviceCapBytes`）。
- *   「在途」的新块（第一片到了、还没收尾）先占住名额，免得并发写把上限冲穿；占着的名额 2 小时没收尾就放掉。
- * - **删项目**：`dropProject(projectId)` 去掉这个项目名下的条目，回「不再被任何项目记着」的块，由调用方（`hosted/combo.mjs`）从数据层删掉。
+ * - **Accounting unit**: chunk `{ ns, hash, size }` and its set of owning projects (if the same
+ *   chunk with identical content is written by multiple projects, all those projects are
+ *   recorded). New chunks are recorded upon successful finalization; if already stored prior to
+ *   writing (written by members, or written by the render service for another project): writes by
+ *   others are not recorded, while writes by itself only backfill project ownership; if a member
+ *   writes the same chunk later (identical content, bytes not rewritten): removed from here, as it
+ *   no longer "belongs solely to the render service".
+ * - **Persistence**: `<hosted data directory>/assets/.service-usage/render.ndjson`, append-only
+ *   write, replayed into an in-memory table at startup; compacted and rewritten at startup when line
+ *   count significantly exceeds live entries. Lines:
+ *   `{"op":"add","ns","hash","size","projectId","at"}`,
+ *   `{"op":"drop-project","projectId","at"}`,
+ *   `{"op":"drop-block","ns","hash","at"}`.
+ * - **Cap**: `min(20 GiB, one-fourth of total disk capacity where hosted data directory resides)`,
+ *   configurable via environment variable `PROMPTCUT_HOSTED_RENDER_CAP_BYTES` (see
+ *   `serviceCapBytes`). "In-flight" new chunks (first piece arrived, not yet finalized) reserve
+ *   quota in advance to prevent concurrent writes from bursting past the cap; reserved quota is
+ *   released if not finalized within 2 hours.
+ * - **Project deletion**: `dropProject(projectId)` removes entries under this project and returns
+ *   chunks "no longer tracked by any project", which the caller (`hosted/combo.mjs`) deletes from
+ *   the data layer.
  *
- * 没有做的：契约第 6 节第 2 条「超过上限的九成时按最久没人在线的项目淘汰」。它的前提——清掉的块在内容库清单里还有引用时，在线页面
- * 必须按「没有产物」重新发预渲染重试——现在不成立（报告 `docs/reports/AGENT-render-service-ops.md`「容量」一节），所以这里没有淘汰。
+ * Not implemented: contract section 6 item 2 "evict by project idle longest without online users
+ * when exceeding 90% of cap". Its prerequisite: when cleared chunks still have references in the
+ * content store manifest, the online page must retry sending prerender requests treating them as
+ * "missing output": does not hold today (report `docs/reports/AGENT-render-service-ops.md` section
+ * "Capacity"), so eviction is omitted here.
  *
- * 只引 Node 内置模块与同目录的 `px-evict.mjs`（取磁盘总容量）。
+ * Only imports Node built-in modules and `px-evict.mjs` in the same directory (to get total disk
+ * capacity).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -27,19 +48,20 @@ export const SERVICE_USAGE_DEFAULTS = Object.freeze({
   capBytes: 20 * GiB,
   diskRatio: 0.25,
   reserveTtlMs: 2 * 60 * 60_000,
-  /** 日志行数超过「存活条目数 × 此倍数 + compactSlack」就在启动时压缩 */
+  /** Compact at startup when log lines exceed "live entries × this multiplier + compactSlack" */
   compactFactor: 3,
   compactSlack: 2000,
 });
 export const SERVICE_USAGE_FILE = 'render.ndjson';
 export const SERVICE_USAGE_DIR = '.service-usage';
-/** 环境变量：渲染服务产物的上限（字节），测试与排查用 */
+/** Environment variable: cap on render service outputs (bytes), for testing and troubleshooting */
 export const SERVICE_CAP_ENV = 'PROMPTCUT_HOSTED_RENDER_CAP_BYTES';
 const HASH = /^[0-9a-f]{64}$/;
 const NAMESPACES = new Set(['snap', 'px']);
 
 /**
- * 渲染服务产物的上限（字节）：环境变量优先；否则 `min(20 GiB, 盘总容量 × 1/4)`，盘容量取不到就是 20 GiB。
+ * Cap on render service outputs (bytes): environment variable takes precedence; otherwise
+ * `min(20 GiB, total disk capacity × 1/4)`, falling back to 20 GiB if disk capacity is unavailable.
  * @param {{ env?: NodeJS.ProcessEnv, diskTotal?: number | null }} [o]
  */
 export function serviceCapBytes({ env = process.env, diskTotal = null } = {}) {
@@ -59,9 +81,9 @@ const keyOf = (ns, hash) => `${ns}/${hash}`;
 
 /**
  * @param {object} p
- * @param {string} p.dir  `<托管数据目录>/assets/.service-usage`
+ * @param {string} p.dir  `<hosted data directory>/assets/.service-usage`
  * @param {number | (() => number)} p.capBytes
- * @param {string} [p.service]  记账的服务名，缺省 `render`
+ * @param {string} [p.service]  Service name for accounting, defaults to `render`
  * @param {() => number} [p.now]
  * @param {(event: string, fields?: object) => void} [p.log]
  * @param {Partial<typeof SERVICE_USAGE_DEFAULTS>} [p.options]
@@ -72,7 +94,7 @@ export function createServiceUsage({ dir, capBytes, service = 'render', now = Da
   const file = path.join(path.resolve(dir), projectScoped ? 'render-v2.ndjson' : SERVICE_USAGE_FILE);
   /** `ns/hash` → { ns, hash, size, projects: Map<projectId, at> } */
   const blocks = new Map();
-  /** `ns/hash` → { size, at }：在途的新块 */
+  /** `ns/hash` → { size, at }: in-flight new chunks */
   const reserved = new Map();
   let lines = 0;
   let writable = true;
@@ -107,12 +129,14 @@ export function createServiceUsage({ dir, capBytes, service = 'render', now = Da
   function append(rec) {
     if (!writable) return;
     try {
-      // 目录第一次要写时才建：没有渲染服务的托管端不会多出一个空目录
+      // Directory is only created on first write: hosted side without render service will not have an
+      // extra empty directory
       if (!dirMade) { fs.mkdirSync(path.dirname(file), { recursive: true }); dirMade = true; }
       fs.appendFileSync(file, `${JSON.stringify(rec)}\n`);
       lines += 1;
     } catch (err) {
-      // 记不下来也不能挡住写入：内存表照常更新，打日志；下次启动时少了这几条，只会少记（不会多删）
+      // Failure to persist must not block writes: update in-memory table as usual and log; missing these
+      // entries on next startup only undercounts (will not over-delete)
       writable = false;
       log('service-usage.write-failed', { message: String(err?.message || err) });
     }
@@ -135,7 +159,7 @@ export function createServiceUsage({ dir, capBytes, service = 'render', now = Da
       fs.renameSync(tmp, file);
       lines = keep.length;
     } catch (err) {
-      try { fs.rmSync(tmp, { force: true }); } catch { /* 没写成 */ }
+      try { fs.rmSync(tmp, { force: true }); } catch { /* Write failed */ }
       log('service-usage.compact-failed', { message: String(err?.message || err) });
     }
   }
@@ -148,7 +172,7 @@ export function createServiceUsage({ dir, capBytes, service = 'render', now = Da
       if (!t) continue;
       lines += 1;
       let rec;
-      try { rec = JSON.parse(t); } catch { continue; } // 崩溃留下的半行
+      try { rec = JSON.parse(t); } catch { continue; } // Partial line left from a crash
       if (!rec || typeof rec !== 'object') continue;
       if (rec.op === 'add') applyAdd(rec);
       else if (rec.op === 'drop-project' && typeof rec.projectId === 'string') applyDropProject(rec.projectId);
@@ -169,9 +193,9 @@ export function createServiceUsage({ dir, capBytes, service = 'render', now = Da
     projectScoped,
     file,
     capBytes: cap,
-    /** 这个服务名的写入要不要记账 */
+    /** Whether writes for this service name should be accounted for */
     accounts: (name) => name === service,
-    /** 已记账的字节数（含在途占用的 `reservedBytes` 另算） */
+    /** Accounted bytes (in-flight `reservedBytes` tracked separately) */
     usedBytes() {
       let n = 0;
       for (const b of blocks.values()) n += b.size;
@@ -183,22 +207,27 @@ export function createServiceUsage({ dir, capBytes, service = 'render', now = Da
       for (const r of reserved.values()) n += r.size;
       return n;
     },
-    /** 已记账的块数 */
+    /** Number of accounted chunks */
     blockCount: () => blocks.size,
     has: (ns, hash, projectId) => blocks.has(blockKey(ns, String(hash).toLowerCase(), projectId)),
     projectsOf(ns, hash, projectId) {
       const b = blocks.get(blockKey(ns, String(hash).toLowerCase(), projectId));
       return b ? [...b.projects.keys()] : [];
     },
-    /** 某项目名下记着多少字节（含与别的项目共有的块，各按全额计） */
+    /**
+     * Bytes accounted under a given project (including chunks shared with other projects, each counted
+     * in full)
+     */
     bytesOfProject(projectId) {
       let n = 0;
       for (const b of blocks.values()) if (b.projects.has(projectId)) n += b.size;
       return n;
     },
     /**
-     * 渲染服务要写一个新块（还没入库）：放行就占住 `size` 字节的名额，回 true；加上已记账与在途的会超过上限回 false。
-     * 同一个块第二次来（分片一片一片到）不重复占。
+     * Render service wants to write a new chunk (not yet stored): reserves `size` bytes of quota and
+     * returns true if admitted; returns false if adding to accounted and in-flight bytes would exceed
+     * cap. Does not re-reserve when the same chunk arrives a second time (chunks arriving slice by
+     * slice).
      */
     reserve(ns, hash, size, projectId) {
       const k = blockKey(ns, String(hash).toLowerCase(), projectId);
@@ -208,7 +237,10 @@ export function createServiceUsage({ dir, capBytes, service = 'render', now = Da
       reserved.set(k, { size, at: now() });
       return true;
     },
-    /** 渲染服务写成了一个块（收尾成功）：记一笔、放掉在途名额。同一个块再来只补项目归属 */
+    /**
+     * Render service wrote a chunk successfully (finalization succeeded): record it and release
+     * in-flight quota. If the same chunk arrives again, only backfill project ownership
+     */
     record({ ns, hash, size, projectId }) {
       const h = String(hash).toLowerCase();
       const k = blockKey(ns, h, projectId);
@@ -218,28 +250,34 @@ export function createServiceUsage({ dir, capBytes, service = 'render', now = Da
       applyAdd(rec);
       if (before === undefined) append(rec);
     },
-    /** 在途的名额放掉（这次写失败了） */
+    /** Release in-flight quota (this write failed) */
     release(ns, hash, projectId) {
       reserved.delete(blockKey(ns, String(hash).toLowerCase(), projectId));
     },
-    /** 别人（成员，或没有服务标记的写入）写了同一个块：它不再只归渲染服务，从这里摘掉 */
+    /**
+     * Someone else (a member, or a write without a service tag) wrote the same chunk: it no longer
+     * belongs solely to the render service, remove it from here
+     */
     disown(ns, hash, projectId) {
       const h = String(hash).toLowerCase();
       if (!applyDropBlock(ns, h, projectId)) return false;
       append({ op: 'drop-block', ns, hash: h, ...(projectScoped ? { projectId } : {}), at: now() });
       return true;
     },
-    /** 删项目：去掉这个项目名下的条目；回不再被任何项目记着的块（调用方从数据层删掉） */
+    /**
+     * Delete project: remove entries under this project; returns chunks no longer tracked by any
+     * project (caller deletes them from data layer)
+     */
     dropProject(projectId) {
       const gone = applyDropProject(projectId);
       append({ op: 'drop-project', projectId, at: now() });
       return gone;
     },
-    /** 状态（诊断用） */
+    /** Status (for diagnostics) */
     status() {
       return { service, capBytes: cap(), usedBytes: api.usedBytes(), reservedBytes: api.reservedBytes(), blocks: blocks.size, writable };
     },
-    /** 现在就压缩日志（单测用） */
+    /** Compact log now (for unit tests) */
     compact,
     lineCount: () => lines,
   };

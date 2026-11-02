@@ -1,10 +1,12 @@
 /**
- * 多用户协作共用的小部件(C6.5 的「新建共享项目」「打开共享项目」两个对话框已在 C10a 删掉,
- * `docs/plan/c10a-contract.md` 第 6 节「旧入口」;语义:项目只有一种新建入口)。留下还有用的:
- * - 托管地址:内置缺省值,界面上可改,记在本机(开始页「加入别人的项目」、项目设置「多用户协作」放云端共用);
- * - 名单编辑器(项目设置开启限定进入、成员浮层「改名单」);
- * - 局域网主机要重启编辑器的提示(项目设置放本机);
- * - 局域网查找:浏览器发不了 UDP,由本机编辑器替页面在本网段查找。
+ * Small widgets shared by multi-user collaboration (the two dialogs "New shared project" and "Open shared
+ * project" from C6.5 were deleted in C10a, `docs/plan/c10a-contract.md` section 6, "Old entry points";
+ * semantics: a project has only one way to be created). What is still useful stays:
+ * - Hosted address: a built-in default, editable in the UI and remembered on this machine (start page
+ *   "Join someone else's project", project settings "Multi-user collaboration" share it for the cloud);
+ * - List editor (project settings turning on restricted entry, member popover "Edit list");
+ * - Prompt that the LAN host must restart the editor (project settings, local);
+ * - LAN discovery: the browser cannot send UDP, so the local editor searches this subnet for the page.
  */
 import { pushToast } from "./syncManager";
 import { hosted, type LanHost } from "./sharedApi";
@@ -12,7 +14,7 @@ import { ONLINE } from "../../online/mode";
 import "./sync.css";
 import { tr } from "../../i18n/index.ts";
 
-/* ---------------- 托管地址(记在本机) ---------------- */
+/* ---------------- Hosted address (remembered on this machine) ---------------- */
 
 const HOSTED_KEY = "pc.shared.hostedUrl";
 
@@ -29,18 +31,18 @@ export function writeHostedUrl(url: string) {
     if (!url.trim() || url.trim() === hosted.DEFAULT_HOSTED_URL) localStorage.removeItem(HOSTED_KEY);
     else localStorage.setItem(HOSTED_KEY, url.trim());
   } catch {
-    /* 存不了就只在这次生效 */
+    /* If it cannot be saved, it only takes effect this time */
   }
 }
 
-/** 界面上改过的值才算「界面值」(覆盖顺序第 1 级);和缺省相同就当没改 */
+/** Only a value changed in the UI counts as a "UI value" (level 1 of the override order); if it equals the default, treat it as unchanged */
 export function uiHostedUrl(): string | null {
   const v = readHostedUrl();
   return v === hosted.DEFAULT_HOSTED_URL ? null : v;
 }
 
 
-/** 局域网模式要编辑器绑在局域网上;浏览器里重启不了编辑器,桌面壳眼下也没有重启接口(留给 C10 / 桌面壳) */
+/** LAN mode needs the editor bound to the LAN; the browser cannot restart the editor, and the desktop shell has no restart interface for now (left to C10 / the desktop shell) */
 export function LanRestartHint() {
   const cmd = "PROMPTCUT_LAN_HOST=1 npm run dev";
   return (
@@ -66,7 +68,7 @@ export function LanRestartHint() {
   );
 }
 
-/** 名单表:创建者固定第一行;下面每行可删;底部新增一行(新建对话框与「改名单」共用) */
+/** List table: the creator is fixed in the first row; every row below can be deleted; one row is added at the bottom (shared by the new dialog and "Edit list") */
 export function ListEditor(props: {
   creatorName: string;
   list: { username: string; password?: string; kept?: boolean }[];
@@ -121,7 +123,7 @@ export function ListEditor(props: {
   );
 }
 
-/** 浏览器发不了 UDP:本机编辑器替页面在本网段查找(`/api/docservice/lan-discover`) */
+/** The browser cannot send UDP: the local editor searches this subnet for the page (`/api/docservice/lan-discover`) */
 export async function discoverViaEditor({ name }: { name: string; timeoutMs: number }): Promise<{ hosts: LanHost[]; errors?: { reason: string }[] }> {
   if (ONLINE) throw new Error(tr("The online page does not search the LAN"));
   const r = await fetch(`/api/docservice/lan-discover?name=${encodeURIComponent(name)}`, { cache: "no-store" });

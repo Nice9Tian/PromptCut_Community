@@ -1,17 +1,34 @@
 /**
- * C10 用户卡与素材效果卡、置灰与离线文案、`/api` 棘轮（`docs/plan/c10-contract.md` 第 9、10、17 节）。
- * 跑：node --experimental-test-module-mocks --test server/test/c10-ui-gates.test.mjs
+ * C10 user cards and media effect cards, grayed-out and offline copy, `/api` ratchet
+ * (`docs/plan/c10-contract.md` sections 9, 10, 17).
+ * Run: node --experimental-test-module-mocks --test server/test/c10-ui-gates.test.mjs
  *
- *   C10-UI-01 表 A 的文案（顶栏五种状态、离线常驻提示、置灰悬停的模板）以原文出现在 `src/` 的非测试源文件里；
- *   C10-UI-02 「该模式暂不支持素材输入的音频素材效果卡」「该模式暂不支持自定义卡」不再出现（第 9 节：并入图标；徽标换了文字），
- *             「需要本地 PC 渲染辅助」也不再出现（2026-10-21 用户定：图标与徽标一并撤掉）；
- *   C10-UI-03 本页运行不了的用户卡、素材效果卡（内容库同步来的没载入成功的；素材效果卡；2026-10-21 起不按档另挡本页能运行的用户卡）在线时与内置重卡一样：一律按重卡（分派表判轻也一样）、
- *             选帧、报缺口、取字节；暂停态整台「已精确」时它们的快照照挂（停下不追）——2026-09-29 用户改语义，撤销原豁免；
- *   C10-UI-04 桌面（在线开关关着）用户卡、素材效果卡照常选帧，同步表不影响桌面；
- *   C10-RA-01 旧本机 `/api` 清单只减不增；已批准账号入口固定11条字面量（含 2026-10-23 的三条第三方登录），网盘导入另固定三条（2026-10-24），两桶都逐条精确、不按前缀放行，不重复。
+ *   C10-UI-01 Copy of Table A (top bar five states, offline resident notice, grayed-out hover
+ *             template) appears verbatim in non-test source files under `src/`;
+ *   C10-UI-02 "This mode does not currently support audio media effect cards with media input" and
+ *             "This mode does not currently support custom cards" no longer appear (section 9:
+ *             merged into icons; badge text changed), and "Local PC rendering assistance required"
+ *             also no longer appears ((user decision, 2026-10-21): icons and badges removed
+ *             together);
+ *   C10-UI-03 User cards and media effect cards that cannot run on this page (those synced from
+ *             content store that failed to load; media effect cards; starting 2026-10-21, do not
+ *             additionally block user cards runnable on this page by tier) when online are treated
+ *             like built-in heavy cards: always treated as heavy cards (even if dispatch table
+ *             classifies them as light), pick frames, report gaps, and fetch bytes; when the
+ *             entire stage is "exact" in pause state, their snapshots remain mounted as usual
+ *             (stopping without catching up): user changed semantics on 2026-09-29, revoking
+ *             original exemption;
+ *   C10-UI-04 On desktop (online switch is off), user cards and media effect cards pick frames
+ *             as usual; sync table does not affect desktop;
+ *   C10-RA-01 Old local `/api` manifest decreases only, never increases; approved account entry
+ *             points fixed to 11 literals (including three third-party logins from 2026-10-23),
+ *             and cloud drive import separately fixed to three (2026-10-24); both buckets are
+ *             strictly exact item-by-item, do not permit by prefix, and contain no duplicates.
  *
- * 置灰入口「点了不发请求、不露报错」要在真页面里点，归探针与验收 C10-A7（主会话），这里只核文案。
- * 假设见 `c10-kit.mjs` 的 K7、K8、K9。门不开时整组 skip。
+ * Grayed-out entry points "clicking sends no requests and shows no errors" must be clicked in real
+ * pages, belonging to probes and acceptance check C10-A7 (lead session); here only copy is verified.
+ * For assumptions, see K7, K8, and K9 of `c10-kit.mjs`. Skip the entire group when the gate is
+ * not open.
  */
 import test, { mock, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -33,7 +50,7 @@ itUi('C10-UI-02 "This mode does not yet support audio media effect cards that ta
   for (const text of DROPPED_TEXTS) assert.deepEqual(srcFilesContaining(text), [], `"${text}" is still present`);
 });
 
-/* ------------------------------------------------------------------ 用户卡、素材效果卡不发快照请求（K7） */
+/* ------------------------------------------------------------------ User cards and media effect cards do not send snapshot requests (K7) */
 
 let feed = null, registry = null, placeholder = null;
 let plan = { segments: [] };
@@ -77,14 +94,15 @@ beforeEach(async () => {
     { id: 'c10-graph-card', name: 'g', card: () => ({}), Component: () => null },
   ]);
   registry.setUserCardSources({ 'c10-user-card.tsx': '' }, { 'c10-user-card': 'c10-user-card.tsx' });
-  // 内容库同步来的用户卡:本机没有定义,只在同步表里
+  // User card synced from content store: not defined locally, only in sync table
   registry.setSyncedUserCards([{ id: 'c10-synced-card', name: 'Synced card', source: 'src/cards/user/c10-synced-card.tsx' }]);
   plan = { segments: [{ fromSec: 0, toSec: 1000, heavy: new Set(['b', 'g', 'u']) }] };
   for (const id of ['b', 'g', 'u', 's']) src.push({ type: 'layer', clipId: id, kind: 'html', key: `k-${id}`, ranges: [[0, 100]] });
   now += 10_000;
 });
 
-// 's' 是同步来的用户卡,分派表里故意不判重(表里没有它):这台设备跑不了的卡一律按重卡
+// 's' is a synced user card, intentionally not classified as heavy in dispatch table (not in
+// table): cards this device cannot run are always treated as heavy cards
 const clips = () => [card('b', 'builtin-heavy'), card('g', 'c10-graph-card'), card('u', 'c10-user-card'), card('s', 'c10-synced-card')];
 
 async function feedOnce(online, { playing = true } = {}) {
@@ -108,7 +126,7 @@ itUi('C10-UI-03 when online, user cards and media effect cards (including synced
   assert.equal(fetched.length, 0, 'Snapshot bytes are no longer fetched');
   placeholder.setOnlineBrowserMode(true);
   try {
-    // 第 150 帧不在就绪区间里:退役后 picks 仍为空
+    // Frame 150 is not in ready range: picks remains empty after retirement
     const late = feed.planFeed({ project: project(clips()), t: 5, playing: true });
     assert.deepEqual(late.heavy, ['b', 'g', 's', 'u']);
     assert.equal(late.picks.size, 0);
@@ -116,22 +134,27 @@ itUi('C10-UI-03 when online, user cards and media effect cards (including synced
   } finally {
     placeholder.setOnlineBrowserMode(false);
   }
-  // 暂停态整台「已精确」(K5 第二路互换之后):内置卡不再抑制,这台设备跑不了的卡停下不追,进 scrub 占位
+  // Entire stage is "exact" in pause state (after K5 second-channel swap): built-in cards are no
+  // longer suppressed, cards this device cannot run stop without catch-up, entering scrub placeholder
   placeholder.setOnlineBrowserMode(true);
   try {
     assert.deepEqual(feed.suppressedAt({ project: project(clips()), t: 1, playing: true }), ['b', 'g', 's', 'u'], 'Always suppressed while playing');
     feed.markAllSettled('front');
     const paused = feed.planFeed({ project: project(clips()), t: 1, playing: false });
-    // 2026-10-06(online-card-exec-contract.md 第 6 节):构建时就在包里的用户卡本页能运行,停下照内置卡追精确、不再抑制
+    // 2026-10-06 (online-card-exec-contract.md section 6): user cards bundled at build time are
+    // runnable on this page, stopping catches up to exact like built-in cards and is no longer
+    // suppressed
     assert.deepEqual(paused.scrub.sort(), ['g', 's'], 'When paused, only the cards this page cannot run still get scrub placeholders');
-    // 同步来的卡载入成功(运行状态 ready):不再一律按重,照分派表(表里没判它重)
+    // Synced card loaded successfully (runtime state ready): no longer always treated as heavy,
+    // follows dispatch table (table did not classify it as heavy)
     registry.setCardRunStates([['c10-synced-card', { state: 'ready', version: 'g1' }]]);
     assert.deepEqual(feed.suppressedAt({ project: project(clips()), t: 1, playing: true }), ['b', 'g', 'u'], 'Synced cards that can run are no longer always suppressed');
     assert.deepEqual(feed.planFeed({ project: project(clips()), t: 1, playing: false }).scrub.sort(), ['g'], 'When paused it also catches up to exact rendering');
     registry.setCardRunStates([['c10-synced-card', { state: 'missing-module', detail: 'lodash' }]]);
     assert.deepEqual(feed.suppressedAt({ project: project(clips()), t: 1, playing: true }), ['b', 'g', 's', 'u'], 'Cards that cannot run are still always suppressed');
-    // 2026-10-21 用户定「暂停时渲染出精确的帧」:不按档另挡本页能运行的用户卡(原来按档挡的开关 2026-10-22 删掉),
-    // 只有一个舞台时构建时的用户卡停下照内置卡追精确
+    // (user decision, 2026-10-21) "render exact frames when paused": do not block runnable user cards
+    // on this page by tier (switch that blocked by tier removed 2026-10-22),
+    // with only one stage, build-time user cards stop and catch up to exact like built-in cards
     assert.deepEqual(feed.planFeed({ project: project(clips()), t: 1, playing: false, single: true }).scrub.sort(), ['g', 's'], 'Single stage: build-time user cards also catch up to exact rendering when paused');
   } finally {
     placeholder.setOnlineBrowserMode(false);
@@ -156,7 +179,8 @@ itUi('C10-UI-05 on a dual stage, once a synced card changes to ready, pumpFeed a
   try {
     const p = project([card('s', 'c10-synced-card')]);
     plan = { segments: [{ fromSec: 0, toSec: 1000, heavy: new Set() }] };
-    // 初载时舞台 B 尚未报回 card-states，同步卡 s 仍属 localOnly，暂停在 t=0 时被抑制显示沙漏
+    // At initial load stage B has not reported back card-states, synced card s is still localOnly,
+    // suppressed when paused at t=0 to display hourglass
     registry.setCardRunStates([['c10-synced-card', { state: 'loading' }]]);
     assert.deepEqual(feed.suppressedAt({ project: p, t: 0, playing: false }), ['s'], 'Paused at t=0 during loading should be suppressed');
 
@@ -179,22 +203,28 @@ itUi('C10-UI-05 on a dual stage, once a synced card changes to ready, pumpFeed a
   }
 });
 
-/* ------------------------------------------------------------------ 棘轮（K9） */
+/* ------------------------------------------------------------------ Ratchet (K9) */
 
 const ratchet = ratchetGate();
-// account-binding-task.md / account-binding-contract.md：独立固定官网同源账号入口，
-// editor/ 是动态拼接的产物字面量，不能使其它 editor 子路径获得许可。
+// account-binding-task.md / account-binding-contract.md: independently pin official website
+// same-origin account entry points,
+// editor/ is a dynamically concatenated artifact literal and cannot allow other editor subpaths.
 /*
- * 网盘导入（`/api/media/storage/*`）在在线产物里**一条都不许有**，所以这一桶是空的。
+ * Cloud drive import (`/api/media/storage/*`) must have **not a single entry** in online
+ * artifacts, so this bucket is empty.
  *
- * 经过：2026-10-24 合网盘连接器时，connect / disconnect / import 三条字面量进了在线产物，
- * 我当时在这里登记了三条把门弄绿——那是治标。这些口由**本机编辑器进程**发，在线页面没有对端，
- * 本来就不该打进在线产物。同日 `claude/drive-connector` 给了治本的改法（`src/editor/io/storageImport.ts`
- * 三个函数开头内联 `if (!storageImportSupported) throw …`，在线构建里那是编译期常量 false，
- * 打包器据此把代码连同字面量一并剪掉），于是这一桶清空。
+ * Context: on 2026-10-24 when merging cloud drive connector, three literals connect / disconnect /
+ * import entered online artifacts; I registered three entries here back then to make the gate
+ * green: that was treating the symptoms. These endpoints are called by the **local editor process**;
+ * online page has no peer, and they should never have been bundled into online artifacts in the
+ * first place. On the same day `claude/drive-connector` provided a root-cause fix (inlining
+ * `if (!storageImportSupported) throw …` at the start of three functions in
+ * `src/editor/io/storageImport.ts`, which is a compile-time constant false in online builds, so
+ * the bundler prunes the code along with the literals), thus emptying this bucket.
  *
- * 空桶不是「不管」：下面的 `added` 判定把任何 `/api/media/storage/` 开头的路径都算成未许可，
- * 所以哪天它们又漏进在线产物，这道门立刻红——比登记三条更严。
+ * An empty bucket is not "ignoring it": the `added` check below treats any path starting with
+ * `/api/media/storage/` as unpermitted, so if they ever leak into online artifacts again, this
+ * gate immediately turns red: stricter than registering three entries.
  */
 const STORAGE_PATHS = [];
 
@@ -202,8 +232,11 @@ const ACCOUNT_PATHS = [
   '/api/account/cloud-agent-consent',
   '/api/account/editor/', '/api/account/editor/renew', '/api/account/editor/session',
   '/api/account/login', '/api/account/logout', '/api/account/me', '/api/account/projects',
-  // 2026-10-23 第三方登录（Google）：取开着哪几种方式（GET config）、登录与第一次注册（POST）。
-  // 和上面八条同类，都是官网账号服务的接口；`src/online/apiGuard.ts` 里逐条精确放行、方法钉死，`third-party/unlink` 不放行
+  // 2026-10-23 third-party login (Google): fetch which methods are enabled (GET config), login and
+  // initial registration (POST).
+  // In the same category as the eight items above, all being official website account service
+  // endpoints; `src/online/apiGuard.ts` allows them strictly item-by-item with fixed methods, and
+  // does not allow `third-party/unlink`
   '/api/account/third-party/config', '/api/account/third-party/login', '/api/account/third-party/register',
 ];
 test('C10-RA-03 project members has one separate exact hosted path without enlarging the /api scanner set', () => {
@@ -243,5 +276,5 @@ test('C10-RA-02 unknown accounts, restored desktop account entry points, additio
   }
   assert.throws(() => assertRatchet([...list.paths, list.paths[0]], baseline), { code: 'ERR_ASSERTION' });
   assert.throws(() => assertRatchet(list.paths, { ...baseline, accountPaths: [...ACCOUNT_PATHS, '/api/account/unknown'] }), { code: 'ERR_ASSERTION' });
-  assertRatchet(list.paths.filter((p) => p !== '/api/asset'), baseline); // 旧本机项可继续删除。
+  assertRatchet(list.paths.filter((p) => p !== '/api/asset'), baseline); // Old local items can continue to be deleted.
 });

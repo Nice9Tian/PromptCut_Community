@@ -1,19 +1,20 @@
 import { useSyncExternalStore } from "react";
 
 /**
- * AI 面板的显示偏好,模块级 store。
+ * Display preferences of the AI panel, a module-level store.
  *
- * 以前是每个 AiPanel 各自 useState 一份,多开几个分页之后,在一页里切了「详细」,
- * 别的页还是老样子,要到刷新才对齐。这两样是「这个人喜欢怎么看」,不是「这段对话」的属性,
- * 所以所有分页共用这一份;顶栏的「思考」按钮和 AI 设置里的「详细模式」开关改的都是它。
+ * Previously each AiPanel kept its own useState copy; with several tabs open, toggling "Detailed" in
+ * one page left the others unchanged until a refresh. These two are "how this person likes to view
+ * things", not properties of "this chat", so all tabs share this one copy; the top bar's "Thinking"
+ * button and the "Detailed mode" switch in AI settings both change it.
  *
- * localStorage 键名 aiViewMode / aiShowThinking 不能改:aiSessionKeys.test.mjs、
- * envReport.test.mjs 钉着它们,诊断报告也按这两个名字读。
+ * The localStorage keys aiViewMode / aiShowThinking must not be changed: aiSessionKeys.test.mjs and
+ * envReport.test.mjs pin them, and the diagnostic report also reads these two names.
  */
 
-/** 显示模式:简洁只看回复,详细连每一步工具调用一起看 */
+/** Display mode: concise shows only replies, detailed shows every tool call too */
 const VIEW_KEY = "aiViewMode";
-/** 「显示思考」是长期偏好,记在本地;默认关——思考是过程,不是结论 */
+/** "Show thinking" is a long-term preference, stored locally; off by default: thinking is process, not conclusion */
 const THINKING_KEY = "aiShowThinking";
 
 export type ViewMode = "simple" | "verbose";
@@ -61,7 +62,7 @@ export function setViewMode(next: ViewMode) {
   try {
     localStorage.setItem(VIEW_KEY, next);
   } catch {
-    /* 隐私模式下写不了,忽略 */
+    /* Cannot write in private mode, ignore */
   }
   emit();
 }
@@ -72,7 +73,7 @@ export function setShowThinking(next: boolean) {
   try {
     localStorage.setItem(THINKING_KEY, next ? "1" : "0");
   } catch {
-    /* 隐私模式下写不了,忽略 */
+    /* Cannot write in private mode, ignore */
   }
   emit();
 }

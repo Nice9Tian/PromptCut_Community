@@ -1,7 +1,9 @@
 /**
- * 停放剪辑的片段索引(`agentScopes.mjs` 末尾的 `parkedCutsIndex` / `otherCutsHint`):Agent 先读的 get_project / list_cuts / 工具回包用它把别的剪辑里的 clipId 摆出来,
- * 模型不必为了「看进」剪辑2 而 switch_cut(线上 2026-10-21 两次尝试两次 switch_cut -> update_clip -> switch_cut)。
- * 跑:node --test src/kernel/cutsIndex.test.mjs
+ * Clip index for parked cuts (`parkedCutsIndex` / `otherCutsHint` at the end of `agentScopes.mjs`):
+ * get_project / list_cuts / tool responses read by the Agent first use it to expose clipIds in
+ * other cuts, so the model does not have to switch_cut just to "look into" Cut 2 (in production
+ * on 2026-10-21, two attempts both did switch_cut -> update_clip -> switch_cut).
+ * Run: node --test src/kernel/cutsIndex.test.mjs
  */
 import test from "node:test";
 import assert from "node:assert/strict";

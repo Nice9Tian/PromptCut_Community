@@ -1,9 +1,11 @@
 /**
- * 素材服务客户端：`complete` 回 400 `incomplete` 时重问 `chunks`、补传缺的片再收尾（claude/push-incomplete，
- * 报告 `docs/reports/AGENT-push-incomplete.md`）。老的素材服务在两路同时推同一内容时会撤掉另一路已答过「收到」的片，
- * 这一步是客户端的兜底。
+ * Asset service client: when `complete` returns 400 `incomplete`, re-query `chunks`, upload
+ * missing chunks, then finalize (claude/push-incomplete, report
+ * `docs/reports/AGENT-push-incomplete.md`). When two paths push the same content concurrently,
+ * the legacy asset service drops chunks the other path had acknowledged as "received";
+ * this step is the client fallback.
  *
- * 跑：node --test server/test/asset-client-resync.test.mjs
+ * Run: node --test server/test/asset-client-resync.test.mjs
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -19,8 +21,10 @@ const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
 const CS = 8;
 
 /**
- * 假素材服务：`dropOnComplete` 次 `complete` 前把第 0 片撤掉（模拟另一路的重传撤了标记），回 400 incomplete。
- * `completeAfterChunks`：重问 chunks 时直接当作别人已收尾入库。
+ * Fake asset service: drops chunk 0 before `complete` for `dropOnComplete` times (simulating
+ * retransmission on the other path revoking the mark), returns 400 incomplete.
+ * `completeAfterChunks`: when re-querying chunks, treat directly as already finalized and stored
+ * by others.
  */
 function fakeService({ dropOnComplete = 1, completeAfterChunks = false } = {}) {
   const parts = new Map();

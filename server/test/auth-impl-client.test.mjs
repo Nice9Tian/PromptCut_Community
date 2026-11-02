@@ -1,8 +1,10 @@
 /**
- * 客户端一侧与组装层的小件（实现方自测；契约 `docs/plan/auth-contract.md` 第 6、8、11 节）：
- * ws-transport 的 `protocols()`、经文档服务取素材票据、`PROMPTCUT_SHARED_CONFIG`、按空间起实例的外壳、
- * principal 规整、本机设备信息、预渲染进程素材回退带票据。
- * 跑：node --test server/test/auth-impl-client.test.mjs
+ * Client-side and assembly layer components (implementer self-test; contract
+ * `docs/plan/auth-contract.md` sections 6, 8, 11):
+ * `protocols()` of ws-transport, fetching asset tickets via document service,
+ * `PROMPTCUT_SHARED_CONFIG`, shell starting instances by space, principal normalization, local
+ * device info, prerender process asset fallback with tickets.
+ * Run: node --test server/test/auth-impl-client.test.mjs
  */
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -47,7 +49,7 @@ test('ws-transport: protocols() is called once before each (re)connect; may be a
   ep.onOpen(() => { opens += 1; });
   await waitFor(() => opens === 1, 5000, 'first connection opened');
   assert.equal(calls, 2, 'the first protocol fetch fails, then it is fetched again after backoff');
-  // 服务端踢掉：重连时再取一次新的（nonce 只能用一次）
+  // Kicked by server: fetch a new one on reconnect (nonce can only be used once)
   for (const c of s.service.describe().conns) s.service.closeConn(c.connId, 4000, 'test');
   await waitFor(() => opens === 2, 5000, 'reconnect');
   assert.equal(calls, 3);
@@ -111,7 +113,7 @@ test('shared-config: reads the file (object or array), default device and role, 
   fs.writeFileSync(file, '{broken');
   assert.throws(() => loadSharedConfig(env), (err) => err.code === 'bad-shared-config');
 
-  // 按名字查项目、只派生一次 K
+  // Look up project by name, derive K only once
   const s = await startSharedService({ mode: 'hosted' });
   t.after(() => s.close());
   const p = await createProject(s.base, { name: 'By Name', password: 'pw' });
@@ -127,7 +129,7 @@ test('shared-config: reads the file (object or array), default device and role, 
   assert.equal(payload(first).r, 'page', 'role overrides the config');
   assert.notEqual(payload(first).nonce, payload(second).nonce, 'new nonce each time');
   assert.equal(fetches, 3, 'lookup once + challenge twice');
-  // 用第二组协议真的能进
+  // Can indeed enter using the second protocol set
   const ws = new WebSocket(s.url, second);
   await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
   ws.close();
@@ -219,7 +221,7 @@ test('prerender process asset fallback: the asset service on another machine req
     assert.equal(r.status, 200);
   }
   assert.equal((await fetch(`${remote.base}/media/${hash}/complete`, { method: 'POST', headers: { Authorization: `Bearer ${rw}` } })).status, 200);
-  // 主源：什么都没有，一律 404
+  // Main origin: nothing exists, returns 404 across the board
   const primary = http.createServer((req, res) => { res.statusCode = 404; res.end('nope'); });
   await new Promise((resolve) => primary.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise((resolve) => primary.close(() => resolve())));

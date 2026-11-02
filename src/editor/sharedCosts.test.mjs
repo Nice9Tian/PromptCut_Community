@@ -1,8 +1,10 @@
 /**
- * 页面侧的共享成本记录与桌面转写(`sharedCosts.ts`;契约 `docs/plan/c10-contract.md` 第 3 节)。用例 SC-01～SC-07。
- * 对着真的共享项目组装跑(`server/test/auth-kit.mjs` 的托管端与证明握手),连接是测试自己的 WebSocket 客户端,
- * 按 `docRequest` 的形状包一层 `request(msg) → 回包`。
- * 跑:node --test src/editor/sharedCosts.test.mjs
+ * Shared cost records and desktop transcription on the page side (`sharedCosts.ts`; contract
+ * `docs/plan/c10-contract.md` section 3). Test cases SC-01~SC-07.
+ * Runs against real shared project assembly (hosted side and attestation handshake in
+ * `server/test/auth-kit.mjs`); connection is the test's own WebSocket client, wrapping a layer of
+ * `request(msg) → response` in the shape of `docRequest`.
+ * Run: node --test src/editor/sharedCosts.test.mjs
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import test from "node:test";
@@ -22,11 +24,11 @@ const ENV = {
 const FP = describeEnvironment({ platform: ENV.platform, renderer: ENV.renderer, vendor: ENV.vendor, chromeVersion: ENV.userAgent }).fingerprint;
 const deviceHere = costDeviceString({ ua: ENV.userAgent, renderer: ENV.renderer, compact: false, offscreenGl: true, mode: "dev" });
 const deviceOther = costDeviceString({ ua: "Mozilla/5.0 (Macintosh) Chrome/150.0.0.0", renderer: "Apple M2", compact: false, offscreenGl: true, mode: "dev" });
-/** 同一台浏览器只有一个舞台时测的(舞台闸门第一级) */
+/** Measured when there is only one stage in the same browser (stage gate level 1) */
 const deviceSingle = costDeviceString({ ua: ENV.userAgent, renderer: ENV.renderer, compact: true, offscreenGl: false, mode: "build" });
 const k1 = (identityKey, stepMs, extra = {}) => ({ identityKey, fps: 30, stepMs, inlineMs: 0, rasterMs: 0, serializeMs: 0, catchUpMs: 0, kind: "stepped", mode: "dev", measuredAt: 1_790_000_000_000, device: deviceHere, ...extra });
 
-/** 测试的 WebSocket 客户端 → `docRequest` 的形状 */
+/** Test WebSocket client → shape of `docRequest` */
 let seq = 0;
 function requestOf(c) {
   return async (msg, timeoutMs = 3000) => {
@@ -95,9 +97,9 @@ test("SC-05 Relay: when connected to a shared project, write the costs measured 
   const { P, desk, phone } = await member(t);
   const costs = [
     k1("cardA", 3), k1("cardB", 40, { measuredAt: 1_790_000_000_500 }),
-    k1("cardA", 99, { device: deviceOther }),        // 别的机器
-    k1("cardC", 5, { device: deviceSingle }),        // 同一台浏览器只有一个舞台时测的:照样写
-    k1("notInProject", 7),                           // 项目里没用到
+    k1("cardA", 99, { device: deviceOther }),        // Other machines
+    k1("cardC", 5, { device: deviceSingle }),        // Measured when there is only one stage in the same browser: still write
+    k1("notInProject", 7),                           // Not used in the project
   ];
   const relay = new S.SharedCostRelay({
     request: desk, linkKey: () => "link-1", projectId: () => P.projectId, environment: () => ENV,
@@ -106,14 +108,15 @@ test("SC-05 Relay: when connected to a shared project, write the costs measured 
   assert.equal(await relay.sync(), 3);
   const l = await S.listSharedCosts({ request: phone, projectId: P.projectId, environment: ENV });
   assert.deepEqual(l.records.map((r) => [r.identityKey, r.stepMs, r.samples, r.mode]), [["cardA", 3, 16, "dev"], ["cardB", 40, 16, "dev"], ["cardC", 5, 16, "dev"]]);
-  // 没变:不再写
+  // Unchanged: no longer write
   assert.equal(await relay.sync(), 0);
-  // 本机又测了一次 cardA(新的测量时刻):只补这一条
+  // This machine measured cardA again (new measurement timestamp): only backfill this item
   costs.push(k1("cardA", 3.5, { measuredAt: 1_790_000_009_000 }));
   assert.equal(await relay.sync(), 1);
   const l2 = await S.listSharedCosts({ request: phone, projectId: P.projectId, environment: ENV });
   assert.equal(l2.records.find((r) => r.identityKey === "cardA").stepMs, 3.5);
-  // 换了连接(重连):从头补传,服务端按测量时刻留最新,重复无害
+  // Connection changed (reconnect): retransmit from the start, server keeps the latest by
+  // measurement timestamp, duplicates are harmless
   let link = "link-1";
   const relay2 = new S.SharedCostRelay({ request: desk, linkKey: () => link, projectId: () => P.projectId, environment: () => ENV, costs: () => costs, identityKeys: () => new Set(["cardA", "cardB"]) });
   assert.equal(await relay2.sync(), 2);

@@ -1,8 +1,11 @@
 /**
- * kernel/audioFx.mjs 的单测。跑:node --test src/kernel/audioFx.test.mjs
+ * Unit tests for kernel/audioFx.mjs. Run: node --test src/kernel/audioFx.test.mjs
  *
- * 效果定义是 Agent 交来的,校验要把不合规的挡在门外、文案说人话;数值求值是预览和导出共用的,
- * 表达式、参数覆盖、中性判断都在这里钉死;混响脉冲响应必须确定性(两条管线各生成一次要逐样本相同)。
+ * Effect definitions are delivered by Agents; validation must keep non-compliant ones out and
+ * use human-readable copy; numeric evaluation is shared between preview and export, with
+ * expressions, parameter overrides, and neutrality checks locked down here; reverb impulse
+ * response must be deterministic (generating once across both pipelines must be identical
+ * sample-by-sample).
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -71,7 +74,7 @@ test("Reverb impulse response: deterministic, length = decay × sample rate, tai
   assert.equal(l.length, 24000);
   assert.deepEqual(Array.from(l.subarray(0, 64)), Array.from(l2.subarray(0, 64)), "Two generations with the same parameters are identical sample by sample");
   assert.notDeepEqual(Array.from(l.subarray(0, 64)), Array.from(r.subarray(0, 64)), "Left and right channels use different seeds");
-  // 头 1% 和尾 1% 的 RMS 之比约 1000(60 dB);噪声有随机性,放宽到 300~3000
+  // RMS ratio of first 1% to last 1% is ~1000 (60 dB); noise is random, relaxed to 300~3000
   const rms = (a) => Math.sqrt(a.reduce((s, v) => s + v * v, 0) / a.length);
   const ratio = rms(l.subarray(0, 240)) / rms(l.subarray(l.length - 240));
   assert.ok(ratio > 300 && ratio < 3000, `Head-to-tail energy ratio ${ratio}`);

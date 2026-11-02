@@ -1,20 +1,25 @@
 /**
- * 多条剪辑(时间轴)的纯逻辑:规范化、切换、新建、改名、删除、列表。
+ * Pure logic for multiple cuts (timelines): normalization, switching, creation, renaming,
+ * deletion, and listing.
  *
- * 数据模型见 project.ts 的 Cut:内容只存一份 —— 激活那条的 tracks/duration 住在 Project 上,
- * 停放的各自带着。这里的函数都不碰 store,输入 Project 输出新 Project,好在 node 里测。
+ * Data model see `Cut` in project.ts: content is only stored once: tracks/duration of the active
+ * cut live on `Project`, while parked ones carry their own. None of the functions here touch the
+ * store; they take `Project` as input and output a new `Project`, making them easy to test in node.
  */
-// 带 .ts 扩展名导入:这个模块要能在 node 里直接跑单测(node --test 走 strip-types,不会给
-// "./project" 补扩展名)。tsconfig 开了 allowImportingTsExtensions(noEmit 下允许)。
-// id 必须复用 project.ts 的 newId —— 两个各自从 0 起的计数器同一毫秒里会撞出同一个 t-… id。
+// Import with .ts extension: this module must run unit tests directly in node (node --test uses
+// strip-types and will not append extensions to "./project"). tsconfig has
+// allowImportingTsExtensions enabled (permitted under noEmit).
+// ids must reuse newId from project.ts: two counters each starting from 0 would collide into the
+// same t-… id within the same millisecond.
 import { newId, type Cut, type Project, type Track } from "./project.ts";
 import { activeCutIdOf, cutCycleReason, cutDuration, cutReferences, stripCutReferences } from "./cutSegments.ts";
 import { contentEndOf, effectiveDuration, manualDurationFor } from "./duration.ts";
 
 /**
- * 默认剪辑数:新项目和没有 cuts 字段的老文件只补「剪辑1」这一条,其余由用户或 Agent 新建
- * (2026-10-20 用户定:「剪辑默认有3个,这不符合预期——用户又没创建那么多,只留一个就行了」)。
- * 已经带着 cuts 的项目原样保留,不因此删减。
+ * Default cut count: new projects and legacy files without a `cuts` field only get "Cut 1" added;
+ * the rest are created by the user or Agent (user decision, 2026-10-20: "3 cuts by default is
+ * unexpected: the user didn't create that many, so keeping just one is enough").
+ * Projects that already carry `cuts` are kept as is without pruning.
  */
 export const DEFAULT_CUT_COUNT = 1;
 const DEFAULT_CUT_DURATION = 30;
@@ -26,7 +31,7 @@ function emptyTracks(): Track[] {
   ];
 }
 
-/** 下一个默认名:剪辑N,N = 现有「剪辑数字」里最大的 + 1 */
+/** Next default name: Cut N, N = max of existing "Cut numbers" + 1 */
 export function nextCutName(cuts: Cut[]): string {
   let max = 0;
   for (const c of cuts) {
@@ -37,12 +42,13 @@ export function nextCutName(cuts: Cut[]): string {
 }
 
 /**
- * 把项目补成合法的多剪辑形状。幂等,加载时调一次:
- *   - 没有 cuts:当前 tracks 就是「剪辑1」(DEFAULT_CUT_COUNT 为 1 时不再补空的);
- *   - activeCutId 不在 cuts 里:取第一条;
- *   - 激活那条的条目不该带 tracks(内容在 Project 上)。真带了且 Project.tracks 是空的,
- *     就把它收进来 —— 这是文件被手改过的情况,宁可保住内容;否则丢掉条目里的;
- *   - 停放的条目缺 tracks / duration 就补空的。
+ * Normalizes project into a valid multi-cut shape. Idempotent, called once on load:
+ *   - No `cuts`: current `tracks` becomes "Cut 1" (no empty cuts added when `DEFAULT_CUT_COUNT` is 1);
+ *   - `activeCutId` not in `cuts`: take the first cut;
+ *   - The active cut entry should not carry `tracks` (content lives on `Project`). If it does and
+ *     `Project.tracks` is empty, bring it in: this happens when the file was manually edited,
+ *     preferring to preserve content; otherwise drop what is in the entry;
+ *   - Parked cut entries missing `tracks` / `duration` get empty ones padded.
  */
 export function normalizeCuts(p: Project): Project {
   let cuts: Cut[] = Array.isArray(p.cuts) ? p.cuts.map((c) => ({ ...c })) : [];
@@ -78,12 +84,12 @@ export function normalizeCuts(p: Project): Project {
   return { ...p, tracks, duration, cuts, activeCutId: activeId };
 }
 
-/** 素材库 / 标签栏 / list_cuts 要的摘要。激活那条的数字从 Project.tracks 上取 */
+/** Summary for media library / tab bar / `list_cuts`. Active cut numbers come from `Project.tracks` */
 export function listCuts(p: Project): {
   id: string; name: string; active: boolean; trackCount: number; clipCount: number; duration: number;
-  /** 直接引用了这条剪辑的那些剪辑(各自哪几段) */
+  /** Cuts that directly reference this cut (which segments in each) */
   referencedBy: { cutId: string; name: string; clipIds: string[] }[];
-  /** 这条剪辑里的剪辑段直接引用了哪些剪辑 */
+  /** Which cuts are directly referenced by cut segments in this cut */
   references: string[];
 }[] {
   const q = normalizeCuts(p);
@@ -105,7 +111,7 @@ export function listCuts(p: Project): {
   });
 }
 
-/** 按 id 或名字找剪辑;找不到就抛,错误信息里列出现有的,给模型看的 */
+/** Finds cut by id or name; throws if not found, listing existing cuts in error message for model */
 export function resolveCut(p: Project, ref: { cutId?: string; name?: string }): Cut {
   const q = normalizeCuts(p);
   const cuts = q.cuts!;
@@ -123,8 +129,9 @@ export function resolveCut(p: Project, ref: { cutId?: string; name?: string }): 
 }
 
 /**
- * 切换到另一条剪辑。当前内容(tracks / duration / 播放头 t)存回它的条目,目标的内容换进来。
- * 返回新项目和目标上次离开时的播放头。目标就是当前的话原样返回。
+ * Switch to another cut. Current content (`tracks` / `duration` / playhead `t`) is saved back to
+ * its entry, and the target's content is swapped in.
+ * Returns new project and target playhead when last left. Returns as is if target is current.
  */
 export function switchCut(p: Project, cutId: string, t: number): { project: Project; t: number } {
   const q = normalizeCuts(p);
@@ -146,7 +153,7 @@ export function switchCut(p: Project, cutId: string, t: number): { project: Proj
   };
 }
 
-/** 新建一条停放的剪辑(不切换)。名字缺省按 剪辑N */
+/** Creates a new parked cut (without switching). Name defaults to Cut N */
 export function addCut(p: Project, name?: string): { project: Project; cut: Cut } {
   const q = normalizeCuts(p);
   const cut: Cut = {
@@ -168,12 +175,15 @@ export function renameCut(p: Project, cutId: string, name: string): Project {
 }
 
 /**
- * 删一条剪辑。最后一条不能删。删的是激活那条时先切到相邻的一条(优先左边),
- * 返回里 switchedTo 告诉调用方切去了哪、播放头该是多少。
+ * Deletes a cut. The last cut cannot be deleted. If deleting the active cut, switch to an
+ * adjacent cut first (preferring the left); `switchedTo` in return tells caller where it switched
+ * to and what playhead should be.
  *
- * 被别的剪辑引用着(剪辑段)时,引用它的那些剪辑段连同绑着它们的转场一起删
- * (`product/project-model.md`「剪辑」:先说明被哪些剪辑用着,确认后连同引用它的剪辑段一起删)。
- * 说明与确认是调用方的事(界面弹确认、Agent 工具要 force);这里返回 removedSegments 供调用方汇报。
+ * When referenced by other cuts (cut segments), cut segments referencing it are deleted along
+ * with transitions bound to them (`product/project-model.md` "Cut": first explain which cuts use
+ * it, and delete together with referencing cut segments upon confirmation).
+ * Explanation and confirmation are caller's concern (UI shows confirmation popup, Agent tool
+ * requires `force`); `removedSegments` is returned here for caller reporting.
  */
 export function removeCut(p: Project, cutId: string, t: number): { project: Project; switchedTo: string | null; t: number; removedSegments: { cutId: string; name: string; clipIds: string[] }[] } {
   let q = normalizeCuts(p);
@@ -196,10 +206,12 @@ export function removeCut(p: Project, cutId: string, t: number): { project: Proj
 }
 
 /**
- * 把剪辑 `childCutId` 作为剪辑段放进激活剪辑的一条序列。纯函数:返回新项目和新段;放不下(重叠)、
- * 会循环引用、找不到剪辑时抛,错误信息给人看(拖放的提示条、Agent 工具都用它)。
+ * Places cut `childCutId` as a cut segment into a track of the active cut. Pure function: returns
+ * new project and new segment; throws if it does not fit (overlaps), causes circular reference,
+ * or cut is not found, with human-readable error message (used by drop notice bar and Agent tools).
  *
- * 剪辑段的默认长度 = 被引用剪辑(从 offset 起)剩下的长度;给了 duration 也不能超出它。
+ * Default cut segment length = remaining duration of referenced cut (starting from `offset`);
+ * even if `duration` is given, it cannot exceed this.
  */
 export function placeCutSegment(
   p: Project,
@@ -231,7 +243,7 @@ export function placeCutSegment(
   return { project: { ...q, tracks, duration: Math.max(q.duration, clip.end) }, clip };
 }
 
-/** 素材是项目级的:删素材要把停放剪辑里引用它的段也清掉,不能只清激活那条 */
+/** Assets are project-level: deleting an asset must clear clips referencing it in parked cuts, not just the active cut */
 export function stripMediaFromCuts(p: Project, mediaId: string): Project {
   if (!p.cuts) return p;
   return {
@@ -241,19 +253,19 @@ export function stripMediaFromCuts(p: Project, mediaId: string): Project {
   };
 }
 
-/** 摘掉片段上的滤镜字段(整个键拿掉,存盘结果和从没挂过一样) */
+/** Strips filter field from clip (removes entire key; saved result is as if never attached) */
 export function withoutFilter<T extends { filter?: unknown }>(clip: T): T {
   const { filter: _gone, ...rest } = clip;
   return rest as T;
 }
 
-/** 摘掉片段上的音频效果字段(整个键拿掉) */
+/** Strips audio effects field from clip (removes entire key) */
 export function withoutAudioFx<T extends { audioFx?: unknown }>(clip: T): T {
   const { audioFx: _gone, ...rest } = clip;
   return rest as T;
 }
 
-/** 音频效果同滤镜:删效果要把停放剪辑里挂着它的段也摘掉 */
+/** Audio effects are like filters: deleting an effect must strip it from clips in parked cuts */
 export function stripAudioFxFromCuts(p: Project, fxId: string): Project {
   if (!p.cuts) return p;
   return {
@@ -265,7 +277,7 @@ export function stripAudioFxFromCuts(p: Project, fxId: string): Project {
   };
 }
 
-/** 滤镜也是项目级的:删滤镜要把停放剪辑里挂着它的段也摘掉,和 stripMediaFromCuts 一个道理 */
+/** Filters are also project-level: deleting a filter strips it from parked cuts, like `stripMediaFromCuts` */
 export function stripFilterFromCuts(p: Project, filterId: string): Project {
   if (!p.cuts) return p;
   return {
@@ -277,18 +289,22 @@ export function stripFilterFromCuts(p: Project, filterId: string): Project {
   };
 }
 
-/* ---------- 就地改停放剪辑里的片段(不切换激活剪辑) ----------
+/* ---------- Modify clips in parked cuts in place (without switching active cut) ----------
  *
- * 激活剪辑住在 Project.tracks 上,停放的住在 cuts[].tracks 里,所以 findClip 只找得到激活那条里的片段;
- * 以前 Agent 要改别的剪辑里的卡只能 switch_cut 切过去(activeCutId 是共享的项目字段,所有成员的界面一起翻),
- * 改完再切回来,两次多余的写入(2026-10-21 线上每轮都有)。
+ * The active cut lives on `Project.tracks` and parked cuts live in `cuts[].tracks`, so `findClip`
+ * only finds clips in the active cut. Previously, for an Agent to modify a card in another cut,
+ * it had to switch over via `switch_cut` (`activeCutId` is a shared project field, flipping all
+ * members' UI together) and switch back afterwards: two redundant writes (occurred every round
+ * online, 2026-10-21).
  *
- * 做法:把项目换成「那条剪辑当激活」的样子(`cutEditView`),让现成的按激活剪辑写的 store 动作照常工作,
- * 动作每次提交的新项目再折回真实形状(`foldCutEdit`):改到的只有那条剪辑条目里的 tracks / duration / transitions,
- * activeCutId 与激活剪辑的内容原样不动。折回时全是新对象,不原地改 store 里的项目对象。
+ * Approach: swap the project into the form where "that cut is active" (`cutEditView`), allowing
+ * existing store actions written for the active cut to work as usual, then fold the new project
+ * committed by each action back into the real shape (`foldCutEdit`): only `tracks` / `duration` /
+ * `transitions` in that cut's entry are modified, leaving `activeCutId` and active cut content
+ * untouched. Folding back creates all new objects without mutating the project object in store.
  */
 
-/** 哪条停放的剪辑里有这个片段(激活那条里的不算);没有返回 null */
+/** Which parked cut contains this clip (excluding active cut); returns null if none */
 export function parkedCutOfClip(p: Project, clipId: string): { cutId: string; cutName: string } | null {
   const active = activeCutIdOf(p);
   for (const c of Array.isArray(p.cuts) ? p.cuts : []) {
@@ -299,8 +315,9 @@ export function parkedCutOfClip(p: Project, clipId: string): { cutId: string; cu
 }
 
 /**
- * 「把 `cutId` 当激活剪辑」的编辑视图:tracks / duration / transitions 换成它的内容,真正激活的那条退回条目里带着自己的内容。
- * 不是激活的那条、或不是带内容的停放剪辑时返回 null(调用方就地照常做)。
+ * Edit view treating `cutId` as active cut: replaces `tracks` / `duration` / `transitions` with
+ * its content, while genuinely active cut steps back into an entry carrying its own content.
+ * Returns null if not the active cut or not a parked cut with content (caller proceeds in place).
  */
 export function cutEditView(real: Project, cutId: string): Project | null {
   const activeId = activeCutIdOf(real);
@@ -325,7 +342,7 @@ export function cutEditView(real: Project, cutId: string): Project | null {
   };
 }
 
-/** 停放剪辑的总时长跟着内容走:和 `agent-exec.mjs` 的 `settleDuration`、页面时间轴同一条规则(至少 1 秒) */
+/** Total duration of parked cuts follows content: same rule as `agent-exec.mjs` `settleDuration` and timeline (min 1s) */
 function settleCutDuration(before: { tracks: Track[]; duration: number }, afterTracks: Track[], afterDuration: number): number {
   if (afterTracks === before.tracks && afterDuration === before.duration) return afterDuration;
   const end = contentEndOf(afterTracks);
@@ -337,9 +354,11 @@ function settleCutDuration(before: { tracks: Track[]; duration: number }, afterT
 }
 
 /**
- * `cutEditView` 里的项目被动作改成 `edited` 之后,折回真实形状:`real` 是进视图之前的真实项目。
- * 项目级的改动(素材、效果库、卡片节点……)照 `edited`;激活剪辑的 tracks / duration / transitions / activeCutId 用 `real` 的;
- * `cutId` 那条的条目收下 `edited` 里的 tracks / duration / transitions(总时长跟着内容走)。
+ * After project in `cutEditView` is modified by actions into `edited`, fold back into real shape:
+ * `real` is the real project before entering the view.
+ * Project-level changes (assets, effects library, card nodes...) follow `edited`; active cut's
+ * `tracks` / `duration` / `transitions` / `activeCutId` use those from `real`;
+ * `cutId` entry accepts `tracks` / `duration` / `transitions` from `edited` (total duration follows content).
  */
 export function foldCutEdit(real: Project, edited: Project, cutId: string): Project {
   const activeId = activeCutIdOf(real)!;
@@ -347,7 +366,7 @@ export function foldCutEdit(real: Project, edited: Project, cutId: string): Proj
   const realActiveEntry = real.cuts!.find((c) => c.id === activeId)!;
   const beforeDuration = typeof realTarget.duration === "number" && realTarget.duration > 0 ? realTarget.duration : DEFAULT_CUT_DURATION;
   const duration = settleCutDuration({ tracks: realTarget.tracks!, duration: beforeDuration }, edited.tracks, edited.duration);
-  // 条目原先没有 transitions 键、改完仍是空的,就不凭空多出一个键
+  // If entry originally lacked transitions key and remains empty, avoid creating an extra key
   const nowT = edited.transitions ?? [];
   const transitions = realTarget.transitions !== undefined ? nowT : nowT.length ? nowT : undefined;
   const entry: Cut = {

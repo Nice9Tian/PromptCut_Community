@@ -26,7 +26,9 @@ const env = { ...process.env, PROMPTCUT_NO_PORT_FILE: '1', PROMPTCUT_AUTH_SIMULA
 env.PROMPTCUT_PRERENDER_MODE = 'agent';
 fs.writeFileSync(env.PROMPTCUT_AI_CONFIG, JSON.stringify({ version: 1, defaultProvider: 'codex', quota: { enabled: false } }));
 const log = fs.openSync(path.join(out, 'server.log'), 'a');
-// vite 向上解析:在 worktree 里(没有自己的 node_modules,依赖在主仓库目录)也起得来。端口缺省 5203,--port 可改(连同 +1、+2 两个舞台端口都要空着)
+// Vite resolves upward: can start even in a worktree (has no own node_modules, dependencies are in
+// main repo directory). Port defaults to 5203, configurable via --port (both +1 and +2 stage ports
+// must also be free)
 const viteBin = path.join(path.dirname(createRequire(import.meta.url).resolve('vite/package.json')), 'bin', 'vite.js');
 const portArg = process.argv.indexOf('--port');
 const PORT = portArg >= 0 ? Number(process.argv[portArg + 1]) : 5203;
@@ -53,7 +55,9 @@ try {
   async function settings(p) { await p.evaluate(()=>{const el=[...document.querySelectorAll('button')].find(e=>e.getBoundingClientRect().width>0&&(/AI settings/.test(e.title)||e.getAttribute('aria-label')==='AI settings'));if(!el)throw new Error('AI settings trigger missing');el.click();});await until(async()=> (await text(p)).includes('Codex')); }
   await until(async()=>await a.$('.ai-panel'));
   await a.bringToFront();
-  // 分页清单按项目分开(2026-10-22):新项目没有会话时只有开始页;先点发送建出第一个会话(这里直接调 agentTabs),「+」才会再开第二页
+  // Tab manifest is separated by project (2026-10-22): a new project with no sessions only has the
+  // start page; only after clicking send to create the first session (calling agentTabs directly here)
+  // will "+" open a second tab
   await a.evaluate(async () => { const m = await import('/src/ai/agentTabs.ts'); m.commitDraft(m.getActiveTabId()); });
   await a.click('[data-pc="agent-tab-add"][data-pc-dock-add="right"]');
   await until(async()=> (await a.$$('.ai-panel')).length===2);

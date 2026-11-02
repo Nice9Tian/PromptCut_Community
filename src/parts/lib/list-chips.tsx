@@ -4,8 +4,8 @@ import { easeExpoOut } from "../../cards/native/hud";
 import { fitOr } from "../fit";
 
 /**
- * 实体名牌:从 entity-chips 卡片拆出。
- * 展示人物或机构的名牌胶囊，无旁注。
+ * Entity nameplates: extracted from entity-chips card.
+ * Displays nameplate pills for people or institutions, without side notes.
  */
 interface Params {
   chips: string;

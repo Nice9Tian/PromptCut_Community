@@ -1,9 +1,14 @@
 /**
- * 保存前等本机写完(`docs/semantics/mechanism/document-service.md`「保存基准与修改状态检查」:「保存暂时禁用前台编辑，
- * 等待本机写完」)。跑:node --experimental-test-module-mocks --test src/editor/io/localWrites.test.mjs
+ * Wait for local writes to finish before saving (`docs/semantics/mechanism/document-service.md`
+ * "Save baseline and modification status checks": "saving temporarily disables foreground editing,
+ * waiting for local writes to finish"). Run:
+ *   node --experimental-test-module-mocks --test src/editor/io/localWrites.test.mjs
  *
- * 钉死:本机 Agent 的工具、这台设备正在导入的素材、后台任务的连续写入、待文档服务确认的修改,保存都等它们写完再序列化;
- * 到时限还没完就不写文件、说清楚在等什么,并恢复编辑;序列化之后项目又被本机改了,不把它标成「已保存」。
+ * Pin down: local Agent tools, assets currently being imported on this device, continuous writes
+ * from background tasks, and modifications pending confirmation by document service: save waits
+ * for all of them to finish writing before serializing; if timeout is reached and not finished, do
+ * not write file, state clearly what it is waiting for, and resume editing; if project is modified
+ * locally again after serialization, do not mark it as "saved".
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test from "node:test";
@@ -17,7 +22,7 @@ const { beginAgentTool, endAgentTool } = await import(srcUrl("editor/userEditing
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** 一次保存的假依赖:写盘就是把内容记下来 */
+/** Mock dependencies for a save: writing to disk just records the content */
 function deps(over = {}) {
   const written = [];
   const notes = [];
@@ -44,7 +49,7 @@ function fresh(name = "Starting point") {
   actions.newProject(name);
 }
 
-/** 本机 Agent 的探测(与 localWrites.ts 的缺省一致,这里写成数据,改前的代码不认它也照样跑得起来) */
+/** Probing for local Agent (matches defaults in localWrites.ts; written as data here, pre-modification code still runs even if it ignores it) */
 let agentBusy = false;
 const agentProbe = { label: () => "Changes the Agent is making", count: () => (agentBusy ? 1 : 0) };
 
@@ -77,7 +82,8 @@ test("Media being imported on this device: wait for the upload to finish; media 
 
 test("A background task keeps writing: wait until it stops (no new writes land for a while) before serializing", async () => {
   fresh();
-  // 后台任务已经在写(第一笔在点保存之前落地),之后每 60 毫秒一笔
+  // Background task is already writing (first write landed before clicking save),
+  // then once every 60 ms
   let n = 1;
   actions.setProjectMeta({ name: "Background write 1" });
   const timer = setInterval(() => {
@@ -132,7 +138,7 @@ test("The project was changed locally again after serialization (an Agent write 
     probes: [],
     writeProc: async (produce, fileName) => {
       const text = await produce();
-      // 写盘这段时间里 Agent 的工具落了一笔
+      // An Agent tool landed a write during disk write
       beginAgentTool();
       actions.setProjectMeta({ name: "Changed during disk write" });
       endAgentTool();
@@ -167,7 +173,8 @@ test("A collaborator's change arrives after serialization (not written locally):
     probes: [],
     writeProc: async (produce, fileName) => {
       const text = await produce();
-      // 别的设备的修改经文档服务到了:docsync 直接换 state.project 并标脏(src/store/docsync.ts 的 bindStore)
+      // Modifications from other devices arrived via document service: docsync directly replaces
+      // state.project and marks dirty (bindStore in src/store/docsync.ts)
       core.set({ project: { ...getState().project, name: "Changed by collaborator" }, dirty: true });
       written.push(JSON.parse(text));
       return { kind: "saved", where: fileName };

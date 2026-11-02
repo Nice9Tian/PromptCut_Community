@@ -1,8 +1,10 @@
 /**
- * 浏览器侧轨道流生成的单测。跑:node --test src/render/streamEncode.test.mjs
+ * Unit tests for browser-side track stream generation. Run: node --test src/render/streamEncode.test.mjs
  *
- * 真的编码要浏览器(`VideoEncoder`),端到端在 `scripts/probes/browser-stream-encode-probe.mjs`;
- * 这里用假的编码器和画布钉住这几件纯算的事:画面怎么拼、级别怎么挑、怎么分段、顺序与出错怎么处理。
+ * Real encoding requires a browser (`VideoEncoder`), end-to-end in
+ * `scripts/probes/browser-stream-encode-probe.mjs`; here mock encoders and canvases are used to pin
+ * down these purely computational concerns: how frames are composited, how tiers are selected,
+ * how segmentation is done, and how ordering and errors are handled.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +14,7 @@ import { parseInit, parseSegment, chunkTimestamp, SEGMENT_FRAMES } from './strea
 const AVCC = Uint8Array.from([1, 0x64, 0x00, 0x32, 0xff, 0xe1, 0x00, 0x02, 0x67, 0x64, 0x01, 0x00, 0x02, 0x68, 0xee]);
 const ab = (u8) => u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
 
-/** 记下每一笔画的假画布 */
+/** Mock canvas recording every stroke */
 function fakeCanvas(log, name) {
   const ctx = {
     globalCompositeOperation: 'source-over', fillStyle: '',
@@ -24,8 +26,9 @@ function fakeCanvas(log, name) {
 }
 
 /**
- * 假的编码环境。`behave` 可以改:不认量化模式、重排帧、漏掉关键帧、报错。
- * 每个样本的字节 = [帧序号, 是否关键帧, 量化参数或 255]。
+ * Mock encoding environment. `behave` can be configured: reject quantization mode, reorder frames,
+ * drop keyframes, throw errors.
+ * Bytes of each sample = [frame sequence number, is keyframe, quantization parameter or 255].
  */
 function fakeEnv(behave = {}) {
   const log = [];
@@ -134,7 +137,8 @@ test('capability query is asked outside the main thread first (Worker): the answ
   const called = [];
   const counting = (inner) => ({ ...inner, VideoEncoder: Object.assign(function () {}, { isConfigSupported: async (c) => { called.push(c.bitrateMode); return inner.VideoEncoder.isConfigSupported(c); } }) });
   const env = counting(fakeEnv().env);
-  // Worker 说量化模式不认、按码率的认:用按码率的那一份配置,本线程不再问
+  // Worker rejects quantization mode but accepts bitrate mode: use bitrate configuration, do not
+  // query again in this thread
   const asked = [];
   const r1 = await probeStreamEncoder({ width: 320, height: 160, fps: 30, env, askOffThread: async (configs) => { asked.push(configs.map((c) => c.bitrateMode)); return [false, true]; } });
   assert.deepEqual(asked, [['quantizer', 'variable']], 'both configs asked in one go');
@@ -143,16 +147,16 @@ test('capability query is asked outside the main thread first (Worker): the answ
   assert.equal(r1.config.bitrate, 1_000_000);
   assert.equal(r1.config.height, 336);
   assert.deepEqual(called, [], 'this thread\'s isConfigSupported was not called');
-  // 都不认:报不支持,也不退回本线程(Worker 的答案是算数的)
+  // Neither is accepted: report unsupported, and do not fall back to this thread (Worker answer is authoritative)
   assert.equal((await probeStreamEncoder({ width: 320, height: 160, fps: 30, env, askOffThread: async () => [false, false] })).supported, false);
   assert.deepEqual(called, []);
-  // 问不了(回 null、抛错):退回本线程,结果与原来相同
+  // Cannot query (returns null, throws error): fall back to this thread, result is identical to original
   const r2 = await probeStreamEncoder({ width: 320, height: 160, fps: 30, env, askOffThread: async () => null });
   assert.equal(r2.mode, 'quantizer');
   assert.deepEqual(called, ['quantizer']);
   const r3 = await probeStreamEncoder({ width: 320, height: 160, fps: 30, env, askOffThread: async () => { throw new Error('boom'); } });
   assert.equal(r3.mode, 'quantizer');
-  // 这个运行环境没有 Worker(Node):缺省的问法回 null
+  // This runtime environment has no Worker (Node): default query returns null
   const { askConfigSupportInWorker } = await import('./streamEncode.ts');
   if (typeof globalThis.Worker !== 'function') assert.equal(await askConfigSupportInWorker([{}]), null);
 });
@@ -179,7 +183,8 @@ test('37 frames → 3 segments (15, 15, 7): segment number, sample count, keyfra
       n += 1;
     });
   }
-  // 送进编码器的:每 15 帧要一个关键帧;时间戳按整条流的帧号,和播放器取帧用的算法相同
+  // Sent to encoder: require a keyframe every 15 frames; timestamps follow frame numbers of the
+  // entire stream, using the same algorithm as player frame fetching
   state.encoded.forEach((e, i) => {
     assert.equal(e.keyFrame, i % SEGMENT_FRAMES === 0);
     assert.equal(e.timestamp, chunkTimestamp(i, 30));

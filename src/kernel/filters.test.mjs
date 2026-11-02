@@ -1,5 +1,5 @@
-// 滤镜内核:表达式、定义校验、求值、CSS / ffmpeg 翻译。
-// 跑法:node --test src/kernel/filters.test.mjs
+// Filter kernel: expressions, definition validation, evaluation, CSS / ffmpeg translation.
+// Run: node --test src/kernel/filters.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -11,8 +11,8 @@ const ev = (src, env = {}, vars) => compileExpr(src, vars).fn({ t: 0, d: 1, p: 0
 
 test("Expressions: precedence, associativity, functions, constants", () => {
   assert.equal(ev("1 + 2*3"), 7);
-  assert.equal(ev("-2^2"), -4); // 一元负号比 ^ 松,和数学习惯一致
-  assert.equal(ev("2^3^2"), 512); // ^ 右结合
+  assert.equal(ev("-2^2"), -4); // Unary minus binds looser than ^, consistent with mathematical convention
+  assert.equal(ev("2^3^2"), 512); // ^ is right-associative
   assert.equal(ev("(1+2)*3"), 9);
   assert.equal(ev("7 % 3"), 1);
   assert.equal(ev("mod(-1, 3)"), 2);
@@ -64,19 +64,20 @@ test("Definition validation: kinds, ranges, parameters, trial evaluation", () =>
 });
 
 test("Evaluation: in-clip time, clamped range, NaN falls back to neutral", () => {
-  // 定义校验会拒掉试算出 NaN 的表达式;这里绕过校验,钉住 resolveOps 自己的兜底(老数据、手改的工程)
+  // Definition validation rejects expressions that evaluate to NaN; bypass validation here
+  // to pin down resolveOps's own fallback (legacy data, manually edited projects)
   const def = {
     name: "Gradual blur", params: { k: { default: 2 } },
     ops: [{ kind: "blur", value: "k*t" }, { kind: "brightness", value: "1 + p" }, { kind: "hue", value: "sqrt(t - 5)" }],
   };
   const at0 = resolveOps(def, undefined, 0, 10);
-  assert.deepEqual(at0.map((o) => o.value), [0, 1, 0]); // sqrt(-5) = NaN → 色相中性 0
-  const at30 = resolveOps(def, { k: 10 }, 30, 10); // t 夹到片段时长以内
-  assert.deepEqual(at30.map((o) => o.value), [40, 2, 2.236068]); // blur 100 → 夹到上限 40
+  assert.deepEqual(at0.map((o) => o.value), [0, 1, 0]); // sqrt(-5) = NaN → neutral hue 0
+  const at30 = resolveOps(def, { k: 10 }, 30, 10); // clamp t to within the clip duration
+  assert.deepEqual(at30.map((o) => o.value), [40, 2, 2.236068]); // blur 100 → clamp to upper limit 40
 
   const project = { filters: [{ id: "f1", ...def }] };
   const clip = { start: 4, end: 14, filter: { id: "f1" } };
-  assert.equal(clipFilterOpsAt(project, clip, 5)[0].value, 2); // 时间轴 5s = 片段内 1s
+  assert.equal(clipFilterOpsAt(project, clip, 5)[0].value, 2); // timeline 5s = 1s within the clip
   assert.equal(clipFilterOpsAt(project, { ...clip, filter: { id: "gone" } }, 5), null);
 });
 
@@ -90,7 +91,7 @@ test("CSS: neutral steps are skipped, blur scales along", () => {
   assert.equal(cssFilter([{ kind: "saturate", value: 1 }]), "");
 });
 
-/** 按 CSS 规范对一个像素做一遍(每步截断),用来核对 ffmpeg 那边的翻译 */
+/** Run once on a pixel per the CSS spec (truncate at each step), used to verify the translation on the ffmpeg side */
 function cssPixel(ops, rgb) {
   let [r, g, b] = rgb;
   const c = (x) => Math.min(1, Math.max(0, x));
@@ -106,7 +107,7 @@ function cssPixel(ops, rgb) {
   return [r, g, b];
 }
 
-/** 按 ffmpeg 滤镜的公式对一个像素做一遍;lutrgb 的表达式先核对一遍它和 linear 说的是同一条线 */
+/** Run once on a pixel per the ffmpeg filter formula; first verify that the lutrgb expression and linear describe the same line */
 function ffPixel(stages, rgb) {
   let px = [...rgb];
   const c = (x) => Math.min(1, Math.max(0, x));
@@ -160,7 +161,7 @@ test("ffmpeg: named instances, blur wrapped in a transparent border, per-frame c
   assert.equal(lines.length, 3);
   assert.match(lines[0], /^9\.991667 lutrgb@f3_0 r val\*1\+0\.5, lutrgb@f3_0 g /);
   assert.match(lines[1], /lutrgb@f3_0 r val\*1\.25\+0\.5,.*gblur@f3_1 sigma 1;$/);
-  assert.equal(blurPad, 12); // 整段最大 σ = 4 → 3σ
+  assert.equal(blurPad, 12); // whole-clip max σ = 4 → 3σ
 
   assert.equal(ffmpegStaticChain([{ kind: "brightness", value: 1 }, { kind: "hue", value: 0 }]), "");
   assert.match(ffmpegStaticChain([{ kind: "saturate", value: 0.5 }]), /^colorchannelmixer=rr=0\.6065:rg=0\.3575:/);
@@ -168,7 +169,8 @@ test("ffmpeg: named instances, blur wrapped in a transparent border, per-frame c
   assert.match(ffmpegStaticChain([{ kind: "blur", value: 3 }], 2), /pad=iw\+36:ih\+36:18:18:.*gblur=sigma=6:steps=6/);
 });
 
-// 工程文件里的坏表达式(别的版本存的、手改过的):预览每帧都在 render 里调 resolveOps,抛了就是白屏
+// Bad expression in the project file (saved from another version, hand-edited): preview calls
+// resolveOps in render on every frame; if it throws, it's a white screen
 test("Bad expressions are treated as neutral and do not throw; isAnimated counts as false", () => {
   const def = { ops: [{ kind: "brightness", value: "nope + 1" }, { kind: "blur", value: 3 }] };
   assert.deepEqual(resolveOps(def, undefined, 1, 2), [{ kind: "brightness", value: 1 }, { kind: "blur", value: 3 }]);
@@ -182,7 +184,7 @@ test("sendcmd script: frames whose values did not change send no command", () =>
   assert.equal(script.trim().split("\n").length, 2, "Once each at 0 and 1");
 });
 
-// ---------------------------------------------------------------- curves / matrix(查表与颜色矩阵)
+// ---------------------------------------------------------------- curves / matrix (lookup table and color matrix)
 {
   const F = await import("./filters.mjs");
   test("curves / matrix: shape completion, identity check, description", () => {
@@ -232,7 +234,7 @@ test("sendcmd script: frames whose values did not change send no command", () =>
     assert.deepEqual(stages.map((s) => [s.filter, !!s.fixed]), [["colorchannelmixer", true], ["lutrgb", true], ["lutrgb", true], ["lutrgb", false]]);
     const { script } = F.sendcmdScript(def, undefined, 4, [{ ts: 0, t: 0 }, { ts: 1, t: 1 }], "fx0");
     assert.equal(/colorchannelmixer@/.test(script), false);
-    assert.match(script, /lutrgb@fx0_3 r val\*/); // 只有会动的那一步(下标 3)在发命令,下标和建链时一致
+    assert.match(script, /lutrgb@fx0_3 r val\*/); // Only the animated step (index 3) is issuing commands; the index matches when the chain was built
     assert.equal(/lutrgb@fx0_[12] /.test(script), false);
     assert.equal(F.ffmpegStaticChain(F.resolveOps(F.normalizeFilterDef({ name: "n", ops: [{ kind: "curves", rgb: [0, 1] }] }), undefined, 0, 1)), "");
   });

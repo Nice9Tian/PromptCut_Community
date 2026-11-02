@@ -4,8 +4,8 @@ import { accentOf } from "../../cards/native/hud";
 import { fitOr } from "../fit";
 
 /**
- * 模糊浮现文字:从 mu-blur-fade 拆出。
- * 复用 Magic UI 的 BlurFade，支持自定义文字和主题色，在部件框内居中。
+ * Blur-fade text: extracted from mu-blur-fade.
+ * Reuses Magic UI's BlurFade, supports custom text and theme color, centered within part box.
  */
 interface Params {
   text: string;

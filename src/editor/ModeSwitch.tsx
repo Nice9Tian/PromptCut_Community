@@ -7,33 +7,42 @@ import "./ModeSwitch.css";
 import { tr } from "../i18n/index.ts";
 
 /**
- * 顶栏的工作方式开关:氛围式 / 传统式 / SKILL(`user-workflow.md`「工作方式」)。
+ * The working mode switch in the top bar: Vibe mode / Classic mode / SKILL (`user-workflow.md`, section
+ * "Working mode").
  *
- * 做成**一个整体控件**而不是三个独立按钮:几种方式是互斥的一件事,滑块滑到哪一格就是哪一格。
+ * It is built as **one whole control** rather than three independent buttons: the modes are one mutually
+ * exclusive choice, and whichever slot the slider rests on is the one in effect.
  *
- *   * 氛围式:不打开编辑界面,对着 Agent 说话把片子做出来(名词表里也叫这个名字)。
- *     **它是个去处,不是个状态** —— 人在编辑界面里就
- *     不可能同时在氛围式,所以滑块永远不会停在这一格;点它等于离开编辑界面、回到氛围式那一屏
- *     (从那儿点一张项目卡片,又回到传统式)。
- *   * 传统式:用户和 AI 栏里的 Agent 动手;桌面 APP 的会话被 SKILL 闸拦下(`server/skill-gate.mjs`)。
- *   * SKILL:桌面 APP 里的 Agent 经 MCP 直连这个项目(计划 `docs/plan/agent-workflow-plan.md` A4),AI 栏照常可用。
- *     进 SKILL 走「SKILL…」对话框(登记到 Claude Code / Codex、看接进来的会话、进入 SKILL);
- *     退出就点这里的「传统式」,手边最近的就是这个控件。
+ *   * Vibe mode: without opening the editor, you talk to the Agent to get the video made (it has the same
+ *     name in the glossary).
+ *     **It is a destination, not a state** -- a person in the editor cannot be in Vibe mode at the same
+ *     time, so the slider never rests on this slot; clicking it means leaving the editor and returning to
+ *     the Vibe mode screen (clicking a project card from there goes back to Classic mode).
+ *   * Classic mode: the user and the Agent in the AI panel do the work; sessions of the desktop app are
+ *     blocked by the SKILL gate (`server/skill-gate.mjs`).
+ *   * SKILL: the Agent in the desktop app connects directly to this project through MCP (plan
+ *     `docs/plan/agent-workflow-plan.md` A4), and the AI panel remains available as usual.
+ *     Entering SKILL goes through the "SKILL…" dialog (register with Claude Code / Codex, view connected
+ *     sessions, enter SKILL); to exit, click "Classic mode" here, since this control is the nearest at hand.
  *
- * 原来只有传统式与 SKILL 两格(更早还有一格「对话式」布局,已去掉)。氛围式这一格是 2026-10-23 加的:
- * 在那之前语义里没有这种工作方式,加完名词表里就有三种了。刚加时那一屏只有在线浏览器有,桌面版这一格置灰;
- * 同日桌面版的氛围式也做出来了(`src/start/DesktopStart.tsx`),两边都能点。
+ * Originally there were only the two slots Classic mode and SKILL (earlier still there was a "chat"
+ * layout slot, now removed). The Vibe mode slot was added on 2026-10-23: before that there was no such
+ * working mode in the semantics, and after adding it the glossary has three. When first added, that screen
+ * existed only in the online browser, and the slot was grayed out in the desktop app; on the same day the
+ * desktop app's Vibe mode was also built (`src/start/DesktopStart.tsx`), so both sides can click it.
  */
 
 type Mode = "vibe" | "classic" | "skill";
 
 /**
- * 在线构建的编译期常量(写法与用意见 `src/online/pageFlag.ts` 的「在线构建剪枝」)。在线页面进不了 SKILL 模式
- * (这一格置灰,`skillMode.ts` 也不轮询),订阅与退出在在线构建里剪掉,连同 `skillMode.ts` 背后的 /api 调用(M8 遗留 L24)。
+ * Compile-time constant of the online build (for how it is written and why, see "online build pruning"
+ * in `src/online/pageFlag.ts`). Online pages cannot enter SKILL mode (this slot is grayed out, and
+ * `skillMode.ts` does not poll either); the subscription and exit are pruned in the online build,
+ * together with the /api calls behind `skillMode.ts` (M8 leftover L24).
  */
 const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
 
-// 顺序照 `user-workflow.md`「工作方式」那张表:氛围式、传统式、SKILL
+// The order follows the table in `user-workflow.md`, section "Working mode": Vibe mode, Classic mode, SKILL
 const ITEMS: { id: Mode; label: string; hint: string }[] = [
   { id: "vibe", label: tr("Vibe mode"), hint: tr("Make the video by talking to the Agent, without opening the editor") },
   { id: "classic", label: tr("Classic mode"), hint: tr("You and the Agent in the AI panel edit together") },
@@ -50,17 +59,20 @@ export function ModeSwitch(props: { onOpenSkill: () => void; onEnterVibe?: () =>
 
   const pick = async (id: Mode) => {
     if (id === "vibe") {
-      // 离开编辑界面、回到氛围式那一屏。脏数据的确认在 TopBar 的 goHome 里,和「回开始页」共用一套
+      // Leave the editor and return to the Vibe mode screen. Confirmation of unsaved changes is in TopBar's
+      // goHome, shared with "back to the start page"
       props.onEnterVibe?.();
       return;
     }
     if (id === "skill") {
-      // 进 SKILL(或已经在 SKILL 时看接进来的会话、登记)都在对话框里
+      // Entering SKILL (or, when already in SKILL, viewing connected sessions and registering) all happens in
+      // the dialog
       props.onOpenSkill();
       return;
     }
     if (id === active || ONLINE_BUILD) return;
-    // 切回传统式 = 退出 SKILL 模式:之后桌面 APP 会话的工具调用都会被拒
+    // Switching back to Classic mode = exiting SKILL mode: afterwards, tool calls from desktop app sessions
+    // are all rejected
     setBusy(true);
     try {
       await closeSkillMode("user");
@@ -73,11 +85,12 @@ export function ModeSwitch(props: { onOpenSkill: () => void; onEnterVibe?: () =>
 
   const index = ITEMS.findIndex((i) => i.id === active);
 
-  // 两边都有氛围式那一屏了(在线 `src/start/OnlineStart.tsx`、桌面 `src/start/DesktopStart.tsx`,
-  // 桌面版 2026-10-23 补上)。只有调用方没给去处时才置灰 —— 那是还没接上这颗键的地方
+  // Both sides now have the Vibe mode screen (online `src/start/OnlineStart.tsx`, desktop
+  // `src/start/DesktopStart.tsx`, added to the desktop app on 2026-10-23). It is grayed out only when the
+  // caller gives no destination -- that is a place where this key is not yet wired up
   const vibeOff = !props.onEnterVibe;
 
-  /** 每一格的悬停说明。三格之后嵌套三目读不动了,拆出来 */
+  /** Hover description for each slot. With three slots a nested ternary became unreadable, so it is split out */
   const titleOf = (item: (typeof ITEMS)[number], on: boolean): string => {
     if (item.id === "vibe") {
       return vibeOff ? tr("Can't reach the Vibe mode screen from here yet") : item.hint;
@@ -93,7 +106,8 @@ export function ModeSwitch(props: { onOpenSkill: () => void; onEnterVibe?: () =>
 
   return (
     <div className="pc-modeswitch" role="group" aria-label={tr("Working mode")} data-pc="mode-switch">
-      {/* 滑块:绝对定位,按选中项的序号平移。三格等宽、滑块宽一格,所以平移 index 个自身宽度就对位 */}
+      {/* Slider: absolutely positioned, translated by the index of the selected item. The three slots have equal
+ * width and the slider is one slot wide, so translating by index times its own width lines it up */}
       <span
         className={`pc-modeswitch-thumb${active === "skill" ? " is-skill" : ""}`}
         style={{ transform: `translateX(${index * 100}%)` }}
@@ -108,7 +122,7 @@ export function ModeSwitch(props: { onOpenSkill: () => void; onEnterVibe?: () =>
             data-pc={`mode-${item.id}`}
             className={`pc-modeswitch-item${on ? " is-on" : ""}`}
             aria-pressed={on}
-            // 在线浏览器模式:SKILL 要本机的桌面 APP 与编辑器进程(C10 契约第 10 节),置灰
+            // Online browser mode: SKILL needs the local desktop app and editor process (C10 contract section 10), so grayed out
             disabled={busy || (item.id === "skill" && !on && onlinePage()) || (item.id === "vibe" && vibeOff)}
             title={titleOf(item, on)}
             onClick={() => void pick(item.id)}

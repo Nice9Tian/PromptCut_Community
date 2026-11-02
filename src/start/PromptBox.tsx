@@ -1,12 +1,18 @@
 /**
- * 开始页顶上那个输入框:写一句话就建一个项目。
+ * The input box at the top of the start page: write one sentence and a project is created.
  *
- * 按回车或点箭头把文字和画幅交给上层(`OnlineStart.tsx`):上层新建一个云端项目(在线浏览器里项目一律放云端,
- * `product/platforms.md`「能新建放云端的项目」)、按画幅定好尺寸、进它的聊天页,再把这句话作为第一条消息发给云端 Agent
- * (`workflow/production.md`「用户发送指令」)。没登录、游客已经建过项目时上层给 `disabled`,这里置灰并说为什么。
+ * Pressing Enter or clicking the arrow hands the text and the aspect ratio to the upper layer
+ * (`OnlineStart.tsx`): the upper layer creates a cloud project (in the online browser projects always
+ * go to the cloud, `product/platforms.md` "Projects that can be created in the cloud"), sets the size
+ * according to the aspect ratio, enters its chat page, and then sends this sentence to the Cloud Agent
+ * as the first message (`workflow/production.md` "User sends an instruction"). When the user is not
+ * logged in, or a guest has already created a project, the upper layer passes `disabled`, and here the
+ * box is grayed out with the reason.
  *
- * 「＋ 素材」:点了由上层开选文件框,挑好的素材先记在页面上(这颗上标出几个),发出这句话、项目建好之后
- * 经编辑界面同一套导入(`src/editor/left/importAssets.ts` 的 `importMediaFiles`)传进这个项目,再发消息。
+ * "+ media": clicking it makes the upper layer open a file picker; the chosen media is first recorded
+ * on the page (a count is shown on this button), and after this sentence is sent and the project is
+ * created, it is passed into the project through the same import as the editor
+ * (`importMediaFiles` in `src/editor/left/importAssets.ts`), and then the message is sent.
  */
 import { useRef, useState } from "react";
 import type { JSX } from "react";
@@ -14,7 +20,7 @@ import type { Ratio } from "./types";
 import { tr } from "../i18n/index.ts";
 
 const RATIOS: Ratio[] = ["16:9", "9:16", "1:1"];
-/** 和 CSS 里的 max-height 对齐:再长就自己滚,不把首屏顶走 */
+/** Aligned with max-height in the CSS: anything longer scrolls by itself instead of pushing the first screen away */
 const MAX_H = 180;
 
 export function PromptBox(props: { onSubmit: (text: string, ratio: Ratio) => void; onUpload: () => void; fileCount?: number; disabled?: string | null; busy?: boolean }): JSX.Element {
@@ -22,7 +28,7 @@ export function PromptBox(props: { onSubmit: (text: string, ratio: Ratio) => voi
   const [ratio, setRatio] = useState<Ratio>("16:9");
   const area = useRef<HTMLTextAreaElement>(null);
 
-  // 输入框跟着内容长高。不用 rows:换行、粘贴一大段都要立刻对
+  // The input box grows taller with its content. Not using rows: line breaks and pasting a large block must both be right immediately
   const fit = () => {
     const el = area.current;
     if (!el) return;
@@ -35,7 +41,7 @@ export function PromptBox(props: { onSubmit: (text: string, ratio: Ratio) => voi
     if (!t || props.disabled || props.busy) return;
     props.onSubmit(t, ratio);
     setText("");
-    // 清空之后高度也要缩回去,否则留着一个空的大框
+    // After clearing, the height must shrink back too, otherwise an empty large box is left behind
     requestAnimationFrame(fit);
   };
 
@@ -54,7 +60,8 @@ export function PromptBox(props: { onSubmit: (text: string, ratio: Ratio) => voi
           fit();
         }}
         onKeyDown={(e) => {
-          // 回车发送、Shift+回车换行;输入法组合中的回车不算(中文输入按回车是在选字)
+          // Enter sends, Shift+Enter inserts a newline; Enter during IME composition does not count
+          // (in Chinese input, Enter confirms a candidate)
           if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
             send();
@@ -62,7 +69,8 @@ export function PromptBox(props: { onSubmit: (text: string, ratio: Ratio) => voi
         }}
       />
       <div className="ps-prompt-foot">
-        {/* 这一颗是行动点:用强调色把人往「传素材」上引,所以和右边那排画幅 chip 不是一个分量 */}
+        {/* This one is the call to action: it uses the emphasis color to steer people toward "upload media",
+   so it does not carry the same weight as the row of aspect-ratio chips on the right */}
         <button
           type="button"
           className="ps-chip is-cta"

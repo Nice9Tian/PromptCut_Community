@@ -52,10 +52,12 @@ export const effectsHandlers = {
     clipGuard.noteMutation();
     return { ok: true, ...(r.note ? { note: r.note } : {}), timeline: timelineDigest(getState().project) };
   },
-  /* ---------- 剪辑(多条时间轴) ---------- */
-  // 每条剪辑带上引用关系(referencedBy:哪些剪辑的哪几段引用了它;references:它里面的剪辑段引用了谁)
-  // 给了 cutId 就多返回那条剪辑的 timeline 一览(各序列和片段的 id、起止):不用 user_interface_switch_cut 就能拿到要改的片段 id,
-  // 拿到以后 update_clip / set_clip / get_clip / set_rect… 直接按 clipId 改(见 mcp/clipCut.ts)
+  /* ---------- Cuts (multiple timelines) ---------- */
+  // Each cut includes reference relationships (referencedBy: which cuts and segments reference it;
+  // references: which cuts the cut segments inside it reference). When cutId is provided,
+  // additionally return an overview of that cut's timeline (ids, start, and end for each track and
+  // clip): obtain the clip id to modify without user_interface_switch_cut, and after obtaining it,
+  // update_clip / set_clip / get_clip / set_rect… can modify directly by clipId (see mcp/clipCut.ts)
   listCuts: (args) => {
     const p = getState().project;
     const out: Record<string, unknown> = { activeCutId: p.activeCutId, cuts: listCuts(p) };
@@ -63,11 +65,14 @@ export const effectsHandlers = {
       const cut = resolveCut(p, { cutId: String(args.cutId) });
       const content = cutContent(p, cut.id);
       if (!content) throw new Error(`Cut "${cut.name}" (${cut.id}) has no readable content`);
-      // 这里的 digest 是借 p 拼出来的别条剪辑的内容,「别的剪辑」提示对它没有意义
+      // The digest here is the content of another cut assembled using p; the "other cut" hint is
+      // meaningless for it
       const { otherCuts: _drop, ...digest } = timelineDigest({ ...p, tracks: content.tracks, duration: content.duration });
       out.timeline = { cutId: cut.id, name: cut.name, active: cut.id === activeCutIdOf(p), ...digest };
     } else {
-      // 不指定剪辑时,把所有停放剪辑里的片段(有上限)直接列出来:模型拿到 clipId 就不必为了「看进去」而 user_interface_switch_cut
+      // When no cut is specified, list clips from all parked cuts directly (with an upper limit):
+      // once the model obtains clipId, it does not need to call user_interface_switch_cut just to
+      // "look inside"
       const parkedCuts = parkedCutsIndex(p, { cardName: (id) => getCard(id)?.name });
       if (parkedCuts) out.parkedCuts = parkedCuts;
     }
@@ -85,7 +90,8 @@ export const effectsHandlers = {
         " The timeline above is now this cut's; the previously active one is parked, and the clips inside it can likewise be edited directly.",
     };
   },
-  // 只建不切(2026-10-21 用户定):切换激活剪辑会动所有成员的界面,要切另调 user_interface_switch_cut
+  // Create only, do not switch (user decision, 2026-10-21): switching the active cut affects all
+  // members' UIs; to switch, call user_interface_switch_cut separately
   addCut: (args) => {
     const cut = actions.addCut(args?.name, { switchTo: false });
     clipGuard.noteMutation();
@@ -103,7 +109,9 @@ export const effectsHandlers = {
   removeCut: (args) => {
     const p = getState().project;
     const cut = resolveCut(p, { cutId: args.cutId });
-    // 门槛和 remove_clip 一个道理:有内容、或被别的剪辑引用着(剪辑段),都不能一句话删掉,要 force + reason,理由回显给用户
+    // The gate follows the same logic as remove_clip: if it has content or is referenced by other cuts
+    // (cut segments), it cannot be deleted in a single prompt; force + reason are required, and the
+    // reason is echoed to the user
     const blocked = removeCutGate(cut.id, !!args.force, args.reason);
     if (blocked) throw new Error(blocked);
     const before = p.activeCutId;

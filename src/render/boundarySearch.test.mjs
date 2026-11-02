@@ -1,6 +1,7 @@
 /**
- * 界限搜索（`boundarySearch.mjs`；语义 `mechanism/rendering.md`「界限搜索与成本记录」）。用例 BS-C01～BS-C11。
- * 跑：node --test src/render/boundarySearch.test.mjs
+ * Bounds search (`boundarySearch.mjs`; semantics `mechanism/rendering.md`
+ * "Bounds search and cost records"). Test cases BS-C01-BS-C11.
+ * Run: node --test src/render/boundarySearch.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +13,7 @@ import {
 const B = 1000 / 30 * 0.7; // 23.33 ms
 const key = (i) => `card${String(i).padStart(3, '0')}`;
 
-/** n 张卡：共享记录按 i 递增；本机实测 = local(i) */
+/** n cards: shared records increase with i; local measurement = local(i) */
 function fixture(n, local, { reps = (i) => i + 1 } = {}) {
   const records = [];
   for (let i = 0; i < n; i++) records.push({ identityKey: key(i), stepMs: reps(i) });
@@ -39,7 +40,8 @@ test('BS-C01 representative time is the median (multiple records come from diffe
 });
 
 test('BS-C02 binary search finds the first card that cannot keep up: it and all costlier ones are judged heavy, all cheaper ones light', async () => {
-  // 本机比共享记录慢 2 倍：rep = i+1，本机 = 2(i+1)；B = 23.33 → i ≤ 10 跑得动（22 ms），i = 11 起跑不动
+  // Local machine is 2x slower than shared records: rep = i+1, local = 2(i+1);
+  // B = 23.33 → i ≤ 10 can run (22 ms), cannot run from i = 11 onwards
   const n = 40;
   const f = fixture(n, (i) => 2 * (i + 1));
   const r = await boundarySearch({ keys: f.keys, records: f.records, budgetMs: B, measure: f.measure, margin: 0, extraMax: 0 });
@@ -58,7 +60,7 @@ test('BS-C03 margin: measure 1 extra card on each side of the threshold; measure
       assert.equal(r.boundary, cut, `n=${n} cut=${cut}`);
       assert.ok(r.measurements <= maxMeasurements(n), `n=${n} cut=${cut}: ${r.measurements} > ${maxMeasurements(n)}`);
       assert.ok(r.measurements <= Math.ceil(Math.log2(n + 1)) + 2 * BOUNDARY_MARGIN + BOUNDARY_EXTRA_MAX);
-      // 余量真的测了：界限两侧（在范围内的）都有实测
+      // Margin was actually measured: both sides of the boundary (within range) have actual measurements
       if (cut > 0) assert.ok(r.measured.has(key(cut - 1)), `n=${n} cut=${cut}: the card right next to the threshold on the cheaper side was measured`);
       if (cut < n) assert.ok(r.measured.has(key(cut)), `n=${n} cut=${cut}: the threshold card was measured`);
     }
@@ -68,8 +70,9 @@ test('BS-C03 margin: measure 1 extra card on each side of the threshold; measure
 });
 
 test('BS-C04 when measurement contradicts the ordering, measurement wins and the threshold moves accordingly (the heavy side measures as able to keep up)', async () => {
-  // 本机：i ≤ 7 跑得动、8 跑不动、9 其实跑得动（排序错了）、10 起跑不动。二分停在 8；
-  // 余量测重的一侧最近的没测过的 9 —— 跑得动，界限挪到 10，再测 10（跑不动）才停
+  // Local: i ≤ 7 can run, 8 cannot run, 9 actually can run (wrong order), cannot run from 10 onwards.
+  // Binary search stops at 8; margin measures 9, the closest unmeasured on the heavy side: can run,
+  // boundary moves to 10, and only stops after measuring 10 (cannot run)
   const local = (i) => (i <= 7 || i === 9 ? 5 : 60);
   const f = fixture(16, local);
   const r = await boundarySearch({ keys: f.keys, records: f.records, budgetMs: B, measure: f.measure });
@@ -83,8 +86,9 @@ test('BS-C04 when measurement contradicts the ordering, measurement wins and the
 });
 
 test('BS-C05 the cheaper side measures as unable to keep up: the threshold moves to it, and unmeasured cards costlier than it are all judged heavy', async () => {
-  // 本机：3 跑不动（排序错了）、5 起跑不动。二分停在 5；余量测省的一侧最近的没测过的 3 —— 跑不动，
-  // 界限挪到 3，接着测 2（跑得动）才停；重的一侧再测 7
+  // Local: 3 cannot run (wrong order), cannot run from 5 onwards. Binary search stops at 5;
+  // margin measures 3, the closest unmeasured on the light side: cannot run, boundary moves to 3,
+  // then continues to measure 2 (can run) before stopping; heavy side then measures 7
   const local = (i) => (i === 3 || i >= 5 ? 40 : 4);
   const f = fixture(8, local);
   const r = await boundarySearch({ keys: f.keys, records: f.records, budgetMs: B, measure: f.measure, margin: 1, extraMax: 2 });
@@ -123,7 +127,7 @@ test('BS-C07 local reuse: measured results are stored by "card identity + local 
   const second = await boundarySearch({ keys: again.keys, records: again.records, budgetMs: B, measure: again.measure, store, envFingerprint: 'fp0123456789abcd' });
   assert.equal(second.measurements, 0, 'second open does not measure');
   assert.deepEqual([...second.heavy].sort(), [...first.heavy].sort());
-  // 换了环境（指纹不同）：键对不上，要重测
+  // Environment changed (different fingerprint): keys do not match, re-measurement required
   const other = fixture(50, (i) => (i < 20 ? 10 : 30));
   const third = await boundarySearch({ keys: other.keys, records: other.records, budgetMs: B, measure: other.measure, store, envFingerprint: 'ffffffffffffffff' });
   assert.ok(third.measurements > 0);
@@ -177,12 +181,12 @@ test('BS-C11 cards with no record are measured one by one (measureUnrecorded, al
   assert.ok(r.heavy.has('newFail'), 'can\'t be measured: treated as can\'t keep up');
   for (const k of ['newLight', 'newHeavy', 'newFail']) assert.ok(calls.includes(k), `${k} was measured`);
   assert.deepEqual(r.unrecorded, ['newFail', 'newHeavy', 'newLight']);
-  // 一张记录都没有:全部逐张实测
+  // No records at all: actually measure every card one by one
   const none = await boundarySearch({ keys: ['x', 'y'], records: [], budgetMs: B, measure: async (k) => ({ stepMs: k === 'x' ? 1 : 99, samples: 16 }), measureUnrecorded: true });
   assert.equal(none.measurements, 2);
   assert.deepEqual([...none.light], ['x']);
   assert.deepEqual([...none.heavy], ['y']);
-  // 第二次打开:本地复用命中,不再测
+  // Opened for the second time: local reuse hits, no more measurements
   const again = [];
   const r2 = await boundarySearch({ keys, records: f.records, budgetMs: B, measure: async (k) => { again.push(k); return measure(k); }, store, envFingerprint: 'fp', measureUnrecorded: true });
   assert.ok(!again.includes('newLight') && !again.includes('newHeavy'), 'measured results were saved');

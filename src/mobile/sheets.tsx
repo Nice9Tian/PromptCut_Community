@@ -1,6 +1,6 @@
 /**
- * 手机版的底部面板:素材库、卡片库(含转场)、选剪辑、调整、冲突合并、成员、导出(演示稿第三～九轮)。
- * 每个按钮都调真实的 store 动作与服务,不写假数据;业务层里没有的项不显示(任务书「设计决定」3)。
+ * The mobile app's bottom sheets: media library, card library (including transitions), select cut, adjust, conflict merge, members, export (demo rounds 3 to 9).
+ * Every button calls real store actions and services, with no fake data; items the business layer does not have are not shown (task brief "Design decisions" 3).
  */
 import { useMemo, useRef, useState } from "react";
 import { actions, getState, useStore, withMerge } from "../store/project";
@@ -39,14 +39,14 @@ import type { MembersInfo } from "./useMembers";
 import { tr as trText } from "../i18n/index.ts";
 import { shownName, shownNameOf } from "../i18n/names.ts";
 
-/* ======================== 素材库 ======================== */
+/* ======================== Media library ======================== */
 
 export type AssetTab = "video" | "image" | "audio" | "cut";
 const ASSET_TABS: { id: AssetTab; label: string }[] = [
   { id: "video", label: trText("Video") }, { id: "image", label: trText("Images") }, { id: "audio", label: trText("audio") }, { id: "cut", label: trText("Cut") },
 ];
 
-/** 视频 / 图片接到主要内容末尾;声音加到播放头位置 */
+/** Videos / images are appended to the end of the main content; sounds are added at the playhead position */
 export function placeMedia(m: MediaAsset): TrackClip | null {
   const p = getState().project;
   if (m.kind === "audio") return actions.addMediaClip(m.id, getState().t);
@@ -58,13 +58,13 @@ export function placeMedia(m: MediaAsset): TrackClip | null {
 
 export function AssetsSheet(props: { tab: AssetTab; onTab: (t: AssetTab) => void; onClose: () => void; onSwitchCut: (name: string) => void; onPlaced: (clip: TrackClip, m: MediaAsset) => void }) {
   const media = useStore((s) => s.project.media);
-  // 剪辑列表按项目算一次(同桌面素材库的剪辑组):选择器里不能现造数组,否则每次读都是新值、无限重渲
+  // The cut list is computed once per project (same as the cut group of the desktop media library): a selector must not build an array on the fly, or every read yields a new value and re-renders endlessly
   const project = useStore((s) => s.project);
   const cuts = useMemo(() => listCuts(project), [project]);
   const toast = useToast();
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
-  // 在线浏览器断网时导入媒体置灰、提示「当前离线」(2026-10-22 用户定)
+  // When the online browser is offline, importing media is grayed out and shows "Currently offline" (user decision, 2026-10-22)
   const importOffline = useImportOffline();
   const list = media.filter((m) => (props.tab === "audio" ? m.kind === "audio" : props.tab === "image" ? m.kind === "image" : m.kind === "video"));
   const onFiles = async (files: FileList | null) => {
@@ -128,7 +128,7 @@ export function AssetsSheet(props: { tab: AssetTab; onTab: (t: AssetTab) => void
   );
 }
 
-/** 素材格子的画面:取色底色 + 类型图标打底,取到首帧 / 缩略图就盖上去(`Thumb.tsx`) */
+/** Picture of a media cell: a sampled-color background plus a type icon as the base, and once the first frame / thumbnail is obtained it is laid over (`Thumb.tsx`) */
 function AssetPic({ m }: { m: MediaAsset }) {
   const thumb = useThumb(m);
   return (
@@ -141,7 +141,7 @@ function AssetPic({ m }: { m: MediaAsset }) {
   );
 }
 
-/* ======================== 卡片库 ======================== */
+/* ======================== Card library ======================== */
 
 export type CardTab = "anim" | "text" | "filter" | "transition";
 const TRANSITION_KINDS: { kind: TransitionKind; name: string; desc: string }[] = [
@@ -150,13 +150,13 @@ const TRANSITION_KINDS: { kind: TransitionKind; name: string; desc: string }[] =
   { kind: "fadeIn", name: trText("Fade in"), desc: trText("The start of the next clip emerges from black") },
 ];
 
-/** 一段是不是文字卡:有一个叫 text 的文字参数 */
+/** Whether a clip is a text card: it has a text parameter named text */
 const isTextCard = (c: CardDef<any>) => c.controls.some((k) => k.key === "text" && k.type === "text");
 
-/** 转场要落在哪:两段主要内容之间(加),或者换掉某一处已有的 */
+/** Where a transition goes: between two clips of main content (add), or replacing an existing one */
 export interface TransitionTarget { a: TrackClip; b: TrackClip; replace?: Transition }
 
-/** 在 a、b 之间放一种转场;有 replace 时先删掉它(一步撤销) */
+/** Put a transition between a and b; with replace, delete it first (one undo step) */
 export function applyTransition(target: TransitionTarget, kind: TransitionKind, dur?: number): { ok: true } | { ok: false; error: string } {
   const run = () => {
     if (target.replace) {
@@ -223,7 +223,7 @@ export function CardsSheet(props: { tab: CardTab; onTab: (t: CardTab) => void; t
   );
 }
 
-/* ======================== 选剪辑 ======================== */
+/* ======================== Select cut ======================== */
 
 export function ClipsSheet(props: { onClose: () => void; onSwitched: (name: string) => void }) {
   const project = useStore((s) => s.project);
@@ -259,19 +259,19 @@ export function ClipsSheet(props: { onClose: () => void; onSwitched: (name: stri
   );
 }
 
-/* ======================== 调整 ======================== */
+/* ======================== Adjust ======================== */
 
 export type ParamsTarget = { clipId: string } | { transitionId: string };
 
 /**
- * 「调整」表单最上面的一节:这一段挂着什么(滤镜、像素映射、音频效果、素材效果卡)。
+ * The top section of the "Adjust" form: what is attached to this clip (filters, pixel maps, audio effects, media effect cards).
  *
- * 放在时长、不透明度、音量之前:挂着的东西决定这一段现在长什么样,比它自己的参数更先要看;
- * 而且滤镜本来就已经在这张表单里(下面的 `ClipFilterFields`),这一节正好把它收编进来。
+ * It is placed before duration, opacity and volume: what is attached decides how this clip looks right now, so it needs to be seen before the clip's own parameters;
+ * and filters were already in this form (`ClipFilterFields` below), so this section just absorbs them.
  *
- * 停用做成开关:桌面上这一项藏在右键菜单里,手机上没有右键,一行一个开关是最省事的做法。
- * 每一行各有一个「引用」—— 子导航那个引的是整段,一段上挂两张同名的滤镜很常见,
- * 不指明哪一张 Agent 只能反问。
+ * Disabling is a switch: on desktop this item hides in the right-click menu, and a phone has no right click, so one switch per row is the simplest approach.
+ * Each row has its own "Quote": the one in the sub-navigation quotes the whole clip, and two filters of the same name on one clip is common,
+ * so without saying which one, the Agent can only ask back.
  */
 function OverlaySection({ clip, onQuote }: {
   clip: TrackClip;
@@ -317,7 +317,7 @@ function OverlaySection({ clip, onQuote }: {
 }
 
 export function ParamsSheet(props: { target: ParamsTarget; onClose: () => void; onAskAgent: (clipId: string) => void;
-  /** 单张叠加卡的「引用」:和子导航那个「引用」同一条路,只是粒度细一级 */
+  /** "Quote" for a single overlay card: the same path as the sub-navigation's "Quote", only one level finer in granularity */
   onQuoteOverlay?: (clip: TrackClip, item: OverlayItem) => void }) {
   const project = useStore((s) => s.project);
   const toast = useToast();
@@ -377,11 +377,11 @@ export function ParamsSheet(props: { target: ParamsTarget; onClose: () => void; 
   );
 }
 
-/* ======================== 速度 ======================== */
+/* ======================== Speed ======================== */
 
 /**
- * 视频段的「速度」(演示稿子导航栏里的「速度」一项;业务层是 store 的 setClipSpeed,和桌面编辑分区同一个动作)。
- * 起点不动、终点按新速度重算;〔裁〕第一版变速段不出原声,面板里写明(同一句 SPEED_MUTE_NOTE)。
+ * "Speed" for a video clip (the "Speed" item in the demo's sub-navigation bar; in the business layer it is the store's setClipSpeed, the same action as the desktop editing section).
+ * The start stays and the end is recomputed at the new speed; [ruling] in the first version a speed-changed clip has no original sound, stated in the panel (the same SPEED_MUTE_NOTE sentence).
  */
 export function SpeedSheet(props: { clipId: string; onClose: () => void }) {
   const project = useStore((s) => s.project);
@@ -398,7 +398,7 @@ export function SpeedSheet(props: { clipId: string; onClose: () => void }) {
     if (!r.ok) { toast(r.error); return; }
     setText(String(getState().project.tracks.flatMap((t) => t.clips).find((x) => x.id === c.id)?.speed ?? 1));
     const head = v === 1 ? trText("Restored to 1×, original audio restored") : trText("Changed to {0}, this clip has no original audio", speedLabel(clipSpeed({ speed: v })));
-    // 转场跟着缩了、谁跟着挪了、推开了几段(用户 2026-10-23 定「气泡提示即可」):和桌面同一句(kernel/clipTime.mjs 的 speedChangeNotes)
+    // Transitions shrank with it, who moved along, how many clips were pushed apart (user decision 2026-10-23: "a bubble notice is enough"): the same sentence as desktop (speedChangeNotes in kernel/clipTime.mjs)
     const tail = speedChangeNotes(r, c.id);
     toast(tail ? trText("{0}; {1}", head, tail) : head);
   };
@@ -414,7 +414,7 @@ export function SpeedSheet(props: { clipId: string; onClose: () => void }) {
           <button key={v} type="button" className={v === cur ? "on" : undefined} data-pcm="speed-preset" data-speed={v} aria-pressed={v === cur} onClick={() => pick(v)}>{speedLabel(v)}</button>
         ))}
       </div>
-      {/* 手动输入倍率(用户 2026-10-23 定):0.25～4,可带小数;超出范围拒绝并提示,不夹 */}
+      {/* Manually entered rate (user decision 2026-10-23): 0.25~4, decimals allowed; out of range is rejected with a message, not clamped */}
       <div className="field" data-pcm="speed-custom">
         <label>{trText("Custom speed multiplier")}<span><input className="num" data-pcm="speed-input" type="number" inputMode="decimal" min={CLIP_SPEED_MIN} max={CLIP_SPEED_MAX} step={0.01} value={text}
           onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") commitText(); }} /> ×</span></label>
@@ -429,13 +429,13 @@ export function SpeedSheet(props: { clipId: string; onClose: () => void }) {
   );
 }
 
-/* ======================== 冲突合并 ======================== */
+/* ======================== Conflict merge ======================== */
 
 /**
- * 冲突合并面板:与桌面的「冲突合并」窗口同一套(两级可勾选列表、「选中无冲突项」「取消全部勾选」、
- * 「合并」「删除选中」「下次再说 / 完成」),状态与动作都在 `editor/sync/useConflictMerge.ts`;样子照演示稿第九轮。
- * 待合并项来自待合并表(`mergeItems.ts`,按「项目 × 用户」存在文档服务),离线重连与 0.7.20 的撤销冲突共用。
- * 「同步已暂停」(离线批次算不出逐项差异、退回整份处理)这种少见情形仍在这里给整份「合并 / 删除全部」。
+ * Conflict merge panel: the same set as the desktop "Conflict merge" window (two-level checkable list, "Select conflict-free items", "Clear all checks",
+ * "Merge", "Delete selected", "Later / Done"), with state and actions all in `editor/sync/useConflictMerge.ts`; the look follows demo round 9.
+ * The pending merge items come from the pending merge table (`mergeItems.ts`, stored per "project × user" in the document service), shared by offline reconnect and the undo conflict of 0.7.20.
+ * The rare case "Sync paused" (the offline batch cannot yield per-item differences and falls back to whole-batch handling) still gets a whole-batch "Merge / Delete all" here.
  */
 export function useConflicts(): { pending: boolean; queued: number; conflicts: number } {
   const c = useMergeCounts();
@@ -498,7 +498,7 @@ export function ConflictSheet(props: { onClose: () => void }) {
   );
 }
 
-/** 离线批次算不出逐项差异时的退路:整份「合并」(重放)或「删除全部」(丢弃,先存本地备份) */
+/** Fallback when the offline batch cannot yield per-item differences: whole-batch "Merge" (replay) or "Delete all" (discard, saving a local backup first) */
 function PausedSheet(props: { onClose: () => void; done: () => void }) {
   const summary = pausedSummary();
   const queued = useSync((v) => v.paused?.queued ?? 0);
@@ -521,16 +521,16 @@ function PausedSheet(props: { onClose: () => void; done: () => void }) {
   );
 }
 
-/* ======================== 成员 ======================== */
+/* ======================== Members ======================== */
 
 export function MembersSheet(props: { info: MembersInfo; onClose: () => void }) {
   const toast = useToast();
   const { info } = props;
   const link = currentAccountProjectLink() ?? currentSharedUrl();
   const [deciding, setDeciding] = useState<string | null>(null);
-  /** 「通过」「拒绝」没收到回包时,再点沿用原请求号;收到结论就丢掉(`src/account/requestIds.ts`,与桌面共用) */
+  /** When "Approve" or "Reject" gets no reply, clicking again reuses the original request ID; once a result arrives it is dropped (`src/account/requestIds.ts`, shared with desktop) */
   const decisionIds = useRef(createRequestIds());
-  // 申请加入(2026-10-22 用户定):创建者在成员面板里「通过」「拒绝」;服务端只认创建者本人,通过那一刻现核禁入与申请还在不在
+  // Join request (user decision, 2026-10-22): the creator clicks "Approve" or "Reject" in the members panel; the server accepts only the creator in person, and at the moment of approval it rechecks the ban list and whether the request still exists
   const decide = async (op: "approve-join" | "reject-join", row: AccountJoinRequestRow) => {
     const name = row.accountName ?? row.accountId;
     setDeciding(row.joinRequestId);
@@ -573,11 +573,11 @@ export function MembersSheet(props: { info: MembersInfo; onClose: () => void }) 
   );
 }
 
-/* ======================== 导出 ======================== */
+/* ======================== Export ======================== */
 
 interface ExportRun { phase: "running" | "done" | "error" | "cancelled"; done: number; total: number; stage?: string; waiting?: string; message?: string; id?: string }
 
-/** 和桌面顶栏的「导出视频」同一条路(`TopBar.tsx` 的 `exportProject`,在线页面那一支):先选方式,再选保存位置,浏览器里逐帧导出 */
+/** The same path as the desktop top bar's "Export video" (`exportProject` in `TopBar.tsx`, the online-page branch): first pick the method, then the save location, and export frame by frame in the browser */
 export function ExportSheet(props: { onClose: () => void }) {
   const [run, setRun] = useState<ExportRun | null>(null);
   const idRef = useRef<string | null>(null);

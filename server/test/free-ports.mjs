@@ -1,13 +1,22 @@
 /**
- * 测试里要空闲端口：自己挑一个并试着监听确认空着，一次要多个时两两不同。
- * 不写死端口号，所以同一次 npm test 里的各文件之间、同一台机器上同时跑的两个 npm test 之间都不会撞端口。
- * 端口在 20000～49151 里随机挑，不会落在 5xxx、58xx、59xx 这些保留段。
+ * Free ports needed in tests: pick one and try listening to confirm it is free; when multiple
+ * are needed at once, they are pairwise distinct.
+ * Port numbers are not hardcoded, so no port collisions occur between files within the same npm
+ * test run, or between two npm test runs running concurrently on the same machine.
+ * Ports are chosen randomly from 20000-49151 and will not fall into reserved ranges like 5xxx,
+ * 58xx, or 59xx.
  *
- * 「确认空着」到「真的占上」之间有一段空档：起子进程的夹具要等一两秒才占上，这期间别的测试进程试着监听同一个端口也是空的，
- * 两边就挑到了同一个，后占的那个 EADDRINUSE（机器忙、几份全量测试同时跑时实测得到：16 份 `move-guard.test.mjs` 并发，
- * 32 次里 1 次素材子进程报 `EADDRINUSE`）。所以挑中的端口另在临时目录里记一笔（`<临时目录>/promptcut-test-port-claims/<端口>`，
- * 独占创建），别的进程看到有人记着、而且还没过期，就换一个挑。记的这一笔只为盖住那段空档，`CLAIM_MS` 之后作废，不用谁来还；
- * 记不下来（目录不可写之类）就当没有这回事，退回原来的做法。
+ * There is a gap between "confirming free" and "actually occupying": the fixture spawning child
+ * processes takes a second or two to occupy it; during this window, another test process trying to
+ * listen on the same port also sees it as free, so both pick the same one, and the one that
+ * occupies it later gets EADDRINUSE (empirically observed when the machine is busy and multiple
+ * full test suites run concurrently: 16 concurrent `move-guard.test.mjs` runs produced 1 asset
+ * child process reporting `EADDRINUSE` out of 32 runs). Therefore, the selected port is recorded
+ * separately in the temporary directory (`<tmpdir>/promptcut-test-port-claims/<port>`, created
+ * exclusively); if another process sees an active claim that has not expired, it picks a
+ * different one. This record only exists to cover that gap and is invalidated after `CLAIM_MS`
+ * without needing to be released; if recording fails (e.g. unwriteable directory), it acts as if
+ * this never happened and falls back to the original approach.
  */
 import fs from 'node:fs';
 import net from 'node:net';
@@ -15,11 +24,14 @@ import os from 'node:os';
 import path from 'node:path';
 
 const CLAIM_DIR = path.join(os.tmpdir(), 'promptcut-test-port-claims');
-/** 一笔记录管多久：比「挑中到占上」的空档长得多，又短到同时记着的端口只占这个区间的一小部分 */
+/**
+ * How long a record lasts: much longer than the "picked to occupied" gap, yet short enough that
+ * concurrently recorded ports only occupy a small fraction of this range.
+ */
 const CLAIM_MS = 90_000;
 let swept = false;
 
-/** 每个进程头一次用时把过期的记录清掉（尽力而为） */
+/** Clean up expired records on each process's first use (best effort) */
 function sweepClaims() {
   if (swept) return;
   swept = true;
@@ -28,30 +40,34 @@ function sweepClaims() {
     const now = Date.now();
     for (const name of fs.readdirSync(CLAIM_DIR)) {
       const file = path.join(CLAIM_DIR, name);
-      try { if (now - fs.statSync(file).mtimeMs > CLAIM_MS) fs.unlinkSync(file); } catch { /* 别的进程刚清掉 */ }
+      try { if (now - fs.statSync(file).mtimeMs > CLAIM_MS) fs.unlinkSync(file); } catch { /* Just cleaned up by another process */ }
     }
-  } catch { /* 目录用不了：不记，照原来的做法 */ }
+  } catch { /* Directory unavailable: do not record, proceed with original approach */ }
 }
 
-/** 给这个端口记一笔。回 false = 别的进程刚挑中它、还没过期，换一个 */
+/**
+ * Record a claim for this port. Returns false = another process just picked it and it has not
+ * expired, pick another.
+ */
 function claimPort(port) {
   sweepClaims();
   const file = path.join(CLAIM_DIR, String(port));
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try { fs.writeFileSync(file, String(process.pid), { flag: 'wx' }); return true; }
     catch (error) {
-      if (error?.code !== 'EEXIST') return true; // 记不下来不挡路
+      if (error?.code !== 'EEXIST') return true; // Failure to record does not block
       try {
         if (Date.now() - fs.statSync(file).mtimeMs <= CLAIM_MS) return false;
-        fs.unlinkSync(file); // 过期的：清掉再记一次
-      } catch { /* 正好被别人清掉或重记了：再试一次 */ }
+        fs.unlinkSync(file); // Expired: clean up and record again
+      } catch { /* Just cleaned up or re-recorded by another process: try again */ }
     }
   }
   return false;
 }
 
 export async function freePorts(count = 1, host = '127.0.0.1') {
-  // 这台机器的系统临时端口区间是 1024～15000，会落进 58xx 这类保留段，所以自己在 20000～49151 里随机挑、逐个试着监听确认空着。
+  // This machine's system ephemeral port range is 1024-15000, which falls into reserved ranges like
+  // 58xx; randomly pick within 20000-49151 and test listening on each to confirm it is free.
   const servers = [], ports = [];
   while (ports.length < count) {
     const port = 20000 + Math.floor(Math.random() * (49152 - 20000));
@@ -63,7 +79,7 @@ export async function freePorts(count = 1, host = '127.0.0.1') {
         server.listen(port, host, () => resolve(server));
       }));
       ports.push(port);
-    } catch { /* 被占了，换一个 */ }
+    } catch { /* Already occupied, pick another */ }
   }
   await Promise.all(servers.map(server => new Promise(resolve => server.close(resolve))));
   return ports;
@@ -74,8 +90,10 @@ export async function freePort(host = '127.0.0.1') {
 }
 
 /**
- * 要一段连续的、都空闲的端口（夹具里「基准端口 + 代号」那种用法）：先挑一个空闲的，再试它后面 count-1 个是否也空闲，不行就换一个重来。
- * 返回起点。
+ * Request a contiguous range of free ports (the "base port + code" pattern in fixtures):
+ * first pick a free port, then test whether the next count-1 ports are also free; if not, pick
+ * another and try again.
+ * Returns the starting port.
  */
 export async function freePortRange(count, host = '127.0.0.1') {
   for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -84,7 +102,8 @@ export async function freePortRange(count, host = '127.0.0.1') {
     const servers = [];
     try {
       for (let i = 0; i < count; i += 1) {
-        // 起点已经由 freePort 记过；后面几个也各记一笔，有一个被别人记着就换一个起点
+        // The start port is already recorded by freePort; record each of the next ones too; if any is
+        // claimed by another process, pick a different start port
         if (i > 0 && !claimPort(base + i)) break;
         servers.push(await new Promise((resolve, reject) => {
           const server = net.createServer();
@@ -92,14 +111,17 @@ export async function freePortRange(count, host = '127.0.0.1') {
           server.listen(base + i, host, () => resolve(server));
         }));
       }
-    } catch { /* 这一段里有被占的，换一个起点 */ }
+    } catch { /* Some port in this range is occupied, pick a different start port */ }
     await Promise.all(servers.map(server => new Promise(resolve => server.close(resolve))));
     if (servers.length === count) return base;
   }
   throw new Error('free-port-range-unavailable');
 }
 
-/** startRunnerProcessFixture 要的那一组端口，全部取自系统给的空闲端口（identityBase、controlBase 各带一段给「代号」往上加）。 */
+/**
+ * The port set required by startRunnerProcessFixture, all drawn from system-assigned free ports
+ * (identityBase and controlBase each provide a range for the "code" to increment).
+ */
 export async function runnerPorts() {
   const [a, b, c, d, e, f, g, agent, masterEvents, look, renderWorker] = await freePorts(11);
   return { combo: [a, b, c, d, e, f, g], agent, masterEvents, look, renderWorker,

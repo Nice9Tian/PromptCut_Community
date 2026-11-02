@@ -1,39 +1,44 @@
 /**
- * 把内联在正文里的 `<think>…</think>` 从文本流里拆出来。
+ * Extract inline `<think>…</think>` from the body text stream.
  *
- * # 为什么需要
+ * # Why it is needed
  *
- * 各家「推理内容」的传法不统一。规矩的接口会把它放进单独的字段
- * (`reasoning_content` / `reasoning` / `thinking`),providers/openai.mjs 认这三个。
- * 但不少中转站是**直接内联在 `content` 里**发的:
+ * Each provider delivers "reasoning content" differently. Well-behaved APIs place it in a separate
+ * field (`reasoning_content` / `reasoning` / `thinking`), and providers/openai.mjs recognizes these
+ * three. However, many relay services send it **directly inlined inside `content`**:
  *
- *   <think>**Clarifying article link and scope**\n\n</think>\n\n我先确认素材收集环境;…
+ *   <think>**Clarifying article link and scope**\n\n</think>\n\nI will first confirm the media collection environment;…
  *
- * 这种就整段走了 text_delta,被当成正文渲染 —— 用户在聊天气泡里看见一个赤裸的
- * `</think>`,阅读被打断。这个模块把它在**流的层面**分离出来,让它走思考那条通道,
- * 后面的 UI 什么都不用改就能正常显示。
+ * In this case, the entire segment passes through text_delta and is rendered as body text: users
+ * see a naked `</think>` in the chat bubble, interrupting their reading. This module separates it
+ * at the **stream level**, routing it through the thinking channel so downstream UI can display it
+ * normally without any changes.
  *
- * # 为什么要做成状态机而不是正则
+ * # Why build a state machine instead of using regex
  *
- * 这是**流式**的:标签会被切在两个 chunk 中间(`<thi` + `nk>`),甚至一个字符一个 chunk。
- * 对着单个 delta 跑正则永远匹配不到那种情况,而把整段攒完再处理就没有流式效果了。
- * 所以这里只在「当前缓冲的尾巴可能是标签的一半」时才扣住那几个字符,其余立刻放行 ——
- * 延迟最多几个字符,肉眼看不出来。
+ * This is **streaming**: tags can be split across two chunks (`<thi` + `nk>`), or even one
+ * character per chunk. Running regex against a single delta can never match those cases, and
+ * accumulating the entire text before processing loses the streaming effect. Therefore, this only
+ * holds back those few characters when "the tail of the current buffer might be half of a tag",
+ * and releases everything else immediately: at most a few characters of latency, unnoticeable to
+ * the human eye.
  *
- * # 已知取舍
+ * # Known trade-offs
  *
- * 正文里如果**真的**要出现 `<think>` 这个字面量(比如在讨论标签本身、或者代码块里),
- * 会被误当成标签吃掉。代价是极低频的误伤,换掉的是每一条消息都被污染。
- * 真遇到了再按「代码块内不解析」加一层,不值得现在为它把状态机搞复杂。
+ * If the literal `<think>` **actually** appears in the body text (such as when discussing the tag
+ * itself, or inside a code block), it will be mistakenly swallowed as a tag. The cost is an
+ * extremely low-frequency false positive, in exchange for avoiding pollution on every message.
+ * If we ever encounter it, we can add a layer for "do not parse inside code blocks"; it is not
+ * worth complicating the state machine for this right now.
  */
 
-/** 认哪些标签对。`<think>` 最常见,`<thinking>` 也有中转站在用 */
+/** Which tag pairs are recognized. `<think>` is most common, and some relay services use `<thinking>` */
 const TAG_PAIRS = [
   { open: '<think>', close: '</think>' },
   { open: '<thinking>', close: '</thinking>' },
 ];
 
-/** s 的后缀里,最长的那个「是 tag 的真前缀」的长度。用来决定扣住几个字符 */
+/** Length of the longest suffix of s that is a proper prefix of tag. Used to decide how many characters to hold back */
 function partialTailLength(s, tag) {
   const max = Math.min(s.length, tag.length - 1);
   for (let n = max; n > 0; n--) {
@@ -43,14 +48,15 @@ function partialTailLength(s, tag) {
 }
 
 /**
- * 建一个拆分器。
+ * Create a splitter.
  *
- * `push(chunk)` 和 `flush()` 都返回事件数组:`{ kind: 'text' | 'think', text }`,
- * 空片段不会产出。调用方照着把 text 发成 text_delta、think 发成 thinking_delta 即可。
+ * Both `push(chunk)` and `flush()` return an array of events: `{ kind: 'text' | 'think', text }`,
+ * with no empty fragments emitted. The caller simply sends text as text_delta and think as
+ * thinking_delta.
  */
 export function createThinkSplitter() {
   let buf = '';
-  /** null = 在正文里;否则是当前正在找的那个闭合标签对 */
+  /** null = inside body text; otherwise the closing tag pair currently being searched for */
   let openPair = null;
 
   function drain(out) {
@@ -63,7 +69,8 @@ export function createThinkSplitter() {
           openPair = null;
           continue;
         }
-        // 没等到闭合:把「肯定不是标签开头」的部分先放出去,尾巴留着等下一块
+        // Closing tag not reached: release the part that is definitely not the start of a tag,
+        // keeping the tail for the next chunk
         const keep = partialTailLength(buf, openPair.close);
         if (buf.length > keep) {
           out.push({ kind: 'think', text: buf.slice(0, buf.length - keep) });
@@ -72,7 +79,7 @@ export function createThinkSplitter() {
         return;
       }
 
-      // 在正文里:找最靠前的那个开标签
+      // Inside body text: find the earliest opening tag
       let best = -1;
       let bestPair = null;
       for (const pair of TAG_PAIRS) {
@@ -86,7 +93,7 @@ export function createThinkSplitter() {
         continue;
       }
 
-      // 没有开标签:尾巴可能是某个开标签的一半,扣住最长的那个
+      // No opening tag: tail might be half of an opening tag, hold back the longest match
       let keep = 0;
       for (const pair of TAG_PAIRS) keep = Math.max(keep, partialTailLength(buf, pair.open));
       if (buf.length > keep) {
@@ -106,9 +113,9 @@ export function createThinkSplitter() {
       return out;
     },
     /**
-     * 流结束。扣住的尾巴要吐出来 —— 它可能是半个标签,也可能就是正常正文
-     * (比如回复正好以 `<` 结尾)。没等到闭合标签的思考内容也一并交出去,
-     * 宁可多显示一段思考,也不能把用户的正文吞掉。
+     * Stream ended. Emit the buffered tail: it could be half a tag, or just normal body text
+     * (e.g. the reply happens to end with `<`). Thinking content that did not reach a closing tag is
+     * also yielded: it is better to display extra thinking content than to swallow the user's body text.
      */
     flush() {
       const out = [];
@@ -117,14 +124,14 @@ export function createThinkSplitter() {
       openPair = null;
       return out;
     },
-    /** 现在是不是在 think 里面(给调用方判断状态用) */
+    /** Whether currently inside think (used by callers to check state) */
     get inThink() { return openPair !== null; },
   };
 }
 
 /**
- * 一次性拆完整段文本(非流式的地方用,比如把历史里已经存下来的文本洗一遍)。
- * 返回 `{ text, think }` 两段拼好的字符串。
+ * Split the entire text in one shot (used in non-streaming contexts, such as cleaning up text
+ * already saved in history). Returns `{ text, think }` as two assembled strings.
  */
 export function splitThinkTags(s) {
   const sp = createThinkSplitter();

@@ -1,11 +1,14 @@
 /**
- * 项目真身（C6.5 设计稿 `docs/plan/c65-design.md` 第 2、3、10、11 节）：`project.open` / `project.op` / `project.ops` /
- * 覆盖通知 / `project.follow` / 快照与日志截断 / 大项目分片 / 与旧 `announce` 的关系。用例 DS-P1～DS-P12。
- * 设计稿验收的文档服务一侧：V2（DS-P11）、V3（DS-P5）、V4（DS-P7）。
- * 跑：node --test server/test/docservice-project-ops.test.mjs
+ * Authoritative project (C6.5 design draft `docs/plan/c65-design.md` sections 2, 3, 10, 11):
+ * `project.open` / `project.op` / `project.ops` / overwrite notification / `project.follow` /
+ * snapshot and log truncation / large project chunking / relationship with legacy `announce`.
+ * Test cases DS-P1 to DS-P12.
+ * Document service side of design draft acceptance check: V2 (DS-P11), V3 (DS-P5), V4 (DS-P7).
+ * Run: node --test server/test/docservice-project-ops.test.mjs
  *
- * `createDocService` 独立模式、端口 0、`autoTick: false`；时钟注入。principal 由查询串给：
- * `?user=alice&dev=d1&role=page&conv=3`；不带 `role` 时是旧式身份 `{ userId, tenantId }`。
+ * `createDocService` standalone mode, port 0, `autoTick: false`; clock injection. principal provided
+ * by query string: `?user=alice&dev=d1&role=page&conv=3`; when without `role`, legacy identity
+ * `{ userId, tenantId }`.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,7 +26,7 @@ import { applyOps } from '../docservice/json-ops.mjs';
 const T0 = 1_700_000_000_000;
 const MIN = 60_000;
 
-/** 查询串 → principal：带 role 时是 M6a 形状，否则旧式 */
+/** Query string → principal: with role, M6a shape; otherwise legacy */
 function authByQuery(req) {
   const q = new URL(req.url ?? '/', 'http://localhost').searchParams;
   const user = q.get('user') ?? 'u-default';
@@ -49,7 +52,7 @@ async function start(t, { store, clock = { t: T0 }, options = {} } = {}) {
     await env.cleanup();
   };
   t.after(cleanup);
-  /** 按完整查询串连（`startStandalone.connect` 只认 user） */
+  /** Connect by full query string (`startStandalone.connect` only recognizes user) */
   const connect = async (query) => {
     const c = wsClient(`${env.url()}?${query}`);
     clients.push(c);
@@ -168,7 +171,7 @@ test('DS-P4 too-large: ops exceed 256 KiB once serialized; forbidden: a render n
   assert.deepEqual({ type: f.type, reason: f.reason, currentRev: f.currentRev }, { type: 'project.op.rejected', reason: 'forbidden', currentRev: 1 });
 });
 
-// ------------------------------------------------------------------ DS-P5（V3）
+// ------------------------------------------------------------------ DS-P5 (V3)
 
 test('DS-P5 (V3) expected version: after the Agent reads, the page changes the same entity, so the write-back of the Agent is stale and since matches the actual changes one by one; after re-reading, writing succeeds', async (t) => {
   const env = await start(t);
@@ -207,7 +210,7 @@ test('DS-P5 (V3) expected version: after the Agent reads, the page changes the s
   const seen = await page.next((m) => m.type === 'project.ops' && m.rev === 4);
   assert.deepEqual(seen.actor, { userId: 'alice@pc', deviceId: 'pc', role: 'agent', conversation: 7, session: 'conv-7' });
 
-  // 期望版本等于当前：落地；不带期望版本：按到达顺序落地
+  // Expected version equals current: persist; without expected version: persist in arrival order
   assert.equal((await op(page, [{ op: 'set', path: '/fps', value: 24 }])).rev, 5);
 });
 
@@ -230,7 +233,7 @@ test('DS-P6 idempotency: resubmitting the same opId returns the original rev (du
   assert.equal(st.project.n, 1);
 });
 
-// ------------------------------------------------------------------ DS-P7（V4）
+// ------------------------------------------------------------------ DS-P7 (V4)
 
 test('DS-P7 (V4) overwrite notification: ok for the overwriting side carries overwrote, and the overwritten side receives one overwritten before the ops; the overwritten side is not notified when it has the same identity, when more than 10 minutes have passed, or when it has exited tracking', async (t) => {
   const env = await start(t);
@@ -251,7 +254,7 @@ test('DS-P7 (V4) overwrite notification: ok for the overwriting side carries ove
   env.clock.t = T0 + 5 * MIN;
   const wb = await op(b, [{ op: 'set', path: '/tracks/@t1/clips/@c1/start', value: 0.75 }], { session: 'sb' });
   assert.deepEqual(wb.overwrote, [{ entity: '/tracks/@t1/clips/@c1', by: actorA, rev: wa.rev, at: T0 + 1 * MIN }]);
-  // 被覆盖方：overwritten 在这一版的 ops 之前到
+  // Overwritten party: overwritten arrives before the ops of this version
   const first = await a.next((m) => m.type === 'project.overwritten' || m.type === 'project.ops');
   assert.equal(first.type, 'project.overwritten', 'overwritten is received before ops');
   assert.deepEqual(
@@ -262,14 +265,14 @@ test('DS-P7 (V4) overwrite notification: ok for the overwriting side carries ove
   assert.deepEqual(await a.quiet(byType('project.overwritten'), 100), [], 'the overwritten side receives only one');
   assert.deepEqual(await b.quiet(byType('project.overwritten'), 100), [], 'the overwriting side does not receive overwritten');
 
-  // 超过 10 分钟：不算覆盖
+  // Over 10 minutes: not counted as overwrite
   env.clock.t = T0 + 16 * MIN;
   const late = await op(a, [{ op: 'set', path: '/tracks/@t1/clips/@c1/start', value: 0.1 }], { session: 'sa' });
   assert.deepEqual(late.overwrote, []);
   await b.next(byType('project.ops'));
   assert.deepEqual(await b.quiet(byType('project.overwritten'), 100), []);
 
-  // 退出跟踪：a 对 c2 退出；b 覆盖 c2 时 b 仍知道，a 不收
+  // Stop tracking: a untracks c2; when b overwrites c2, b still knows, a does not receive it
   await op(a, [{ op: 'set', path: '/tracks/@t1/clips/@c2/end', value: 3 }], { session: 'sa' });
   await b.next(byType('project.ops'));
   const f = await ask(a, { type: 'project.follow', projectId: 'P', entity: '/tracks/@t1/clips/@c2/end', on: false, session: 'sa' });
@@ -279,14 +282,14 @@ test('DS-P7 (V4) overwrite notification: ok for the overwriting side carries ove
   assert.equal((await a.next(byType('project.ops'))).rev, wb2.rev);
   assert.deepEqual(await a.quiet(byType('project.overwritten'), 100), [], 'not received after exiting tracking');
 
-  // 同一用户同一设备、不同页面会话：是另一个写入身份
+  // Same user on same device, different page session: is another write identity
   const a2 = await env.connect('user=alice&dev=pa&role=page');
   await open(a2);
   const x = await op(a2, [{ op: 'set', path: '/tracks/@t1/clips/@c1/start', value: 0.9 }], { session: 'sa-2' });
   assert.equal(x.overwrote.length, 1);
   assert.equal((await a.next(byType('project.overwritten'))).entity, '/tracks/@t1/clips/@c1');
 
-  // open 的 writers：时间窗内的最近写入者
+  // open's writers: recent writers within the time window
   const st = await open(b);
   const byEntity = Object.fromEntries(st.writers.map((w) => [w.entity, w.actor.session]));
   assert.equal(byEntity['/tracks/@t1/clips/@c1'], 'sa-2');
@@ -412,9 +415,9 @@ test('DS-P10 large project: project.upload sends the whole thing in parts, and p
   assert.equal(got, text);
 });
 
-// ------------------------------------------------------------------ DS-P11（V2）
+// ------------------------------------------------------------------ DS-P11 (V2)
 
-/** 可复现的随机数 */
+/** Reproducible random numbers */
 function rng(seed) {
   let s = seed >>> 0;
   return () => {
@@ -426,7 +429,10 @@ function rng(seed) {
   };
 }
 
-/** 按本地副本随机造一批编辑（可能因为别人刚改过而走不通，那就被拒） */
+/**
+ * Randomly generate a batch of edits based on local replica (may fail because someone else just
+ * modified it, in which case it is rejected)
+ */
 function randomOps(view, rand, tag, n) {
   const pick = (arr) => arr[Math.floor(rand() * arr.length)];
   const tracks = view.tracks;

@@ -1,15 +1,20 @@
 /**
- * X7(`docs/plan/m6c-contract.md`):远端节点产的卡,本机的 PNG 缓存。
+ * X7(`docs/plan/m6c-contract.md`): cards produced by remote nodes, local PNG cache.
  *
- *   推送侧:快照清单(C6.2 的 `SnapshotResult`)另带这一段的 PNG 缓存帧 `pngs: [{ key, fps, frames: [[帧, 哈希, 字节数]] }]`,
- *          块推进素材服务的 `px`;
- *   拉取侧:`applyResult` 落地快照时,清单带着 `pngs` 就一并取回,原样写进本机 PNG 缓存
- *          (`CardFrameCache` 的 `controls/<key>/mov/frames/`);没有 `pngs` 的保持原样(legacy 通道照旧画占位),不在本机预渲染重试。
+ *   Push side: snapshot manifest (C6.2 `SnapshotResult`) additionally carries PNG cache frames
+ *              for this segment `pngs: [{ key, fps, frames: [[frame, hash, bytes]] }]`,
+ *              chunks pushed into `px` of asset service;
+ *   Pull side: when `applyResult` lands snapshot, manifest carrying `pngs` is retrieved together,
+ *              written as-is into local PNG cache (`CardFrameCache`'s `controls/<key>/mov/frames/`);
+ *              those without `pngs` remain as-is (legacy channel draws placeholder as usual),
+ *              without prerender retries locally.
  *
- * 两个临时帧库 A(远端,产)、B(本机,取),各一个真的 `FramePipeline`(`bakery/index.mjs` 换成假的,不起 Chrome);
- * 一台真 HTTP 的素材服务(memory,端口 0)。A、B 的 entry 用真的 `CardFrameCache`,PNG 用 pngjs 现造。
+ * Two temporary frame stores A (remote, produce), B (local, retrieve), each with a real
+ * `FramePipeline` (`bakery/index.mjs` replaced with a mock, does not start Chrome); one real HTTP
+ * asset service (memory, port 0). A and B entries use real `CardFrameCache`, PNGs generated on the
+ * fly with pngjs.
  *
- * 跑法:node --experimental-test-module-mocks --test server/test/artifact-png.test.mjs
+ * Run: node --experimental-test-module-mocks --test server/test/artifact-png.test.mjs
  */
 import { test, mock, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -51,7 +56,10 @@ const FP = ENV.fingerprint;
 const CAPTURE = 'capture-v1';
 const SHARED_CAPS = { compositing: 'independent', frameMode: 'stateful' };
 
-/** 4×4 的 PNG:第 n 帧一个颜色;`clear` 为真时全零(全透明,同 Chrome 截出的空帧) */
+/**
+ * 4×4 PNG: frame n has one color; when `clear` is true, all zeros (fully transparent, like empty
+ * frames captured by Chrome)
+ */
 function pngOf(n, clear = false) {
   const png = new PNG({ width: 4, height: 4 });
   for (let i = 0; i < 16 && !clear; i++) {
@@ -60,7 +68,7 @@ function pngOf(n, clear = false) {
   return PNG.sync.write(png);
 }
 
-/** 一张共享档卡的 control(`card-cache.mjs` 的 `plan` 产出的那些字段里用得到的) */
+/** Control of a shared tier card (fields that are useful among those produced by `plan` in `card-cache.mjs`) */
 function controlFor(tag, { clipId = `clip-${tag}` } = {}) {
   const contentKey = sha256(`content-${tag}`);
   return {
@@ -92,7 +100,10 @@ async function withLibs(fn) {
   }
 }
 
-/** 管线上挂一个 entry:card plan 是这些 control,PNG 缓存是真的 `CardFrameCache`(capture 取管线的) */
+/**
+ * Mount an entry on the pipeline: card plan has these controls, PNG cache is a real
+ * `CardFrameCache` (capture takes from the pipeline)
+ */
 function attachEntry(pipeline, controls, key = `entry-${Math.random().toString(36).slice(2, 8)}`) {
   const project = { fps: 30, width: 64, height: 64 };
   const cardCache = new CardFrameCache({ root: pipeline.root, project, capture: () => pipeline.captureCode(), scale: () => 1, envFingerprint: FP });
@@ -101,7 +112,10 @@ function attachEntry(pipeline, controls, key = `entry-${Math.random().toString(3
   return entry;
 }
 
-/** A 产一段:60 帧快照 + PNG 缓存。第 0 帧全透明且二次确认、第 1 帧全透明未确认、第 5 帧没有 PNG */
+/**
+ * A produces a segment: 60-frame snapshot + PNG cache. Frame 0 is fully transparent and
+ * reconfirmed, frame 1 is fully transparent unconfirmed, frame 5 has no PNG
+ */
 async function produce(A, control) {
   const entry = attachEntry(A, [control]);
   await A.snapshots().commitSnapshots({ tier: 'shared', key: control.snapshotKey, clipId: control.clipId, capabilities: SHARED_CAPS,
@@ -110,7 +124,7 @@ async function produce(A, control) {
     if (n === 5) continue;
     const clear = n === 0 || n === 1;
     await entry.cardCache.put(control.key, n, pngOf(n, clear));
-    if (n === 0) await entry.cardCache.put(control.key, n, pngOf(n, clear));   // 同一产出方再渲一遍,确认它确实是空的
+    if (n === 0) await entry.cardCache.put(control.key, n, pngOf(n, clear));   // Same producer renders again to confirm it is indeed empty
   }
   return entry;
 }
@@ -128,7 +142,7 @@ async function pushed(A, control) {
   return { srv, client, result: wire(result) };
 }
 
-/* ------------------------------------------------------------------ 用例 */
+/* ------------------------------------------------------------------ Test cases */
 
 test('X7-1 Push side: the snapshot manifest carries this segment\'s cached PNG frames (valid ones only), and the chunks are pushed into px', async () => {
   await withLibs(async (make) => {
@@ -262,12 +276,14 @@ test('X7-7 When including PNGs would push the manifest past 256 KiB, the PNGs ar
   await withLibs(async (make) => {
     const A = await make();
     const base = controlFor('x77');
-    // 同一张卡摆 70 次:共用一份快照,各有一份 PNG 缓存(键不同)。70 × 60 帧的 PNG 条目超过 256 KiB
+    // Same card placed 70 times: share one snapshot, each has a PNG cache (different keys).
+    // PNG entries for 70 × 60 frames exceed 256 KiB
     const controls = range(0, 69).map((i) => ({ ...base, clipId: `clip-x77-${i}`, key: resultKeyOf(sha256(`png-x77-${i}`), FP) }));
     const entry = attachEntry(A, controls);
     await A.snapshots().commitSnapshots({ tier: 'shared', key: base.snapshotKey, clipId: base.clipId, capabilities: SHARED_CAPS,
       items: range(0, 59).map((n) => ({ localFrame: n, html: `<div>${n}</div>` })) });
-    // PNG 缓存只按目录查:70 个键的 frames 目录各放同样 60 个文件(直接写盘,不走 70 × 60 次 put)
+    // PNG cache only checks by directory: 70 key frames directories each hold the same 60 files
+    // (written directly to disk, bypassing 70 × 60 put calls)
     const oneStore = await entry.cardCache.store(controls[0].key);
     for (const n of range(0, 59)) await entry.cardCache.put(controls[0].key, n, pngOf(n));
     const files = await fs.readdir(oneStore.frameDir);
@@ -276,7 +292,7 @@ test('X7-7 When including PNGs would push the manifest past 256 KiB, the PNGs ar
       await fs.mkdir(dir, { recursive: true });
       for (const name of files) {
         const src = await fs.readFile(path.join(oneStore.frameDir, name));
-        // 产出记录里的卡键要是它自己的,否则不算有效
+        // The card key in the production record must be its own, otherwise it is not considered valid
         const { withRenderRecord } = await import('../png-record.mjs');
         const record = readRenderRecord(src);
         await fs.writeFile(path.join(dir, name), withRenderRecord(src, { ...record, signature: { ...record.signature, cards: c.key } }));

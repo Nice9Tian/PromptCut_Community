@@ -5,9 +5,10 @@ import "../../cards/native/hud.css";
 import { fitOr } from "../fit";
 
 /**
- * A/B 对比面板。
- * 从 versus-card 拆出来的组合部件。包含左右两张卡片和中间的 VS 徽章。
- * 进场: 两侧卡片从外向内滑入(0.5s)，然后中间的徽章弹缩出现(延时 0.3s + 0.6s)。可以高亮胜出者并让另一侧变暗。
+ * A/B comparison panel.
+ * Composite part extracted from versus-card. Contains left and right cards and a center VS badge.
+ * Entrance: cards on both sides slide in from outside inward (0.5s), then center badge springs into
+ * view (delay 0.3s + 0.6s). Can highlight winner and dim the other side.
  */
 interface Params {
   aKicker: string;

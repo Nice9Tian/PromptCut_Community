@@ -1,27 +1,34 @@
 /**
- * 托管方服务一侧的客户端：凭服务私钥连文档服务的**控制连接**，看目录、核验委托、换票据
- * （契约 `docs/plan/hosted-render-contract.md` 第 1.2、1.3 节，`docs/plan/cloud-agent-contract.md` 第 4.3、16 节；
- * 写进了 `docs/plan/auth-contract.md` 第 17 节）。云端 Agent 服务用它；别的托管方服务（服务名不同）同样能用。
+ * Host-service-side client: connects to the document service's **control connection** with the
+ * service private key to inspect catalog, verify delegations, and exchange tickets (contracts
+ * `docs/plan/hosted-render-contract.md` Sections 1.2 and 1.3, `docs/plan/cloud-agent-contract.md`
+ * Sections 4.3 and 16; written into `docs/plan/auth-contract.md` Section 17). Used by Cloud Agent
+ * service; other host services (with different service names) can also use it.
  *
  * ```js
  * const client = createServiceClient({ base: 'ws://127.0.0.1:8787', key: readServiceKeyFile(dir), log });
- * await client.ready();                                   // 控制连接连上（断了自己重连）
- * client.watch({ onProjects, onProject });                // 目录：完整清单与之后的每次变化（重连后自动重订）
- * const who = await client.verifyDelegation(委托票据);     // { ok: true, projectId, userId, username, acc, ownerKey, … } | { ok: false, reason }
- * const t = await client.memberTicket({ projectId, conversation, conversationId, delegation: 对话委托 });
- * const protocols = client.dataProtocols(t.ticket);       // 交给数据连接（`promptcut.ticket.<票据>`）
- * const p = await client.publishTicket(projectId);        // 只用来发布预渲染重试计划的连接票据
- * await client.demand(projectId, holdMs);                 // 声明「这个项目有活要别的托管方服务做」
+ * await client.ready();                                   // Control connection established (auto-reconnects on disconnect)
+ * client.watch({ onProjects, onProject });                // Catalog: full manifest and every subsequent change (auto-resubscribes on reconnect)
+ * const who = await client.verifyDelegation(delegationTicket); // { ok: true, projectId, userId, username, acc, ownerKey, … } | { ok: false, reason }
+ * const t = await client.memberTicket({ projectId, conversation, conversationId, delegation: chatDelegation });
+ * const protocols = client.dataProtocols(t.ticket);       // Passed to data connection (`promptcut.ticket.<ticket>`)
+ * const p = await client.publishTicket(projectId);        // Connection ticket only used to publish prerender retry plans
+ * await client.demand(projectId, holdMs);                 // Declares "this project has work for other host services to do"
  * client.close();
  * ```
  *
- * - 控制连接只认本机发起（文档服务那一侧判），所以 `base` 是同机回环地址。
- * - 每次建连取一次挑战、签一次（`nonce` 只能用一次）；连接断了按 `reconnectMs` 退避重连。断开期间的请求立刻回
- *   `{ ok: false, reason: 'unavailable' }`，不排队：调用方（Agent 服务）据此不接新对话。
- * - 请求按 `reqId` 配对；超时回 `{ ok: false, reason: 'timeout' }`。回包里的 `error { reason }` 原样带回，不抛错。
- * - 私钥、签名、`nonce`、委托、票据的原文不进日志：日志只有事件名、服务名、原因码、项目 id。
+ * - Control connections only accept local origination (judged on the document service side), so
+ *   `base` is a loopback address on the same machine.
+ * - Each connection fetches a challenge and signs once (`nonce` can only be used once); if the
+ *   connection drops, reconnect with backoff according to `reconnectMs`. Requests during
+ *   disconnection immediately return `{ ok: false, reason: 'unavailable' }` without queuing:
+ *   callers (Agent service) will not accept new chats based on this.
+ * - Requests are paired by `reqId`; timeouts return `{ ok: false, reason: 'timeout' }`. Any
+ *   `error { reason }` in the response is returned as-is without throwing.
+ * - Raw private keys, signatures, `nonce`, delegations, and tickets do not enter logs: logs only
+ *   contain event name, service name, reason code, and project id.
  *
- * 只用 Node 内置能力（全局 `WebSocket`、`fetch`），可注入。
+ * Uses only Node built-in capabilities (global `WebSocket`, `fetch`), injectable.
  */
 import { PROTOCOL, TICKET_PREFIX } from './protocol.mjs';
 import { buildServiceProtocols, readServiceKeyFile } from './service-identity.mjs';
@@ -35,7 +42,7 @@ export const SERVICE_CLIENT_DEFAULTS = Object.freeze({
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-/** `http(s)://…` → `ws(s)://…`；已经是 ws 的原样 */
+/** `http(s)://…` → `ws(s)://…`; leaves existing ws as-is */
 function wsUrlOf(base) {
   const u = new URL(base);
   if (u.protocol === 'http:') u.protocol = 'ws:';
@@ -43,21 +50,21 @@ function wsUrlOf(base) {
   return u.toString();
 }
 
-/** 数据连接握手用的子协议 */
+/** Subprotocol used for data connection handshake */
 export const ticketProtocols = (ticket) => [PROTOCOL, TICKET_PREFIX + ticket];
 
 /**
  * @param {object} options
- * @param {string} options.base 文档服务地址（`ws://127.0.0.1:8787` 或 `http://…`）
- * @param {{ service, kid, priv, instanceId, instanceName }} [options.key] `readServiceKeyFile` 的结果
- * @param {string} [options.keyFile] 私钥文件或它所在的目录（没给 `key` 时读它）
+ * @param {string} options.base Document service address (`ws://127.0.0.1:8787` or `http://…`)
+ * @param {{ service, kid, priv, instanceId, instanceName }} [options.key] Result of `readServiceKeyFile`
+ * @param {string} [options.keyFile] Private key file or its directory (read when `key` is not provided)
  * @param {typeof globalThis.WebSocket} [options.WebSocketImpl]
  * @param {typeof globalThis.fetch} [options.fetch]
  * @param {(event: string, fields: object) => void} [options.log]
  * @param {number} [options.requestTimeoutMs]
  * @param {number} [options.connectTimeoutMs]
- * @param {number[]} [options.reconnectMs] 逐次加长，封顶最后一个
- * @param {boolean} [options.autoReconnect] 缺省 true
+ * @param {number[]} [options.reconnectMs] Progressively increased, capped at the last value
+ * @param {boolean} [options.autoReconnect] Defaults to true
  */
 export function createServiceClient({
   base,
@@ -76,7 +83,7 @@ export function createServiceClient({
   const key = givenKey ?? readServiceKeyFile(keyFile);
   const url = wsUrlOf(base);
   const say = (event, fields = {}) => {
-    try { log(event, { service: key.service, ...fields }); } catch { /* 日志不该影响连接 */ }
+    try { log(event, { service: key.service, ...fields }); } catch { /* Logging should not affect the connection */ }
   };
 
   let ws = null;
@@ -88,13 +95,13 @@ export function createServiceClient({
   let seq = 0;
   /** reqId → { resolve, timer } */
   const waiting = new Map();
-  /** 订阅目录的回调；重连后自动重订 */
+  /** Callback for catalog subscription; automatically resubscribes after reconnect */
   let watcher = null;
   const stateListeners = new Set();
 
   const emitState = (state, info = {}) => {
     for (const fn of [...stateListeners]) {
-      try { fn(state, info); } catch { /* 监听方的错不影响连接 */ }
+      try { fn(state, info); } catch { /* Listener errors should not affect the connection */ }
     }
   };
 
@@ -135,7 +142,7 @@ export function createServiceClient({
     retryTimer.unref?.();
   }
 
-  /** 建一次控制连接；已连上直接回。失败抛错（并按退避安排下一次） */
+  /** Establishes a control connection; returns immediately if already connected. Throws on failure (and schedules next attempt with backoff) */
   function connect() {
     if (closed) return Promise.reject(Object.assign(new Error('The service client is closed'), { code: 'closed' }));
     if (open) return Promise.resolve();
@@ -149,7 +156,7 @@ export function createServiceClient({
           const timer = setTimeout(() => {
             if (settled) return;
             settled = true;
-            try { sock.close(); } catch { /* 还没连上 */ }
+            try { sock.close(); } catch { /* Not connected yet */ }
             reject(Object.assign(new Error(tr("Control connection timed out")), { code: 'timeout' }));
           }, connectTimeoutMs);
           timer.unref?.();
@@ -163,7 +170,7 @@ export function createServiceClient({
             resolve();
           });
           sock.addEventListener('message', (ev) => { if (typeof ev.data === 'string') onMessage(ev.data); });
-          sock.addEventListener('error', () => { /* 紧跟着会有 close */ });
+          sock.addEventListener('error', () => { /* Followed immediately by close */ });
           sock.addEventListener('close', (ev) => {
             const wasOpen = ws === sock && open;
             if (ws === sock) {
@@ -198,7 +205,7 @@ export function createServiceClient({
     return connecting;
   }
 
-  /** 发一条请求，回 `{ ok: true, message }` 或 `{ ok: false, reason }`；不抛错 */
+  /** Sends a request, returns `{ ok: true, message }` or `{ ok: false, reason }`; does not throw */
   function request(message) {
     if (closed) return Promise.resolve({ ok: false, reason: 'closed' });
     if (!open || !ws) return Promise.resolve({ ok: false, reason: 'unavailable' });
@@ -238,23 +245,25 @@ export function createServiceClient({
   }
 
   const api = {
-    /** 这个客户端代表哪个服务 */
+    /** Which service this client represents */
     service: key.service,
     instanceId: key.instanceId,
     get connected() { return open; },
 
-    /** 等控制连接连上（没在连就发起一次）；连不上抛错 */
+    /** Waits for control connection to connect (initiates one if not connecting); throws if unable to connect */
     ready: connect,
 
-    /** 连接状态变化：`fn('up' | 'down', { code?, reason? })`；回取消函数 */
+    /** Connection state change: `fn('up' | 'down', { code?, reason? })`; returns unsubscribe function */
     onState(fn) {
       stateListeners.add(fn);
       return () => stateListeners.delete(fn);
     },
 
     /**
-     * 订阅目录。`onProjects(完整清单)` 在订阅成功与每次重连后各调一次，`onProject(条目)` 在之后每次变化时调
-     * （条目 `{ projectId, enabled, active, members, hosted }` 或 `{ projectId, removed: true }`；`enabled` 是这个服务自己的开关）。
+     * Subscribes to catalog. `onProjects(fullManifest)` is called once upon successful subscription
+     * and after each reconnect, and `onProject(entry)` is called on every subsequent change
+     * (entry `{ projectId, enabled, active, members, hosted }` or `{ projectId, removed: true }`;
+     * `enabled` is this service's own toggle).
      * @returns {Promise<{ ok: true, projects: object[] } | { ok: false, reason: string }>}
      */
     watch({ onProjects, onProject } = {}) {
@@ -263,44 +272,49 @@ export function createServiceClient({
     },
 
     /**
-     * 核验一张委托票据或对话委托（不签任何东西）。
-     * @returns {Promise<{ ok: true, projectId, userId, username, deviceId, deviceName, creator, mode, acc, exp, ownerKey, grant, conversationId? } | { ok: false, reason }>}
+     * Verifies a delegation ticket or chat delegation (does not sign anything).
+     * @returns {Promise<{ ok: true, projectId, userId, username, deviceId, deviceName, creator, mode,
+     *   acc, exp, ownerKey, grant, conversationId? } | { ok: false, reason }>}
      */
     async verifyDelegation(delegation) {
       return strip(await request({ type: 'hosted.delegate.verify', delegation }), 'hosted.delegate.ok');
     },
 
     /**
-     * 凭对话委托换一张代那位成员的连接票据（2 分钟，只在握手时用）。
+     * Exchanges a chat delegation for a connection ticket representing that member (2 minutes, used only
+     * during handshake).
      * @param {{ projectId: string, conversation: number, conversationId: string, delegation: string }} fields
-     * @returns {Promise<{ ok: true, ticket, exp, userId, username, access, ownerKey, conversation, conversationId } | { ok: false, reason }>}
+     * @returns {Promise<{ ok: true, ticket, exp, userId, username, access, ownerKey, conversation,
+     *   conversationId } | { ok: false, reason }>}
      */
     async memberTicket({ projectId, conversation, conversationId, delegation }) {
       return strip(await request({ type: 'hosted.ticket', projectId, conversation, conversationId, delegation }), 'hosted.ticket.ok');
     },
 
-    /** 只用来发布预渲染重试计划的连接票据（服务自己的身份，不带任何成员的权限） */
+    /** Connection ticket only used to publish prerender retry plans (service's own identity, without any member permissions) */
     async publishTicket(projectId) {
       return strip(await request({ type: 'hosted.ticket', projectId, purpose: 'publish' }), 'hosted.ticket.ok');
     },
 
-    /** 以服务自己的身份进项目的票据（`actsFor: 'self'` 的服务，如渲染服务，才要得到） */
+    /** Ticket to enter project under service's own identity (only obtainable by services with `actsFor: 'self'`, such as render service) */
     async serviceTicket(projectId) {
       return strip(await request({ type: 'hosted.ticket', projectId }), 'hosted.ticket.ok');
     },
 
-    /** 声明「这个项目有活要别的托管方服务做」；`holdMs: 0` 撤回 */
+    /** Declares "this project has work for other host services to do"; `holdMs: 0` revokes */
     async demand(projectId, holdMs) {
       return strip(await request({ type: 'hosted.demand', projectId, ...(holdMs === undefined ? {} : { holdMs }) }), 'hosted.demand.ok');
     },
 
-    /** 数据连接握手用的子协议 `[promptcut.v1, promptcut.ticket.<票据>]` */
+    /** Subprotocols used for data connection handshake: `[promptcut.v1, promptcut.ticket.<ticket>]` */
     dataProtocols: ticketProtocols,
 
     /**
-     * 给 `server/agent/doc-link.mjs` 的 `createAgentLink({ protocolsFor })` 用：按对话号现换票据、拼子协议。
-     * 每次调用（首次连接、会话接续、断线重连）都拿手里那张对话委托重新换，所以不需要页面在场；
-     * 换不出来抛错，`code` 是文档服务给的原因（`expired`、`generation`、`service-disabled`、`banned`、`not-listed`、`unavailable`……）。
+     * For `createAgentLink({ protocolsFor })` in `server/agent/doc-link.mjs`: exchanges ticket on the
+     * fly by chat number and constructs subprotocols. Each invocation (initial connection, session
+     * resume, disconnect reconnect) exchanges anew with the held chat delegation, so page presence is
+     * not required; throws if exchange fails, where `code` is the reason given by the document
+     * service (`expired`, `generation`, `service-disabled`, `banned`, `not-listed`, `unavailable`...).
      * @param {{ projectId: string, conversationId: string, delegation: string | (() => string) }} fields
      * @returns {(conversation: number) => Promise<string[]>}
      */
@@ -313,7 +327,7 @@ export function createServiceClient({
       };
     },
 
-    /** 关掉控制连接，不再重连 */
+    /** Closes the control connection and stops reconnecting */
     close() {
       closed = true;
       if (retryTimer) clearTimeout(retryTimer);
@@ -322,7 +336,7 @@ export function createServiceClient({
       const sock = ws;
       ws = null;
       open = false;
-      try { sock?.close(1000, 'client-close'); } catch { /* 已经断了 */ }
+      try { sock?.close(1000, 'client-close'); } catch { /* Already disconnected */ }
     },
   };
   return api;

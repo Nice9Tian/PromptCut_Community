@@ -1,11 +1,15 @@
 /**
- * 虚拟定时器(E4b)的单测。跑:node --test src/render/virtualTimers.test.mjs
+ * Unit tests for virtual timers (E4b). Run: node --test src/render/virtualTimers.test.mjs
  *
- * 钉死四条:
- *   - `tick` 推进时按到期顺序触发,同一时刻按登记顺序;
- *   - `setInterval` 按周期重排,一拍跨过好几个周期时在同一拍里追齐;
- *   - **跳转不结算**(`shift`):跳过的那段里的定时器不触发,每个挂起定时器的**剩余时间保持**;
- *   - `clear` 只认虚拟 id(≥ 1e9),真 id 交回调用方 —— 舞台自身的墙钟定时器靠这条不被张冠李戴地摘掉。
+ * Four rules pinned down:
+ *   - When `tick` advances, trigger in expiration order; at the same timestamp, by registration
+ *     order;
+ *   - `setInterval` reschedules by period; when a single tick crosses multiple periods, catch up
+ *     within the same tick;
+ *   - **Jump without settling** (`shift`): timers in the skipped range do not trigger, and each
+ *     pending timer's **remaining time is preserved**;
+ *   - `clear` only recognizes virtual ids (≥ 1e9), returning real ids to the caller: the stage's
+ *     own wall-clock timers rely on this to avoid being mistakenly removed.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -37,7 +41,7 @@ test("setInterval: one step every 100 ms, advancing to second 3 gives exactly 30
   const vt = createVirtualTimers();
   let cells = 0;
   vt.set(() => { cells++; }, 100, [], true, 0);
-  // 30 fps 的拍子,一拍 1000/30 ms,一路推到 3000 ms
+  // 30 fps ticks, 1000/30 ms per tick, advancing all the way to 3000 ms
   const step = 1000 / 30;
   for (let ms = step; ms <= 3000 + 1e-9; ms += step) vt.settle(ms);
   vt.settle(3000);
@@ -66,12 +70,12 @@ test("a 0 ms timer registered inside a callback is pushed to the next tick (a se
 test("shift: seeking does not settle, the remaining time of pending timers is preserved", () => {
   const vt = createVirtualTimers();
   const hits = [];
-  vt.set(() => hits.push("x"), 100, [], false, 0);       // 到期 100
-  vt.set(() => hits.push("i"), 50, [], true, 0);         // 每 50
-  // clock.set(5000):往前跳 5 秒,不结算
+  vt.set(() => hits.push("x"), 100, [], false, 0);       // Expires at 100
+  vt.set(() => hits.push("i"), 50, [], true, 0);         // Every 50
+  // clock.set(5000): jump forward 5 seconds, do not settle
   vt.shift(5000 - 0);
   assert.deepEqual(hits, [], "no timers in the skipped span fire");
-  // 剩余时间保持:x 还差 100 ms,i 还差 50 ms
+  // Remaining time preserved: x still has 100 ms left, i still has 50 ms left
   assert.equal(vt.settle(5049), 0);
   assert.equal(vt.settle(5050), 1);
   assert.deepEqual(hits, ["i"]);
@@ -81,8 +85,8 @@ test("shift: seeking does not settle, the remaining time of pending timers is pr
 test("shift: jumping backward does not settle either, remaining time is kept", () => {
   const vt = createVirtualTimers();
   let n = 0;
-  vt.set(() => { n++; }, 200, [], false, 1000);          // 到期 1200
-  vt.shift(0 - 1000);                                    // 拨回 0
+  vt.set(() => { n++; }, 200, [], false, 1000);          // Expires at 1200
+  vt.shift(0 - 1000);                                    // Dial back to 0
   assert.equal(vt.settle(199), 0);
   assert.equal(vt.settle(200), 1);
   assert.equal(n, 1);

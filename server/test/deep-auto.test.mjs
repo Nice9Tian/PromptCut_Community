@@ -1,9 +1,10 @@
 /**
- * 「深度自主」：轮次上限放宽，且不给模型任何关于轮次的话。
+ * "Deep autonomy": round limit is relaxed, and no statements regarding rounds are given to the model.
  *
- * 这里盯住的是**模型看得见的那份上下文**。屏幕上显示第几轮是好事，但同一句话
- * 一旦进了 history，模型就会替自己算预算、提前草草收工 —— 而这正是开这个开关
- * 想避免的。所以断言都落在 history 上，不落在 progress 事件上。
+ * What is monitored here is **the context visible to the model**. Displaying the round number on
+ * screen is helpful, but once that same phrase enters history, the model calculates a budget for
+ * itself and wraps up prematurely: exactly what enabling this toggle aims to avoid. Therefore,
+ * assertions are placed on history, not on progress events.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Agent } from '../harness/agent.mjs';
 
-/** 一个永远只调工具、从不收尾的模型：拿它把循环逼到上限 */
+/** A model that only ever calls tools and never finalizes: use it to push the loop to the limit */
 function neverStops() {
   let n = 0;
   return { name: 'never', async *stream() {
@@ -22,7 +23,10 @@ function neverStops() {
   } };
 }
 
-/** 每次返回都不一样，免得撞上「重复操作」检测，那会在到上限之前就把循环停掉 */
+/**
+ * Returns something different each time to avoid "duplicate operation" detection stopping
+ * the loop before the limit
+ */
 const noopTool = {
   name: 'noop',
   inputSchema: { type: 'object', properties: { n: { type: 'number' } } },
@@ -42,7 +46,7 @@ async function runTo(limitOpts) {
   return { out, events, history: out.history.get() };
 }
 
-/** 模型手里那份上下文里，所有 user 文本拼成一串 */
+/** All user text in the model's context concatenated into a single string */
 const userText = (history) => history
   .filter((m) => m.role === 'user')
   .flatMap((m) => m.content.filter((b) => b.type === 'text').map((b) => b.text))
@@ -65,7 +69,7 @@ test('Deep autonomy: it still wraps up at the limit, but the message does not me
 
 test('The deep autonomy limit really is relaxed, not still running at the normal 48 rounds', async () => {
   const { out } = await runTo({ maxIterations: 40, deepAuto: true });
-  // 40 轮才触顶：说明 maxIterations 真的被用上了，而不是构造函数的默认值
+  // Only tops out at 40 rounds: shows maxIterations was actually used, not the constructor default
   assert.equal(out.outcome, 'round_limit');
   assert.equal(out.completed, 40, 'Running noop once per round should complete exactly 40 times');
 });
@@ -92,7 +96,7 @@ test('With no round limit the loop has no end: if the model does not wrap up it 
   let rounds = 0;
   const agent = new Agent({
     provider: { name: 'never', async *stream() {
-      // 跑够 60 轮就当作「已经远远越过 48 这个常规上限」，然后模拟用户点停止
+      // Reaching 60 rounds is treated as "far past the normal limit of 48", then simulate user clicking Stop
       if (++rounds >= 60) ac.abort();
       yield { type: 'tool_use', id: `c${rounds}`, name: 'noop', input: { n: rounds } };
       yield { type: 'stop', reason: 'tool_use' };
@@ -105,9 +109,10 @@ test('With no round limit the loop has no end: if the model does not wrap up it 
   assert.ok(rounds >= 60, `With no round limit it should run straight past the normal 48 rounds, but it only ran ${rounds}`);
 });
 
-// ── 「自主轮次」这个设置项本身 ──────────────────────────────────
-// 0 是有意义的取值(不限),所以下界必须是 0 —— 一旦有人顺手写成 `v < 1`,
-// 用户在设置里填 0 会被当成非法值退回去,而界面上明写着 0 表示不限。
+// ── The "Autonomous rounds" setting itself ──────────────────────────────────
+// 0 is a meaningful value (unlimited), so the lower bound must be 0: if someone casually writes
+// `v < 1`, entering 0 in settings will be rejected as an invalid value, while the UI explicitly
+// states that 0 means unlimited.
 
 async function withConfig(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-deep-'));

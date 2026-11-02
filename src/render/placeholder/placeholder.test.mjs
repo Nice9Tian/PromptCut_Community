@@ -21,7 +21,8 @@ test("the module satisfies the handoff shape", () => {
 
 test("CSS animations have the reserved prefix and only animate opacity or transform", () => {
   const names = [...PLACEHOLDER_CSS.matchAll(/@keyframes\s+([\w-]+)\s*\{([^}]*\}[^}]*)\}/g)];
-  // 降级时只剩 120 ms 出现延迟那一条;不降级时还有沙漏转动
+  // When downgraded, only the 120 ms appearance delay item remains;
+  // when not downgraded, the hourglass spins as well
   assert.equal(names.length, PERF_DEGRADED ? 1 : 2);
   for (const [, name, body] of names) {
     assert.ok(contract.isPlaceholderAnimation({ animationName: name }));
@@ -43,7 +44,7 @@ test("Performance downgrade (P4 circuit-breaker protocol): no noise overlay, hou
   if (!PERF_DEGRADED) return;
   assert.ok(!PLACEHOLDER_CSS.includes("background-image"), "No noise texture");
   assert.ok(!/pc-ph-turn/.test(PLACEHOLDER_CSS), "No spin animation");
-  // index.ts 引 .tsx,node 直接 import 不了,按源码核对降级分支
+  // index.ts references .tsx, node cannot directly import it; verify downgrade branches against source code
   assert.match(index, /maxAnimated = PERF_DEGRADED \? 0 : 1/);
   assert.match(index, /if \(PERF_DEGRADED\) return 0;/);
 });
@@ -63,10 +64,11 @@ test("No \"Needs local PC render assist\": this icon appears nowhere in the comp
 });
 
 test("fit: the hourglass scales up by a multiplier computed from one side of the stage (center fixed); no transform is written when the multiplier is 1", () => {
-  // 沙漏:徽标的圆整个放大;铺满形态只放大中间那个(噪点铺在根元素上,不缩放)
+  // Hourglass: the entire circle of the badge is scaled up; fill mode only scales up the middle one
+  // (noise is placed on the root element, unscaled)
   assert.match(component, /width: 28, height: 28, \.\.\.\(s !== 1 \? \{ transform: `scale\(\$\{s\}\)` \} : null\)/);
   assert.match(component, /className="pc-ph-center"[^>]*style=\{solid && s !== 1 \? \{ transform: `translate\(-50%, -50%\) scale\(\$\{s\}\)` \}/);
-  // 不再用 CSS 变量
+  // No longer use CSS variables
   assert.doesNotMatch(component + PLACEHOLDER_CSS, /--pc-ph-ui-scale/);
   assert.doesNotMatch(PLACEHOLDER_CSS, /data-pc-placeholder-layout/);
 });

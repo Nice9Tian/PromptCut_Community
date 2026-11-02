@@ -83,7 +83,8 @@ export const stepTimeline: CardDef<Params> = {
   useWhen: "When the narration describes ordered steps or a process (\"first\", \"to begin with\", \"then\", \"finally\", \"steps\"), use a horizontal timeline that lights up step by step. The base has a fixed landscape width, **at most 5 steps, each step name no longer than 4 characters**, otherwise the characters stack horizontally. This is an entrance animation that plays on mount and does not follow the timeline, so it cannot make a progress bar spanning the whole video (use chapter-bar for that). For parallel points with no order, use checklist.",
   tags: ["steps","process","timeline","sequence"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,

@@ -1,12 +1,18 @@
-// C6.6 集成补做项(`docs/plan/c66-design.md` 第 9 节「要集成方补做的」第 1～3 条)的服务端一侧。
-// 跑:node --test server/test/c66-integ.test.mjs
+// Server side for C6.6 integration follow-ups (`docs/plan/c66-design.md` section 9 "To be supplemented
+// by the integrator", items 1-3).
+// Run: node --test server/test/c66-integ.test.mjs
 //
-//   C66-I1-*  上传队列的目标经 `POST /api/media/upload-queue/target` 换(页面一侧在 src/editor/media/uploadTarget.test.mjs)
-//   C66-I2-*  打开项目时补转素材小尺寸:`POST /api/media/tiers/backfill` 与两档管理器的 `backfill`
-//   C66-I3-*  预渲染进程 `/api/export` 的导出拦截:缺素材原尺寸回 409 `awaiting-uploader`
+//   C66-I1-*  Upload queue target switched via `POST /api/media/upload-queue/target`
+//             (page side in src/editor/media/uploadTarget.test.mjs)
+//   C66-I2-*  Backfill small-size assets when opening a project: `POST /api/media/tiers/backfill`
+//             and two-tier manager `backfill`
+//   C66-I3-*  Export interception for prerender process `/api/export`: returns 409
+//             `awaiting-uploader` when original-size asset is missing
 //
-// 素材插件是 .ts:同 media-tiers.test.mjs,用 typescript 转译到临时目录再 import,兄弟模块换成仓库里的绝对地址。
-// 导出插件用 node 的类型剥离直接 import(`src/testing/registerTs.mjs` 补无扩展名的相对 import)。
+// Asset plugin is .ts: same as media-tiers.test.mjs, transpiled to temporary directory with
+// typescript before import; sibling modules replaced with absolute paths in repository.
+// Export plugin directly imported using Node type stripping (`src/testing/registerTs.mjs`
+// supplements extensionless relative imports).
 import '../../src/testing/registerTs.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -75,7 +81,7 @@ const ff = (args) => {
   const r = spawnSync('ffmpeg', ['-y', '-hide_banner', '-v', 'error', ...args], { windowsHide: true, encoding: 'utf8' });
   if (r.status !== 0) throw new Error(`ffmpeg failed: ${r.stderr}`);
 };
-/** moov 在尾的小 MP4(不重封装的话它就一直是晚置 moov) */
+/** Small MP4 with moov at the end (remains a late moov unless remuxed) */
 function lateMoov(name) {
   const file = path.join(OUT, name);
   ff(['-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=30', '-t', '1', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-an', file]);
@@ -96,7 +102,7 @@ const topBoxes = (file) => {
 };
 
 /* ======================================================================== *
- * C66-I1 上传目标
+ * C66-I1 Upload target
  * ======================================================================== */
 
 test('C66-I1-01 POST /api/media/upload-queue/target { base, ticket } switches the upload target; { base: null } switches back to this machine', async () => {
@@ -135,7 +141,7 @@ test('C66-I1-05 when PROMPTCUT_ASSET_URL is set: the remote target given by the 
 });
 
 /* ======================================================================== *
- * C66-I2 打开项目时补转素材小尺寸
+ * C66-I2 Backfill small-size assets when opening a project
  * ======================================================================== */
 
 test('C66-I2-01 backfill transcode: a video ingested without tiers (same as a .procp restore) → backfill queues the small-size asset, no remux, original-size hash unchanged; once done, GET /api/media/tiers reports ready', { skip: !ffmpegOk && 'No ffmpeg', timeout: 180_000 }, async () => {
@@ -143,7 +149,7 @@ test('C66-I2-01 backfill transcode: a video ingested without tiers (same as a .p
   fs.mkdirSync(media.mediaDir(root), { recursive: true });
   const origin = await listen(serviceHandler(root));
   const src = lateMoov('i2-late.mp4');
-  // 不带 ?tiers=1:.procp 还原、配音等走的路,不做两档
+  // Without ?tiers=1: path taken by .procp restore, voiceover, etc.; does not generate two tiers
   const upRes = await fetch(`${origin}/api/media/upload/i2-late.mp4`, { method: 'POST', body: fs.readFileSync(src) });
   const upText = await upRes.text();
   assert.equal(upRes.status, 200, upText.slice(0, 300));
@@ -168,7 +174,7 @@ test('C66-I2-01 backfill transcode: a video ingested without tiers (same as a .p
   const lib = path.join(media.mediaDir(root), `${up.hash}.mp4`);
   assert.equal(sha256File(lib), up.hash, 'original-size asset bytes untouched (the hash is the one the project references)');
   assert.ok(topBoxes(lib).indexOf('mdat') < topBoxes(lib).indexOf('moov'), 'backfill transcode does not remux: the original-size asset still has a trailing moov');
-  // 再问一次:已经有了,直接回 ready,不再转
+  // Query again: already exists, return ready directly without transcoding again
   const again = await (await postJson(`${origin}/api/media/tiers/backfill`, { items: [{ hash: up.hash }] })).json();
   assert.deepEqual(again.items[up.hash], { state: 'ready', small });
 });
@@ -187,12 +193,12 @@ test('C66-I2-02 two-tier manager backfill: image / audio extensions are skipped;
   const m = tiers.createTierManager({ dir, lib, ffmpeg: async () => 'ffmpeg', queue: fakeQueue });
   assert.deepEqual(await m.backfill({ hash: 'a'.repeat(64), ext: 'png' }), { state: 'skipped' });
   assert.deepEqual(await m.backfill({ hash: 'a'.repeat(64), ext: 'm4a' }), { state: 'skipped' });
-  // 原尺寸文件不在:转码失败(source-missing),记 failed
+  // Original-size file missing: transcoding failed (source-missing), record failed
   const ghost = 'b'.repeat(64);
   assert.deepEqual(await m.backfill({ hash: ghost, ext: 'mp4' }), { state: 'pending' });
   await m.idle();
   assert.equal(m.status([ghost])[ghost].state, 'failed');
-  // 文件补上了:下次打开再补,这回成了
+  // File was added: backfill again on next open, succeeded this time
   fs.copyFileSync(lateMoov('i2b-src.mp4'), path.join(dir, `${ghost}.mp4`));
   assert.deepEqual(await m.backfill({ hash: ghost, ext: 'mp4' }), { state: 'pending' }, 'the one that failed last time is retried once');
   await m.idle();
@@ -200,7 +206,7 @@ test('C66-I2-02 two-tier manager backfill: image / audio extensions are skipped;
   assert.equal(st.state, 'ready');
   const last = enq.at(-1);
   assert.deepEqual(last.tiers.map((t) => [t.tier, t.hash]), [['small', st.small], ['original', ghost]], 'once transcoded, handed to the upload queue: small first, then large');
-  // 没有视频流(纯音频的 mp4)
+  // No video stream (audio-only mp4)
   const audioOnly = path.join(OUT, 'i2b-audio.mp4');
   ff(['-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-c:a', 'aac', audioOnly]);
   const ah = sha256File(audioOnly);
@@ -215,7 +221,7 @@ test('C66-I2-02 two-tier manager backfill: image / audio extensions are skipped;
 });
 
 /* ======================================================================== *
- * C66-I3 预渲染进程 /api/export 的导出拦截
+ * C66-I3 Export interception for /api/export in prerender process
  * ======================================================================== */
 
 const H = (c) => c.repeat(64);
@@ -234,7 +240,7 @@ const projectOf = () => ({
   ] }],
 });
 
-/** 假的编辑器进程:只答 /api/media/originals,`incomplete` 是当前素材服务上没到齐的哈希 */
+/** Fake editor process: only responds to /api/media/originals; `incomplete` is hashes not yet fully arrived on the asset service */
 async function fakeEditor(incomplete) {
   const asked = [];
   const origin = await listen((req, res) => {

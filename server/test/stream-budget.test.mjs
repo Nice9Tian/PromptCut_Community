@@ -1,6 +1,7 @@
 /**
- * 同屏轨道流的预算(`src/render/streamBudget.mjs`):数像素的口径、页面与服务端是不是同一个式子、组流在新预算下怎么并。
- * 跑:npm test -- server/test/stream-budget.test.mjs
+ * On-screen track stream budget (`src/render/streamBudget.mjs`): pixel counting metric, whether client
+ * page and server use the same formula, and how group streams merge under the new budget.
+ * Run: npm test -- server/test/stream-budget.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,8 +16,8 @@ import { STREAM_HALF_PAD, packedSize } from '../../src/render/streamEncode.ts';
 import { planesWithinBudget, DECODER_BUDGET } from '../../src/render/streamPlayer.ts';
 import { localPlacement as pageLocalPlacement, PAGE_STREAM_DECODER_BUDGET, PAGE_LOCAL_OVERFLOW_PX } from '../../src/online/pageStreamPlan.ts';
 
-const FULL = 1920 * 2176;        // 一张 1920×1080 满屏卡的编码画幅
-const SMALL = 704 * 864;         // 640×360 的小卡(四周各 32 像素溢出)
+const FULL = 1920 * 2176;        // Encoding aspect ratio of a 1920×1080 full-screen card
+const SMALL = 704 * 864;         // Small 640×360 card (32-pixel overflow on all four sides)
 
 test('Budget numbers: the pixel budget is "6 full-screen cards at 60 fps", the stream count cap is 32; the stream count cap exported in three places is the same number', () => {
   assert.equal(STREAM_PIXEL_RATE_BUDGET, 6 * FULL * 60);
@@ -27,11 +28,11 @@ test('Budget numbers: the pixel budget is "6 full-screen cards at 60 fps", the s
   assert.equal(DECODER_BUDGET, STREAM_COUNT_BUDGET);
   assert.equal(PAGE_STREAM_DECODER_BUDGET, STREAM_COUNT_BUDGET);
   assert.equal(STREAM_DEFAULT_PIXELS, FULL);
-  // 同值的守门:黑边行数、单卡流外扩的像素数
+  // Gatekeeper for identical values: black bar row count, single-card stream expansion pixels
   assert.equal(STREAM_BUDGET_HALF_PAD, STREAM_HALF_PAD);
   assert.equal(STREAM_BUDGET_OVERFLOW_PX, LOCAL_OVERFLOW_PX);
   assert.equal(STREAM_BUDGET_OVERFLOW_PX, PAGE_LOCAL_OVERFLOW_PX);
-  // 合并的函数只有一份:服务端导出的就是共用的那一个
+  // Only one merge function: the server exports the shared one
   assert.equal(server.groupStreams, groupStreams);
   assert.equal(server.peakConcurrency, peakConcurrency);
 });
@@ -80,10 +81,11 @@ test('How many fit: full-screen cards fit 6 streams at 60 fps and 12 at 30 fps; 
   assert.equal(fits(SMALL, 30), STREAM_COUNT_BUDGET);
   assert.equal(fits(SMALL, 60), STREAM_COUNT_BUDGET);
   assert.equal(Math.floor(STREAM_PIXEL_RATE_BUDGET / streamCost(SMALL, 60)), 41, 'by pixels alone, 41 small cards fit at 60 fps');
-  // 5 张满屏卡(60 帧)以后:再来一张满屏的放得下,第 7 张放不下,后面的小卡也放不下(像素用完了)
+  // After 5 full-screen cards (60 frames): one more full-screen fits, 7th does not, subsequent small
+  // cards also do not fit (pixels exhausted)
   const full = streamCost(FULL, 60), small = streamCost(SMALL, 60);
   assert.deepEqual(withinStreamBudget([full, full, full, full, full, full, full, small]), [0, 1, 2, 3, 4, 5]);
-  // 留着余量时:大的放不下跳过,后面小的照放
+  // When margin remains: large cards that do not fit are skipped, subsequent small cards still placed
   assert.deepEqual(withinStreamBudget([full, full, full, full, full, small, full, small]), [0, 1, 2, 3, 4, 5, 7]);
   assert.deepEqual(withinStreamBudget([small, small, small], 2), [0, 1], 'passing a single number = changes only the stream count cap');
   assert.deepEqual(withinStreamBudget([10, 10, 10], { pixelRate: 25, free: 0 }), [0, 1]);
@@ -100,17 +102,19 @@ test('The page\'s planesWithinBudget uses the same basis: the encoded frame size
   assert.equal(planesWithinBudget(planes, 30, () => FULL).length, 12);
   assert.equal(planesWithinBudget(planes, 30, () => SMALL).length, 32);
   assert.equal(planesWithinBudget(planes, 30).length, 12, 'no frame size given: treated as a full-screen card');
-  // 第 3 条是满屏的、其余是小卡(60 帧):5 张满屏以后第 6 张满屏照放,再往后的满屏放不下、小卡也放不下
+  // Track 3 is full-screen, the rest are small cards (60 frames): after 5 full-screen cards, the 6th
+  // is still placed, beyond that neither full-screen nor small cards fit
   const mixed = planesWithinBudget(planes.slice(0, 9), 60, (p) => (p.clipIds[0] === 'c8' ? SMALL : FULL));
   assert.deepEqual(mixed.map((p) => p.clipIds[0]), ['c0', 'c1', 'c2', 'c3', 'c4', 'c5']);
-  // 标了 over 的不算在内,也不占预算
+  // Those marked over are excluded and do not count toward the budget
   const marked = planes.slice(0, 13).map((p, i) => (i < 2 ? { ...p, over: true } : p));
   assert.deepEqual(planesWithinBudget(marked, 60, () => FULL).map((p) => p.clipIds[0]), ['c2', 'c3', 'c4', 'c5', 'c6', 'c7']);
 });
 
 test('peakCost: the peak of the summed cost on the same frame; entries without a cost do not count', () => {
   assert.deepEqual(peakCost([{ from: 0, to: 9, cost: 5 }, { from: 5, to: 20, cost: 7 }, { from: 21, to: 30, cost: 9 }]), { peak: 12, at: 5, count: 2 });
-  // 只看同屏超过 1 条的帧:第 21～30 帧那一条最贵(9),但那里只有 1 条,不看
+  // Only inspect frames with >1 stream on screen: the stream at frames 21-30 is costliest (9), but only
+  // 1 stream there, skipped
   assert.deepEqual(peakCost([{ from: 0, to: 9, cost: 5 }, { from: 5, to: 20, cost: 7 }, { from: 21, to: 30, cost: 20 }], null, 1), { peak: 12, at: 5, count: 2 });
   assert.deepEqual(peakCost([{ from: 0, to: 9, cost: 5 }, { from: 5, to: 20, cost: 7 }], null, 2), { peak: 0, at: 0, count: 0 });
   assert.deepEqual(peakCost([{ from: 0, to: 9, cost: 5 }, { from: 5, to: 20, cost: 7 }], new Set([5])), { peak: 7, at: 10, count: 1 }, 'skip frame 5: of the remaining frames the most expensive is frame 10 (only the second entry is left)');
@@ -121,36 +125,40 @@ test('groupStreams counts pixels (this test sets the pixel-exempt count to 0, co
   const layers = ['a', 'b', 'c', 'd'].map((id, i) => ({ clipId: id, order: i + 1, from: 0, to: 99 }));
   const of = (costs) => ['a', 'b', 'c', 'd'].map((id, i) => ({ clipIds: [id], order: i + 1, from: 0, to: 99, cost: costs[i] }));
   const ids = (list) => list.map((s) => s.clipIds);
-  // 四条各 10,像素预算 25,一条组流的开销 10:并一次(a+b)是 30,还超;再并是 20,不超了
+  // Four streams at 10 each, pixel budget 25, group stream overhead 10: merge once (a+b) is 30, still
+  // over; merge again is 20, fits
   assert.deepEqual(ids(groupStreams(of([10, 10, 10, 10]), layers, { pixelRate: 25, free: 0 }, [], 10)), [['a', 'b', 'c'], ['d']]);
-  // 没超:不并
+  // Not over budget: do not merge
   assert.deepEqual(ids(groupStreams(of([10, 10, 10, 10]), layers, { pixelRate: 40, free: 0 }, [], 10)), [['a'], ['b'], ['c'], ['d']]);
-  // 小卡:两张加起来还没有一条组流贵,并了反而更贵 —— 不并(超着也不并,超出的层由页面显示占位符)
+  // Small cards: two together cost less than a group stream, merging is costlier: do not merge (even
+  // if over, excess layers show placeholders on the page)
   assert.deepEqual(ids(groupStreams(of([4, 4, 4, 4]), layers, { pixelRate: 12, free: 0 }, [], 10)), [['a'], ['b'], ['c'], ['d']]);
-  // 大小混着:a、b 小,c、d 大。只有 c+d 并了变少
+  // Mixed sizes: a and b small, c and d large. Only merging c+d decreases the total
   assert.deepEqual(ids(groupStreams(of([4, 4, 10, 10]), layers, { pixelRate: 20, free: 0 }, [], 10)), [['a'], ['b'], ['c', 'd']]);
-  // 条数超了:照原来的办法从画家顺序最靠前的一对并起,不看像素
+  // Stream count exceeded: merge starting from foremost pair in painter's order as before, ignoring
+  // pixels
   assert.deepEqual(ids(groupStreams(of([4, 4, 4, 4]), layers, { count: 3, pixelRate: 1000 }, [], 10)), [['a', 'b'], ['c'], ['d']]);
-  // 不参加合并的流也占像素
+  // Streams not participating in merge also consume pixels
   const fixed = [{ from: 0, to: 99, cost: 10 }];
   assert.deepEqual(ids(groupStreams(of([10, 10, 0, 0]).slice(0, 2), layers.slice(0, 2), { pixelRate: 25, free: 0 }, fixed, 10)), [['a', 'b']]);
-  // 不看像素的条数:同屏不超过它就不并,不管像素超了多少;正好多一条时并掉一对就回到里面,并了不省像素也并
+  // Stream count threshold ignoring pixels: no merge if count on screen does not exceed it, regardless
+  // of pixel overrun; merge a pair to bring it back when over by 1, even if no pixels saved
   assert.deepEqual(ids(groupStreams(of([10, 10, 10, 10]), layers, { pixelRate: 1, free: 4 }, [], 10)), [['a'], ['b'], ['c'], ['d']]);
   assert.deepEqual(ids(groupStreams(of([4, 4, 4, 4]), layers, { pixelRate: 1, free: 3 }, [], 10)), [['a', 'b'], ['c'], ['d']]);
-  // 没带开销:只看条数
+  // No overhead specified: only check stream count
   const plain = ['a', 'b', 'c'].map((id, i) => ({ clipIds: [id], order: i + 1, from: 0, to: 99 }));
   assert.equal(groupStreams(plain, layers, 6).length, 3);
   assert.deepEqual(ids(groupStreams(plain, layers, 2)), [['a', 'b'], ['c']]);
 });
 
-/* ------------------------------------------------------------------ planStreams 在新预算下的结果 */
+/* ------------------------------------------------------------------ planStreams results under new budget */
 
 const ENV_FP = '0123456789abcdef';
 const control = (clipId, start, end, fps) => ({
   clipId, key: `K-${clipId}`, snapshotKey: `S-${clipId}`, capabilities: { compositing: 'independent', frameMode: 'stateful' }, compositing: 'independent',
   start, end, count: Math.ceil((end - start) * fps), sampling: { firstFrame: Math.ceil(start * fps), fps: { numerator: String(fps), denominator: '1' }, phase: { numerator: '0', denominator: '1' } },
 });
-/** n 张叠在一起的独立卡,每张一条序列;`frame` 不给就是满屏 */
+/** n stacked standalone cards, one track each; full-screen if `frame` omitted */
 function stacked(n, { fps = 30, frame = undefined } = {}) {
   const tracks = Array.from({ length: n }, (_, i) => ({ id: `t${i}`, clips: [{ id: `c${i}`, cardId: 'x', start: 0, end: 4, ...(frame ? { frame } : {}) }] }));
   const project = { width: 1920, height: 1080, fps, duration: 4, media: [], tracks };
@@ -163,7 +171,8 @@ test('planStreams: full-screen cards at 30 fps, up to 12 on screen each get one 
     const specs = planStreams(stacked(n), { envFingerprint: ENV_FP });
     assert.deepEqual(kinds(specs), Array.from({ length: n }, () => 'card:1'), `${n} cards`);
   }
-  // 13 张:13 × 满屏 > 预算;并一对成组流(组流也是整幅)以后是 12 条,正好放下
+  // 13 cards: 13 × full-screen > budget; after merging a pair into a group stream (also full frame),
+  // it is 12 streams, fits just right
   const specs = planStreams(stacked(13), { envFingerprint: ENV_FP });
   assert.deepEqual(kinds(specs), [...Array.from({ length: 11 }, () => 'card:1'), 'group:2']);
 });
@@ -172,7 +181,8 @@ test('planStreams: full-screen cards at 60 fps, 6 cards get one stream each; 8 c
   assert.deepEqual(kinds(planStreams(stacked(6, { fps: 60 }), { envFingerprint: ENV_FP })), Array.from({ length: 6 }, () => 'card:1'));
   const specs = planStreams(stacked(8, { fps: 60 }), { envFingerprint: ENV_FP });
   assert.deepEqual(kinds(specs), ['card:1', 'card:1', 'card:1', 'card:1', 'card:1', 'group:3']);
-  // 原来「同屏 6 条」的结果:预算给一个数 6(只改条数上限)得到的并法相同
+  // Previous "6 on screen" results: setting budget to 6 (changing only stream count limit) yields the
+  // same merge pattern
   const old = planStreams(stacked(8, { fps: 60 }), { envFingerprint: ENV_FP, budget: 6 });
   assert.deepEqual(specs.map((s) => s.streamKey).sort(), old.map((s) => s.streamKey).sort());
 });
@@ -191,7 +201,7 @@ test('planStreams: small cards (640×360), 30 on screen get one single-card stre
 test('planStreams: after the budget changes the single-card stream keys stay the same (the key does not contain the budget); cards that used to be merged into group streams now each produce a single-card stream', () => {
   const entry = stacked(8);
   const now = planStreams(entry, { envFingerprint: ENV_FP });
-  const before = planStreams(entry, { envFingerprint: ENV_FP, budget: 6 });     // 原来:同屏 6 条
+  const before = planStreams(entry, { envFingerprint: ENV_FP, budget: 6 });     // Previous: 6 on screen
   assert.deepEqual(kinds(now), Array.from({ length: 8 }, () => 'card:1'));
   assert.deepEqual(kinds(before), ['card:1', 'card:1', 'card:1', 'card:1', 'card:1', 'group:3']);
   const keyOf = (specs) => new Map(specs.filter((s) => s.kind === 'card').map((s) => [s.clipIds[0], s.streamKey]));
@@ -200,7 +210,7 @@ test('planStreams: after the budget changes the single-card stream keys stay the
   assert.equal([...a.keys()].filter((id) => !b.has(id)).length, 3, 'the three cards that used to be merged into group streams now each have a single-card stream (newly produced)');
 });
 
-/* ------------------------------------------------------------------ 原来放得过的现在照样放得过(同屏 6 条以内不看像素) */
+/* ------------------------------------------------------------------ What passed previously still passes now (pixels ignored within 6 on screen) */
 
 function stackedOn(n, { width, height, fps }) {
   const entry = stacked(n, { fps });
@@ -219,10 +229,10 @@ test('Projects larger than 1080p or above 60 fps: up to 6 streams on screen are 
     const entry = stackedOn(n, size);
     const specs = planStreams(entry, { envFingerprint: ENV_FP });
     assert.deepEqual(kinds(specs), Array.from({ length: n }, () => 'card:1'), `${label}: one single-card stream each, not merged`);
-    // 和原来「同屏 6 条」的结果逐条相同
+    // Item-by-item identical to previous "6 on screen" results
     const before = planStreams(entry, { envFingerprint: ENV_FP, budget: { count: 6, free: 6 } });
     assert.deepEqual(specs.map((s) => s.streamKey).sort(), before.map((s) => s.streamKey).sort(), label);
-    // 页面一侧:这几条都放行,没有超出预算的(也就没有占位符)
+    // Page side: all these streams pass through, none exceeding budget (hence no placeholders)
     const px = stageStreamPixels(size);
     assert.ok(px * size.fps * n > STREAM_PIXEL_RATE_BUDGET, `${label}: over the budget by pixels alone`);
     const planes = specs.map((s) => ({ clipIds: s.clipIds, key: s.streamKey, ranges: [[0, 9]], originFrame: 0 }));
@@ -237,7 +247,8 @@ test('Two below-dependent streams at 4K 60 fps (cannot be merged): the page lets
   assert.deepEqual(planesWithinBudget(planes.slice(0, 2), 60, () => px).map((p) => p.key), ['B0', 'B1']);
   assert.equal(planesWithinBudget(planes.slice(0, 6), 60, () => px).length, 6, 'up to 6 streams ignore pixels');
   assert.equal(planesWithinBudget(planes, 60, () => px).length, 6, 'pixels are checked from the 7th stream on: cannot be added');
-  // 划分一侧:不能并的流(fixed)同屏 2 条,旁边的独立卡不因为它们被并
+  // Partitioning side: 2 non-mergeable streams (fixed) on screen, adjacent standalone cards are not
+  // merged because of them
   const layers = [{ clipId: 'a', order: 1, from: 0, to: 99 }, { clipId: 'b', order: 2, from: 0, to: 99 }];
   const cost = streamCost(px, 60);
   const singles = layers.map((l) => ({ clipIds: [l.clipId], order: l.order, from: 0, to: 99, cost }));
@@ -250,7 +261,8 @@ test('7 full-screen cards at 1080p 60 fps: still merged as before (the 7th strea
   assert.deepEqual(kinds(specs), ['card:1', 'card:1', 'card:1', 'card:1', 'card:1', 'group:2']);
   const before = planStreams(stacked(7, { fps: 60 }), { envFingerprint: ENV_FP, budget: { count: 6, free: 6 } });
   assert.deepEqual(specs.map((s) => s.streamKey).sort(), before.map((s) => s.streamKey).sort(), 'same merging as before');
-  // 4K 60 帧 7 张:同样并成 6 条(并掉一条就回到不看像素的条数里)
+  // Seven 4K 60-frame cards: similarly merged into 6 streams (merging one brings it back within the
+  // pixel-ignoring count)
   const big = planStreams(stackedOn(7, { width: 3840, height: 2160, fps: 60 }), { envFingerprint: ENV_FP });
   assert.deepEqual(kinds(big), ['card:1', 'card:1', 'card:1', 'card:1', 'card:1', 'group:2']);
 });

@@ -50,8 +50,9 @@ fs.mkdirSync('out/left', { recursive: true });
       await wait(500);
     }
 
-    // 探「有没有被弹窗盖住」:用左 rail 的「素材库」项当探针。
-    // rail 常驻可见(抽屉收起时也在),卡片藏在分组里、切到别的分区时 display:none,拿卡片当探针会永远判成被盖住。
+    // Probe "whether covered by a dialog": use the "Media library" item in the left rail as a probe.
+    // The rail is permanently visible (even when the drawer is collapsed); cards are hidden in groups
+    // and set to display:none when switching sections, so using a card as a probe always flags as covered.
     const clickable = await page.evaluate(() => {
       const probe = document.querySelector('[data-pc-rail="library"]') || document.querySelector('[data-pc-card]');
       if (!probe) return false;
@@ -107,7 +108,7 @@ fs.mkdirSync('out/left', { recursive: true });
     }
   }
 
-  /** 元素在不在屏幕上(祖先 display:none 时没有 client rect) */
+  /** Whether the element is on screen (ancestor display:none has no client rect) */
   const shown = (sel) => page.evaluate((s) => {
     const el = document.querySelector(s);
     return !!el && el.getClientRects().length > 0;
@@ -136,13 +137,14 @@ fs.mkdirSync('out/left', { recursive: true });
       logFail('01-initial: could not find the expected text or structure');
     }
 
-    // 五个分区头部各有一个「收起面板」钮(SectionHead)
+    // Each of the five section headers has a "Collapse panel" button (SectionHead)
     const collapseBtns = await page.evaluate(() => document.querySelectorAll('[data-pc="left-collapse"]').length);
     if (collapseBtns === 5) logPass('01-initial: each of the five section headers has one left-collapse');
     else logFail(`01-initial: wrong left-collapse count -> ${collapseBtns}`);
 
-    // 左栏 = rail + 抽屉。点另一项 = 切分区(收着就顺手展开);点已选中项 = 收起 / 展开。
-    // 所以先看当前状态再决定点不点,免得把要看的分区点收起来
+    // Left rail = rail + drawer. Clicking another item = switch section (expanding if collapsed);
+    // clicking the selected item = collapse / expand. Check current state first before deciding whether
+    // to click, to avoid accidentally collapsing the section we want to view
     const railState = (key) => page.evaluate((k) => {
       const item = document.querySelector(`[data-pc-rail="${k}"]`);
       const drawer = document.querySelector('[data-pc="left-drawer"]');
@@ -160,8 +162,9 @@ fs.mkdirSync('out/left', { recursive: true });
         await wait(150);
       }
     };
-    // 分区里的东西在分组里:先清搜索、回总览,再点开要的组(groupId 给 null 就停在总览)。
-    // section 同时是 rail 键和分区根节点的 data-pc:素材(videos / images / music)在 library,卡片和部件在 animations
+    // Items in a section are inside groups: first clear search and return to overview, then open the
+    // desired group (stay on overview if groupId is null). section is both the rail key and data-pc
+    // on the section root node: media (videos / images / music) in library, cards and parts in animations
     const openGroupIn = async (section, groupId) => {
       await showSection(section);
       const clear = await page.$(`[data-pc="${section}"] .pc-left-search-clear`);
@@ -176,7 +179,7 @@ fs.mkdirSync('out/left', { recursive: true });
         await page.click(`[data-pc="${section}"] [data-pc-chip="all"]`);
         await wait(150);
       } else if (await page.$(`[data-pc="${section}"] [data-pc-category="all"]`)) {
-        // 「动画」只有视觉组,总览没有分类胶囊行
+        // "Animations" only has visual groups; the overview has no category pill row
         await page.click(`[data-pc="${section}"] [data-pc-category="all"]`);
         await wait(150);
       }
@@ -192,7 +195,8 @@ fs.mkdirSync('out/left', { recursive: true });
 
     await runStep('02-hover', async () => {
       await openGroupIn('animations', 'magicui');
-      // 动画分区全是视觉组:组详情的胶囊行只有「所有 / 组名 ×」,不画分类那颗
+      // The animations section only has visual groups: the pill row in group details only has
+      // "All / group name ×", without rendering the category pill
       const chipsOk = await page.evaluate(() =>
         !!document.querySelector('[data-pc="animations"] [data-pc-chip="all"]') &&
         !document.querySelector('[data-pc="animations"] [data-pc-chip="category"]') &&
@@ -317,7 +321,7 @@ fs.mkdirSync('out/left', { recursive: true });
            const r = parseInt(m[1]), g = parseInt(m[2]), b = parseInt(m[3]);
            return r > g + 50 && r > b + 50;
         }
-        // Tailwind v4 输出的是 oklch(L C H):红色在色相 10-50 且有饱和度
+        // Tailwind v4 outputs oklch(L C H): red has hue between 10-50 with chroma
         const ok = color.match(new RegExp("oklch\\(([0-9.]+)\\s+([0-9.]+)\\s+([0-9.]+)"));
         if (ok) {
           const c = parseFloat(ok[2]), h = parseFloat(ok[3]);
@@ -352,7 +356,8 @@ fs.mkdirSync('out/left', { recursive: true });
     });
 
     await runStep('07-sections', async () => {
-      // 左栏改成 rail + 四个常驻分区:验分区切换、选择记忆、点已选中项收起 / 展开抽屉
+      // Left rail changed to rail + four resident sections: verify section switching, selection memory,
+      // and clicking the selected item to collapse / expand the drawer
       await showSection('library');
       const libOk = (await shown('[data-pc="search"]')) && !(await shown('[data-pc="inspector"]'));
       if (libOk) logPass('07-sections: media library, editing section hidden');
@@ -395,7 +400,8 @@ fs.mkdirSync('out/left', { recursive: true });
       if (await shown('[data-pc="left-drawer"]')) logPass('07-sections: clicking again expanded the drawer');
       else logFail('07-sections: clicking again did not expand the drawer');
 
-      // 分区头部右上角的「收起面板」钮(SectionHead)和点 rail 当前项走同一条收起路子
+      // The "Collapse panel" button (SectionHead) in the top right of the section header follows the same
+      // collapse path as clicking the current rail item
       await page.click('[data-pc="inspector"] [data-pc="left-collapse"]');
       await wait(300);
       const btnCollapsedOk = !(await shown('[data-pc="left-drawer"]')) &&
@@ -407,7 +413,8 @@ fs.mkdirSync('out/left', { recursive: true });
       if (await shown('[data-pc="left-drawer"]')) logPass('07-sections: clicking the current rail item after collapsing expanded it again');
       else logFail('07-sections: clicking the current rail item after collapsing did not expand it');
 
-      // 动画是独立分区:卡片搜索和卡片筛选在这里,素材库的搜索框藏着;打开过的卡片组记在 pc.left.group.animations
+      // Animations is a separate section: card search and card filters are here, while the media library
+      // search box is hidden; opened card groups are recorded in pc.left.group.animations
       await showSection('animations');
       const animOk = (await shown('[data-pc="animations-search"]')) && (await shown('[data-pc="scope-toggle"]')) &&
         !(await shown('[data-pc="search"]'));
@@ -433,7 +440,8 @@ fs.mkdirSync('out/left', { recursive: true });
         window.__pcStoreLeft.actions.addMedia({ kind: "video", name: "test-clip.mp4", url: "blob:fake", duration: 12.5 });
       });
       await wait(200);
-      // 总览组框里的视频缩略:悬停播放的那一格接指针(.is-hoverplay),<video> 本身不接,也不带 data-pc-media
+      // Video thumbnail in the overview group box: the hover-play cell receives pointer events
+      // (.is-hoverplay); <video> itself does not receive them and does not have data-pc-media
       await openGroupIn('library', null);
       const thumbOk = await page.evaluate(() => {
         const box = document.querySelector('[data-pc="library"] [data-pc-group="videos"]');
@@ -448,7 +456,7 @@ fs.mkdirSync('out/left', { recursive: true });
       await openGroupIn('library', 'videos');
 
       const mediaItemText = await page.evaluate(() => {
-        // 时长角标写成 m:ss
+        // Duration badge is written as m:ss
         const el = Array.from(document.querySelectorAll('[data-pc-media]')).find(el => el.textContent.includes('test-clip.mp4') && el.textContent.includes('0:12'));
         return el ? el.textContent : null;
       });
@@ -493,7 +501,8 @@ fs.mkdirSync('out/left', { recursive: true });
     });
 
     await runStep('09-captions-bus', async () => {
-      // 时间轴右键「转写字幕」走 captionsBus:收着的抽屉要被拉出来,并切到字幕分区
+      // Timeline right-click "Transcribe captions" goes through captionsBus: the collapsed drawer must
+      // be opened, and switched to the captions section
       await showSection('library');
       await page.click('[data-pc-rail="library"]');
       await wait(150);

@@ -1,9 +1,13 @@
 /**
- * C6.5 第二批：Agent 直接写文档服务（D1、D4）与工具调用事件（D2）。用例 C65B-D1-*、C65B-D2-*。
- * 跑：node --test server/test/c65b-agent.test.mjs
+ * C6.5 batch 2: Agent directly writes to document service (D1, D4) and tool call events (D2).
+ * Test cases C65B-D1-*, C65B-D2-*.
+ * Run: node --test server/test/c65b-agent.test.mjs
  *
- * 依据：`docs/plan/c65-design.md` 第 5、7、8 节与第 11 节 V3；`docs/plan/cloud-task.md` 的 D1、D2、D4。
- * 只照设计稿写，没看 `c65-agent`、`c65-editor` 的实现。设计稿没写死的接口集中在 `c65b-kit.mjs`（假设 B1～B4、B9）。
+ * Basis: `docs/plan/c65-design.md` Sections 5, 7, 8 and Section 11 V3; D1, D2, D4 of
+ * `docs/plan/cloud-task.md`.
+ * Written only against the design doc without looking at `c65-agent` and `c65-editor`
+ * implementations. Interfaces left open by the design doc are gathered in `c65b-kit.mjs`
+ * (assumptions B1-B4, B9).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,7 +30,7 @@ async function setup(t, { conversation = 7 } = {}) {
   return { env, w, agent };
 }
 
-/** 一条页面角色的原始连接，打开项目；edit(path, value) 提交一次 set，等 ok */
+/** A raw connection with page role opens the project; edit(path, value) submits a set, waits for ok */
 async function rawPage(env, { user, dev = `dev-${user}`, session = `page-${user}` }) {
   const c = await env.connect({ user, dev });
   await openProject(c, PID);
@@ -40,10 +44,10 @@ async function rawPage(env, { user, dev = `dev-${user}`, session = `page-${user}
   };
 }
 
-/** 观察者收到的、路径碰到 prefix 的广播 */
+/** Broadcasts received by the observer whose path matches prefix */
 const opsTouching = (w, prefix) => w.ops().filter((m) => (m.ops ?? []).some((o) => o.path === prefix || o.path.startsWith(`${prefix}/`)));
 
-// ------------------------------------------------------------------ D1：写工具在服务端执行、以 Agent 身份提交
+// ------------------------------------------------------------------ D1: write tools execute on server, commit as Agent
 
 test('C65B-D1-01 write tools run on the Agent server: edits work with no page online; one commit is made as an agent identity (role, chat number); it does not go through a page', async (t) => {
   const { env, w, agent } = await setup(t, { conversation: 7 });
@@ -132,7 +136,7 @@ test('C65B-D1-05 two chats: each commits with its own chat number; each uses the
   assert.equal(clipOf((await stateOf(env)).project, 'c1').label, 'Chat 3');
 });
 
-// ------------------------------------------------------------------ D1 / D4：执行位置
+// ------------------------------------------------------------------ D1 / D4: execution location
 
 test('C65B-D1-06 each tool is labeled with its side: write tools and get_project / get_layout are on the Agent server; selection, playhead and web_handoff stay on the page', async () => {
   const tools = await loadTools();
@@ -152,12 +156,13 @@ test('C65B-D1-07 tools that stay on the page are still executed through the page
   await agent.call('get_selection');
   await agent.call('user_interface_seek', { t: 1 });
   await agent.call('seek', { t: 2 });
-  // 发给页面的是旧的内部操作名(新旧名调用都一样),0.7.18 的页面也认得
+  // Sent to page is the old internal operation name (old and new names call the same), 0.7.18 pages
+  // also recognize it
   assert.deepEqual(agent.pageCalls.map((c) => c.tool), ['get_selection', 'seek', 'seek'], `page-side tools go through the page: ${JSON.stringify(agent.pageCalls)}`);
   assert.equal((await stateOf(env)).rev, rev0, 'page-side tools produce no commits');
 });
 
-// ------------------------------------------------------------------ D2：工具调用事件
+// ------------------------------------------------------------------ D2: tool call events
 
 test('C65B-D2-01 each tool call yields two events (create, complete) on the project channel; the full parameters are in event-detail', async (t) => {
   const { w, agent } = await setup(t, { conversation: 9 });
@@ -180,7 +185,7 @@ test('C65B-D2-01 each tool call yields two events (create, complete) on the proj
   const text = JSON.stringify(detail);
   assert.ok(text.includes('"clipId":"c1"') && text.includes('Event'), `event-detail holds the full parameters: ${text.slice(0, 300)}`);
 
-  // 读工具同样两条
+  // Read tools also have two
   await agent.call('get_project');
   const pair = await eventPairOf(w, 'get_project');
   assert.equal(pair.complete.status, 'ok');
@@ -207,7 +212,7 @@ test('C65B-D2-02 a write tool\'s event carries opId and inverse: opId is the com
   const readInfo = undoInfoOf({ ...read, detail: await detailOf(w.c, read.create) });
   assert.ok(readInfo.opId === undefined && !(readInfo.inverse?.length), `read-only tools carry no undo info (the AI panel does not show "Undo this step"): ${JSON.stringify(readInfo)}`);
 
-  // 被拒的写：完成事件记 error，不带 opId
+  // Rejected write: completion event records error, without opId
   const bob = await rawPage(env, { user: 'bob', dev: 'dev-b' });
   await bob.set(`${C2}/label`, 'Bob');
   const stale = await agent.call('update_clip', { clipId: 'c2', label: 'Cannot overwrite' });
@@ -217,7 +222,7 @@ test('C65B-D2-02 a write tool\'s event carries opId and inverse: opId is the com
   assert.equal(undoInfoOf(rej).opId, undefined, 'a write that did not land has no opId');
 });
 
-// ------------------------------------------------------------------ D2 × 第 8 节：AI 栏「撤销这一步」
+// ------------------------------------------------------------------ D2 × Section 8: AI panel "Undo this step"
 
 async function pageAndAgent(t, opts) {
   const { env, w, agent } = await setup(t, opts);
@@ -257,7 +262,7 @@ test('C65B-D2-03 the page commits inverse + undoOf from the event: the entity is
   await A.settled();
   assert.equal(clipOf((await stateOf(env)).project, 'c1').label, 'Agent\'s', 'Ctrl+Z restores the Agent\'s change');
 
-  // Agent 下次改动时发现版本变了（undo 稿第 4 节「对 Agent 的影响」）
+  // Agent discovers version changed on next edit (undo doc Section 4, "Impact on Agent")
   const next = await agent.call('update_clip', { clipId: 'c1', label: 'Agent edit again' });
   assert.equal(next.ok, false, `the Agent writes back with an old version and errors: ${next.text.slice(0, 300)}`);
   assert.match(next.text, /c1/);

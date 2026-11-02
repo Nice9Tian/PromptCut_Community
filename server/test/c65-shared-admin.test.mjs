@@ -1,11 +1,15 @@
 /**
- * C6.5 补的创建者操作(`server/docservice/modules/shared.mjs`):`set-creator-password`、`list-bans`,
- * 以及 `set-password` 之后发给在线成员的 `shared.notice { event: 'password-changed' }`。
- * 跑:node --test server/test/c65-shared-admin.test.mjs
+ * C6.5 added creator operations (`server/docservice/modules/shared.mjs`): `set-creator-password`,
+ * `list-bans`, and `shared.notice { event: 'password-changed' }` sent to online members after
+ * `set-password`.
+ * Run: node --test server/test/c65-shared-admin.test.mjs
  *
- * 依据:`docs/plan/c65-design.md` 第 9 节裁定(创建者能改自己的密码,另加 `set-creator-password`,带创建者证明),
- * 2026-09-26 主会话裁定:改完旧密码不能以创建者身份进入、新密码可以,之后的创建者操作按新密码算证明;
- * 成员 / 不带证明 / 证明错回 forbidden;**不作废已发票据**(不加代数)。
+ * Basis: `docs/plan/c65-design.md` Section 9 ruling (creator can change their own password,
+ * additionally add `set-creator-password`, with creator proof),
+ * 2026-09-26 lead session ruling: after changing, old password cannot enter as creator, new
+ * password can; subsequent creator operations compute proof from the new password;
+ * member / missing proof / incorrect proof returns forbidden; **does not invalidate issued
+ * tickets** (does not increment generation).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,14 +31,14 @@ for (const mode of ['free', 'restricted']) {
     assert.equal(await joinStatus(env, proj, { username: proj.creator.username, as: 'creator', remote: R(2) }), 401, 'old creator password');
     assert.equal(await joinStatus(env, proj, { username: proj.creator.username, as: 'creator', password: 'creator-new', remote: R(3) }), 101, 'new creator password');
 
-    // 之后的创建者操作:旧密码算的证明 forbidden,新密码的成功
+    // Subsequent creator operations: proof from old password returns forbidden, new password succeeds
     const old = await adminOp(creator, proj, 'list-bans', {}, { password: proj.creator.password });
     assert.equal(old.type, 'error');
     assert.equal(old.reason, 'forbidden');
     const ok = await adminOp(creator, proj, 'list-bans', {}, { password: 'creator-new' });
     assert.equal(ok.type, 'shared.admin.ok', JSON.stringify(ok));
     assert.deepEqual(ok.bans, []);
-    // 在线连接不断
+    // Online connections stay connected
     assert.equal(creator.ws.readyState, 1);
   });
 }
@@ -67,7 +71,7 @@ test('C65-SA3 set-creator-password: a member, no proof, or wrong proof is always
   const bad = await adminOp(creator, proj, 'set-creator-password', { creator: { salt: 'x' } });
   assert.equal(bad.type, 'error');
   assert.equal(bad.reason, 'bad-message');
-  // 都没生效:旧密码照样能以创建者进入
+  // Neither took effect: old password can still enter as creator
   assert.equal(await joinStatus(env, proj, { username: proj.creator.username, as: 'creator', remote: R(12) }), 101);
 });
 
@@ -108,7 +112,7 @@ test('C65-SA6 restricted entry: list-bans also carries the usernames in the list
   const read = await adminOp(creator, proj, 'list-bans');
   assert.deepEqual(read.list, ['bob', 'cai']);
   assert.equal(JSON.stringify(read).includes('"salt"'), false, 'no salt and no K');
-  // 留 bob 原口令、删 cai、加 dan
+  // Keep bob's original passphrase, delete cai, add dan
   const r = await adminOp(creator, proj, 'set-list', { list: [{ username: 'bob', keep: true }, credential('dan-pw', 'dan')] });
   assert.equal(r.type, 'shared.admin.ok', JSON.stringify(r));
   proj.list = [{ username: 'bob', password: 'bob-pw' }, { username: 'dan', password: 'dan-pw' }, { username: 'cai', password: 'cai-pw' }];

@@ -14,7 +14,10 @@ const { mountFrameOf } = await import("./frameWindow.mjs");
 
 const FPS = 30;
 const TEXT = "这是一段打字机测试文字";
-/** 旧打字卡(main 上的 vendor/typing-animation.tsx)在导出页里显示的字:页面时钟被钉成「帧秒 * 1000」,从挂载那一帧起计时 */
+/**
+ * Text displayed in the export page by legacy typing card (vendor/typing-animation.tsx on main):
+ * page clock is pinned to "frame seconds * 1000", timing from the mount frame
+ */
 const legacyText = (text, duration, frame, mountFrame) => text.substring(0, Math.floor(((frame / FPS) * 1000 - (mountFrame / FPS) * 1000) / duration));
 
 test("mount clock: mu-4 of the demo project (6-8 s, default params) matches the old implementation frame by frame in the flattened timeline export, including the floating-point boundary at frame 197", () => {
@@ -31,12 +34,14 @@ test("mount clock: mu-4 of the demo project (6-8 s, default params) matches the 
     assert.equal(text, legacyText(TEXT, 120, frame, mountFrame), `Frame ${frame}`);
     shown[frame] = text.length;
   }
-  // 基线摸底时与 main 不同的那 10 帧,每一帧都比「按片段起点计时」多一个字
+  // The 10 frames differing from main during baseline testing each have one more character than
+  // "timed from clip start"
   const nominal = (frame) => typingTextAt(schedule, (frame / FPS - clip.start) * 1000).length;
   const ahead = [];
   for (let frame = 180; frame < 240; frame++) if (shown[frame] !== nominal(frame)) ahead.push(frame);
   assert.deepEqual(ahead, [183, 187, 190, 194, 201, 205, 208, 212, 215, 219]);
-  // 197 帧:197/30*1000 − 179/30*1000 = 599.9999999999991,旧实现少一个字;加了容差就会多出来
+  // Frame 197: 197/30*1000 − 179/30*1000 = 599.9999999999991, old implementation had one less
+  // character; adding tolerance produces the extra character
   assert.equal(shown[197], 4);
   assert.equal(typingTextAt(schedule, mountClockMsAt(mounted, "mu-4:1", clip.start, 197 / FPS)).length, 5);
 });
@@ -62,11 +67,11 @@ test("mount clock: a card mounted at or after its start gets no clock (continues
   assert.equal(mountClockMsAt(mounted, "b:1", 6, 6.5), undefined, "export starting from the middle of a clip");
   assert.equal(mountClockMsAt(mounted, "c:1", 6, 179 / 30), 0);
   assert.equal(mountClockMsAt(mounted, "c:1", 6, 180 / 30), (180 / 30) * 1000 - (179 / 30) * 1000);
-  // 换代数(重挂载)是另一把钟
+  // Changing generation (remounting) uses a different clock
   assert.equal(mountClockMsAt(mounted, "c:2", 6, 6.2), undefined);
   forgetUnmounted(mounted, new Set(["c:2"]));
   assert.deepEqual([...mounted.keys()], ["c:2"]);
-  // c:1 卸载后同一个 key 再进来:从这一次挂载的时刻重新起算
+  // Same key re-entering after c:1 unmounts: recalculates starting from this mount time
   assert.equal(mountClockMsAt(mounted, "c:1", 6, 5.98), 0);
 });
 
@@ -81,11 +86,11 @@ test("stage: the mount clock is passed to the card only when mountClock is on; w
     registry.registerCards([{ id: "mu-typing", name: "typing", defaults: {}, controls: [], frameMode: "stateful", Component }]);
     const timeline = { width: 640, height: 360, fps: 30, duration: 8, clips: [{ id: "mu-4", cardId: "mu-typing", start: 6, end: 8, params: {} }] };
     const render = (t, extra) => { seen.length = 0; renderToStaticMarkup(React.createElement(Stage, { timeline, t, playToken: 1, ...extra })); return seen[0]; };
-    // 提前挂载的那一帧(179):打开时钟从 0 起;t 仍是夹到 0 的局部时间
+    // Pre-mounted frame (179): clock starts from 0; t is still local time clamped to 0
     assert.equal(render(179 / 30, { mountClock: true }).mountClockMs, 0);
     assert.equal(render(179 / 30, { mountClock: true }).t, 0);
     assert.equal(render(179 / 30, {}).mountClockMs, undefined);
-    // 在起点之后才第一次渲染(一次性渲染 = 这一刻才挂上):不给钟
+    // First render occurring after the start point (one-off render = mounted only now): no clock provided
     assert.equal(render(6.5, { mountClock: true }).mountClockMs, undefined);
     assert.equal(render(6.5, {}).mountClockMs, undefined);
   } finally { await server.close(); }

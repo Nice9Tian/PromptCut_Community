@@ -10,13 +10,15 @@ import { usePopover } from "./chat/usePopover";
 import "./ModelBar.css";
 import { tr } from "../../i18n/index.ts";
 
-/** 「云端」下深度自主与审查环路为什么不可选(契约 9.3,2026-10-06 主会话裁定) */
+/** Why deep autonomy and the review loop cannot be selected under "Cloud" (contract 9.3, ruling by the lead session, 2026-10-06) */
 export const CLOUD_NO_DEEP_AUTO = tr("Cloud Agent does not support deep autonomy and review loops yet: the cloud uses the host's model quota, which currently has no limit");
 
 /**
- * 「云端」接入方式下输入区底部工具条上的一组:模型下拉(托管方配置了多个模型才出现)+ 思考强度下拉(云端报了档位才出现)
- * +「⋯」运行选项(创造力,以及置灰的深度自主)。
- * 与本机的 `ModelBar` 同一套样式;加速、参数兼容这些是本机各驱动自己的,云端没有。
+ * The group on the toolbar at the bottom of the input area under the "Cloud" connection type: the model
+ * dropdown (only shown when the host has configured several models) + the thinking effort dropdown (only
+ * shown when the cloud reports tiers) + the "⋯" run options (creativity, and the greyed-out deep autonomy).
+ * Same styles as the local `ModelBar`; acceleration and parameter compatibility belong to the local
+ * drivers and do not exist in the cloud.
  */
 export function CloudModelBar(props: {
   info: CloudInfo | null;

@@ -1,7 +1,8 @@
 /**
  * node --test src/ai/mediaRef.test.mjs
  *
- * 模型在卡片里引用素材库文件靠 cardUrl(/@media/<文件名>)。换算错了,卡片上那张图就是空的。
+ * Models reference media library files in cards via cardUrl(/@media/<filename>). If converted
+ * incorrectly, that image on the card is blank.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

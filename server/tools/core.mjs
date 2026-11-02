@@ -1,14 +1,17 @@
 export const coreTools = [
   /*
-   * 等一会儿。看着多余,其实是必需品。
+   * Wait a moment. Looks redundant, but is actually a necessity.
    *
-   * 有十来个工具是「立刻返回 jobId,你去轮询」的形状,说明里也写着「隔几秒问一次」——
-   * 但在有这个工具之前,**模型根本没有等待的手段**。它唯一想得到的办法就是借壳跑一条
-   * shell 命令(实测 agy 就发了 `powershell -Command "Start-Sleep -Seconds 3"`),
-   * 而无人值守模式下 Antigravity 会把自己的 run_command 自动拒掉,一拒**整轮就废** ——
-   * 用户那边看到的是一串工具调用之后毫无征兆地结束,没有回复也没有报错。
+   * Over a dozen tools take the shape of "return jobId immediately, you poll for it", and the
+   * descriptions also say "poll every few seconds": but before this tool existed, **the model had no
+   * means of waiting at all**. The only way it could think of was borrowing a shell to run a command
+   * (in testing, agy actually issued `powershell -Command "Start-Sleep -Seconds 3"`), and in
+   * unattended mode Antigravity automatically rejects its own run_command; once rejected, **the whole
+   * round is ruined**: what the user sees is an abrupt end without warning after a string of tool
+   * calls, with neither reply nor error.
    *
-   * 换句话说:是我们让它去等,却没给它表针。补上这一个,那条借道 shell 的路就不用走了。
+   * In other words: we told it to wait, but gave it no clock hands. With this added, that detour
+   * through the shell is no longer needed.
    */
   {
     name: "wait",

@@ -1,19 +1,26 @@
 /**
- * Node 进程怎么拿共享项目的凭证（契约 `docs/plan/auth-contract.md` 第 11 节）。
+ * How Node processes obtain credentials for shared projects (contract `docs/plan/auth-contract.md`
+ * Section 11).
  *
- * 预渲染进程、独立主机、探针读环境变量 `PROMPTCUT_SHARED_CONFIG`，它指向一个 JSON 文件：
- *   `{ url, projectId, username, deviceId, deviceName, as, password | key, role }`，
- * 也可以是这样的对象组成的数组（独立主机加入多个项目时）。
- * - `url`：文档服务地址（`ws://host:8787`、`ws://host:5190/docservice`）；
- * - `projectId` 可以换成 `name`（按名字查一次 `shared/lookup`）；
- * - `deviceId` / `deviceName` 不给时用本机设备信息（`device.mjs`）；`as` 缺省 `member`；`role` 缺省 `render`；
- * - `password` 与 `key`（已派生的 `K`）给一个。给 `password` 时第一次连接派生出 `K` 后只缓存 `K`。
- * - `contentId`（可选）：这个共享项目的项目文档 id（项目 JSON 的 `id`）。预渲染进程的推送队列与 plan 发布只认这个项目的产物，
- *   本机别的项目的帧留在本机（`server/push-scope.mjs`）；不写就不限（原来的行为）。
+ * Prerender process, standalone host, and probe read environment variable
+ * `PROMPTCUT_SHARED_CONFIG`, which points to a JSON file:
+ *   `{ url, projectId, username, deviceId, deviceName, as, password | key, role }`,
+ * or an array of such objects (when a standalone host joins multiple projects).
+ * - `url`: document service address (`ws://host:8787`, `ws://host:5190/docservice`);
+ * - `projectId` can be replaced with `name` (queried once via `shared/lookup` by name);
+ * - `deviceId` / `deviceName`: when omitted, uses local device info (`device.mjs`); `as` defaults
+ *   to `member`; `role` defaults to `render`;
+ * - Provide either `password` or `key` (derived `K`). When `password` is given, derive `K` on first
+ *   connection and only cache `K`.
+ * - `contentId` (optional): project document id for this shared project (`id` in project JSON).
+ *   The push queue and plan publishing of prerender process only accept outputs for this project;
+ *   frames of other projects on this machine stay local (`server/push-scope.mjs`); omitting it means
+ *   unrestricted (original behavior).
  *
- * 设了这个变量，就用它拼证明、连文档服务，并经 `auth.ticket` 取素材票据；没设就维持原来的做法：
- * 连回环地址时是本机身份，连不上就回落本机。
- * 文件内容（口令、`K`）不进日志、不进错误信息。
+ * If this variable is set, use it to construct proof, connect to document service, and fetch asset
+ * tickets via `auth.ticket`; if unset, keep the original behavior: connecting to loopback address
+ * uses local identity, falling back to local if connection fails.
+ * File contents (passphrase, `K`) are never written to logs or error messages.
  */
 import fs from 'node:fs';
 import { buildAuthProtocols, lookupProject } from './client.mjs';
@@ -29,12 +36,12 @@ function bad(detail) {
   return err;
 }
 
-/** 规整一条配置；不合格抛错（错误信息里不带口令与 K） */
+/** Normalizes a config entry; throws if invalid (error messages do not contain passphrase or K) */
 export function normalizeEntry(raw, device = localDeviceInfo()) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw bad('Each entry must be an object');
   let url;
   try {
-    url = new URL(migrateHostedText(raw.url)); // 换下来的托管主机名换成新的（hosted-default.mjs）
+    url = new URL(migrateHostedText(raw.url)); // Replace the retired hosted host name with the new one (hosted-default.mjs)
   } catch {
     throw bad('url is not a valid address');
   }
@@ -68,7 +75,7 @@ export function normalizeEntry(raw, device = localDeviceInfo()) {
 }
 
 /**
- * 读 `PROMPTCUT_SHARED_CONFIG`。没设回 null；设了但读不了、格式不对抛错。
+ * Reads `PROMPTCUT_SHARED_CONFIG`. Returns null if unset; throws if set but unreadable or invalid.
  * @returns {null | Array<ReturnType<typeof normalizeEntry>>}
  */
 export function loadSharedConfig(env = process.env) {
@@ -87,11 +94,14 @@ export function loadSharedConfig(env = process.env) {
 }
 
 /**
- * 一条配置 → 每次连之前调的 `protocols()`（交给 `createDocEndpoint`，每次建会话前调、接续时不调）。
- * 配置里没有传输字段：传输由会话层自动选（`docs/plan/http-transport-contract.md` 第 4.3 节）。
- * 按名字给的项目，第一次调用时查一次 `projectId`；给口令的，第一次派生出 `K` 后缓存 `K`、丢掉口令。
+ * A config entry → `protocols()` called before each connection (passed to `createDocEndpoint`,
+ * called before creating each session, not on resume).
+ * Config contains no transport field: transport is selected automatically by the session layer
+ * (`docs/plan/http-transport-contract.md` Section 4.3).
+ * For projects given by name, looks up `projectId` once on first call; for those with a passphrase,
+ * derives `K` on first call, caches `K`, and discards the passphrase.
  * @param {ReturnType<typeof normalizeEntry>} entry
- * @param {{ fetch?: typeof globalThis.fetch, role?: string }} [options] `role` 覆盖配置里的角色
+ * @param {{ fetch?: typeof globalThis.fetch, role?: string }} [options] `role` overrides role in config
  */
 export function sharedProtocols(entry, { fetch, role } = {}) {
   let projectId = entry.projectId;

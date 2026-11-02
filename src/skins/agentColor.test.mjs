@@ -34,7 +34,8 @@ test("the amber accent is itself yellow-orange: the Agent switches to purple so 
 });
 
 test("after changing hue it left the sRGB gamut: lightness and hue stay, only chroma is reduced", () => {
-  // 霓虹的品红 #ec4899:明度约 0.66、纯度约 0.2,黄色在这个明度放不下这么浓
+  // Neon magenta #ec4899: lightness ~0.66, chroma ~0.2; yellow cannot be this saturated at this
+  // lightness
   const accent = "#ec4899";
   const out = agentColorFor(accent);
   assert.match(out, /^#[0-9a-f]{6}$/);

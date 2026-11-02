@@ -1,10 +1,12 @@
 /**
- * 浏览器版(在线构建)不画应用标题栏(2026-10-22 用户定:不要「显示顶部菜单栏」和 − □ × 三个按钮;桌面版照旧)。
- * 开关是编译期常量 `ONLINE_BUILD`,就对产物核:
- * - 在线产物里没有标题栏的菜单行、窗口按钮、桌面壳命令;
- * - 标题栏「帮助」里只此一处入口的「快捷键」「关于 PromptCut」改住编辑器顶栏的「⋯」菜单,在线产物里有;
- * - 桌面产物里标题栏整套还在,「⋯」菜单里不重复那两项。
- * 产物写进临时目录,不碰 `dist/`、`dist-online/`。
+ * Browser version (online build) does not render the app title bar (user decision, 2026-10-22: omit
+ * "Show top menu bar" and the three buttons −, □, ×; desktop app remains as before). The toggle is
+ * the compile-time constant `ONLINE_BUILD`, verified against artifacts:
+ * - Online artifacts do not contain title bar menu row, window buttons, or desktop shell commands;
+ * - "Keyboard shortcuts" and "About PromptCut", whose only entry point was in the title bar "Help",
+ *   are moved to the editor top bar "..." menu, and are present in online artifacts;
+ * - Desktop artifacts retain the full title bar, and the "..." menu does not repeat those two items.
+ * Artifacts are written to a temporary directory without touching `dist/` or `dist-online/`.
  */
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';

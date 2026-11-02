@@ -2,9 +2,12 @@ import type { PartDef } from "../kernel/partTypes";
 import { registerParts, resetParts } from "../kernel/partRegistry";
 
 /**
- * 部件库:src/parts/lib/ 下一个文件一个部件,glob 自动收集,**不用改这个文件**。
- * 从卡片拆出来的部件放这里(文件头写 from: 哪张卡),新写的也放这里。
- * 一个写坏的部件不该让整个编辑器起不来:不像 PartDef 的导出只警告、跳过。
+ * Parts library: one part per file under src/parts/lib/, automatically collected by glob, **no need
+ * to modify this file**.
+ * Parts extracted from cards go here (file header specifies from: which card), and newly written
+ * ones go here too.
+ * A broken part should not prevent the whole editor from launching: exports not resembling PartDef
+ * only warn and skip.
  */
 const modules = import.meta.glob<Record<string, unknown>>("./lib/*.tsx", { eager: true });
 
@@ -27,7 +30,7 @@ export const libraryParts: PartDef<any>[] = Object.entries(modules).flatMap(([pa
   return found;
 });
 
-// 这个模块会被 HMR 重新执行(新建或修改 lib/ 下的部件就会触发),每次从空开始重装
+// This module is re-executed by HMR (triggered when creating or modifying parts under lib/), reinstalled from scratch each time
 resetParts();
 const seen = new Set<string>();
 registerParts(

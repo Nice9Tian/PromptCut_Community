@@ -1,9 +1,11 @@
 /**
- * SP 客户端路由与缺省托管地址（契约 `docs/plan/shared-project-contract.md` 第 3 节；验收第 7 节 SP5、SP6）。
- * 跑：node --test server/test/sp-route.test.mjs
+ * SP client routing and default hosted address (Section 3 of
+ * `docs/plan/shared-project-contract.md`; Section 7 acceptance check SP5 and SP6).
+ * Run: node --test server/test/sp-route.test.mjs
  *
- * 托管端与局域网主机都用进程内的 M6a 文档服务（`auth-kit.mjs` 的 hostFor），局域网发现用假的 `discover`。
- * 契约没写死的参数形状见 `sp-kit.mjs` 文件头的假设 D1、R1～R3。
+ * Both hosted side and LAN host use in-process M6a document service (`auth-kit.mjs` hostFor);
+ * LAN discovery uses fake `discover`. For parameter shapes not hardcoded in the contract,
+ * see assumptions D1, R1-R3 in the header of `sp-kit.mjs`.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +18,7 @@ import { loadRoute, loadHostedDefault, ROOT } from './sp-kit.mjs';
 
 const hostedUrlOf = (env) => `http://127.0.0.1:${env.port}`;
 
-/** 假的局域网发现：不看参数，回给定的应答包 */
+/** Fake LAN discovery: ignores parameters, returns the given response packet */
 const fakeDiscover = (announces) => async () => announces;
 
 function announceFor(proj, { ip = '192.168.50.20', port = 5173, hostDeviceName = 'Studio-PC' } = {}) {
@@ -35,7 +37,7 @@ async function findTimed(route, args) {
   return { r, ms: Date.now() - t0 };
 }
 
-// ================================================================== SP5：四种候选组合
+// ================================================================== SP5: Four candidate combinations
 
 test('SPC5-1 only the LAN has it: a single lan candidate, carrying projectId, name, mode, hostDeviceName, base', async (t) => {
   const route = await loadRoute();
@@ -81,7 +83,7 @@ test('SPC5-4 neither side has it: no candidates, no exception thrown (the caller
   assert.ok(Array.isArray(r.errors));
 });
 
-// ================================================================== SP5：出错进 errors、不抛
+// ================================================================== SP5: Errors go into errors, do not throw
 
 test('SPC5-5 the hosted side is unreachable: goes into errors { where: hosted }, no throw; LAN candidates are unaffected', async (t) => {
   const route = await loadRoute();
@@ -162,7 +164,7 @@ test('SPC5-10 createSharedProject({ where: hosted }): POSTs shared/create to the
   assert.ok(!joined.includes(password) && !joined.includes(creatorPw), 'no plaintext passphrase in the server logs');
 });
 
-// ================================================================== SP6：缺省托管地址
+// ================================================================== SP6: Default hosted address
 
 test('SPC6-2 override order: value changed in the UI > PROMPTCUT_HOSTED_URL > default value', async () => {
   const { DEFAULT_HOSTED_URL, resolveHostedUrl } = await loadHostedDefault();

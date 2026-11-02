@@ -1,11 +1,17 @@
 /**
- * 依赖下层的流(`kind: 'below'`,`docs/plan/prerender-products-contract.md` 第 5.1 节)经队列走一遍:
- * 管线的计划(`planForQueue`)→ 切分 → 执行器把流任务对回这一版的流(`prerender-executor.mjs` 的 `matchStream`)→ 生产者按隔离工程产分段。
- * 用例名以 `BLQ-` 开头。跑:npm test -- server/test/below-stream-queue.test.mjs
+ * Below-dependent streams (`kind: 'below'`, `docs/plan/prerender-products-contract.md` section 5.1)
+ * pass through the queue:
+ * Pipeline plan (`planForQueue`) → split → executor matches stream task back to this version's
+ * stream (`matchStream` in `prerender-executor.mjs`) → producer outputs segments per isolated project.
+ * Test case names start with `BLQ-`. Run: npm test -- server/test/below-stream-queue.test.mjs
  *
- * 开关(`PROMPTCUT_TEST_BELOW_STREAMS`)在每条用例里自己设、自己还原:产品里缺省开着;设成 0 是扮「还不认识这种流的旧节点」,那时这一路什么都不出。
- * 不用 Chrome、不用 ffmpeg,假件照 `stream-queue.test.mjs` 的做法(预渲染间、`bakeStream`、分段编码器)。
- * 这里验的是「认不认得、对不对得上、隔离工程给的是哪一种」;流里的像素怎么取不在这一块。
+ * Toggle (`PROMPTCUT_TEST_BELOW_STREAMS`) is set and restored in each test case: enabled by default
+ * in production; set to 0 to simulate "an old node that does not recognize this stream yet", in which
+ * case this path outputs nothing.
+ * No Chrome, no ffmpeg; mocks follow `stream-queue.test.mjs` (prerender room, `bakeStream`, segment
+ * encoder).
+ * Validates here "whether it is recognized, matches up, and which kind the isolated project provides";
+ * how pixels in the stream are extracted is not in this scope.
  */
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,11 +21,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { streamInputSig } from '../../src/render/streamInputSig.mjs';
 
-/* ------------------------------------------------------------------ 假的预渲染间 / 截图 / 编码器 */
+/* ------------------------------------------------------------------ Fake prerender room / screenshots / encoder */
 
 let scene = null;
 const streamBakes = [];
-/** 每次把隔离工程灌进预渲染间时记一笔 */
+/** Records an entry each time an isolated project is loaded into the prerender room */
 const resets = [];
 
 function fakeBakery() {
@@ -72,7 +78,7 @@ const box = (type, payload = Buffer.alloc(0)) => {
   head.write(type, 4, 'latin1');
   return Buffer.concat([head, payload]);
 };
-/** 结构合法的一段 fMP4:`ftyp + moov` 与一对 `moof + mdat`,`trun` 的样本数就是帧数、首帧是同步帧 */
+/** Structurally valid fMP4 segment: `ftyp + moov` and a pair of `moof + mdat`, `trun` sample count is frame count, first frame is a sync frame */
 function fakeFmp4(samples, digest, encoder) {
   const ftyp = box('ftyp', Buffer.from('isom\0\0\0\0isomavc1', 'latin1'));
   const moov = box('moov', box('udta', Buffer.from(`enc:${encoder}`, 'latin1')));
@@ -104,7 +110,7 @@ const { describeEnvironment, resultKeyOf } = await import('../render-node/finger
 const { splitPlan, planTaskOf } = await import('../render-node/split.mjs');
 const { createPrerenderExecutor } = await import('../prerender-executor.mjs');
 
-/* ------------------------------------------------------------------ 场景 */
+/* ------------------------------------------------------------------ Scenario */
 
 const FPS = 30;
 const OWN_ENV = describeEnvironment({
@@ -118,10 +124,11 @@ const PID = 'below-queue';
 const REV = 4;
 
 /**
- * 从上到下三条序列(5 秒,150 帧):
- *   clip-top  独立卡,0～5 秒   —— 在毛玻璃上面
- *   clip-g    毛玻璃(依赖下层),1～4 秒 —— 目标卡;流从它的第一帧(第 30 帧)起分段,分段 0～5
- *   clip-a    独立卡,0～5 秒   —— 毛玻璃的下层
+ * Three tracks from top to bottom (5 seconds, 150 frames):
+ *   clip-top  standalone card, 0-5 seconds: above the frosted glass
+ *   clip-g    frosted glass (below-dependent), 1-4 seconds: target card; stream is segmented from
+ *             its first frame (frame 30), segments 0-5
+ *   clip-a    standalone card, 0-5 seconds: lower layer of the frosted glass
  */
 const START = { 'clip-top': 0, 'clip-g': 1, 'clip-a': 0 };
 const END = { 'clip-top': 5, 'clip-g': 4, 'clip-a': 5 };
@@ -186,7 +193,7 @@ const streamTasksOf = (ctx) => splitPlan({ ...ctx, planTask: planTaskOf({ projec
 async function manifestOf(pipeline, key) {
   return JSON.parse(await fs.readFile(path.join(pipeline.root, 'streams', key, 'stream.json'), 'utf8'));
 }
-/** 这一段里把「依赖下层的流」的开关设成 `on`,出去时还原 */
+/** In this block, set the "below-dependent stream" toggle to `on`, and restore it when exiting */
 async function withBelow(on, fn) {
   const saved = process.env.PROMPTCUT_TEST_BELOW_STREAMS;
   process.env.PROMPTCUT_TEST_BELOW_STREAMS = on ? '1' : '0';
@@ -195,7 +202,7 @@ async function withBelow(on, fn) {
   }
 }
 
-/* ================================================================== 用例 */
+/* ================================================================== Test cases */
 
 test('BLQ-off off (the way an old node behaves): the plan has no such stream, no such task can be split out, and the layer table has no such row', { timeout: 30_000 }, async (t) => {
   t.after(cleanup);
@@ -237,18 +244,22 @@ test('BLQ-on once turned on: the plan gains the frosted glass stream; the split-
     await executor.render(view(task), { signal: signalNone(), progress: () => {} });
     const bakes = streamBakes.slice(markBakes);
     assert.ok(bakes.length > 0 && bakes.every((b) => b.streamSignature === q.streamKey), 'What was produced is exactly this stream');
-    // 这种流推过去的每一拍都要画一张(下层的动画不画就不往前走):头一段接不上租约,从回放的起点(第 0 帧)起每一帧都交给取帧钩子,
-    // 第 30 帧之前的画完就丢、不进编码器;后面几段接着租约,从各自的第一帧起
+    // Every tick pushed by this stream must render a frame (lower-layer animations do not advance
+    // without being rendered): the first segment cannot resume a lease, so every frame starting from
+    // the playback origin (frame 0) is passed to the frame capture hook; frames before frame 30 are
+    // discarded after rendering and do not enter the encoder; subsequent segments continue the lease,
+    // starting from their respective first frames
     assert.deepEqual(bakes.map((b) => b.fromFrame), [0, 45, 60, 75, 90, 105], 'Segments 0 to 5 (one segment per 15 frames from frame 30), full density; the first segment is drawn from the start of the replay');
     assert.ok(bakes.every((b) => b.stride === 1));
     assert.deepEqual(bakes[0].clip, { x: 0, y: 0, w: 320, h: 180 }, 'Captured in stage coordinates (the upper bound is the whole frame)');
     assert.equal(bakes[0].mountFrame, 0, 'The lower card is motion-style and is advanced from its mount frame');
-    // 灌进预渲染间的隔离工程:目标卡和下面的层出画,上面的层藏起来
+    // Isolated project fed into the prerender room: the target card and lower layers are rendered,
+    // while layers above are hidden
     const iso = resets.slice(markResets)[0];
     assert.ok(iso, 'The project was reloaded once');
     assert.deepEqual(iso.tracks.filter((tr) => !tr.hidden).map((tr) => tr.clips.map((c) => c.id)), [['clip-g'], ['clip-a']]);
     assert.deepEqual(iso.tracks.filter((tr) => tr.hidden).map((tr) => [tr.clips.map((c) => c.id), tr.sourceOnly]), [[['clip-top'], true]]);
-    // 清单里记着这是哪一种流
+    // The manifest records what kind of stream this is
     const manifest = await manifestOf(A, q.streamKey);
     assert.equal(manifest.kind, 'below');
     assert.equal(manifest.plane, 'stage');
@@ -256,11 +267,12 @@ test('BLQ-on once turned on: the plan gains the frosted glass stream; the split-
     assert.equal(manifest.originFrame, 30, 'The manifest records the first frame of this stream');
     assert.deepEqual(Object.keys(manifest.segments).map(Number).sort((x, y) => x - y), [0, 1, 2, 3, 4, 5]);
     for (let n = 0; n <= 5; n++) assert.equal(manifest.segments[n]?.stride, 1, `Segment ${n} was produced`);
-    // 层表那一行
+    // That row in the layer table
     const entry = [...A.entries.values()][0];
     const rows = (A.layerMapStreamOptions(entry).streams ?? []).filter((s) => s.kind === 'below');
     assert.deepEqual(rows.map((s) => s.contentKey), [q.contentKey]);
-    // 发给页面的那一层(就绪索引):带着「这是依赖下层的流」和这一版项目的输入签名;单卡流的层什么都不多带
+    // The layer sent to the page (ready index): includes "this is a below-dependent stream" and the
+    // input signature of this project version; single-card stream layers carry nothing extra
     const sig = streamInputSig(entry.project, { clipIds: ['clip-g'], kind: 'below' });
     assert.match(sig, /^s1-/);
     const layers = A.streamProducer().claimLayers(entry.key);
@@ -275,7 +287,8 @@ test('BLQ-on once turned on: the plan gains the frosted glass stream; the split-
     assert.equal(mine?.inputSig, sig);
     assert.deepEqual(mine?.ranges, [[0, 5]]);
 
-    // 对不上的:分段越界、结果键是别的指纹的、种类和任务说的不一样
+    // Mismatched cases: segment out of bounds, result key belongs to another fingerprint, or kind
+    // does not match what the task specifies
     const mut = (fn) => { const copy = view(task); fn(copy); return copy; };
     const cardTask = streamTasksOf(ctx).find((x) => x.input.clipId === 'clip-a');
     const cases = [
@@ -291,7 +304,7 @@ test('BLQ-on once turned on: the plan gains the frosted glass stream; the split-
       assert.equal(err?.retryable, false);
     }
     assert.equal(streamBakes.length, mark, 'No screenshots for ones that do not match');
-    // 单卡流的任务照旧产得出来(这种流没有影响到它)
+    // Single-card stream tasks can still be produced as usual (this kind of stream did not affect it)
     await executor.render(view(cardTask), { signal: signalNone(), progress: () => {} });
     assert.ok(streamBakes.length > mark);
     return task;

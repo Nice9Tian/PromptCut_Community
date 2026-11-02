@@ -1,35 +1,49 @@
 /**
- * 在场状态模块(计划 `docs/plan/agent-workflow-plan.md` A3 第二阶段;语义 `user-workflow.md`「保护」「多 Agent」)。
+ * Presence module (plan `docs/plan/agent-workflow-plan.md` A3 stage 2;
+ * semantics `user-workflow.md` "Protection", "Multi-Agent").
  *
- * 共享项目里,各成员页面的「正在编辑」、各 Agent 的范围声明和互发的消息,要让同一项目的其它成员知道。
- * 它们**不进项目历史**、带过期时间:本模块只在内存里转发,不落盘、不记版本,重启就清空。
+ * In shared projects, the "editing" status on each member's page, each Agent's scope declarations,
+ * and messages sent between them must be made known to other members of the same project.
+ * They **do not enter project history** and have an expiration time: this module only forwards in
+ * memory, does not write to disk, does not record versions, and clears on restart.
  *
- * 消息(都带 `projectId`,可带 `session`;写入身份照项目模块取 principal 加 `session`,消息里自报的身份一律不认):
- * - `presence.set { key, data, ttlMs? }`:记下「这个身份的这一项」(同一身份同一 key 整条替换),在项目频道上
- *   给别的订阅者广播 `presence.update { projectId, key, from, data, expiresAt }`,回 `presence.ok`;
- * - `presence.clear { key }`:撤掉,广播 `presence.update { …, data: null, expiresAt: 0 }`;
- * - `presence.list`:回 `presence.state { projectId, entries: [{ key, from, data, expiresAt }] }`(没过期的);
- * - `presence.send { data }`:不记,只广播一次 `presence.message { projectId, from, data, at }`(Agent 之间的消息);
- * - 连接断了,它记下的各项一并撤掉(广播撤销)。
- * `data` 由客户端约定(`kind: 'editing' | 'agent' | 'agent-message'`),本模块不认识内容,只限大小。
+ * Messages (all carry `projectId`, may carry `session`; write identity is taken from the project
+ * module as principal plus `session`, and self-reported identities in messages are never accepted):
+ * - `presence.set { key, data, ttlMs? }`: records "this entry for this identity" (replacing the
+ *   entire entry for the same identity and same key), broadcasts
+ *   `presence.update { projectId, key, from, data, expiresAt }` to other subscribers on the
+ *   project channel, and returns `presence.ok`;
+ * - `presence.clear { key }`: removes it, and broadcasts
+ *   `presence.update { …, data: null, expiresAt: 0 }`;
+ * - `presence.list`: returns
+ *   `presence.state { projectId, entries: [{ key, from, data, expiresAt }] }` (unexpired ones);
+ * - `presence.send { data }`: does not record, only broadcasts
+ *   `presence.message { projectId, from, data, at }` once (messages between Agents);
+ * - If the connection drops, all entries it recorded are removed together (broadcasting revocations).
+ * `data` is defined by client convention (`kind: 'editing' | 'agent' | 'agent-message'`); this
+ * module does not inspect the content, only limits its size.
  *
- * 广播借同一空间里项目模块的 `publishToProject`(订阅就是 `project.open`),与事件模块同一个做法;渲染节点的连接不能发。
+ * Broadcasting borrows `publishToProject` from the project module in the same space (subscription is
+ * simply `project.open`), following the same approach as the events module; connections from render
+ * nodes cannot send.
  *
- * **兼容**:旧版文档服务没有本模块,这几种消息回 `error { reason: 'unsupported' }`(核心的「没有模块处理这种消息」),
- * 客户端据此停发、不报错、不断线;旧客户端不发这些消息,不受影响。
+ * **Compatibility**: Older versions of the document service do not have this module, and return
+ * `error { reason: 'unsupported' }` for these messages (the core's "no module handles this message"),
+ * based on which the client stops sending, reports no errors, and does not disconnect; old clients
+ * do not send these messages and are unaffected.
  */
 import { actorOf } from './actor.mjs';
 
 export const PRESENCE_MODULE = 'presence';
 
 export const PRESENCE_LIMITS = Object.freeze({
-  /** `data` 序列化后的上限(UTF-8 字节) */
+  /** Upper limit for serialized `data` (UTF-8 bytes) */
   DATA_BYTES: 8 * 1024,
-  /** 过期时间:缺省、最短、最长 */
+  /** Expiration time: default, minimum, maximum */
   TTL_DEFAULT_MS: 30_000,
   TTL_MIN_MS: 1_000,
   TTL_MAX_MS: 30 * 60_000,
-  /** 每个项目最多记多少项 */
+  /** Maximum number of items recorded per project */
   PER_PROJECT: 256,
 });
 
@@ -51,7 +65,8 @@ const identityOf = (a) => JSON.stringify([a?.userId ?? null, a?.deviceId ?? null
 
 /**
  * @param {object} options
- * @param {{ publishToProject(projectId: string, message: object, opts?: object): number }} options.project 同一空间的项目模块
+ * @param {{ publishToProject(projectId: string, message: object, opts?: object): number }} options.project
+ *   Project module in the same space
  * @param {() => number} [options.now]
  */
 export function presenceModule({ project, now } = {}) {

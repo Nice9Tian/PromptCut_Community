@@ -1,18 +1,28 @@
 /**
- * 开始页「加入别人的项目」（C10a 契约 `docs/plan/c10a-contract.md` 第 4 节；语义 `workflow/project.md`「多用户协作」）。
- * 桌面版与在线浏览器模式用同一个组件，差别只在服务器地址：
- * - 在线页面：本页的源，文档服务在 `<源>/hosted/`；
- * - 桌面版：手填时用内置的托管地址（C6.5 的缺省值，可改），同时像 C6.5 那样在局域网里找同名项目（本机托管的项目）；
- * - 粘贴邀请链接：取链接的源。
+ * Start page "Join someone else's project" (C10a contract `docs/plan/c10a-contract.md` section 4;
+ * semantics `workflow/project.md` "Multi-user collaboration").
+ * The desktop app and the online browser mode use the same component; they differ only in the
+ * server address:
+ * - Online page: this page's origin; the document service is at `<origin>/hosted/`;
+ * - Desktop app: when typed by hand, use the built-in hosted address (the C6.5 default, editable),
+ *   and, as in C6.5, also look for a same-named project on the LAN (a project hosted on this machine);
+ * - Pasted invite link: take the link's origin.
  *
- * 三条路径：
- * 1. 手填，自由进入：项目名、项目密码、自己的用户名；
- * 2. 手填，限定进入：项目名、名单里的用户名和密码（与 1 同一张表：密码框自由进入填项目密码，限定进入填名单里的密码）；
- * 3. 凭邀请链接：页面读到邀请码先 `resolve`，显示项目名；自由进入只填用户名（`redeem` 回项目口令的 K，照常握手），
- *    限定进入填名单里的用户名和密码。`resolve` 失败给完整表单加表 A 的提示。
- * 另有「我是创建者」：用户名预填创建者名并置灰（这台设备记得的话），只填创建者密码，以 `as: 'creator'` 进入。
+ * Three paths:
+ * 1. Typed by hand, open entry: project name, project password, your own username;
+ * 2. Typed by hand, restricted entry: project name, username and password from the list (same form
+ *    as 1: the password box takes the project password for open entry, and the password from the
+ *    list for restricted entry);
+ * 3. By invite link: the page reads the invite code and first calls `resolve`, showing the project
+ *    name; open entry needs only a username (`redeem` returns K of the project passphrase, then the
+ *    handshake proceeds as usual), restricted entry needs the username and password from the list.
+ *    If `resolve` fails, the full form is shown with the hint from table A.
+ * There is also "I am the creator": the username is prefilled with the creator's name and greyed
+ * out (if this device remembers it), only the creator password is entered, and entry is with
+ * `as: 'creator'`.
  *
- * 文案照契约第 14 节表 A。邀请码不进查询串、不写 localStorage、不进日志（`src/online/invite.ts`）。
+ * Text follows table A in section 14 of the contract. The invite code does not go into the query
+ * string, is not written to localStorage, and does not enter logs (`src/online/invite.ts`).
  */
 import { useEffect, useRef, useState } from "react";
 import { ONLINE } from "../../online/mode";
@@ -25,7 +35,7 @@ import { discoverViaEditor, readHostedUrl, uiHostedUrl, writeHostedUrl } from ".
 import "./sync.css";
 import { tr } from "../../i18n/index.ts";
 
-/** 表 A（契约第 14 节）：原文照抄 */
+/** Table A (contract section 14): copied verbatim */
 export const JOIN_TEXT = {
   needName: tr("Enter a project name"),
   needPassword: tr("Enter a password"),
@@ -43,7 +53,7 @@ export const JOIN_TEXT = {
   badLink: tr("This is not a valid invite link."),
 } as const;
 
-/** 服务端的用户名规则（`server/auth/protocol.mjs` 的 `isUsername`）：界面只做同样的前置检查 */
+/** Server-side username rule (`isUsername` in `server/auth/protocol.mjs`): the UI only runs the same pre-check */
 export function usernameOk(v: string): boolean {
   return v.length > 0 && Array.from(v).length <= 64 && !/[\u0000-\u001f\u007f-\u009f]/.test(v) && v.trim() === v;
 }
@@ -53,14 +63,14 @@ type InviteState =
   | { phase: "ok"; code: string; base: string; projectId: string; name: string; mode: SharedMode }
   | null;
 
-/** 在线页面的文档服务：本页的源下 `/hosted/` */
+/** Document service of the online page: `/hosted/` under this page's origin */
 function onlineBase(): string {
   return hostedDocBaseOf(location.origin);
 }
 
 /**
- * 凭源与路径走的候选：WebSocket 地址保留末尾斜杠（nginx，见 `hostedWsUrlOf`）。
- * 手机版凭邀请链接加入那一屏（`src/mobile/MobileJoin.tsx`）共用这一份。
+ * Candidates built from origin and path: the WebSocket URL keeps its trailing slash (nginx, see `hostedWsUrlOf`).
+ * The mobile app screen for joining via invite link (`src/mobile/MobileJoin.tsx`) shares this one.
  */
 export function hostedCandidate(base: string, p: { projectId: string; name: string; mode: SharedMode }): Candidate {
   return { where: "hosted", base, ws: hostedWsUrlOf(base), projectId: p.projectId, name: p.name, mode: p.mode };
@@ -98,7 +108,7 @@ export function JoinForm({ onJoined }: { onJoined: () => void }) {
     setNow(Date.now());
   };
 
-  /** 查邀请码（不扣次数）：成功显示项目名与精简表单，失败给完整表单加表 A 的提示 */
+  /** Look up the invite code (does not use up an attempt): on success show the project name and a compact form; on failure show the full form plus the Table A message */
   const checkInvite = async (code: string, base: string) => {
     setInvite({ phase: "checking", code, base });
     setMsg(null);
@@ -116,7 +126,7 @@ export function JoinForm({ onJoined }: { onJoined: () => void }) {
     }
   };
 
-  // 启动时读到的邀请码（`main.tsx` 读 `#invite=` 后已清掉片段）：只取一次
+  // Invite code read at startup (`main.tsx` already cleared the fragment after reading `#invite=`): take it only once
   useEffect(() => {
     if (started.current) return;
     started.current = true;
@@ -125,8 +135,9 @@ export function JoinForm({ onJoined }: { onJoined: () => void }) {
     if (!got) return;
     if (!("code" in got)) return fail(JOIN_TEXT.badLink);
     /*
-     * 文档服务在哪由链接自己说（`online/invite.ts` 的 `doc=`）：托管端是 `/hosted/`、局域网主机是 `/docservice`，
-     * 源是这张页面自己的源 —— 扫码进来的页面本来就是那台主机发的。不带 `doc=` 的是旧链接，当失效。
+     * The link itself says where the document service is (`doc=` in `online/invite.ts`): `/hosted/` for the hosted side,
+     * `/docservice` for a LAN host. The origin is this page's own origin: a page opened by scanning a QR code
+     * was served by that very host. A link without `doc=` is an old link and counts as expired.
      */
     if (!got.doc) return fail(JOIN_TEXT.oldLink);
     void checkInvite(got.code, docBaseOf(location.origin, got.doc));
@@ -136,7 +147,7 @@ export function JoinForm({ onJoined }: { onJoined: () => void }) {
   const usePasted = () => {
     const parsed = parseInviteLink(paste);
     if (!parsed) return fail(JOIN_TEXT.badLink);
-    // 粘来的链接自己带着源和路径,两样都照它的（不带 `doc=` 的是旧链接,当失效）
+    // A pasted link carries its own origin and path, so follow it on both (a link without `doc=` is an old link and counts as expired)
     if (!parsed.doc) return fail(JOIN_TEXT.oldLink);
     setPaste("");
     void checkInvite(parsed.code, docBaseOf(parsed.origin, parsed.doc));
@@ -144,7 +155,7 @@ export function JoinForm({ onJoined }: { onJoined: () => void }) {
 
   const creatorName = invite?.phase === "ok" ? knownCreator(invite.projectId) : null;
 
-  /** 进入：新开一个空项目当起点（项目内容以文档服务为准），进去了就进编辑器 */
+  /** Enter: start from a new empty project (the project content is whatever the document service has), then go into the editor once inside */
   const enter = async (candidate: Candidate, cred: { as: "member" | "creator"; username: string; password: string; key?: string }) => {
     newProject(tr("Untitled"));
     const r: EnterResult = await enterShared(candidate, cred);
@@ -204,7 +215,7 @@ export function JoinForm({ onJoined }: { onJoined: () => void }) {
         else await enter(c, { as: "member", username: user, password });
         return;
       }
-      // 手填：在线页面只问本页的源；桌面版问托管地址，并在局域网里找（C6.5 的查找）
+      // Manual entry: the online page only asks for this page's origin; the desktop app asks for the hosted address and also searches the LAN (the lookup in C6.5)
       let candidates: Candidate[];
       if (ONLINE) {
         const base = onlineBase();

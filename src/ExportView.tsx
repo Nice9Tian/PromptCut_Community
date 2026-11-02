@@ -33,19 +33,23 @@ import type { FrameLayer } from "./export/exportLayers";
 import "./cards";
 import { tr as trText } from "./i18n/index.ts";
 
-/** 导出页初始化:等舞台自检、等项目装好的时限(真毫秒) */
+/** Export page init: time limit (real milliseconds) for waiting on the stage self-check and for
+ *  the project to be loaded */
 const EXPORT_GATE_WAIT_MS = 10_000;
 const EXPORT_LOAD_WAIT_MS = 30_000;
 
-// 只要进了导出视图就把页面时钟量化到导出帧(见 exportClock.ts),必须早于任何卡片挂载
+// As soon as the export view is entered, quantize the page clock to export frames (see
+// exportClock.ts); this must come before any card mounts
 if (new URLSearchParams(location.search).has("export")) installExportClock();
-// 素材装载器也必须早于任何卡片挂载:推进动画的过程中一律不给素材赋 URL(原 scripts/frame-media.mjs,现 server/bakery/frame-media.mjs)
+// The media loader must also come before any card mounts: while advancing animation, never assign
+// a URL to media (originally scripts/frame-media.mjs, now server/bakery/frame-media.mjs)
 if (new URLSearchParams(location.search).has("export")) installFrameMedia();
 
 /*
- * ?cardsOnly=1:素材(视频 / 图片)一概不挂,只渲卡片的透明层。
- * 默认导出和 see_frames 走完整的 Chrome FrameScene；显式 --media=ffmpeg 时才走这条
- * 卡片透明层旁路。保留 cardsOnly 是为了兼容旁路和需要只渲卡片的调用。
+ * ?cardsOnly=1: mount no media (video / image) at all, render only the transparent layer of cards.
+ * Default export and see_frames go through the full Chrome FrameScene; this path, the card
+ * transparent-layer bypass, is only used with an explicit --media=ffmpeg. cardsOnly is kept for
+ * compatibility with the bypass and for callers that need cards only.
  */
 const CARDS_ONLY = new URLSearchParams(location.search).get("cardsOnly") === "1";
 function stripMedia(p: Project): Project {
@@ -71,13 +75,14 @@ function mediaFrameUrl(el: HTMLVideoElement | HTMLImageElement, scratch: HTMLCan
 }
 
 /**
- * 导出视图(?export=1)。导出脚本的每帧顺序:
- *   1. page.evaluate(window.__pcSetT(sec))  → 写 __pcExportMs、setT 触发 React 重渲染
- *   2. 推进 CDP 虚拟时间 1/fps(React 提交、rAF、Motion 建动画都在这一格里发生)
- *   3. window.__pcSyncAnims() 把所有 Web Animations 的 currentTime 钉到导出时间
- *   4. 等素材(图片 decode、视频 seek)→ 截图
- * 页面挂载后把 window.__pcReady 置 true,脚本等它。
- * 时间轴可由 ?timeline=<url> 指定(JSON),默认用 demo。
+ * Export view (?export=1). The per-frame sequence of the export script:
+ *   1. page.evaluate(window.__pcSetT(sec))  → writes __pcExportMs, setT triggers a React re-render
+ *   2. advance CDP virtual time by 1/fps (React commit, rAF, and Motion building animations all
+ *      happen within this one tick)
+ *   3. window.__pcSyncAnims() pins the currentTime of all Web Animations to the export time
+ *   4. wait for media (image decode, video seek) → take the screenshot
+ * After the page mounts, window.__pcReady is set to true, and the script waits for it.
+ * The timeline can be specified with ?timeline=<url> (JSON), and defaults to the demo.
  */
 export default function ExportView() {
   const [t, setT] = useState(0);
@@ -101,14 +106,19 @@ export default function ExportView() {
     clips: timeline.clips.filter(c => frameClipIds.has(c.id)),
   }), [timeline, frameClipIds]);
   /*
-   * canvas 卡的共享 WebGL 渲染器(R9 M2)。**导出页永远走路线 1**:预渲染进程里没有父页,自己持一个上下文
-   * (懒建:这一帧真有 canvas 卡要画才建,纯 DOM 的项目一个都不开,DOM 一个字不变)。
+   * Shared WebGL renderer for canvas cards (R9 M2). **The export page always takes route 1**: there is
+   * no parent page in the prerender process, so it holds a context itself (built lazily: only when
+   * this frame really has a canvas card to draw; a pure-DOM project opens none, and the DOM does not
+   * change by a single character).
    *
-   * **现在在导出页的主线程上画**(同一份渲染器代码、同一张 `programs.ts`、同一套 MSAA FBO → blit → 裁位图),
-   * 不开 Worker:受帧控制的导出页里,Worker 主脚本那个请求的收尾事件报在 Worker 自己的 target 上,
-   * `server/bakery/chrome.mjs` 的 `waitNet` 在页面的 Network 域里看它一直「在路上」,每帧白等 30 秒后报错(实测)。
-   * 导出页的主线程不是用户的交互线程,在这里画不卡任何人。`chrome.mjs` 放过 `blob:` 脚本之后
-   * (补丁见 R9 报告),带 `?glWorker=1` 就改走 Worker —— 像素相同,那是同一份代码。
+   * **Now drawn on the export page's main thread** (the same renderer code, the same `programs.ts`,
+   * the same MSAA FBO → blit → crop bitmap), without a Worker: in a frame-controlled export page, the
+   * completion event of the request for the Worker's main script is reported on the Worker's own
+   * target, and `waitNet` in `server/bakery/chrome.mjs` sees it as still "in flight" in the page's
+   * Network domain, waits in vain for 30 seconds on every frame and then errors out (measured).
+   * The export page's main thread is not the user's interaction thread, so drawing here stalls no
+   * one. After `chrome.mjs` lets `blob:` scripts through (patch: see the R9 report), adding
+   * `?glWorker=1` switches to the Worker: identical pixels, since it is the same code.
    */
   const glHost = useRef<GlHost | null>(null);
   useEffect(() => {
@@ -118,11 +128,15 @@ export default function ExportView() {
     return () => { host.dispose(); if (glHost.current === host) glHost.current = null; };
   }, []);
   /*
-   * 导出页 / 预渲染页**每一帧**发一拍(M3)。帧推进由 `__pcSetT` 的 `flushSync` 驱动,`beat` 就发在
-   * **那次提交的 layout effect** 里 —— gl 平面的登记(子组件的 layout effect)这时已经做完。
-   * 严格的拍:编译、纹理没好就等,不留空帧。`glHost` 自己领 `beginFrameWork('gl')` 的票、收到 `done` 再还,
-   * 所以 `__pcFrameReady`(下面挂的 `waitForFrameWork`)天然把 `done` 等进来,Node 端照旧等它。
-   * 不写依赖:任何一次提交(换帧、换分片窗口、重挂载)都可能换了 gl 平面上该画的那一帧。
+   * Emit one beat on **every frame** of the export page / prerender page (M3). Frame advance is driven
+   * by the `flushSync` of `__pcSetT`, and `beat` is emitted in **that commit's layout effect**: by
+   * then the registration of the gl plane (the layout effect of the child components) is already done.
+   * A strict beat: if compilation or textures are not ready, wait; leave no empty frames. `glHost`
+   * takes its own ticket from `beginFrameWork('gl')` and returns it on receiving `done`, so
+   * `__pcFrameReady` (the `waitForFrameWork` hooked up below) naturally waits for `done` as well, and
+   * the Node side waits for it as before.
+   * Write no dependencies: any commit (frame change, shard window change, remount) may change which
+   * frame should be drawn on the gl plane.
    */
   useLayoutEffect(() => {
     void glHost.current?.beat({ strict: true, t });
@@ -138,25 +152,29 @@ export default function ExportView() {
     const url = new URLSearchParams(location.search).get("timeline");
     (url ? fetch(url).then((r) => r.json()) : Promise.resolve(demoTimeline))
       .then(async (json: unknown) => {
-        // 素材保持占位,到截图那一帧才加载。
+        // Media stays as placeholders and is only loaded at the frame of the screenshot.
         if (json && Array.isArray((json as Project).tracks)) return CARDS_ONLY ? stripMedia(json as Project) : (json as Project);
         return json;
       })
-      // 命名函数表达式:函数体既是首次加载的装配流程,也是换项目时要重跑的那一套。
-      // 取个名字就能在体内自己调用(见下面的 __pcLoadProject),不用把这一大块抽出去。
+      // Named function expression: the function body is both the assembly flow of the first load and the
+      // one to rerun when switching projects. Giving it a name lets it call itself from inside (see
+      // __pcLoadProject below), without having to extract this big block.
       .then(function install(json: any, options?: { deferCards?: boolean }) {
       let tl: Timeline;
       let proj: Project | null = null;
       /*
-       * 整个 install() 只算这一次图,下面的 __pcCardPlan 闭包和渲染体都复用它。
-       * **必须兜底**:projectCardGraph 会对悬空输入抛(删掉套了滤镜素材效果卡的素材段就是这种),
-       * 在这一层不接住就是舞台整棵树卸载、预渲染页永远不 ready。
+       * The whole install() computes the graph only this once; the __pcCardPlan closure below and the
+       * render body both reuse it.
+       * **A fallback is required**: projectCardGraph throws on a dangling input (deleting a media clip
+       * that carries a filtered media effect card is such a case); if it is not caught at this level,
+       * the whole stage tree unmounts and the prerender page never becomes ready.
        */
       let graph: ReturnType<typeof projectCardGraph> | undefined;
 
       if (json && Array.isArray(json.tracks)) {
         proj = json as Project;
-        // 变速段的素材节点补上倍率(kernel/clipTime.mjs 的 withMediaRates;没有变速段时原样)
+        // Add the rate to media nodes of speed-change segments (withMediaRates in kernel/clipTime.mjs;
+        // unchanged when there are no speed-change segments)
         try { graph = withMediaRates(proj, projectCardGraph(proj, getCard)); } catch { graph = undefined; }
         tl = flattenOverlay(proj, graph);
       } else {
@@ -188,36 +206,45 @@ export default function ExportView() {
           }
         }
         /*
-         * 剪辑段换成它里面的卡(`kernel/cutFlatten.mjs` 的摊平视图):剪辑段里的卡和父时间轴上的卡一样进卡片计划
-         * (测量、分派、各自产单卡流)。渲染用的图(上面的 `graph`)不变,画面照旧走嵌套场景。没有剪辑段的项目原样不变
+         * Replace a cut segment with the cards inside it (the flattened view in `kernel/cutFlatten.mjs`):
+         * cards inside a cut segment enter the card plan just like cards on the parent timeline
+         * (measurement, dispatch, each producing its own single-card stream). The graph used for rendering
+         * (`graph` above) is unchanged, and the picture still goes through the nested scene. A project
+         * without cut segments is unchanged
          */
         const flat = flatPlanProject(proj);
         let planGraph = graph;
         if (flat !== proj) { try { planGraph = withFlatNodes(flat, withMediaRates(flat, projectCardGraph(flat, getCard))); } catch { planGraph = undefined; } }
         return { graph: planGraph ?? withMediaRates(flat, projectCardGraph(flat, getCard)), sourceVersions,
           /*
-           * 这个页面的注册表里查不到定义的卡片段(未知卡片;预渲染进程里没有同步表,等于「没有定义」)。舞台不画它们,
-           * `CardFrameCache.plan()` 据此不给它们出控件:不排预渲染、不进预渲染集合、层表里没有它们那一层。
-           * 图本身不动(别的卡的键逐字不变)。
+           * Card clips whose definition cannot be found in this page's registry (unknown cards; the prerender
+           * process has no sync table, which amounts to "no definition"). The stage does not draw them, and
+           * `CardFrameCache.plan()` accordingly gives them no control: they are not scheduled for prerender,
+           * not put in the prerender set, and the layer table has no layer for them.
+           * The graph itself is untouched (the keys of other cards are verbatim unchanged).
            */
           unknownClipIds: [...unknownCardClipIds(flat.tracks.flatMap((track) => track.clips))].sort(),
           environment: { width: proj.width, height: proj.height, fps: proj.fps, theme: proj.themeId,
-            // I0:这一帧排版实际用上的字体集合。共享快照键要它 —— 缺字体的机器
-            // 画出来的 HTML 不一样,不能和有字体的机器共用一份快照。
+            // I0: the set of fonts actually used when laying out this frame. The shared snapshot key needs it:
+            // a machine missing fonts renders different HTML, so it cannot share a snapshot with a machine
+            // that has the fonts.
             fontFingerprint: fontFingerprintOf(document.fonts as unknown as Iterable<{ family: string; status: string }>) } };
       };
-      /** 音频素材效果卡的片段:有 nodeId、没有 cardId(按 H2 它不写 cardId) */
+      /** Clip of an audio media effect card: has a nodeId, no cardId (per H2 it does not write cardId) */
       const audioNode = (nodeId?: string) => !!nodeId && !!proj?.cardNodes?.some(node => node.id === nodeId && node.kind === 'audio');
       /*
-       * 音频素材效果卡的片段整个排除:它没有 cardId,照字面收进来就是 getCard('') → 兜底 stateful,
-       * 于是一条铺满全片的音频卡被算进 replayClips,每个导出分片都从第 0 帧回放。
+       * Clips of audio media effect cards are excluded entirely: they have no cardId, and taking them in
+       * literally gives getCard('') → fallback stateful, so an audio card spanning the whole video gets
+       * counted into replayClips and every export chunk replays from frame 0.
        */
       const plannedClips = [...tl.clips, ...(proj?.tracks.filter(track => !track.hidden).flatMap(track => track.clips
         .filter(clip => clip.nodeId && !clip.cardId && !audioNode(clip.nodeId)).map(clip => ({ ...clip, cardId: '' }))) || [])];
       // Parallel export cuts only where no stateful card is mounted on both sides.
-      // 只有**不出画**的音频素材效果卡才无条件 direct;其余素材效果卡片段照它自己的声明算 ——
-      // 沿用「有节点就 direct」会让声明 stateful 的素材效果卡在导出里不进回放窗口,
-      // 而预览按 clipFrameMode 给它回放钟,两边时间口径静默分叉且不报错。
+      // Only audio media effect cards that **never leave the picture** are unconditionally direct; other
+      // media effect card clips are counted by their own declaration. Keeping "direct whenever there is a
+      // node" would leave media effect cards that declare stateful out of the replay window in export,
+      // while preview gives them a replay clock per clipFrameMode, so the two sides silently diverge in
+      // timing with no error.
       window.__pcClipFrameModes = () => plannedClips.map(clip => ({ id: clip.id, start: clip.start, end: clip.end,
         mode: audioNode(clip.nodeId) ? 'direct' : clipFrameMode(clip, getCard(clip.cardId)) }));
       window.__pcPlanFrameWindow = (frames, fps) => planFrameWindow(plannedClips, frames, fps,
@@ -228,25 +255,29 @@ export default function ExportView() {
           return clipFrameMode(clip, getCard(clip.cardId));
         });
       window.__pcExportMs = 0;
-      // 排空 / 生成快照:原来由 export-frames.mjs(现 server/bakery/chrome.mjs)的 PAGE_PRELUDE 注入,现在是页面 bundle 的一部分(J1)。
+      // Drain / generate snapshots: previously injected by PAGE_PRELUDE in export-frames.mjs (now server/bakery/chrome.mjs), now part of the page bundle (J1).
       window.__bfSettle = settleDom;
       window.__pcCreateSnapshot = () => createSnapshot(document.querySelector("[data-pc-scene]"));
-      // D3(c):实体几何的导出面,只给 puppeteer 侧 page.evaluate 用(/api/cards/layout 对快照 DOM 量 contentBox),页面内部不经它
+      // D3(c): export surface for entity geometry, used only by puppeteer-side page.evaluate (/api/cards/layout measures contentBox on the snapshot DOM); the page itself never goes through it
       window.__pcSolid = solidApi;
       window.__pcCanvasBox = solidApi.canvasPaintedBox;
-      // 画布直取(己一):产轨道流时预渲染进程问页面要画布的像素,不经过截图(`server/bakery/capture-canvas.mjs`)
+      // Direct canvas read (ji-1): when producing the track stream, the prerender process asks the page for canvas pixels without going through screenshots (`server/bakery/capture-canvas.mjs`)
       (window as unknown as { __pcGrabCanvas?: typeof grabCanvasPixels }).__pcGrabCanvas = grabCanvasPixels;
 
 
       window.__pcSetT = (sec: number, directSec = sec) => {
         window.__pcExportMs = sec * 1000;
-        // flushSync:和下面 __pcRestartCards 同一个理由 —— 这一帧的渲染(尤其是 clip 边界上
-        // 卡片的挂载/卸载)必须在这次调用里同步提交完。不然 React 把它排进调度器,落在
-        // 下一格虚拟时间的哪个位置取决于这一帧截图花了多少真实时间;Motion 要等挂载提交后的
-        // 下一次 rAF 才建 WAAPI 动画,于是动画有时算进这一帧、有时要到下一帧才被 __pcSyncAnims
-        // 看见,锚点差一帧,整段入场差一帧相位。实测 demo 时间轴 blur-fade 卡切进来那一段
-        // (第 60~71 帧)连导两趟约一半概率全不同,就是它。同步提交之后,挂载在推进虚拟时间之前
-        // 就已落地,第一次 rAF 里 Motion 就把动画建好,不再依赖截图耗时。
+        // flushSync: same reason as __pcRestartCards below. The rendering of this frame (especially cards
+        // mounting/unmounting at a clip boundary) must be committed synchronously within this call.
+        // Otherwise React puts it in the scheduler, and where it lands in the next tick of virtual time
+        // depends on how much real time this frame's screenshot took. Motion only builds the WAAPI
+        // animation on the next rAF after the mount commits, so the animation is sometimes counted into
+        // this frame and sometimes only seen by __pcSyncAnims on the next frame; the anchor is off by one
+        // frame, and the whole entrance is off by one frame of phase. Measured: on the demo timeline, the
+        // segment where a blur-fade card cuts in (frames 60~71), exporting twice gives all-different
+        // results about half the time, and this is why. After committing synchronously, the mount lands
+        // before virtual time advances, Motion builds the animation in the first rAF, and no longer
+        // depends on screenshot duration.
         flushSync(() => { setT(sec); setDirectT(directSec); });
 
       };
@@ -267,28 +298,35 @@ export default function ExportView() {
         });
       };
 
-      // flushSync:重挂载在这次调用里同步完成。否则 React 的调度任务落在下一格虚拟时间的哪个位置
-      // 两次导出不一样,卡片的第一帧就会差一帧。
+      // flushSync: the remount completes synchronously within this call. Otherwise where React's
+      // scheduled task lands in the next tick of virtual time differs between two exports, and the
+      // card's first frame would be off by one frame.
       window.__pcRestartCards = () => {
-        // 随机种子先拨回起点,再重挂载:卡片挂载时抽的随机数(粒子初始位置之类)每趟都一样
+        // Rewind the random seed to the start, then remount: random numbers drawn when a card mounts (initial particle positions and the like) are identical on every pass
         window.__pcResetRandom?.(1);
         flushSync(() => setPlayToken((n) => n + 1));
       };
 
-      // 动画锚点:每个 Web Animation 首次出现那一帧的导出毫秒。
-      // 导出脚本每帧推进完虚拟时间后调 __pcSyncAnims,把 currentTime 钉到「现在 − 锚点」再截图。
-      // CSS / WAAPI 动画钟和虚拟时钟不同步,用实测比值校正 playbackRate 会随机器负载变;显式钉时间与负载无关。
+      // Animation anchor: the export millisecond of the frame where each Web Animation first appears.
+      // After advancing virtual time each frame, the export script calls __pcSyncAnims, pins currentTime to "now − anchor", then takes the screenshot.
+      // The CSS / WAAPI animation clock is not in sync with the virtual clock, and correcting playbackRate with a measured ratio varies randomly with machine load; explicitly pinning the time is independent of load.
       let anchors = new WeakMap<Animation, number>();
       window.__pcResetAnims = () => {
         anchors = new WeakMap<Animation, number>();
       };
-      // 必须 pause:transform / opacity 这类动画跑在合成线程上,只设 currentTime 不暂停的话,
-      // 截图那一帧合成器仍按它自己的时钟采样,两次导出差零点几帧。暂停后数值只由 currentTime 决定。
-      // 越过结尾的用 finish():Motion 等 finished 才提交终态样式,CSS 动画则回到自然样式,和正常播完一致。
-      // 这一帧被 finish() 收束的动画数。静态判定要看它:动画在这一帧从"还差一小段"跳到终态,
-      // 画面是变了的,但收束之后 getAnimations() 里它已经是 finished、DOM 也没被改过 ——
-      // 探针只看得见"结束后的状态",看不见"在这一帧结束"这件事。实测 type-shift 外层过渡恰好在
-      // 第 6 帧结束,静态跳过复用了第 5 帧,和不跳过差 28085 个像素。
+      // Must pause: animations such as transform / opacity run on the compositor thread, and if only
+      // currentTime is set without pausing, the compositor still samples by its own clock at the
+      // screenshot frame, so two exports differ by a fraction of a frame. After pausing, the value is
+      // determined by currentTime alone.
+      // Those past the end use finish(): Motion waits for finished before committing the final style,
+      // while CSS animations return to their natural style, same as after a normal playthrough.
+      // The number of animations settled by finish() in this frame. The static check must look at it:
+      // an animation jumps from "a little left" to its final state in this frame, so the picture has
+      // changed, but after settling, getAnimations() reports it as finished and the DOM was not
+      // modified ——
+      // the probe only sees "the state after ending", not "ending in this frame". Measured: the
+      // type-shift outer transition happens to end on frame 6, and static skipping reused frame 5,
+      // differing from not skipping by 28085 pixels.
       let finishedThisFrame = 0;
       window.__pcSyncAnims = () => {
         const now = window.__pcExportMs ?? 0;
@@ -312,15 +350,19 @@ export default function ExportView() {
         }
       };
       /**
-       * 这一帧画面静不静止。四个条件同时成立才算,因为单看任何一个都会漏:
-       *   anims —— getAnimations() 只看得见 CSS/过渡/WAAPI;
-       *   mut   —— 补上它看不见的 JS 动画(Motion 的 MotionValue,例如 rank-bars 的滚动数值),
-       *            以及卡片刚重挂载、动画还没建起来那几帧 —— 那时 anims 是 0,画面却在变;
-       *   raf   —— 走了被替换的 rAF 的第三方循环。Motion 走不到这里(见 exportClock.ts),
-       *            留着是因为不要钱,多罩一层算一层;
-       *   video —— 前三个都看不见的第四种变化:底下 <video> 在放。它自己会变,而且
-       *            卡片上的 backdrop-filter 毛玻璃会把它的变化采样进来,于是毫无动画的玻璃板也在逐帧变。
-       * 判静态是为了复用上一帧的截图,判错了会渲出坏帧,所以宁可保守。
+       * Whether this frame's picture is still. All four conditions must hold together, since any one
+       * alone would miss cases:
+       *   anims —— getAnimations() only sees CSS / transitions / WAAPI;
+       *   mut   —— covers the JS animations it cannot see (Motion's MotionValue, e.g. the scrolling
+       *            numbers in rank-bars), and the frames right after a card remounts before its
+       *            animation is built —— anims is 0 then, yet the picture is changing;
+       *   raf   —— third-party loops that go through the replaced rAF. Motion never gets here (see
+       *            exportClock.ts); it stays because it is free, one more layer of cover is still cover;
+       *   video —— a fourth kind of change the first three cannot see: the underlying <video> is playing.
+       *            It changes by itself, and the backdrop-filter frosted glass on a card samples its
+       *            changes in, so even a glass panel with no animation changes frame by frame.
+       * Judging static is for reusing the previous frame's screenshot, and a wrong call renders a bad
+       * frame, so err on the conservative side.
        */
       window.__pcStaticProbe = () => ({
         anims: document.getAnimations().filter((a) => a.playState !== "finished" && a.playState !== "idle").length,
@@ -331,18 +373,20 @@ export default function ExportView() {
           const s = getComputedStyle(v);
           return s.visibility !== "hidden" && parseFloat(s.opacity) > 0;
         }),
-        // canvas 上画的东西不在 DOM 里,MutationObserver 看不见;有可见的 canvas 就不敢判静止
+        // What is drawn on a canvas is not in the DOM and MutationObserver cannot see it; with a visible canvas we dare not judge the frame still
         canvas: Array.from(document.querySelectorAll("canvas")).some((c) => {
           const s = getComputedStyle(c);
           return s.visibility !== "hidden" && parseFloat(s.opacity) > 0 && c.width > 0 && c.height > 0;
         }),
       });
       /**
-       * 原地换一个项目,不重新导航。常驻预渲染进程靠它复用同一个页面:
-       * 起 Chrome + goto + 字体首次布局加起来是固定的几秒钟,每渲一次都重付一遍太贵。
-       * 走的是 install 自己,和重新加载页面同一条路径,不会两套行为。
+       * Swap in another project in place, without navigating again. The resident prerender process
+       * reuses the same page through this: launching Chrome + goto + the first font layout add up to a
+       * fixed few seconds, and paying that again on every render is too expensive.
+       * It goes through install itself, the same path as reloading the page, so there are not two
+       * sets of behavior.
        */
-      /** 在线逐帧导出:编辑页面把同步来的用户卡的表交给导出页,让它们的包裹层挂出来、好换成预渲染原尺寸(`placeholderHost.exportSyncedMountFor`) */
+      /** Online frame-by-frame export: the editor page hands the table of synced user cards to the export page so their wrapper layers get mounted and can be swapped for the prerender's original size (`placeholderHost.exportSyncedMountFor`) */
       (window as unknown as { __pcSetSyncedUserCards?: (entries: SyncedUserCard[]) => void }).__pcSetSyncedUserCards = (entries) => {
         setSyncedUserCards(entries);
         setExportSyncedMount(true);
@@ -544,8 +588,8 @@ export default function ExportView() {
         try {
           markIsolatedStageDocument();
           noteMediaPolicy({ ticket: null, cardExec: true });
-          // 等舞台自检出结果,最多 10 秒(真时间:导出页的 performance.now / Date.now 被导出时钟钉住,`export/realClock.ts`)。
-          // 只有装了舞台加固的文档(在线构建的 stage.html)才会有自检结果;桌面运行环境、开发服务器上的导出页没有自检,闸门一直是 checking,不等
+          // Wait for the stage self-check result, at most 10 seconds (real time: the export page's performance.now / Date.now are pinned by the export clock, `export/realClock.ts`).
+          // Only documents with stage hardening installed (stage.html from the online build) have a self-check result; the export page in the desktop app and on the dev server has no self-check, the gate stays at checking, so do not wait
           if (stageGuardBooted() && cardExecGate().reason === "checking") {
             await waitReal(() => cardExecGate().reason !== "checking", EXPORT_GATE_WAIT_MS);
           }
@@ -631,13 +675,15 @@ export default function ExportView() {
         overflow: "hidden",
         background: "transparent",
         /*
-         * **主题变量必须挂在这里**,和 StageView 那一处对齐。
+         * **The theme variables must be attached here**, aligned with the one in StageView.
          *
-         * 少了它,卡片里每一处 `var(--pc-…, 兜底)` 在导出里都会走兜底 —— 而预览走的是主题值。
-         * 默认主题下大部分兜底和主题值碰巧相同,所以这条漏了很久都没被发现;只有等宽字体
-         * 露了馅:主题是 `ui-monospace, Consolas, monospace`,兜底是 `ui-monospace, monospace`,
-         * 后者在 Windows 上落到 NSimSun —— 预览里是带斜杠零的 Consolas,成片里是一套衬线字。
-         * 换个主题(比如 Courier New 那套、或者任何改了配色的)就是全线不一致。
+         * Without it, every `var(--pc-…, fallback)` in a card takes the fallback in export, while preview
+         * uses the theme value. Under the default theme most fallbacks happen to equal the theme values,
+         * so this gap went unnoticed for a long time; only the monospace font gave it away: the theme is
+         * `ui-monospace, Consolas, monospace` and the fallback is `ui-monospace, monospace`, which on
+         * Windows lands on NSimSun —— in preview it is Consolas with the slashed zero, in the final video
+         * it is a set of serif glyphs. Switch to another theme (say the Courier New one, or anything that
+         * changed the colors) and everything is inconsistent across the board.
          */
         ...themeStyle(timeline.themeId),
       }}

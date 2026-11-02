@@ -1,14 +1,22 @@
 /**
- * C10 在线页面的两个舞台：运行配置与退回（`docs/plan/c10-contract.md` 第 2 节）。
- * 跑：node --test server/test/c10-stages.test.mjs
+ * Two stages for C10 online page: runtime configuration and fallback
+ * (`docs/plan/c10-contract.md` section 2).
+ * Run: node --test server/test/c10-stages.test.mjs
  *
- *   C10-ST-01 舞台源配置解析：两个同站跨源的 https 源（子域）→ A、B 各一个；本机开发的同主机不同端口也认；
- *   C10-ST-02 读不到或不合法（缺、空、一个、两个相同、不是地址、不是 http(s)、JSON 坏了）→ 回空，不抛；
- *   C10-ST-03 取舍：舞台闸门要试到第二级以上 + 配置读到 + 握手成功 → 双舞台；
- *   C10-ST-04 读不到配置或舞台握手失败 → 退回同源单舞台（不许开不出画面）；
- *   C10-ST-05 舞台闸门停在第一级（精简、低配）恒单舞台（配置、握手都好也一样；原来是低内存档那一条，2026-10-22 改）。
+ *   C10-ST-01 Stage origin configuration parsing: two same-site cross-origin https origins
+ *             (subdomains) → one each for A and B; also accepts same host with different ports
+ *             for local development;
+ *   C10-ST-02 Unreadable or invalid (missing, empty, one, two identical, not a URL, not http(s),
+ *             corrupted JSON) → returns empty, does not throw;
+ *   C10-ST-03 Decision: stage gate reaches level 2 or above + configuration read + handshake
+ *             succeeds → dual stage;
+ *   C10-ST-04 Configuration unreadable or stage handshake fails → falls back to same-origin
+ *             single stage (never fail to show video);
+ *   C10-ST-05 Stage gate stops at level 1 (lite, low-spec) always single stage (even if
+ *             configuration and handshake are both good; originally the low-memory tier item,
+ *             changed 2026-10-22).
  *
- * 假设见 `c10-kit.mjs` 的 K5。实现不在时整组 skip。
+ * For assumptions, see K5 of `c10-kit.mjs`. Skip the entire group when implementation is absent.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

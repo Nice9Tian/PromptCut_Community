@@ -1,30 +1,47 @@
 /**
- * 剪辑段里的卡逐张预渲染(语义 `docs/semantics/mechanism/rendering.md`「剪辑段」的「测量与预渲染:拆开逐卡」;用户 2026-10-21 定)——
- * 真 Chrome、真编码器的端到端探针,**比像素**。
+ * Prerender cards in cut segments card by card (semantics `docs/semantics/mechanism/rendering.md`
+ * "Cut segment" - "Measurement and prerendering: split per card"; user decision, 2026-10-21):
+ * end-to-end probe with real Chrome and real encoder, **comparing pixels**.
  *
  *   node scripts/probes/cut-flatten-probe.mjs (--origin http://127.0.0.1:5440 | --port 5440) [--out <dir>] [--keep] [--json <file>]
  *
- * 给 `--port` 就自己在检出根起一台 dev server(另占 +1、+2 当舞台端口),用完按进程号收掉。本进程里直接起 `FramePipeline`
- * (同预渲染进程的代码),库根放临时目录。
+ * If `--port` is given, it starts a dev server at the checkout root itself (occupying +1 and +2 as
+ * stage ports), and tears it down by PID when done. Directly starts `FramePipeline` in this process
+ * (same code as the prerender process), with store root placed in a temporary directory.
  *
- * 项目(1280×720、30 fps):激活剪辑「主」只有一个剪辑段 S(第 1～5 秒,框 960×540 居中,`cutOffset` 1 秒)引用剪辑「重」;
- * 「重」里:推帧卡 `r6-stateful`(重,0～6 秒;偏移 1 秒落在它中间,要预卷)、轻卡 `punch-pill`(1～3 秒;舞台上不抑制它,活渲)、
- * 剪辑段引用剪辑「里」(两层嵌套),「里」里一张 `punch-pill`(重)。
+ * Project (1280×720, 30 fps): active cut "Main" has only one cut segment S (seconds 1-5, box
+ * 960×540 centered, `cutOffset` 1 second) referencing cut "Heavy"; in "Heavy": frame-push card
+ * `r6-stateful` (heavy, 0-6 seconds; 1-second offset falls in its middle, requiring preroll), light
+ * card `punch-pill` (1-3 seconds; not suppressed on stage, live render), and a cut segment
+ * referencing cut "Inner" (two levels of nesting), with one `punch-pill` (heavy) inside "Inner".
  *
- * 逐条核对:
- *   1. 卡片计划:剪辑段里每张卡各有控件(id `seg-s~h-r6`、`seg-s~h-seg~i-pill`、`seg-s~h-light`),段本身没有;不走整帧 PNG。
- *   2. 流的计划:三张独立卡各一条 `solo: 'flat'` 的单卡流(预渲染集合本由页面的分派表定,探针全部放行),从第 30 帧起到各自露出窗口的末帧;
- *      `r6` 要回放、从嵌套场景挂上那一帧起。
- *   3. 隔离工程:顶层只留 S、被引用剪辑里只留链上的段与目标卡。
- *   4. 稀疏版每个分段一张;满密度每帧都有。
- *   5. 舞台贴流:真舞台(跨源两台)上把两张重卡抑制、发它们的流平面,轻卡照常活渲;停在几帧上截图,与整个项目的活渲导出同一帧比:
- *      最像的是它自己那一帧、框内平均差小;嵌套包裹层上重卡藏活子树、流平面露着,轻卡不抑制。
- *   6. 占位:只抑制、不给流平面时,那张卡的嵌套包裹层里的占位槽位露出来。
- *   7. 失效:改「里」里那张卡的文字,只有它的流键变,`r6` 的不变;激活剪辑里加一条隐藏序列,键都不变。
+ * Check item by item:
+ *   1. Card plan: each card in the cut segment has its own control (ids `seg-s~h-r6`,
+ *      `seg-s~h-seg~i-pill`, `seg-s~h-light`), while the segment itself does not; does not use
+ *      full-frame PNGs.
+ *   2. Stream plan: three standalone cards each have a single-card stream with `solo: 'flat'` (the
+ *      prerender set is normally determined by the page's dispatch table; the probe allows all),
+ *      from frame 30 to the last frame of their respective exposure windows; `r6` needs playback,
+ *      starting from the frame where the nested scene is attached.
+ *   3. Isolated project: only S is kept at the top level, and only the segments and target cards on
+ *      the chain are kept in referenced cuts.
+ *   4. Sparse version: one frame per segment; full density: every frame is present.
+ *   5. Stage stream paste: on real stages (two cross-origin instances), suppress the two heavy cards
+ *      and emit their stream planes, while light cards are live rendered as usual; pause on several
+ *      frames to take screenshots and compare them with the same frame exported via live render of
+ *      the whole project: the closest match is its own frame, with a small average difference inside
+ *      the box; on the nested wrapper layer, heavy cards hide live subtrees while stream planes are
+ *      exposed, and light cards are not suppressed.
+ *   6. Placeholder: when only suppressing without providing stream planes, the placeholder slot in
+ *      that card's nested wrapper layer is exposed.
+ *   7. Invalidation: when changing the text of the card inside "Inner", only its stream key changes
+ *      while that of `r6` remains unchanged; when adding a hidden track to the active cut, no keys
+ *      change.
  *
- * 输出 JSON 结论,过程写 stderr;任何一条不过就以非零退出。耗时只记录。截图写到 `--out`。
+ * Outputs JSON conclusions, writes progress to stderr; exits non-zero if any item fails. Time
+ * elapsed is only recorded. Screenshots are written to `--out`.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -127,7 +144,7 @@ function decodedDiff(picture, rect, truth) {
   return e.count ? e.sum / e.count : 0;
 }
 function sampleDiff(a, b) { let sum = 0; for (let i = 0; i < a.length; i++) sum += Math.abs(a[i] - b[i]); return sum / a.length; }
-/** 整幅 RGBA 两份逐字节不同的字节数 */
+/** Number of bytes differing byte-by-byte between two full RGBA images */
 function bytesDiff(a, b) { let n = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) n++; return n; }
 function rgbOver(buf, bg = [0x20, 0x20, 0x20]) {
   const png = PNG.sync.read(buf);
@@ -138,7 +155,7 @@ function rgbOver(buf, bg = [0x20, 0x20, 0x20]) {
   }
   return { width: png.width, height: png.height, rgb: out };
 }
-/** 两幅 RGB 在框里的平均差 */
+/** Average difference between two RGB images inside the box */
 function rectDiff(a, b, r = FRAME) {
   let sum = 0, n = 0;
   for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) {
@@ -177,7 +194,8 @@ window.__ready = Promise.all([waitReady(document.getElementById('a'), '${oa}'), 
 
 function openPipeline(root, origin, { frozen = false } = {}) {
   const pipeline = new FramePipeline({ root, origin: () => origin, interactive: true, playhead: () => null });
-  // 预渲染集合由页面的分派表定;这里全部放行,轻卡活渲由舞台这一步(不抑制它)来验
+  // The prerender set is determined by the page's dispatch table; here all are allowed through, and
+  // light card live render is verified by this stage step (without suppressing it)
   pipeline.streamPicked = () => true;
   const producer = pipeline.streamProducer();
   producer.attachRoute();
@@ -211,7 +229,7 @@ try {
   const emptyUrl = emptyUrlOf(origin, { width: WIDTH, height: HEIGHT });
   bakery = await openBakery({ url: emptyUrl });
 
-  // ================================================================ 1、2、3:卡片计划、流的计划、隔离工程
+  // ================================================================ 1, 2, 3: Card plan, stream plan, isolated project
   const A = openPipeline(path.join(OUT, 'library-a'), origin);
   pipelines.push(A.pipeline);
   let t0 = Date.now();
@@ -243,7 +261,7 @@ try {
   const truth = await exportFrames(bakery, PROJECT, emptyUrl, WANT[1], refDir);
   for (const f of [31, 75, 149]) await fs.writeFile(path.join(OUT, `export-${f}.png`), toPng(rgbOver(truth.png(f))));
 
-  // ================================================================ 4:稀疏与满密度
+  // ================================================================ 4: Sparse and full density
   const decodeOf = async (state, n, name) => {
     const { spec } = state;
     const { manifest } = state;
@@ -286,7 +304,7 @@ try {
     check(wrong.length === 0 && frames === 2 * (WANT[1] - WANT[0] + 1) + 60, '4: full density has every frame', out.dense);
   }
 
-  // ================================================================ 5:舞台贴流
+  // ================================================================ 5: Stage stream paste
   const ports = await (await fetch(origin + '/api/stage/ports')).json();
   if (!ports.ok || !Array.isArray(ports.ports) || ports.ports.length < 2) throw new Error(`Stage ports did not come up: ${JSON.stringify(ports)}`);
   const u = new URL(origin);
@@ -345,7 +363,9 @@ try {
     await sleep(60);
     return { planes, got };
   };
-  // 舞台上真贴的是流:嵌套包裹层上重卡藏活子树(`.pc-suppressed`)、流平面露着;轻卡(第 1～3 秒露出)不抑制、活渲;剪辑段自己不抑制
+  // What is actually pasted on stage is the stream: heavy cards hide live subtrees (`.pc-suppressed`)
+  // on nested wrapper layers, stream planes are exposed; light cards (exposed during seconds 1-3)
+  // are not suppressed and live rendered; the cut segment itself is not suppressed
   const domNow = () => frameA().evaluate((seg, heavy, light) => {
     const at = (id) => document.querySelector(`[data-pc-flat-clip="${id}"]`);
     const shown = (el) => !!el && getComputedStyle(el).display !== 'none';
@@ -379,7 +399,7 @@ try {
     check(out.stageDom.light.mounted && !out.stageDom.light.suppressed, '5: the light card is live rendered in the nested scene (not suppressed)', out.stageDom.light);
   }
 
-  // ================================================================ 6:没流时显示占位
+  // ================================================================ 6: Show placeholder when there is no stream
   {
     await rpc('setPlaying', false);
     await rpc('setStreamPlanes', []);
@@ -394,13 +414,13 @@ try {
     await fs.writeFile(path.join(OUT, 'stage-placeholder-75.png'), toPng(await shotStage()));
   }
 
-  // ================================================================ 7:失效
+  // ================================================================ 7: Invalidation
   {
     const fpOf = async (project) => {
       const p = new FramePipeline({ root: path.join(OUT, `library-x-${Math.random().toString(36).slice(2, 7)}`), origin: () => origin, interactive: true, playhead: () => null });
       pipelines.push(p);
       p.streamPicked = () => true;
-      p.streamBusy = () => true; // 只要计划,不产
+      p.streamBusy = () => true; // Only plan, do not produce
       const e = await p.preload(project);
       await until('card plan (invalidation case)', () => controlOf(e), 120_000);
       const specs = planStreams(e, { picked: () => true, envFingerprint: 'probe-fp', below: false });

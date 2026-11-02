@@ -1,5 +1,5 @@
 /**
- * 剪辑标签栏的状态规则(cutTabsState.ts)。跑:npm test -- src/editor/timeline/cutTabsState.test.mjs
+ * State rules for the cut tab bar (cutTabsState.ts). Run: npm test -- src/editor/timeline/cutTabsState.test.mjs
  */
 import test from "node:test";
 import assert from "node:assert/strict";

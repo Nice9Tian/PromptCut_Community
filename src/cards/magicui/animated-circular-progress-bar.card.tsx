@@ -60,7 +60,8 @@ export const animatedCircularProgressBarCard: CardDef<Params> = {
   useWhen: "A large full-screen centered circular progress (ring + center percentage + caption below), with no backing plate. For a frosted-glass plate, or to place it in a corner/at the bottom instead of the center, use ring-metric; for bilingual lead-in text and a data-source footnote, use stat-proof.",
   tags: ["percentage","circular","progress"],
   source: "magicui",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: { value: 75, label: "加载中", accent: "" },
   controls: [

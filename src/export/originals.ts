@@ -1,15 +1,25 @@
 /**
- * 导出前核对、导出中取用**预渲染原尺寸**(`docs/plan/c10a-contract.md` 第 11.1 节「导出前」「逐帧」)。
+ * Pre-export check and export consumption of **prerendered original size**
+ * (`docs/plan/c10a-contract.md` Section 11.1 "Before export", "Frame-by-frame").
  *
- * - 哪些片段是重卡:渲染节点写进内容库的层表(`layers:<项目 id>`,`server/artifact-transfer.mjs` 的 `layerMapOf`);
- *   还没有层表时退回页面自己的分派表判重的片段(调用方给 `fallbackHeavy`),它们一律算缺。
- * - 在线浏览器(语义 `product/platforms.md`「在线浏览器」的导出):只有页面判重的卡用预渲染原尺寸,判轻的卡由本机逐帧渲 ——
- *   调用方给 `onlyClips`(页面判重的片段),层表里不在其中的层不算重卡、不核对、不取。
- * - 就绪:每张重卡每一段清单(`<resultKey>:<from>-<to>`)的 `frames` 盖满整段。原尺寸只认 `frames`,
- *   `small`(小尺寸)不算 —— 两档的就绪分开记。
- * - 取用:清单里这一帧的哈希 → 素材服务 `GET snap/<hash>`(凭只读票据)。一次只取当前这一帧,用完不留。
- * - 旧输入的层(stale-layer):给了 `project` 时,层表里带输入签名、又和这一版片段对不上的层(改参数之前的结果)不取,
- *   这张卡算缺 —— 等渲染节点按新输入重写层表、渲完再导。
+ * - Which clips are heavy cards: layer table written to content store by render nodes
+ *   (`layers:<project id>`, `layerMapOf` in `server/artifact-transfer.mjs`); when layer table is
+ *   not yet available, falls back to clips classified as heavy by the page's own dispatch table
+ *   (caller provides `fallbackHeavy`), all counted as missing.
+ * - Online browser (semantics of `product/platforms.md` "Online browser" export): only cards
+ *   classified as heavy by the page use prerendered original size; cards classified as light are
+ *   rendered frame-by-frame locally: caller provides `onlyClips` (clips classified as heavy by the
+ *   page), layers in the layer table not among them are not counted as heavy cards, not checked,
+ *   and not fetched.
+ * - Ready: for each heavy card, `frames` in each segment manifest (`<resultKey>:<from>-<to>`) must
+ *   cover the entire segment. Original size only recognizes `frames`, not `small` (small size):
+ *   readiness of the two tiers is tracked separately.
+ * - Retrieval: frame hash in manifest → asset service `GET snap/<hash>` (with read-only ticket).
+ *   Fetches only the current frame at a time, discarding after use.
+ * - Stale-input layer (stale-layer): when `project` is provided, layers in the layer table carrying
+ *   an input signature that mismatches this clip version (results prior to parameter changes) are
+ *   omitted, counting this card as missing: wait for render nodes to rewrite layer table with new
+ *   inputs and finish rendering before exporting.
  */
 import { LAYER_MAP_PREFIX, parseLayerMap, type LayerMap, type OnlineLayer } from "../render/snapshotSource";
 import { clipInputSig, inputSigStale } from "../render/layerInputSig.mjs";
@@ -24,9 +34,9 @@ export interface OriginalsDeps {
 
 export interface OriginalsIndex {
   map: LayerMap | null;
-  /** 缺预渲染原尺寸的重卡片段 */
+  /** Heavy card clips missing prerendered original size */
   missing: string[];
-  /** 这张卡这一帧(全局帧)的原尺寸哈希;不是重卡回 undefined,是重卡但缺回 null */
+  /** Original-size hash for this card at this frame (global frame); returns undefined if not a heavy card, null if heavy card but missing */
   hashAt(clipId: string, globalFrame: number): string | null | undefined;
 }
 
@@ -36,12 +46,15 @@ function segmentsOf(layer: OnlineLayer, span: number): Array<[number, number]> {
   return out;
 }
 
-/** 读层表与每一段清单,核对原尺寸是否齐全 */
+/** Reads the layer table and each segment manifest to verify whether original sizes are complete */
 export async function loadOriginalsIndex(projectId: string | null, deps: OriginalsDeps, { fallbackHeavy = [] as readonly string[], onlyClips = null as readonly string[] | null, project = null as unknown, requiredClips = [] as readonly string[] } = {}): Promise<OriginalsIndex> {
   /*
-   * `requiredClips`:导出时**必须**用预渲染原尺寸的片段,不管页面判它轻还是重 —— 同步来的用户卡与素材效果卡
-   * (`docs/plan/online-card-exec-contract.md` 第 8 节「在线导出」:导出页与编辑页面同源,不执行它们的代码)。
-   * 它们不受 `onlyClips` 限制;层表里没有它们的层、或没有层表,都算缺。
+   * `requiredClips`: clips that **must** use prerendered original size during export, regardless of
+   * whether the page classifies them as light or heavy: synced user cards and media effect cards
+   * (`docs/plan/online-card-exec-contract.md` Section 8 "Online export": export page shares origin
+   * with editor page and does not execute their code).
+   * They are not restricted by `onlyClips`; if their layer is missing in layer table, or there is no
+   * layer table, they are counted as missing.
    */
   const required = new Set(requiredClips);
   const only = onlyClips ? new Set([...onlyClips, ...required]) : null;
@@ -81,7 +94,7 @@ export async function loadOriginalsIndex(projectId: string | null, deps: Origina
     if (!complete) missing.push(layer.clipId);
     byClip.set(layer.clipId, { layer, frames });
   }
-  // 必须用原尺寸、层表里却没有层的片段:算缺(等渲染节点渲出来)
+  // Clips that must use original size but have no layer in the layer table: counted as missing (waiting for render nodes to render them)
   const requiredMissing = new Set([...required].filter((id) => !byClip.has(id)));
   for (const id of requiredMissing) if (!missing.includes(id)) missing.push(id);
   return {
@@ -97,7 +110,7 @@ export async function loadOriginalsIndex(projectId: string | null, deps: Origina
   };
 }
 
-/** 取一帧原尺寸 HTML 快照(`snap/<hash>`) */
+/** Fetches a single frame original-size HTML snapshot (`snap/<hash>`) */
 export async function fetchOriginalHtml(hash: string, deps: OriginalsDeps, signal?: AbortSignal): Promise<string> {
   const base = deps.assetBase();
   if (!base) throw new Error(tr("There is no remote asset service yet"));

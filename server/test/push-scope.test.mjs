@@ -1,7 +1,8 @@
 /**
- * 推送只推绑定项目的产物(`server/push-scope.mjs`、`artifact-push.mjs` 的 `scope`),
- * 以及老路径起步时第一次推送就去配置的 / 已登记的素材服务(`server/asset-select.mjs`)。
- * 报告 `docs/archive/agent-reports/AGENT-push-scope.md`。
+ * Push only pushes artifacts of bound project (`server/push-scope.mjs`, `scope` of
+ * `artifact-push.mjs`), and on legacy path startup, pushes to configured / registered asset service
+ * on first push (`server/asset-select.mjs`).
+ * Report `docs/archive/agent-reports/AGENT-push-scope.md`.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +16,10 @@ import { normalizeEntry } from '../auth/shared-config.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'push-scope-'));
 
-/** 帧库里同时有两个项目:A(docA)与 B(docB);共享档键 kA / kB / kAB(两个项目都用),本地档各一版 */
+/**
+ * Two projects in frame store simultaneously: A (docA) and B (docB); shared tier keys
+ * kA / kB / kAB (used by both projects), one version each in local tier.
+ */
 function twoProjects() {
   const entries = new Map([
     ['eA', { key: 'eA', project: { id: 'docA' }, cardPlan: [{ snapshotKey: 'kA', contentKey: 'cA' }, { snapshotKey: 'kAB', contentKey: 'cAB' }, { snapshotKey: 'lA', contentKey: 'clA', tier: 'local' }] }],
@@ -25,7 +29,8 @@ function twoProjects() {
   const streams = new Map([
     [SA, { entryKey: 'eA', spec: { members: [{ contentKey: 'cA' }] } }],
     [SB, { entryKey: 'eB', spec: { members: [{ contentKey: 'cB' }] } }],
-    // 这条流的 state 记在 B 那一版上,但成员卡 A 也用(内容寻址):算 A 的
+    // This stream's state is recorded on B's version, but member card is also used by A
+    // (content addressing): counts as A's
     [SX, { entryKey: 'eB', spec: { members: [{ contentKey: 'cAB' }] } }],
   ]);
   return { pipeline: { root: null, entries, streamProducer: () => ({ streams }) }, SA, SB, SX };
@@ -60,7 +65,7 @@ test('PS-01 frames of two projects enter the frame store at the same time: only 
   ].sort());
   assert.equal(queue.stats().outOfScope, 4, 'the shared tier, local tier and stream of B, plus the segment with no entry found');
   assert.deepEqual(fileIds(dir), ['snapshot:kA', 'snapshot:kAB', 'snapshot:rlA', `stream:${world.SA}`, `stream:${world.SX}`].sort());
-  // 层表:只写绑定项目的
+  // Layer table: only writes for bound project
   assert.equal(queue.putLayerMap('docA', { layers: [] }), true);
   assert.equal(queue.putLayerMap('docB', { layers: [] }), false);
   assert.equal(queue.stats().layerMapsOutOfScope, 1);
@@ -108,20 +113,21 @@ test('PS-04 rebinding and unbinding: queue files are split into directories by p
   const u = units(world);
   const root = tmp();
   const dirA = path.join(root, 'push', 'host-PA'), dirB = path.join(root, 'push', 'host-PB');
-  // 绑 A
+  // Bind A
   const qA = queueOf(world.pipeline, dirA, createPushScope({ pipeline: world.pipeline, contentIds: () => ['docA'] }));
   await qA.enqueue(u.sharedA); await qA.enqueue(u.sharedB);
-  await qA.stop();   // 换绑定:撤掉 A 的队列(没推完的留在 dirA)
-  // 换绑 B
+  await qA.stop();   // Change binding: tear down A's queue (unpushed items remain in dirA)
+  // Rebind B
   const qB = queueOf(world.pipeline, dirB, createPushScope({ pipeline: world.pipeline, contentIds: () => ['docB'] }));
   assert.equal(qB.stats().restored, 0, 'the directory of B has no segment of A');
   await qB.enqueue(u.sharedA); await qB.enqueue(u.sharedB); await qB.enqueue(u.localB);
   assert.deepEqual(ids(qB), ['snapshot:kB:0-29', 'snapshot:rlB:0-29']);
-  await qB.stop();   // 撤绑定
+  await qB.stop();   // Unbind
   assert.deepEqual(fileIds(dirA), ['snapshot:kA']);
   assert.deepEqual(fileIds(dirB), ['snapshot:kB', 'snapshot:rlB']);
   assert.equal(fs.existsSync(path.join(root, PUSH_QUEUE_FILE)), false, 'the old queue file at the frame store root is not written');
-  // 再绑回 A:接着推 A 留下的,读回的不再判范围(文件里只有 A 的)
+  // Bind back to A: resume pushing what A left behind, read-back items are no longer scope-checked
+  // (file only contains A's)
   const qA2 = queueOf(world.pipeline, dirA, createPushScope({ pipeline: world.pipeline, contentIds: () => ['docA'] }));
   assert.equal(qA2.stats().restored, 1);
   assert.deepEqual(ids(qA2), ['snapshot:kA:0-29']);
@@ -136,7 +142,7 @@ test('PS-05 the shared config on the legacy path may set contentId (optional; an
   assert.throws(() => normalizeEntry({ ...base, contentId: '' }), /contentId/);
 });
 
-/* ---------------- 老路径起步:第一次推送就去配置的 / 已登记的素材服务 ---------------- */
+/* ---------------- Legacy path startup: push to configured / registered asset service on first push ---------------- */
 
 function assetWorld() {
   const calls = [];
@@ -153,7 +159,7 @@ test('AS-01 no explicit base URL: the first push waits until registration arrive
   const log = [];
   const sel = selectAssetClient({ ...common(w), envBase: '', settleMs: 60_000, log: (e, f) => log.push([e, f]) });
   assert.equal(sel.settled(), false);
-  const pushed = sel.client.put('snap', Buffer.from('x'));   // 队列文件里上次没推完的段:起步就推
+  const pushed = sel.client.put('snap', Buffer.from('x'));   // Segments in queue file not finished pushing last time: pushed right at startup
   await new Promise(r => setTimeout(r, 20));
   assert.equal(w.calls.length, 0, 'no push before registration arrives');
   w.deliver(FOREIGN);
@@ -161,7 +167,7 @@ test('AS-01 no explicit base URL: the first push waits until registration arrive
   assert.deepEqual(w.calls.map(c => c.base), ['http://10.0.0.2:5460/api/asset']);
   assert.equal(sel.settled(), true);
   assert.equal(log.find(([e]) => e === 'push.asset-ready')[1].source, 'announced');
-  // 定下来之后照旧按登记换
+  // Once settled, switch according to registration as usual
   w.deliver([]);
   await sel.client.put('snap', Buffer.from('y'));
   assert.equal(w.calls.at(-1).base, 'http://127.0.0.1:5670/api/asset');
@@ -173,7 +179,7 @@ test('AS-02 registration is empty: local; document service unreachable: wait out
     const w = assetWorld();
     const sel = selectAssetClient({ ...common(w), envBase: '', settleMs: 60_000 });
     const p = sel.client.put('snap', Buffer.from('x'));
-    w.deliver([{ kind: 'asset', announcerId: 'asset:me', urls: ['http://10.0.0.9:1/api/asset'] }]);   // 只有本机自己登记的
+    w.deliver([{ kind: 'asset', announcerId: 'asset:me', urls: ['http://10.0.0.9:1/api/asset'] }]);   // Only what this machine registered itself
     await p;
     assert.deepEqual(w.calls.map(c => c.base), ['http://127.0.0.1:5670/api/asset']);
     sel.stop();
@@ -201,7 +207,7 @@ test('AS-03 the page gave an asset base URL: use it immediately; one the page gi
   const sel = selectAssetClient({ ...common(w), envBase: '', settleMs: 60_000, preferred: () => page });
   const p = sel.client.put('snap', Buffer.from('x'));
   page = 'https://cloud.example/api/asset';
-  sel.client.has('snap', 'h');   // 任何一次取用都会看页面给没给
+  sel.client.has('snap', 'h');   // Every fetch checks whether the page provided it
   await p;
   assert.deepEqual(w.calls.map(c => c.base), ['https://cloud.example/api/asset']);
   sel.stop();

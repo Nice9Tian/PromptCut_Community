@@ -1,15 +1,16 @@
 /**
- * 解析 SSE 块流,处理跨块拼接、单块多条事件、以及忽略注释行。
- * 返回解析出的 JSON 事件数组和剩余未解析的缓冲区字符串。
+ * Parses an SSE chunk stream, handling joins across chunks, several events in a single chunk, and
+ * ignoring comment lines.
+ * Returns the array of parsed JSON events and the remaining unparsed buffer string.
  */
 export function parseSseChunks(buffer: string, chunk: string): { events: any[]; rest: string } {
   const text = buffer + chunk;
   const events: any[] = [];
   
-  // 按照 \n\n 拆分。结尾如果不含 \n\n，则最后一部分是不完整的
+  // Split on \n\n. If the end does not contain \n\n, the last part is incomplete
   const blocks = text.split(/\n\n/);
   
-  // 最后一个元素是剩余未结束的文本（或者是空字符串，如果以 \n\n 结尾）
+  // The last element is the remaining unfinished text (or an empty string if it ends with \n\n)
   const rest = blocks.pop() ?? "";
   
   for (const block of blocks) {
@@ -20,7 +21,7 @@ export function parseSseChunks(buffer: string, chunk: string): { events: any[]; 
     
     for (const line of lines) {
       if (line.startsWith(":")) {
-        // 注释行 (例如 : ping)
+        // Comment line (e.g. : ping)
         continue;
       }
       if (line.startsWith("data: ")) {
@@ -34,7 +35,7 @@ export function parseSseChunks(buffer: string, chunk: string): { events: any[]; 
       try {
         events.push(JSON.parse(dataContent));
       } catch {
-        // 解析失败直接忽略或记录
+        // If parsing fails, just ignore it or log it
       }
     }
   }

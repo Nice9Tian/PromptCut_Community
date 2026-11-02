@@ -1,10 +1,15 @@
 /**
- * 同一条流的稀疏版任务与满密度任务并发推同一个结果键(线上 2026-10-21,`docs/archive/agent-reports/AGENT-cut-stream-fix.md` 缺陷 4):
- * 稀疏任务列完清单之后,满密度那一趟换掉某一段、旧的稀疏分段文件被删,稀疏任务推这一段时不该 ENOENT。
+ * Sparse-version task and full-density task for the same stream concurrently push the same result
+ * key (production 2026-10-21, `docs/archive/agent-reports/AGENT-cut-stream-fix.md` defect 4):
+ * after the sparse task finishes listing manifest, the full-density pass replaces a segment and
+ * old sparse segment file is deleted; pushing this segment in sparse task should not ENOENT.
  *
- *   SPR1  collectStreamResult 之后删掉一个分段文件(模拟 `storeSegment` 5 秒后删被替换的分段):pushResult 照样推齐,
- *         推上去的字节就是列清单时的那份(哈希与清单一致)
- *   SPR2  同上,但文件被换成满密度的新字节(同名不同内容的极端情形):推的仍是清单里那份,不报「本机文件在清单之后被改过」
+ *   SPR1  Delete a segment file after collectStreamResult (simulating `storeSegment` deleting the
+ *         replaced segment after 5 seconds): pushResult still pushes completely, and pushed bytes
+ *         match the ones from when manifest was listed (hash matches manifest)
+ *   SPR2  Same as above, but file is replaced with new full-density bytes (extreme case of same
+ *         name, different content): still pushes version from manifest, without reporting "local
+ *         file was modified after manifest"
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

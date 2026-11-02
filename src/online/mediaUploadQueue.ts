@@ -1,24 +1,40 @@
 /**
- * 在线浏览器端的素材上传队列。
+ * Media upload queue on the online browser side.
  *
- * 语义：`docs/plan/user-decisions-2026-10-14.md` 第 2.5 节、`docs/reports/AGENT-rr-small-first.md` 第 3 节。
- * 与桌面端 `server/upload-queue.mjs` 保持完全一致的调度规则：
- *   - **所有小尺寸先传、再传原尺寸**：队里只要还有哪个素材的素材小尺寸（`small`）没传完，就优先传它（按进队先后）；
- *     所有素材的素材小尺寸都在素材服务上 `complete` 之后，才按进队先后传素材原尺寸（`original`）。
- *   - **原尺寸传码期间新插队**：传素材原尺寸期间新进队的素材（或后补上的小尺寸），它的小尺寸排在剩下的原尺寸前面，
- *     正在传的那一档传完后立即优先派发该小尺寸。
- *   - **严格按序与退避**：轮到的那一档在退避时，后面的都等着（小尺寸在退避，任何原尺寸都不传）。
- *   - **分片与对账**：每一档向远程素材服务 `media` 命名空间对账（`GET media/<hash>/chunks`），
- *     只补缺的片（`PUT media/<hash>/<n>`，每片 8 MiB，带 `X-Media-Size` 与 `X-Media-Ext`），最后 `POST media/<hash>/complete`。
- *     云端账号项目另带 `X-Media-Tier: small | original`（这一档是小尺寸还是原尺寸）：游客的视频条数按「原尺寸几个、
- *     小档几个取多的」数（`server/asset-store/guest-quota.mjs`），服务端认不出这个头就当原尺寸。只在云端带，是因为游客只在云端有，
- *     而本地项目经托管中继（`server/hosting/service.mjs`）走的那条路，预检放行的头里没有它，带上浏览器就把整个 PUT 拦了。
- *   - **所有档位 complete 才出队**：两档都向素材服务确认 `complete: true` 后才出队。
- *   - **被限额拒掉的不再重试**（claude/guest-fix〔裁〕，二级：用户看得见；审查 D）：素材服务回 403 且错误是
- *     `PERMANENT_REFUSALS` 里的一种（游客视频条数满了、文件太大、只读），这一项整项出队、记成被拒，不进退避，
- *     后面的照常传；并告诉订阅的人（`subscribeMediaUploadRejected`，编辑台据此显示「游客最多上传 3 条视频」那句话）。
- *     原先它按暂时性失败无限退避重试，严格按序之下后面所有项（包括图片）都排在它后面传不上去。
- *   - **写入票据**：带写票据 `Authorization: Bearer <rw 票据>`；账号项目带 `credentials: "omit"`。
+ * Semantics: `docs/plan/user-decisions-2026-10-14.md` Section 2.5, `docs/reports/AGENT-rr-small-first.md` Section 3.
+ * Maintains scheduling rules fully consistent with desktop `server/upload-queue.mjs`:
+ *   - **Upload all small sizes first, then original sizes**: As long as any asset has an incomplete
+ *     small-size asset (`small`) in the queue, upload it first (in enqueue order); only after
+ *     the small-size assets of all assets are `complete` on the asset service are original-size
+ *     assets (`original`) uploaded in enqueue order.
+ *   - **New insertions during original-size upload**: For assets newly enqueued while uploading
+ *     original-size assets (or small sizes added later), their small sizes are queued ahead of
+ *     remaining original sizes; once the currently uploading tier finishes, that small size is
+ *     dispatched with priority immediately.
+ *   - **Strict ordering and backoff**: When the active tier is backing off, all subsequent ones
+ *     wait (if a small size is backing off, no original size is uploaded).
+ *   - **Chunking and reconciliation**: Each tier reconciles with the remote asset service `media`
+ *     namespace (`GET media/<hash>/chunks`), only uploading missing chunks (`PUT media/<hash>/<n>`,
+ *     8 MiB per chunk, with `X-Media-Size` and `X-Media-Ext`), and finally `POST media/<hash>/complete`.
+ *     Cloud account projects additionally send `X-Media-Tier: small | original` (whether this tier is
+ *     small size or original size): guest video counts are counted as "the greater of the original-size
+ *     count and the small-tier count" (`server/asset-store/guest-quota.mjs`); if the server does not
+ *     recognize this header, it treats it as original size. It is only included in the cloud because
+ *     guests only exist in the cloud; for local projects routed via the hosted relay
+ *     (`server/hosting/service.mjs`), this header is not in the preflight-allowed headers, and
+ *     including it causes the browser to block the entire PUT.
+ *   - **Dequeue only when all tiers are complete**: Only dequeued after both tiers confirm
+ *     `complete: true` with the asset service.
+ *   - **Do not retry items rejected due to quota** (claude/guest-fix [ruling], level 2: user-visible;
+ *     review D): When the asset service returns 403 and the error is one of `PERMANENT_REFUSALS`
+ *     (guest video limit reached, file too large, read-only), this entire item is dequeued,
+ *     recorded as rejected, does not enter backoff, and subsequent items upload normally; it also
+ *     notifies subscribers (`subscribeMediaUploadRejected`, based on which the editor displays
+ *     "Guests can upload up to 3 videos"). Previously, it retried indefinitely with backoff as a
+ *     transient failure; under strict ordering, all subsequent items (including images) were blocked
+ *     behind it and could not be uploaded.
+ *   - **Write ticket**: Includes write ticket `Authorization: Bearer <rw ticket>`; account projects
+ *     include `credentials: "omit"`.
  */
 import {
   remoteAssetBase,
@@ -32,12 +48,14 @@ import { tr } from "../i18n/index.ts";
 
 export const CHUNK_SIZE = 8 * 1024 * 1024;
 /**
- * 素材服务回 403 时，哪些错误是「再试也不会过」的：这一项出队、记成被拒，不挡后面的。
- * 只收限额与只读这几种；别的 403（票据过期之类）仍按暂时性失败退避重试。
+ * When the asset service returns 403, errors that "will not succeed even if retried": this item is
+ * dequeued and recorded as rejected without blocking subsequent ones.
+ * Only covers quota and read-only errors; other 403s (expired tickets, etc.) are still retried
+ * with backoff as transient failures.
  */
 export const PERMANENT_REFUSALS: ReadonlySet<string> = new Set(["guest-video-limit", "guest-file-too-large", "guest-read-only"]);
 
-/** 被拒的那一项 */
+/** The rejected item */
 export interface MediaUploadRejection { id: string; name: string; mediaId?: string; projectId?: string; code: string }
 export const UPLOAD_BACKOFF_MS = Object.freeze([5_000, 30_000, 120_000, 600_000]);
 const HASH = /^[0-9a-f]{64}$/;
@@ -79,7 +97,7 @@ export interface MediaUploadQueueDeps {
   backoff?: number[];
   now?: () => number;
   log?: (event: string, fields: Record<string, unknown>) => void;
-  /** 有一项被素材服务永久拒掉（`PERMANENT_REFUSALS`）时调 */
+  /** Called when an item is permanently rejected by the asset service (`PERMANENT_REFUSALS`) */
   onRejected?: (rejection: MediaUploadRejection) => void;
 }
 
@@ -144,11 +162,12 @@ export function createMediaUploadQueue(deps: MediaUploadQueueDeps): MediaUploadQ
   };
 
   /**
-   * 下一档活的调度逻辑（铁律）：
-   * 1. 优先扫描所有素材未发送的 small 档，取其中最早进队的（最小 seq）。
-   * 2. 若没有任何未发送的 small 档：
-   *    若此时有导入批次正处于 hold 状态（正准备后续素材），暂不派发 original；
-   *    否则按进队先后（最小 seq）派发 original 档。
+   * Scheduling logic for the next active tier (strict rule):
+   * 1. Scan unsent small tiers across all assets first, picking the earliest enqueued (smallest seq).
+   * 2. If there are no unsent small tiers:
+   *    If an import batch is currently in hold state (preparing subsequent assets), do not dispatch
+   *    original for now;
+   *    otherwise dispatch the original tier in enqueue order (smallest seq).
    */
   const nextJob = (): { item: InternalQueueItem; tier: "small" | "original" } | null => {
     let small: InternalQueueItem | null = null;
@@ -187,7 +206,7 @@ export function createMediaUploadQueue(deps: MediaUploadQueueDeps): MediaUploadQ
       ...(where.accountProject ? { "X-Media-Tier": t.tier === "small" ? "small" : "original" } : {}),
     };
 
-    /** 没过的回包摆成错误：带状态码和素材服务说的错误代号（`PERMANENT_REFUSALS` 靠它认） */
+    /** Format failed response as error: includes status code and asset service error code (used to recognize `PERMANENT_REFUSALS`) */
     const failure = async (res: Response, what: string) => {
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
       return Object.assign(new Error(tr("{0} returned {1}{2}", what, res.status, body?.error ? ` ${body.error}` : "")), { status: res.status, code: body?.error });
@@ -206,7 +225,7 @@ export function createMediaUploadQueue(deps: MediaUploadQueueDeps): MediaUploadQ
         ...(where.accountProject ? { credentials: "omit" as const } : {}),
       });
       if (res.status === 401) {
-        // 401 换票据重试一次
+        // Retry once on 401 with refreshed ticket
         const freshWhere = await deps.target();
         if (freshWhere?.ticket) {
           where.ticket = freshWhere.ticket;
@@ -221,12 +240,12 @@ export function createMediaUploadQueue(deps: MediaUploadQueueDeps): MediaUploadQ
       return res;
     };
 
-    // 1. 对账
+    // 1. Reconcile
     const chunksRes = await authedFetch(`${base}/media/${t.hash}/chunks`, { method: "GET", cache: "no-store" });
     if (!chunksRes.ok) throw await failure(chunksRes, "chunks");
     let chunksData = (await chunksRes.json()) as { size?: number | null; received?: number[]; complete?: boolean };
 
-    // 2. 补齐缺片
+    // 2. Fill in missing chunks
     if (!chunksData.complete) {
       let received = new Set<number>(Array.isArray(chunksData.received) ? chunksData.received : []);
       for (let n = 0; n < count; n++) {
@@ -243,7 +262,7 @@ export function createMediaUploadQueue(deps: MediaUploadQueueDeps): MediaUploadQ
         if (!putRes.ok) throw await failure(putRes, tr("PUT part {0}", n));
       }
 
-      // 3. 收尾
+      // 3. Finalize
       for (let attempt = 0; attempt < 2; attempt++) {
         const completeRes = await authedFetch(`${base}/media/${t.hash}/complete`, { method: "POST" });
         if (completeRes.ok) break;
@@ -271,7 +290,7 @@ export function createMediaUploadQueue(deps: MediaUploadQueueDeps): MediaUploadQ
       }
     }
 
-    // 4. 再次向素材服务确认 complete
+    // 4. Confirm complete with asset service again
     const verifyRes = await authedFetch(`${base}/media/${t.hash}/chunks`, { method: "GET", cache: "no-store" });
     const verifyData = (await verifyRes.json().catch(() => null)) as { complete?: boolean } | null;
     if (!verifyData?.complete) {
@@ -294,7 +313,7 @@ export function createMediaUploadQueue(deps: MediaUploadQueueDeps): MediaUploadQ
 
     const where = await deps.target();
     if (!where || !where.base) {
-      // 尚未连接素材服务：每 2 秒看一次
+      // Not yet connected to asset service: check every 2 seconds
       return schedule(2000);
     }
 
@@ -307,7 +326,7 @@ export function createMediaUploadQueue(deps: MediaUploadQueueDeps): MediaUploadQ
       item.attempts = 0;
 
       if (job.tier === "original") {
-        // 所有档位均在素材服务上 complete 才算整项出队
+        // Dequeue the entire item only after all tiers are complete on the asset service
         for (const t of item.uploaded) {
           const checkRes = await f(`${where.base.replace(/\/+$/, "")}/media/${t.hash}/chunks`, {
             headers: where.ticket ? { Authorization: `Bearer ${where.ticket}` } : {},
@@ -326,9 +345,9 @@ export function createMediaUploadQueue(deps: MediaUploadQueueDeps): MediaUploadQ
       }
     } catch (error: any) {
       if (!running && error?.name === "AbortError") {
-        // 队列主动停止，保留在队内
+        // Queue explicitly stopped, retain in queue
       } else if (error?.status === 403 && PERMANENT_REFUSALS.has(error?.code)) {
-        // 再试也不会过：整项出队、记成被拒，不挡后面的（文件头说明）
+        // Will not succeed even if retried: dequeue entire item, record as rejected, without blocking subsequent items (see file header description)
         counters.failures++;
         counters.rejected++;
         items.delete(item.id);
@@ -446,15 +465,17 @@ export function createMediaUploadQueue(deps: MediaUploadQueueDeps): MediaUploadQ
 }
 
 /* ------------------------------------------------------------------ *
- * 全局单例与编辑器接线
+ * Global singleton and editor wiring
  * ------------------------------------------------------------------ */
 
 let globalQueue: MediaUploadQueue | null = null;
 const rejectionListeners = new Set<(rejection: MediaUploadRejection) => void>();
 
 /**
- * 订阅「在线上传队列里有一项被素材服务永久拒掉」（游客视频条数满了之类）。回退订函数。
- * 编辑台的素材库据此把那句话显示出来（`src/editor/left/LibrarySection.tsx`）。
+ * Subscribe to "an item in the online upload queue was permanently rejected by the asset service"
+ * (guest video limit reached, etc.). Returns an unsubscribe function.
+ * The media library in the editor uses this to display that message
+ * (`src/editor/left/LibrarySection.tsx`).
  */
 export function subscribeMediaUploadRejected(listener: (rejection: MediaUploadRejection) => void): () => void {
   rejectionListeners.add(listener);

@@ -1,15 +1,17 @@
 /**
- * 视频 seek 目标比要求的时刻晚 2 ms,不依赖素材帧率;和 `src/render/cards/mediaSource.ts` 的 `CARD_SEEK_LEAD` 同一个数,
- * 也是下面出画判断的容差。不从那里 import:这个模块要在 React 之前装好,不拉素材分档那一串依赖。
+ * Video seek target is 2 ms later than the requested timestamp, independent of media frame rate;
+ * same number as `CARD_SEEK_LEAD` in `src/render/cards/mediaSource.ts`, and also the tolerance for
+ * the out-of-frame check below. Not imported from there: this module must be installed before React,
+ * without pulling in that asset tiering dependency chain.
  */
 const SEEK_LEAD = 0.002;
 
-/** 帧时长读不到时,判「呈现的是不是目标那一帧」用的宽窗(秒):容得下 4 fps 以上的素材 */
+/** Wide window (seconds) to determine "whether presentation is target frame" when frame duration is unreadable: accommodates assets of 4 fps or higher */
 const LOOSE_WINDOW = 0.25;
-/** 只有宽窗认可、严窗(按帧时长)不认可的呈现,等这么久(ms)仍没有严窗认可的呈现就照宽窗收下,不卡死 */
+/** For presentations accepted only by wide window and not strict window (by frame duration), wait this long (ms); if still none, accept by wide window to avoid hanging */
 const LOOSE_ACCEPT_MS = 1000;
 
-/** 视频元素当前帧的时长(秒);读不到(没有 WebCodecs、帧没有时长)给 null。素材帧率不变时每帧一样。 */
+/** Video element current frame duration (seconds); null if unreadable (no WebCodecs or duration). Uniform across fixed frame-rate asset frames. */
 function frameSpan(v: HTMLVideoElement): number | null {
   if (typeof VideoFrame === "undefined") return null;
   try {
@@ -21,14 +23,15 @@ function frameSpan(v: HTMLVideoElement): number | null {
 }
 
 /**
- * 这一帧的素材(视频 seek / 图片加载)。
+ * Asset for this frame (video seek / image loading).
  *
- * 原来写在 `server/bakery/frame-media.mjs`(当时在 `scripts/`)、由 puppeteer 的 `evaluateOnNewDocument` 注入;现在是页面
- * bundle 的一部分(J1),但 `window.__pcHideFrameMedia` / `window.__pcPrepareFrameMedia` 这两个
- * 名字和语义原样不动 —— `server/bakery/frame-media.mjs` 的 `prepareFrameMedia`(Node 侧)和
- * `server/bakery/capture-snapshot.mjs` 还是照旧调它们。
+ * Originally written in `server/bakery/frame-media.mjs` (then in `scripts/`) and injected via
+ * puppeteer's `evaluateOnNewDocument`; now part of the page bundle (J1), but the two names and
+ * semantics `window.__pcHideFrameMedia` / `window.__pcPrepareFrameMedia` remain untouched:
+ * `prepareFrameMedia` in `server/bakery/frame-media.mjs` (Node side) and
+ * `server/bakery/capture-snapshot.mjs` still call them as before.
  *
- * 必须在 React 之前装好:推进动画的过程中一律不给素材赋 URL。
+ * Must be set up before React: never assign URLs to assets while advancing animations.
  */
 export function installFrameMedia(): void {
   window.__pcHideFrameMedia = () => {
@@ -79,8 +82,10 @@ export function installFrameMedia(): void {
         const check = () => {
           if (v.error) return finish(new Error(`Video decode failed: ${v.dataset.pcMediaSrc} (${v.error.code})`));
           if (v.readyState < 1) return;
-          // seek 目标加 SEEK_LEAD:取「时间戳不超过要求时刻的最后一帧」,要求时刻正好落在帧边界上时取边界上这一帧
-          // (同 `src/render/cards/mediaSource.ts` 的 CARD_SEEK_LEAD;原样 seek 时浮点误差 + 浏览器按微秒截断会取到前一帧)
+          // Add SEEK_LEAD to seek target: pick "the last frame whose timestamp does not exceed requested
+          // time", picking the boundary frame when requested time lands exactly on it
+          // (same as CARD_SEEK_LEAD in `src/render/cards/mediaSource.ts`; seeking as-is can pick previous
+          // frame due to floating-point error + browser truncation to microseconds)
           const requested = Math.max(0, Number(v.dataset.pcMediaTime)) + SEEK_LEAD;
           target = Math.max(0, Math.min(requested, Number.isFinite(v.duration) ? Math.max(0, v.duration - 0.000001) : requested));
           if (!sought) {

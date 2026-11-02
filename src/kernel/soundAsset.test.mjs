@@ -18,10 +18,11 @@ test("soundAssetFrom: same file, extension removed and \"· Sound\" added, aspec
   assert.equal(s.path, video.path);
   assert.equal(s.duration, 12.5);
   assert.equal(s.soundOf, "m1");
-  // 声音没有画幅:带着 width/height 会让「以视频比例作为项目比例」之类的地方误判
+  // Audio has no aspect ratio: carrying width/height causes places like "use video aspect ratio as
+  // project aspect ratio" to misjudge
   assert.equal(s.width, undefined);
   assert.equal(s.height, undefined);
-  // 转写是同一条音轨的,直接继承
+  // Transcription belongs to the same audio track, inherit directly
   assert.equal(s.transcript.segments.length, 1);
 });
 
@@ -37,7 +38,7 @@ test("findSoundAsset: once derived it can be found, the basis for idempotence", 
   const p = { media: [video, soundAssetFrom(video, "m2"), { id: "m3", kind: "audio", name: "bgm", url: "" }] };
   assert.equal(findSoundAsset(p, "m1").id, "m2");
   assert.equal(findSoundAsset(p, "No such clip"), undefined);
-  // 自带的音频素材不是谁派生的,别把它认成某段视频的声音
+  // Built-in audio assets are not derived from anything; do not mistake them for audio of a video
   assert.equal(findSoundAsset(p, "m3"), undefined);
 });
 
@@ -48,7 +49,7 @@ test("opacityAt: sound clips take it as their volume: proportional inside the fa
   assert.equal(opacityAt(clip, 12), 1);
   assert.equal(opacityAt(clip, 15), 1);
   assert.equal(opacityAt(clip, 18), 0.5);
-  assert.equal(opacityAt(clip, 20), 0); // 区间外
-  // opacity 是总音量,和淡化相乘
+  assert.equal(opacityAt(clip, 20), 0); // Outside range
+  // opacity is master volume, multiplied with fade
   assert.equal(opacityAt({ ...clip, opacity: 0.5 }, 11), 0.25);
 });

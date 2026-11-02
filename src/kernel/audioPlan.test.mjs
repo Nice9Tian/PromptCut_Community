@@ -1,6 +1,7 @@
 /**
- * kernel/audioPlan.mjs:导出混音、测响度共用的「谁在什么时候出声」清单。
- * 跑:node --test src/kernel/audioPlan.test.mjs
+ * kernel/audioPlan.mjs: the "who makes sound when" manifest shared by export mixing and
+ * loudness measurement.
+ * Run: node --test src/kernel/audioPlan.test.mjs
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -73,7 +74,8 @@ test("Fails explicitly when a referenced synthesized media item is missing; mute
   assert.throws(() => audioPlanOf({ ...p, media: [{ id: "gone", kind: "audio", url: "", soundEffect: {} }] }), /media for lost is missing/);
 });
 
-// 导出的淡入淡出包络:和 ffmpeg 两条 afade(线性)相乘一样。重叠、比片段还长这两种以前会出错
+// Export fade-in/fade-out envelope: identical to multiplying two ffmpeg afade (linear).
+// Overlapping and longer than the clip previously caused errors
 import { fadeEnvelope } from "./audioPlan.mjs";
 test("fadeEnvelope: two linear fades multiplied; when they overlap it is a triangle, and when the fade-in is longer than the clip the endpoint only reaches dur/fadeIn", () => {
   const at = (env, dur, t) => env[Math.round((t / dur) * (env.length - 1))];
@@ -82,11 +84,12 @@ test("fadeEnvelope: two linear fades multiplied; when they overlap it is a trian
   assert.ok(Math.abs(at(plain, 4, 0.5) - 0.25) < 1e-6);
   assert.ok(Math.abs(at(plain, 4, 2) - 0.5) < 1e-6);
   assert.equal(at(plain, 4, 4), 0);
-  // fadeIn + fadeOut > dur:峰值在中点 = (1/1.5)*(1/1.5)... 这里 dur 2、各 1.5:t=1 时 (1/1.5)×(1/1.5)=0.444
+  // fadeIn + fadeOut > dur: peak is at midpoint = (1/1.5)*(1/1.5)... here dur 2, each 1.5:
+  // at t=1, (1/1.5)×(1/1.5)=0.444
   const overlap = fadeEnvelope(1, 1.5, 1.5, 2, 201);
   assert.ok(Math.abs(at(overlap, 2, 1) - 4 / 9) < 1e-6);
   assert.ok(at(overlap, 2, 0.5) > 0 && at(overlap, 2, 0.5) < at(overlap, 2, 1), "There must be no step that jumps hard from 0 to full volume");
-  // fadeIn 比片段还长:末尾只升到 dur/fadeIn
+  // fadeIn is longer than the clip: only rises to dur/fadeIn at the end
   const longIn = fadeEnvelope(1, 4, 0, 2, 201);
   assert.ok(Math.abs(at(longIn, 2, 2) - 0.5) < 1e-6);
   assert.equal(fadeEnvelope(1, 0, 0, 3, 5).every((v) => v === 1), true);

@@ -1,37 +1,55 @@
 /**
- * 舞台端口的闸 —— **真的编辑器、真的舞台窗口**里的探针(`server/stage-gate.mjs`:从舞台端口来的请求缺省全拒,只放行白名单)。
+ * Stage port gate: probe in the **real editor and real stage window** (`server/stage-gate.mjs`:
+ * requests from the stage port are rejected by default, only allowing the whitelist).
  *
- * 〔2026-10-22 主会话改名〕原来叫 `stage-gate-probe.mjs`。0.7.19 的在线浏览器那一块把那个文件名**就地改写**成了
- * 「舞台闸门、崩溃记录、护栏、档位气泡」的探针（名字相近、验的是另一回事），合并后这条**安全**测试就没人跑了。
- * 验收清单改写那一块发现了这个缺口，于是在合并前把本文件另存成这个名字保住。两支探针都要跑：
- * 本文件验舞台端口的放行白名单，`stage-gate-probe.mjs` 验三道闸门里的舞台那一道。
+ * [lead session rename, 2026-10-22] Originally named `stage-gate-probe.mjs`. The online browser part
+ * of 0.7.19 **rewrote that filename in place** into a probe for "stage gate, crash records, guards,
+ * tier bubbles" (similar names, verifying different things); after merging, nobody ran this
+ * **security** test. The acceptance checklist rewrite discovered this gap, so this file was saved
+ * under this name before merging to preserve it. Both probes must be run: this file verifies the
+ * stage port allowlist, while `stage-gate-probe.mjs` verifies the stage gate among the three gates.
  *
- *   node scripts/probes/stage-port-whitelist-probe.mjs --port 29000 [--out <目录>] [--json <文件>] [--shots <目录>] [--keep]
+ *   node scripts/probes/stage-port-whitelist-probe.mjs --port 29000 [--out <dir>] [--json <file>] [--shots <dir>] [--keep]
  *
- * 自己起一台隔离的编辑器(舞台端口是 +1、+2,三个连号都要空着;数据、素材、卡片改动层都指到 `--out` 下),跑完按进程号收掉。
- * 编辑器进程带 `PROMPTCUT_STAGE_PORT_LOG`:舞台端口每来一个请求,代理记一行(方法、地址、放没放行)。
- * `--out` 不要指到仓库的 `out/` 下:那里不在开发服务器的监听范围里,第 5 步改卡不会触发热更新(缺省在系统临时目录)。
+ * Starts an isolated editor itself (stage ports are +1, +2; all three consecutive numbers must be
+ * free; data, assets, and card overlay layers all point under `--out`), cleaned up by PID after
+ * running. The editor process runs with `PROMPTCUT_STAGE_PORT_LOG`: for every request arriving at
+ * the stage port, the proxy logs a line (method, path, whether allowed).
+ * Do not point `--out` under `out/` of the repository: that is outside the dev server watch scope,
+ * so modifying cards in step 5 will not trigger hot reload (defaults to system temporary directory).
  *
- * 流程:
- *   0. 往卡片改动层写一张用户卡(`probe-gate-card`):它在舞台里挂上以后**自己**去调一次 `POST /api/agent/bind`,
- *      并留一个函数,让探针叫它用卡片模块里的 `fetch`、`WebSocket` 逐个去调一批接口。
- *      素材目录里放一段视频(ffmpeg 测试图样)和一段声音(正弦波)。
- *   1. 编辑器 `?editor&nosetup=1&preview=stage`;装进一份项目:这张用户卡、一张带文字的内置卡、一张带内嵌声音的内置卡(`av-pulse`)、
- *      视频、声音,各占一条序列。点几处、播放两秒、暂停、再点。
- *      核:两个舞台窗口都在舞台端口上;可见舞台里用户卡画出来了(标记色块的像素)、视频那一块有画面而且两处时间的画面不同;
- *      播放时播放头在走、舞台里的视频也在走;卡片声音生成成功(`generateCardAudio`)。
- *   2. **到这里为止舞台端口没有一个请求被拒**(代理的流水里没有 `ok: false`)—— 白名单没有挡住舞台正当要用的东西。
- *      流水里出现过的请求按「方法 + 路径前缀」归类,写进结果(白名单就是照它定的)。
- *   3. 用户卡在可见舞台里逐个去调一批接口(Agent 绑定与对话、数据镜像、项目写入、素材写入、帧与导出的写口、MCP、文件系统类、
- *      卡片写入与同步、渲染节点、采集、网页工具、项目根下的文件、`/@fs/` 任意文件、文档服务的 WebSocket):**全部被拒**(403;WebSocket 连不上)。
- *      同一批接口从编辑器端口发(Node 里,不带 Origin):没有一个是 403。
- *   4. 被拒之后预览照常:再点一处、播一秒,用户卡和视频照样画得出来。
- *   5. 改这张用户卡的源码:舞台不重载就换成新的(热更新的 WebSocket、重新取源码都经舞台端口)。
+ * Flow:
+ *   0. Write a user card (`probe-gate-card`) to the card overlay layer: after mounting in the stage,
+ *      it calls `POST /api/agent/bind` **itself** once, and exposes a function so the probe can tell it
+ *      to call a batch of endpoints one by one using `fetch` and `WebSocket` from the card module.
+ *      Place a video (ffmpeg test pattern) and an audio track (sine wave) in the asset directory.
+ *   1. Editor `?editor&nosetup=1&preview=stage`; load a project: this user card, a built-in card with
+ *      text, a built-in card with embedded audio (`av-pulse`), video, and audio, each occupying a track.
+ *      Click a few spots, play for two seconds, pause, click again.
+ *      Verify: both stage windows are on stage ports; user card is drawn in the visible stage (pixels
+ *      of marker color block), video area has picture and pictures at two timestamps differ; during
+ *      playback the playhead moves and video in stage moves; card audio generated successfully
+ *      (`generateCardAudio`).
+ *   2. **Up to this point, not a single request to the stage port was rejected** (no `ok: false` in
+ *      proxy trace): the whitelist did not block things legitimately needed by the stage.
+ *      Requests in the trace are categorized by "method + path prefix" and written to results
+ *      (the whitelist is defined based on it).
+ *   3. The user card calls a batch of endpoints one by one in the visible stage (Agent binding and
+ *      chat, data mirror, project write, asset write, frame and export write endpoints, MCP,
+ *      filesystem, card write and sync, render node, media collection, web tools, files under project
+ *      root, arbitrary files via `/@fs/`, document service WebSocket): **all rejected** (403;
+ *      WebSocket cannot connect). The same batch sent from the editor port (in Node, without Origin):
+ *      none is 403.
+ *   4. Preview continues normally after rejection: click another spot, play for one second; user card
+ *      and video still render properly.
+ *   5. Modify the source code of this user card: stage updates to the new one without reloading
+ *      (hot reload WebSocket and refetching source code both go through the stage port).
  *
- * 贴轨道流、按住标尺拖这两样的逐帧核对用现成的 `scrub-stream-probe.mjs`(同一道闸下跑,见报告)。
- * 验收:退出码 0,结果里 `fails: []`。等待时限只为防卡死。
+ * Frame-by-frame verification for track stream paste and ruler scrub uses the existing
+ * `scrub-stream-probe.mjs` (run under the same gate, see report).
+ * Acceptance check: exit code 0, `fails: []` in results. Wait timeout is only to prevent hanging.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import os from 'node:os';
@@ -50,7 +68,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const args = process.argv.slice(2);
 const PORT = Number(flagArg('port', '0', args));
 const KEEP = args.includes('--keep');
-/** `--observe`:只跑到第 2 步(记下舞台端口正当发的请求),不让用户卡去调那一批 */
+/** `--observe`: only run up to step 2 (log legitimate requests sent by stage port), without letting the user card call that batch */
 const OBSERVE = args.includes('--observe');
 const JSON_OUT = flagArg('json', null, args);
 const SHOTS = flagArg('shots', null, args);
@@ -64,9 +82,9 @@ const DATA_DIR = path.join(WORK, 'data');
 const OVERRIDES = path.join(WORK, 'card-overrides');
 const GATE_LOG = path.join(WORK, 'stage-port.log');
 const CARD_ID = 'probe-gate-card';
-/** 用户卡画的色块:纯品红,别的东西不会是这个颜色 */
+/** Color block drawn by the user card: pure magenta, nothing else will be this color */
 const MARK = [255, 0, 255];
-/** 改卡之后的颜色 */
+/** Color after card modification */
 const MARK2 = [16, 32, 48];
 const FPS = 30, WIDTH = 1280, HEIGHT = 720, SECONDS = 6;
 
@@ -84,7 +102,7 @@ async function until(label, fn, timeoutMs, everyMs = 300) {
   }
 }
 
-/* ------------------------------------------------------------------ 素材与卡 */
+/* ------------------------------------------------------------------ Assets and cards */
 
 async function makeVideo(ffmpeg) {
   const tmp = path.join(WORK, 'gate-video.mp4');
@@ -107,7 +125,7 @@ async function makeAudio() {
   return { id: 'm-audio', kind: 'audio', name: 'gate-audio.wav', url: `/@media/${hash}`, hash, duration: SECONDS, bytes: bytes.length };
 }
 
-/** 用户卡:画一个品红色块;挂上以后自己调一次 Agent 绑定;留一个函数让探针叫它逐个去调 */
+/** User card: draws a magenta block; calls Agent binding once itself after mounting; exposes a function for probe batch calls */
 async function writeCard(color = MARK) {
   const dir = path.join(OVERRIDES, 'src', 'cards', 'user');
   await fs.mkdir(dir, { recursive: true });
@@ -152,14 +170,18 @@ export const probeGateCard: CardDef<{}> = {
 }
 
 /**
- * 用户卡去调的那一批。`type` 是 Content-Type;写口都按自家界面的写法带 JSON。
- * 这里只列「万一放行了,后果也只落在这台探针编辑器自己的临时目录里」的接口;会动到这台机器别处的几条
- * (开资源管理器、改用户级 MCP 配置、开网页、下载、起对话、起导出)不在真舞台里试,由单测 `server/test/stage-gate.test.mjs` 核。
+ * The batch called by the user card. `type` is Content-Type; write endpoints include JSON following
+ * built-in UI patterns.
+ * Only endpoints where "even if allowed, consequences are confined to this probe editor's own
+ * temporary directory" are listed here; several that affect other locations on this machine
+ * (opening File Explorer, modifying user-level MCP config, opening web pages, downloading,
+ * starting chats, starting exports) are not tested in the real stage, and are verified by unit test
+ * `server/test/stage-gate.test.mjs`.
  */
 const J = 'application/json';
 const body = (o) => JSON.stringify(o);
 const ATTACKS = [
-  // Agent 绑定与对话
+  // Agent binding and chat
   { method: 'POST', path: '/api/agent/bind', type: J, body: body({ mode: 'ticket', projectId: 'p', url: 'ws://attacker.invalid/' }) },
   { method: 'POST', path: '/api/agent/unbind', type: J, body: '{}' },
   { method: 'POST', path: '/api/agent/ticket', type: J, body: body({ reqId: 'x', ticket: 'x' }) },
@@ -172,25 +194,25 @@ const ATTACKS = [
   { method: 'GET', path: '/api/chats/list' },
   { method: 'POST', path: '/api/chats/save', type: J, body: body({ id: 'x', messages: [] }) },
   { method: 'POST', path: '/api/chats/attach/import', type: J, body: body({ path: 'C:/Windows/win.ini' }) },
-  // 数据镜像
+  // Data mirror
   { method: 'GET', path: '/api/data/project' },
   { method: 'PUT', path: '/api/data/project', type: J, body: body({ project: {} }) },
   { method: 'POST', path: '/api/data/diff', type: J, body: '{}' },
   { method: 'POST', path: '/api/data/playhead', type: J, body: body({ t: 0 }) },
   { method: 'PUT', path: '/api/data/costs', type: J, body: body({ records: [] }) },
   { method: 'GET', path: '/api/data/costs' },
-  // 项目写入
+  // Project write
   { method: 'GET', path: '/api/projects' },
   { method: 'PUT', path: '/api/projects/gate-probe', type: J, body: body({ project: {} }) },
   { method: 'DELETE', path: '/api/projects/gate-probe' },
   { method: 'GET', path: '/api/project-backups' },
-  // 素材写入
+  // Asset write
   { method: 'POST', path: '/api/media/upload/gate-probe.txt', type: 'text/plain', body: 'x' },
   { method: 'POST', path: '/api/media/adopt', type: J, body: body({ path: 'C:/Windows/win.ini' }) },
   { method: 'GET', path: '/api/media/local?path=C%3A%2FWindows%2Fwin.ini' },
   { method: 'POST', path: '/api/media/upload-queue/target', type: J, body: body({ base: 'https://attacker.invalid' }) },
   { method: 'POST', path: '/api/media/prefetch', type: J, body: '{}' },
-  // 帧与导出的写口
+  // Frame and export write endpoints
   { method: 'POST', path: '/api/frames/preload', type: J, body: '{}' },
   { method: 'POST', path: '/api/frames/yield', type: J, body: '{}' },
   { method: 'POST', path: '/api/frames/render-node', type: J, body: '{}' },
@@ -200,12 +222,12 @@ const ATTACKS = [
   { method: 'GET', path: '/api/storage' },
   { method: 'POST', path: '/api/vision/bake', type: J, body: '{}' },
   { method: 'POST', path: '/api/vision/snapshot', type: J, body: '{}' },
-  // MCP 与 Skill
+  // MCP and Skill
   { method: 'POST', path: '/api/mcp/call', type: J, body: body({ name: 'get_project', args: {} }) },
   { method: 'GET', path: '/api/mcp/status' },
   { method: 'POST', path: '/api/mcp/result', type: J, body: '{}' },
   { method: 'GET', path: '/api/skill-lock' },
-  // 卡片写入与同步、渲染节点
+  // Card write and sync, render nodes
   { method: 'POST', path: '/api/cards/create', type: J, body: body({ id: 'gate-evil', source: 'x', existingIds: [] }) },
   { method: 'POST', path: '/api/cards/edit', type: J, body: body({ id: CARD_ID, find: 'a', replace: 'b' }) },
   { method: 'GET', path: `/api/cards/source?id=${CARD_ID}` },
@@ -216,16 +238,16 @@ const ATTACKS = [
   { method: 'GET', path: '/api/cards/sync/status' },
   { method: 'POST', path: '/api/render-node/bind', type: J, body: body({ url: 'ws://attacker.invalid/' }) },
   { method: 'POST', path: '/api/render-node/ticket', type: J, body: '{}' },
-  // 采集、网页工具、听写、配音、文档服务
+  // Media collection, web tools, speech-to-text, voiceover, document service
   { method: 'GET', path: '/api/collect/cookies' },
   { method: 'GET', path: '/api/stt/status' },
   { method: 'GET', path: '/api/voice/config' },
   { method: 'GET', path: '/api/docservice/device' },
   { method: 'POST', path: '/docservice/shared/create', type: J, body: '{}' },
-  // 大小写与重复斜杠的写法
+  // Casing and repeated slashes
   { method: 'POST', path: '/aPi/agent/bind', type: J, body: '{}' },
   { method: 'POST', path: '/api//agent/bind', type: J, body: '{}' },
-  // 文件系统类:项目根下的文件、/@fs/ 任意文件
+  // Filesystem types: files under project root, arbitrary files via /@fs/
   { method: 'GET', path: '/package.json' },
   { method: 'GET', path: '/vite.config.ts?raw' },
   { method: 'GET', path: '/scripts/test-suite.mjs?raw' },
@@ -235,15 +257,15 @@ const ATTACKS = [
   { method: 'GET', path: '/out/' },
   { method: 'GET', path: `/@fs/${REPO.replace(/\\/g, '/')}/package.json` },
   { method: 'GET', path: '/@fs/C:/Windows/win.ini' },
-  // WebSocket:文档服务;不带热更新子协议的升级
+  // WebSocket: document service; upgrade without hot reload subprotocol
   { ws: true, path: '/docservice' },
   { ws: true, path: '/' },
 ];
 
-/* ------------------------------------------------------------------ 流水 */
+/* ------------------------------------------------------------------ Trace */
 
 const readLog = () => { try { return fsSync.readFileSync(GATE_LOG, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
-/** 一条请求归成「方法 + 路径的形状」:哈希、数字、文件名这些会变的段换成占位 */
+/** Normalize a request into "method + path pattern": dynamic segments like hashes, numbers, filenames become placeholders */
 function shapeOf(row) {
   const p = row.u.split('?')[0];
   let shape = p;
@@ -254,7 +276,7 @@ function shapeOf(row) {
 }
 const shapes = (rows) => { const m = new Map(); for (const r of rows) { const k = shapeOf(r); m.set(k, (m.get(k) ?? 0) + 1); } return Object.fromEntries([...m].sort()); };
 
-/* ------------------------------------------------------------------ 主流程 */
+/* ------------------------------------------------------------------ Main flow */
 
 const out = { out: OUT, port: PORT };
 let dev = null, browser = null;
@@ -291,8 +313,9 @@ try {
   const frontFrame = async () => { const id = await frontId(); return stageFrames().find((f) => f.url().includes(`id=${id}`)) ?? null; };
   check(stageFrames().length === 2, 'both stage windows are open on the stage port', page.frames().map((f) => f.url().slice(0, 80)));
 
-  /* ---------------------------------------------------------------- 1. 项目 */
-  // 整份项目直接装进去(片段的时间、所在的序列都写死;用「加一张卡」那几个动作的话,同一条序列上放不下的会被往后挪)
+  /* ---------------------------------------------------------------- 1. Project */
+  // Directly load the entire project (clip timings and track assignments are hardcoded; using
+  // "add a card" actions would push clips backward if they don't fit on the same track)
   const clips = { user: 'clip-user', pill: 'clip-pill', pulse: 'clip-pulse', video: 'clip-video', audio: 'clip-audio' };
   const PROJECT = { id: `stage-gate-${RUN}`, name: 'Stage port probe', width: WIDTH, height: HEIGHT, fps: FPS, duration: SECONDS, themeId: 'dark', filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
     media: [media.video, media.audio],
@@ -328,7 +351,7 @@ try {
     if (SHOTS && name) await fs.writeFile(path.join(SHOTS, `${name}.png`), buf);
     return PNG.sync.read(buf);
   };
-  /** 截图里:品红标记有多少像素;右下四分之一(视频露出来的地方)的平均色与离散程度 */
+  /** In screenshot: how many pixels of magenta marker; average color and variance of lower-right quadrant (video area) */
   const measure = (png) => {
     if (!png) return null;
     let mark = 0, sum = 0, sq = 0, n = 0; const sig = [];
@@ -354,7 +377,8 @@ try {
   const seek = (t) => page.evaluate(async (t) => (await import('/src/store/project.ts')).actions.seek(t), t);
   const storeT = () => page.evaluate(async () => (await import('/src/store/project.ts')).getState().t);
 
-  // 新卡头一次上舞台要先测一遍成本,测完要等播放头动一下才挂上:每隔几秒在 1 秒附近挪一帧
+  // When a new card enters the stage for the first time, its cost must be measured first; after
+  // measuring, it waits for the playhead to move before mounting: shift by one frame near 1s every few seconds
   let nudge = 0;
   const first = await until('in the visible stage the user card is mounted and the video decodes a picture', async () => {
     const s = await stageState();
@@ -376,7 +400,7 @@ try {
   check(shot1 && shot1.mark > 2000 && shot2 && shot2.mark > 2000, 'the screenshot shows the user card\'s color block (at both times)', out.shots);
   check(shot1 && shot2 && shot1.videoStd > 8 && shot2.videoStd > 8 && shot1.sig !== shot2.sig, 'the video area in the screenshot has a picture, and the pictures at the two times differ', out.shots);
 
-  // 播放两秒
+  // Play for two seconds
   await seek(0.5);
   await sleep(500);
   const before = { t: await storeT(), stage: await stageState() };
@@ -394,7 +418,7 @@ try {
   check(shot3 && shot3.mark > 2000 && shot3.videoStd > 8, 'after playback, the screenshot still has both the user card and the video', shot3);
   out.fonts = { status: after.stage?.fontsReady, loaded: after.stage?.fonts };
 
-  // 卡片声音(有声卡的 audio() 在编辑器页里求值、入库)
+  // Card audio (audio() of audio card is evaluated on editor page and stored)
   const audio = await page.evaluate(async (clipId) => {
     const G = await import('/src/editor/io/cardAudioGeneration.ts');
     const S = await import('/src/store/project.ts');
@@ -406,7 +430,7 @@ try {
   }, clips.pulse);
   out.cardAudio = audio;
   check(audio.ok === true && /^[a-f0-9]{64}$/.test(audio.hash ?? ''), 'card sound generated successfully', audio);
-  // 带着声音再播一秒(素材声音、卡片声音都在轨上)
+  // Play for another second with audio (both asset audio and card audio are on track)
   await seek(0.6);
   await page.evaluate(async () => (await import('/src/store/project.ts')).actions.play());
   await sleep(1200);
@@ -419,18 +443,18 @@ try {
   out.sound = sound;
   check(sound.t > 1.2, 'playing with media sound and card sound, the playhead keeps moving', sound);
 
-  /* ---------------------------------------------------------------- 2. 到这里没有一个请求被拒 */
+  /* ---------------------------------------------------------------- 2. No requests rejected up to this point */
   await sleep(500);
   const logBefore = readLog();
   const deniedBefore = logBefore.filter((r) => !r.ok);
-  // 用户卡挂上时自己发的那一条 Agent 绑定是预期被拒的,不算在「正当请求」里
+  // The Agent binding sent by user card upon mounting is expected to be rejected, not counted among "legitimate requests"
   const unexpected = deniedBefore.filter((r) => !(r.m === 'POST' && r.u === '/api/agent/bind'));
   out.observed = { total: logBefore.length, shapes: shapes(logBefore.filter((r) => r.ok)), deniedBeforeAttack: shapes(deniedBefore) };
   check(logBefore.length > 50, 'the stage port\'s request log was recorded', logBefore.length);
   check(unexpected.length === 0, 'along the whole path of creating a project, clicking, playing and card sound, not a single legitimate request to the stage port was rejected', shapes(unexpected));
 
   if (OBSERVE) throw new Error('observe');
-  /* ---------------------------------------------------------------- 3. 用户卡逐个去调 */
+  /* ---------------------------------------------------------------- 3. User card calls one by one */
   const front = await frontFrame();
   const auto = await until('the request the user card sent by itself when mounted has a result', () => front.evaluate(() => globalThis.__gateProbe?.auto ?? null), 30000);
   out.auto = auto;
@@ -443,7 +467,7 @@ try {
   check(new URL(out.attack.origin).port !== String(PORT), 'this batch was sent from the origin of the stage port', out.attack.origin);
   check(out.attack.notDenied.length === 0, `the user card calls ${http.length} endpoints from the stage, all 403`, out.attack.notDenied);
   check(sockets.every((r) => r.opened === false), 'the user card connecting from the stage to the document service\'s WebSocket, an upgrade without the hot-update subprotocol: cannot connect', out.attack.sockets);
-  // 同一批从编辑器端口发(Node,不带 Origin):没有一个是 403(各接口自己回什么照旧)
+  // Same batch sent from editor port (Node, without Origin): none is 403 (what each endpoint returns remains as usual)
   const fromEditor = [];
   for (const a of ATTACKS.filter((x) => !x.ws)) {
     const status = await fetch(origin + a.path, { method: a.method, headers: a.type ? { 'Content-Type': a.type } : undefined, body: a.body, signal: AbortSignal.timeout(20000) }).then((r) => r.status, (e) => `Error: ${e.message}`);
@@ -455,7 +479,7 @@ try {
   const logAfter = readLog().slice(logBefore.length);
   out.deniedInAttack = logAfter.filter((r) => !r.ok).length;
 
-  /* ---------------------------------------------------------------- 4. 之后预览照常 */
+  /* ---------------------------------------------------------------- 4. Preview continues normally afterwards */
   await seek(2);
   await until('the video in the stage reaches second 2', async () => { const s = await stageState(); return s?.video && Math.abs(s.video.currentTime - 2) < 0.1 ? s : null; }, 60000);
   await sleep(800);
@@ -467,7 +491,7 @@ try {
   out.afterAttack = { shot: shot4, t: t5, stage: await stageState() };
   check(shot4 && shot4.mark > 2000 && shot4.videoStd > 8 && t5 > 2.5, 'after the rejection the preview works as usual: the user card and the video both draw and playback works', out.afterAttack);
 
-  /* ---------------------------------------------------------------- 5. 改卡:舞台跟着热更新(热更新的 WebSocket 与重新取源码都经舞台端口) */
+  /* ---------------------------------------------------------------- 5. Modify card: stage hot-reloads accordingly (hot reload WebSocket and refetching source code both go through stage port) */
   for (const f of stageFrames()) await f.evaluate(() => { globalThis.__gateStay = 1; }).catch(() => {});
   await writeCard(MARK2);
   const colorNow = async () => (await frontFrame())?.evaluate(() => { const el = document.querySelector('[data-gate-mark]'); return el ? { color: getComputedStyle(el).backgroundColor, stayed: globalThis.__gateStay === 1 } : null; }).catch(() => null);

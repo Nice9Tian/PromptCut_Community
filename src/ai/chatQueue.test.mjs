@@ -1,9 +1,11 @@
 /**
  * node --test src/ai/chatQueue.test.mjs
  *
- * 输入队列:Agent 跑着的时候用户又交的话先排队,一轮结束按顺序发。
- * 钉住四件事:入队顺序、删中间一条、shift 取队首、不同分页的队列互不影响;
- * 外加「暂停」只在队列非空时成立,清空自动解除。
+ * Input queue: when the Agent is running, subsequent words submitted by the user are queued first
+ * and sent in order after a round finishes.
+ * Pins down four things: enqueue order, deleting an item in the middle, shift to take the head of
+ * the queue, and queues on different tabs not affecting each other;
+ * plus "pause" holds only when the queue is non-empty, and automatically clears when emptied.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -95,7 +97,7 @@ test("store: notifies only on real changes; snapshot references are stable (for 
   const before = q.getQueueState("main");
   assert.equal(q.getQueueState("main"), before, "The same reference when unchanged");
   q.remove("main", "nope");
-  q.setPaused("main", true); // 空队列暂停不成立,不算变化
+  q.setPaused("main", true); // Pausing an empty queue does not hold and does not count as a change
   assert.equal(calls, 0);
   const it = q.enqueue("main", { text: "x" });
   assert.equal(calls, 1);

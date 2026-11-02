@@ -1,8 +1,12 @@
 /**
- * AI 栏 Agent 标签的关闭与编号(2026-10-20 用户定;2026-10-22 起最后一个也能关、没有会话时是开始页,
- * 见 docs/semantics/workflow/editing.md「AI 栏的 Agent 标签」)。跑:node --test src/ai/agentTabsClose.test.mjs
- * 用例 AT-C1～AT-C6:没有会话时是开始页占位页、点发送才建第一个会话、最后一个也能关(回到开始页)、关当前页后的激活、
- * 新建取最小空号、刷新后从持久化恢复。分项目的用例在 agentTabsProjects.test.mjs。
+ * Closing and numbering of Agent tabs in the AI panel (user decision, 2026-10-20; from 2026-10-22
+ * onwards the last tab can also be closed, displaying the start page when there are no sessions, see
+ * docs/semantics/workflow/editing.md "Agent tabs in the AI panel").
+ * Run: node --test src/ai/agentTabsClose.test.mjs
+ * Test cases AT-C1~AT-C6: start page placeholder page when there are no sessions, first session
+ * created only upon clicking send, the last tab can also be closed (returns to start page),
+ * activation after closing current tab, new tab picks the lowest unused number, restore from
+ * persistence after refresh. Per-project test cases are in agentTabsProjects.test.mjs.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -11,7 +15,7 @@ const store = new Map();
 globalThis.localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
 
 let n = 0;
-/** 每个用例重新载入一份模块,等于刷新页面;prep 先往 localStorage 里放点东西;再打开项目 p1(清单按项目分开) */
+/** Each test case reloads a fresh module copy, equivalent to page refresh; prep populates localStorage first; then opens project p1 (manifests split by project) */
 async function fresh(prep, project = "p1") {
   store.clear();
   prep?.();
@@ -19,7 +23,7 @@ async function fresh(prep, project = "p1") {
   t.setAgentProject(project);
   return t;
 }
-/** 在开始页点发送:占位页变成第一个会话 */
+/** Click send on start page: placeholder page becomes the first session */
 function send(t) {
   return t.commitDraft(t.getActiveTabId());
 }
@@ -37,9 +41,9 @@ test("AT-C1 No sessions in the project yet: there is only one start page placeho
   assert.equal(t.isDraftTab(d.id), true, "The placeholder tab cannot be closed");
   assert.equal(t.addTab().id, d.id, "With no sessions, \"+\" does not create a real tab and returns to the start page");
   assert.equal(t.hasRealTabs(), false);
-  // 没点发送之前不进存储
+  // Does not enter storage before clicking send
   assert.equal(store.has("pc.agentTabs:p1"), false);
-  // 点发送:同一个 id 变成真页
+  // Click send: the same id becomes a real page
   const real = send(t);
   assert.equal(real.id, d.id, "The placeholder tab becomes a real tab and its id does not change (neither the rail item nor the page node needs replacing)");
   assert.equal(real.draft, undefined);
@@ -67,8 +71,8 @@ test("AT-C2 The last session can also be closed: after closing all of them it re
 test("AT-C3 Every tab can be closed (including Agent 1); closing the current tab switches to the tab on its left, or to the one on its right if it is leftmost; closing a non-current tab leaves the current tab unchanged", async () => {
   const t = await fresh();
   const first = send(t); // Agent 1
-  const a = t.addTab(); // Agent 2,激活
-  const b = t.addTab(); // Agent 3,激活
+  const a = t.addTab(); // Agent 2, activated
+  const b = t.addTab(); // Agent 3, activated
   t.activateTab(first.id);
   assert.equal(t.canCloseTab(first.id), true);
   t.closeTab(first.id);
@@ -106,7 +110,7 @@ test("AT-C5 After a refresh: the list, numbers and active tab are restored as th
   assert.deepEqual(t2.getTabs().map((x) => [x.id, x.title]), [[a.id, "Agent 2"]]);
   assert.equal(t2.getActiveTabId(), a.id);
   assert.equal(t2.addTab().title, "Agent 1");
-  // 再关光,刷新
+  // Close all again, refresh
   for (const x of [...t2.getTabs()]) t2.closeTab(x.id);
   const saved2 = new Map(store);
   const t3 = await fresh(() => saved2.forEach((v, k) => store.set(k, v)));

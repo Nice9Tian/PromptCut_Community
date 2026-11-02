@@ -1,6 +1,7 @@
 /**
- * 剪辑段在 store 里的编辑规则:放置、修头带偏移、出点不能超出被引用剪辑、切分累加偏移、复制、独立静音、
- * 删除被引用剪辑一步撤销。跑:npm test -- src/store/actions/cutSegments.test.mjs
+ * Edit rules for cut segments in store: placement, trim head with offset, out point cannot exceed
+ * referenced cut, split accumulates offset, duplicate, independent mute, deleting referenced cut
+ * undone in one step. Run: npm test -- src/store/actions/cutSegments.test.mjs
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test from "node:test";

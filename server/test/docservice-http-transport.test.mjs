@@ -1,11 +1,15 @@
 /**
- * 文档服务的 HTTP 长轮询传输，服务端一侧（契约 `docs/plan/http-transport-contract.md` 第 2 版第 6 节）。
- * 跑：node --test server/test/docservice-http-transport.test.mjs
+ * HTTP long polling transport for document service, server side (contract
+ * `docs/plan/http-transport-contract.md` version 2 section 6).
+ * Run: node --test server/test/docservice-http-transport.test.mjs
  *
- * 本阶段（HT-a）长轮询不接线：`createDocService` 不答 `/lp/…`。这里自己搭一个最小组装——核心 `createRouter`、会话层
- * `createSessionLayer`、`createHttpTransport`、一台只绑回环的 http 服务器（端口 0）——验证传输按第 6 节接在会话层下面，
- * 给 HT-b 接线时用。直接打四个端点（`fake-transport-kit.mjs` 的 `lp`），不经节点端的客户端。
- * HT1 / HT2 的 WebSocket 部分在 `ht1-session.test.mjs`、`ht2-backpressure.test.mjs`（测试方 `claude/ht-tests`）。
+ * In this phase (HT-a), long polling is not wired up: `createDocService` does not answer `/lp/…`.
+ * Here we build a minimal assembly ourselves: core `createRouter`, session layer
+ * `createSessionLayer`, `createHttpTransport`, and an http server bound only to loopback (port 0),
+ * to verify transport is attached under session layer per section 6, for use when wiring HT-b.
+ * Directly hits four endpoints (`fake-transport-kit.mjs`'s `lp`), bypassing node-side client.
+ * The WebSocket portion of HT1 / HT2 is in `ht1-session.test.mjs` and `ht2-backpressure.test.mjs`
+ * (test suite `claude/ht-tests`).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,7 +23,7 @@ import { sleep, waitFor } from './fake-ws-kit.mjs';
 const SID_RE = /^[A-Za-z0-9_-]{43}$/;
 const NEW = 'promptcut.session.new';
 
-/** 测试模块：`t.echo { n }` 回 `t.echoed`，`t.sink` 不回 */
+/** Test module: `t.echo { n }` replies with `t.echoed`, `t.sink` does not reply */
 function echoModule() {
   const mod = {
     name: 't', types: ['t.'], seen: [], connects: [], disconnects: [], ctx: null,
@@ -49,7 +53,7 @@ async function startLp(t, { retainMs = 60_000, waitMs = 2000, highWaterBytes, ma
   sessions = createSessionLayer({ router, nextConnId: () => `conn-${++n}`, log, retainMs });
   const mod = echoModule();
   router.mount(mod);
-  // 传输的时钟可拨（空闲判据是 waitMs + 15 s，测试不真等）
+  // Transport clock can be dialed (idle criterion is waitMs + 15 s, test does not actually wait)
   const clock = { offset: 0 };
   const transport = createHttpTransport({
     sessions, authenticate: authByProtocols, retainMs, waitMs, corsOrigins, maxFrameBytes, log, now: () => Date.now() + clock.offset,
@@ -97,10 +101,10 @@ test('LP-send-recv frames carry seq: modules do not see seq / ack; replies are i
   const got = await recvUntil(env.c, sid, (m) => m.n === 2);
   assert.deepEqual(got.frames.map((m) => [m.type, m.n, m.seq, m.ack]), [['t.echoed', 1, 1, 2], ['t.echoed', 2, 2, 2]]);
   assert.deepEqual(env.mod.seen, [{ type: 't.echo', n: 1 }, { type: 't.echo', n: 2 }], 'modules do not see seq / ack');
-  // 重发同一批：丢弃，照样回 ack
+  // Resend the same batch: discard, still return ack
   assert.deepEqual((await env.c.send(sid, [{ type: 't.echo', n: 2, seq: 2 }])).body, { ok: true, ack: 2 });
   assert.equal(env.mod.seen.length, 2);
-  // 跳号
+  // Skip sequence number
   const bad = await env.c.send(sid, [{ type: 't.echo', n: 9, seq: 9 }]);
   assert.equal(bad.status, 410);
   assert.equal(bad.body.code, 1002);
@@ -127,7 +131,7 @@ test('LP-recv with no frames the GET hangs and returns empty when wait elapses; 
   const woke = await hanging;
   assert.equal(woke.body.frames.length, 1);
   assert.equal(JSON.parse(woke.body.frames[0]).seq, 1);
-  // 替换
+  // Replace
   const first = env.c.recv(sid, 1, 1500);
   await sleep(50);
   const second = env.c.recv(sid, 1, 100);
@@ -141,7 +145,7 @@ test('LP-resume resumes via open: no re-authentication, resumed true, ack is wha
   const { sid } = await openNew(env);
   await env.c.send(sid, [{ type: 't.echo', n: 1, seq: 1 }, { type: 't.echo', n: 2, seq: 2 }]);
   await recvUntil(env.c, sid, (m) => m.n === 2);
-  // 客户端只确认到 1，然后当传输坏了、重新 open 接续
+  // Client only acknowledges up to 1, then assumes transport is broken and re-opens to resume
   const r = await env.c.open(['promptcut.v1', `promptcut.session.${sid}.1`], { 'x-promptcut-fallback': 'ws-error' });
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.deepEqual({ sid: r.body.sid, resumed: r.body.resumed, ack: r.body.ack }, { sid, resumed: true, ack: 2 });
@@ -152,10 +156,10 @@ test('LP-resume resumes via open: no re-authentication, resumed true, ack is wha
   assert.equal(s.fallbacks, 1);
   assert.equal(s.list[0].fallback, 'ws-error');
   assert.equal(env.mod.connects.length, 1, 'the module sees connect only once');
-  // 接续项与鉴权项同给 400；会话不存在 404
+  // Providing both resume and auth items gives 400; session does not exist 404
   assert.equal((await env.c.open(['promptcut.v1', 'x-user.alice', `promptcut.session.${sid}.2`])).status, 400);
   assert.equal((await env.c.open(['promptcut.v1', `promptcut.session.${'A'.repeat(43)}.0`])).status, 404);
-  // 越界的 ack：会话以 1002 结束，回 410
+  // Out-of-bounds ack: session ends with 1002, returns 410
   const over = await env.c.open(['promptcut.v1', `promptcut.session.${sid}.99`]);
   assert.equal(over.status, 410);
   assert.equal(over.body.code, 1002);
@@ -176,7 +180,7 @@ test('LP-close the client POSTs /lp/close: the session ends immediately (the mod
   env.mod.ctx.send(connId, { type: 't.pushed', k: 1 });
   const hanging = env.c.recv(b.sid, 0, 1500);
   await sleep(30);
-  // 刚才那条已经被这个 GET 取走（未确认）；再来一条后服务端踢人
+  // Previous message was already fetched by this GET (unconfirmed); after another arrives, server kicks
   const waitAll = hanging.then(async (first) => {
     const rest = await env.c.recv(b.sid, 0, 1500);
     return [first, rest];
@@ -195,7 +199,7 @@ test('LP-idle with no hanging GET and no request at all: sweep treats the transp
   const { sid } = await openNew(env);
   env.transport.sweep();
   assert.equal(env.sessions.stats().detached, 0, 'idle limit not reached yet');
-  // 空闲判据是 waitMs + 15 s：把传输的时钟往后拨
+  // Idle criterion is waitMs + 15 s: dial the transport clock forward
   env.clock.offset = 20_000;
   env.transport.sweep();
   env.clock.offset = 0;
@@ -222,7 +226,7 @@ test('LP-busy only one POST /lp/send per session is in flight at a time: the sec
   const env = await startLp(t);
   const { sid } = await openNew(env);
   const url = new URL(`${env.base}/lp/send`);
-  // 第一个 POST 只发请求头、不发完请求体，一直占着
+  // First POST only sends request headers without finishing request body, holding it open
   const req = http.request({ host: url.hostname, port: url.port, path: url.pathname, method: 'POST', headers: { authorization: `Bearer ${sid}`, 'content-type': 'application/json', 'content-length': '100' } });
   req.on('error', () => {});
   req.write('{"frames":');

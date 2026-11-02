@@ -1,34 +1,45 @@
 /**
- * R3「舞台内容」验收探针(E4b / E7 / D3 第 4 步)。
+ * R3 "stage content" acceptance check probe (E4b / E7 / D3 step 4).
  *
  *   node scripts/probes/stage-content-probe.mjs [--origin http://127.0.0.1:5241] [--same-origin]
  *
- * 不带 `--origin` 就看 `PC_STAGE_TEST_URL`,再没有就打 `.claude/launch.json` 的 `dev-test`。
+ * Without `--origin`, check `PC_STAGE_TEST_URL`; if still missing, hit `dev-test` in
+ * `.claude/launch.json`.
  *
- * 和 `stage-rpc-probe.mjs` 同一套骨架:本进程临时起一个 http 服务发「测试页」,页面里挂两个
- * 舞台 iframe(默认打编辑器进程的两个舞台端口,`--same-origin` 打编辑器自己这个源),
- * 只经 postMessage RPC 驱动它们。**iframe 的地址带 `&preview=stage`** —— 舞台靠它决定渲
- * `FrameScene` 的 live 变体(素材层进舞台、六个平面 prop 生效),不带就是今天那条 `Stage` 路。
+ * Same skeleton as `stage-rpc-probe.mjs`: this process temporarily starts an HTTP service serving
+ * the "test page", mounting two stage iframes in the page (by default targeting the two stage
+ * ports of the editor process; `--same-origin` targets the editor's own origin), driving them
+ * only via postMessage RPC. **The iframe address includes `&preview=stage`**: the stage uses it
+ * to decide whether to render the live variant of `FrameScene` (asset layer enters stage, six
+ * plane props take effect); without it, it takes today's `Stage` path.
  *
- * 验的是任务书 E7 / E4b / D3 第 4 步这几条:
+ * Verifies these items from task brief E7 / E4b / D3 step 4:
  *
- *   1. **组件实例不变**:快照挂上、摘掉、同一片段换另一帧三种情况下,卡片组件的 DOM 根是同一个
- *      元素对象(挂了标记),而且它的内部状态(打字机的格数)一格都没丢 —— 不靠人看 DevTools;
- *   2. **四个类的可见性**:`.pc-snapshot` / `.pc-suppressed` 藏子树(display:none)但放过三种平面;
- *      `.pc-awaiting` / `.pc-settling` 是 visibility:hidden(子树保留布局盒);
- *   3. **被抑制的卡**:粒子卡的 `<canvas>` 像素哈希在抑制期间不变(传给组件的 `t` 冻住了),
- *      而包裹层的 `data-pc-local-frame` 仍随 `t` 变(`cardT` 的其余用途照常用实时值),
- *      `hitTest` 仍能点中它(贴着快照平面时);
- *   4. **`.pc-awaiting` 的 500 ms 兜底**:快照没来也要自己摘掉,不能永久隐身;
- *   5. **素材层在舞台里**:视频出画面、图片出画面、带像素映射的素材段也出;`rects()` 含素材段;
- *      被别人接管的素材段(像素映射 / 素材效果卡节点)不被画两遍;
- *   6. **E4b 两条**:`setInterval` 每 100 ms 一格的打字机卡补跑到第 3 秒恰好 30 格;
- *      `Date.now()` 倒计时卡续推 10 秒后恰好少 10 秒。
+ *   1. **Component instance unchanged**: across three cases: snapshot attached, removed, and same
+ *      clip switching to another frame, the card component DOM root is the same element object
+ *      (tagged), and none of its internal state (typewriter step count) is lost: without relying
+ *      on manual DevTools inspection;
+ *   2. **Visibility of four classes**: `.pc-snapshot` / `.pc-suppressed` hide subtrees
+ *      (display:none) but pass through three planes; `.pc-awaiting` / `.pc-settling` are
+ *      visibility:hidden (subtrees retain layout boxes);
+ *   3. **Suppressed cards**: the particle card's `<canvas>` pixel hash does not change during
+ *      suppression (the `t` passed to the component is frozen), while the wrapper layer's
+ *      `data-pc-local-frame` still changes with `t` (other uses of `cardT` still use real-time
+ *      values as usual), and `hitTest` can still hit it (when flush against snapshot plane);
+ *   4. **500 ms fallback for `.pc-awaiting`**: must remove itself if snapshot does not arrive,
+ *      cannot remain permanently hidden;
+ *   5. **Asset layer in stage**: video displays frames, image displays frames, media clips with
+ *      pixel maps also display; `rects()` includes media clips; media clips taken over by others
+ *      (pixel map / media effect card nodes) are not drawn twice;
+ *   6. **Two E4b items**: a typing card with `setInterval` advancing one step every 100 ms reaches
+ *      exactly 30 steps when caught up to second 3; a countdown card using `Date.now()` decreases
+ *      by exactly 10 seconds after advancing 10 seconds.
  *
- * 素材用 ffmpeg 现生成一份(`testsrc`),按内容哈希落进 `out/media/`,所以 `/@media/<hash>`
- * 和舞台同源 —— 跨源的 `<video>` 上传成 WebGL 纹理会污染画布,像素映射那条就验不了。
+ * Media is generated on the fly via ffmpeg (`testsrc`) and stored into `out/media/` by content
+ * hash, so `/@media/<hash>` is same-origin with the stage: cross-origin `<video>` uploaded as a
+ * WebGL texture taints the canvas, making the pixel map check unverifiable.
  *
- * 输出 JSON 结论到 stdout;任何一条不过就以非零退出。
+ * Outputs JSON conclusion to stdout; exits with non-zero if any item fails.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -48,9 +59,9 @@ const HOST_PATH = '/__stage-content-probe-host';
 const fails = [];
 const check = (cond, label, extra) => { if (!cond) fails.push(label + (extra !== undefined ? ' :: ' + JSON.stringify(extra) : '')); return cond; };
 
-/* ------------------------------------------------------------------ 素材 */
+/* ------------------------------------------------------------------ Assets */
 
-/** 落一份内容到本地内容库(`out/media/<sha256>.<ext>`),回 `/@media/<hash>` 能取到的 hash */
+/** Stores content into local content store (`out/media/<sha256>.<ext>`), returns hash for `/@media/<hash>` */
 function intoMediaStore(file) {
   const bytes = fs.readFileSync(file);
   const hash = crypto.createHash('sha256').update(bytes).digest('hex');
@@ -62,7 +73,7 @@ function intoMediaStore(file) {
   return hash;
 }
 
-/** ffmpeg 现生成两份小素材(彩条视频 + 彩条图),放临时目录再收进内容库 */
+/** ffmpeg generates two small assets (color bar video + image), placed in temp dir then stored into content store */
 function makeMedia(tmpDir) {
   fs.mkdirSync(tmpDir, { recursive: true });
   const mp4 = path.join(tmpDir, 'pc-stage-content-probe.mp4');
@@ -77,7 +88,7 @@ function makeMedia(tmpDir) {
   return { video: intoMediaStore(mp4), image: intoMediaStore(png) };
 }
 
-/* ------------------------------------------------------------------ 测试页 */
+/* ------------------------------------------------------------------ Test page */
 
 async function stageOrigins() {
   if (sameOrigin) return [origin, origin];
@@ -120,7 +131,7 @@ window.__ready = Promise.all([
 ]).then(([a, b]) => { window.__rpc = a.rpc; window.__rpcB = b.rpc; return true; });
 </script></body></html>`;
 
-/* ------------------------------------------------------------------ 跑 */
+/* ------------------------------------------------------------------ Run */
 
 const media = makeMedia(path.join(process.env.TEMP || process.env.TMP || ROOT, 'pc-probe-media'));
 const [originA, originB] = await stageOrigins();
@@ -153,7 +164,7 @@ try {
   check(!!fa && !!fb, 'both stage iframes are attached', { a: fa?.url(), b: fb?.url() });
   check(!!fa && fa.url().includes('preview=stage'), 'stage iframe carries ?preview=stage (live FrameScene)', fa?.url());
 
-  /* ── 项目工厂(形状同 kernel/project.ts 的 createEmptyProject) ─────────── */
+  /* ── Project factory (same shape as createEmptyProject in kernel/project.ts) ─── */
   await page.evaluate((m) => {
     window.__media = m;
     window.__mk = (tracks, extra = {}) => ({
@@ -167,14 +178,14 @@ try {
   }, media);
 
   /* ================================================================
-   * A. 素材层在舞台里(E7 第 1 条 / D3 第 4 步)
+   * A. Asset layer in the stage (E7 item 1 / D3 step 4)
    * ================================================================ */
   const mediaProject = await page.evaluate(() => window.__mk([
-    // 最上面一条:普通视频段
+    // Topmost one: regular video clip
     { id: 'tr-v', clips: [{ id: 'c-video', mediaId: 'mv', start: 0, end: 4, params: {}, frame: { x: 0, y: 0, w: 960, h: 540, anchor: [0, 0] } }] },
-    // 图片段
+    // Image clip
     { id: 'tr-i', clips: [{ id: 'c-image', mediaId: 'mi', start: 0, end: 4, params: {}, frame: { x: 960, y: 0, w: 960, h: 540, anchor: [0, 0] } }] },
-    // 带像素映射的视频段
+    // Video clip with pixel map
     { id: 'tr-p', clips: [{ id: 'c-pixel', mediaId: 'mv', start: 0, end: 4, params: {}, pixelMap: { id: 'pm1' }, frame: { x: 0, y: 540, w: 960, h: 540, anchor: [0, 0] } }] },
   ], {
     pixelMaps: [{
@@ -187,7 +198,7 @@ try {
     await window.__rpc.setMediaT(1.5);
     await window.__rpc.setTime(1.5);
   }, mediaProject);
-  // 解码 + 出画要几个真帧:素材层跟的是墙钟,不是虚拟时钟
+  // Decoding + displaying frames takes several real frames: the asset layer follows wall clock, not virtual clock
   await new Promise((r) => setTimeout(r, 2500));
   await page.evaluate(async () => { await window.__rpc.setMediaT(1.5); await window.__rpc.setTime(1.5); });
   await new Promise((r) => setTimeout(r, 1500));
@@ -197,7 +208,7 @@ try {
     const v = shown.find((x) => !x.closest('[data-pc-clip="c-pixel"]'));
     const img = document.querySelector('[data-pc-clip="c-image"] img');
     const px = document.querySelector('[data-pc-clip="c-pixel"] canvas[data-pc-pixel-map]');
-    /** 画到一张离屏画布上,看是不是真有画面(全黑 / 单色 = 没出画) */
+    /** Draws to an offscreen canvas to check if frames actually render (all black / solid color = no frame displayed) */
     const colours = (el, w, h) => {
       const c = document.createElement('canvas');
       c.width = w; c.height = h;
@@ -217,7 +228,7 @@ try {
       imgColours: img ? colours(img, 64, 64) : -1,
       pixelError: px?.getAttribute('data-pc-pixel-error') ?? null,
       pixelColours: px ? colours(px, 64, 48) : -1,
-      // 同一个素材不能被画两遍:带像素映射的那条序列上不该有装着它的 <video src>
+      // The same asset cannot be drawn twice: the track with pixel map should not contain a <video src> holding it
       pixelTrackVideos: [...document.querySelectorAll('[data-pc-track="tr-p"] video[src]')].length,
       slotWrappers: [...document.querySelectorAll('[data-pc-clip]')].map((e) => e.getAttribute('data-pc-clip')),
     };
@@ -232,7 +243,7 @@ try {
   check(['c-video', 'c-image', 'c-pixel'].every((id) => out.rects.includes(id)), 'rects() includes media clips (D3 step 4)', out.rects);
   check(new Set(out.rects).size === out.rects.length, 'each clipId appears only once in rects()', out.rects);
 
-  /* 素材效果卡接管的素材段:节点是 adapter:'card' 的,素材层不画它 */
+  /* Media clip taken over by a media effect card: where node is adapter:'card', asset layer does not draw it */
   const graphProject = await page.evaluate(() => window.__mk([
     { id: 'tr-v', clips: [{ id: 'c-video', mediaId: 'mv', start: 0, end: 4, params: {} }] },
     { id: 'tr-g', clips: [{ id: 'c-graph', mediaId: 'mv', nodeId: 'gnode', start: 0, end: 4, params: {} }] },
@@ -248,7 +259,7 @@ try {
     'media clips taken over by a media effect card are not drawn by VideoTrack (ordinary media clips are drawn as usual)', out.graphTakeover);
 
   /* ================================================================
-   * B. 平面与类(E7 第 4、5 条)+ 组件实例不变
+   * B. Planes and classes (E7 items 4 and 5) + component instance unchanged
    * ================================================================ */
   const cardProject = await page.evaluate(() => window.__mk([
     { id: 'tr-a', clips: [{ id: 'c-type', cardId: 'probe-typewriter', start: 0, end: 10, params: {} }] },
@@ -257,14 +268,14 @@ try {
   await page.evaluate(async (p) => { await window.__rpc.setProject(p, { reset: true }); await window.__rpc.setTime(1); }, cardProject);
   await new Promise((r) => setTimeout(r, 600));
 
-  // 样式表进来了没有(只有真的用上平面 prop 的宿主才注入)
+  // Whether stylesheet loaded (injected only if the host actually uses plane props)
   out.planeStyle = await fa.evaluate(() => ({
     injected: !!document.querySelector('style[data-pc-planes]'),
     css: document.querySelector('style[data-pc-planes]')?.textContent?.split('\n').length ?? 0,
   }));
   check(out.planeStyle.injected && out.planeStyle.css === 4, 'E7\'s four style rules have been injected', out.planeStyle);
 
-  // 给组件根挂标记:React 一旦重挂载,这个 DOM 元素就换人了
+  // Tag the component root: once React remounts, this DOM element changes
   await fa.evaluate(() => {
     window.__mark = (id) => {
       const el = document.querySelector(`[data-pc-clip="${id}"] > *:not([data-pc-snapshot-plane]):not([data-pc-proxy-plane]):not([data-pc-stream-plane])`);
@@ -308,13 +319,13 @@ try {
   await fa.evaluate(() => window.__mark('c-type'));
   const cellsBefore = await fa.evaluate(() => window.__state('c-type'));
 
-  // ① 挂上快照
+  // (1) Attach snapshot
   await page.evaluate(async (html) => { await window.__rpc.setSnapshots({ 'c-type': html }, {}); }, SNAP_A);
   const onSnap = await fa.evaluate(() => ({ marked: window.__marked('c-type'), cells: window.__state('c-type'), cls: window.__classes('c-type'), vis: window.__vis('c-type'), snap: document.querySelector('[data-pc-clip="c-type"] [data-pc-snapshot-plane] [data-probe-snap]')?.getAttribute('data-probe-snap') ?? null }));
-  // ② 同一片段换另一帧
+  // (2) Switch to another frame in the same clip
   await page.evaluate(async (html) => { await window.__rpc.setSnapshots({ 'c-type': html }, {}); }, SNAP_B);
   const swapSnap = await fa.evaluate(() => ({ marked: window.__marked('c-type'), cells: window.__state('c-type'), planes: document.querySelectorAll('[data-pc-clip="c-type"] [data-pc-snapshot-plane]').length, snap: document.querySelector('[data-pc-clip="c-type"] [data-pc-snapshot-plane] [data-probe-snap]')?.getAttribute('data-probe-snap') ?? null }));
-  // ③ 摘掉
+  // (3) Remove
   await page.evaluate(async () => { await window.__rpc.setSnapshots({ 'c-type': null }, {}); });
   const offSnap = await fa.evaluate(() => ({ marked: window.__marked('c-type'), cells: window.__state('c-type'), cls: window.__classes('c-type'), vis: window.__vis('c-type') }));
   out.snapshot = { cellsBefore, onSnap, swapSnap, offSnap };
@@ -330,7 +341,7 @@ try {
     '`.pc-snapshot`: subtree is display:none, the snapshot plane is spared', onSnap.vis);
   check(offSnap.vis?.comp?.display !== 'none' && offSnap.vis?.hasPlane === false, 'after detaching, the plane is gone and the component shows', offSnap.vis);
 
-  /* ── 抑制:粒子卡 ───────────────────────────────────────────────── */
+  /* ── Suppression: particle card ─────────────────────────────────── */
   await page.evaluate(async (html) => {
     await window.__rpc.setSnapshots({ 'c-par': html }, { reset: true });
     await window.__rpc.setSuppressed(['c-par']);
@@ -369,7 +380,7 @@ try {
 
   await page.evaluate(async () => { await window.__rpc.setSuppressed([]); await window.__rpc.setSnapshots({}, { reset: true }); });
 
-  /* ── `.pc-awaiting`:挂上、500 ms 兜底自己摘掉 ─────────────────── */
+  /* ── `.pc-awaiting`: attached, removed via 500 ms fallback ───────── */
   const awaitOn = await page.evaluate(async () => {
     await window.__rpc.setTime(2.5, { awaiting: ['c-type'] });
     return true;
@@ -385,7 +396,7 @@ try {
   check(!awaiting2.cls?.includes('pc-awaiting'), '`.pc-awaiting` is removed automatically after 500 ms (real-timer fallback)', awaiting2);
   check(awaiting2.vis?.comp?.visibility !== 'hidden' && awaiting2.marked === true, 'after the fallback, what shows is the same live component', awaiting2);
 
-  /* ── 快照到达就把 `.pc-awaiting` 摘掉(另一条退出路) ─────────── */
+  /* ── Remove `.pc-awaiting` when snapshot arrives (the other exit path) ── */
   const awaitSnap = await page.evaluate(async (html) => {
     await window.__rpc.setTime(2.6, { awaiting: ['c-type'] });
     await window.__rpc.setSnapshots({ 'c-type': html }, {});
@@ -397,7 +408,7 @@ try {
     'when the snapshot arrives, `.pc-awaiting` is immediately replaced by `.pc-snapshot`', out.awaitingBySnapshot);
   await page.evaluate(async () => { await window.__rpc.setSnapshots({}, { reset: true }); });
 
-  /* ── `.pc-settling` 的可见性(R5 才有驱动,这里直接验样式契约) ── */
+  /* ── `.pc-settling` visibility (driven only in R5, tests style contract directly here) ── */
   out.settling = await fa.evaluate(() => {
     const wrap = document.querySelector('[data-pc-clip="c-type"]');
     const comp = wrap.querySelector(':scope > *:not([data-pc-snapshot-plane]):not([data-pc-proxy-plane]):not([data-pc-stream-plane])');
@@ -412,7 +423,7 @@ try {
   check(out.settling.off.visibility !== 'hidden', 'removing `.pc-settling` restores it', out.settling);
 
   /* ================================================================
-   * C. E4b 两条
+   * C. Two E4b items
    * ================================================================ */
   const typeProject = await page.evaluate(() => window.__mk([
     { id: 'tr-a', clips: [{ id: 'c-type', cardId: 'probe-typewriter', start: 0, end: 10, params: {} }] },
@@ -445,7 +456,8 @@ try {
   }, countProject);
   await new Promise((r) => setTimeout(r, 300));
   const rem0 = await readRemaining();
-  // 续推(不重挂载)10 秒:倒计时的终点是挂载那一刻记下的,推完必须正好少 10 秒
+  // Advance 10 s (without remounting): countdown endpoint was recorded at mount,
+  // must be exactly 10 s less after advance
   await page.evaluate(async () => { await window.__rpcB.render(10, { maxCatchUp: Infinity }); });
   await new Promise((r) => setTimeout(r, 300));
   const rem10 = await readRemaining();

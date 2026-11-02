@@ -1,12 +1,18 @@
 /**
- * 桌面应用自动成为共享项目的渲染节点:页面一侧(`renderNodeHandoff.ts`)。报告 `docs/archive/agent-reports/AGENT-desktop-auto-node.md`。
- * 跑:node --test src/editor/sync/renderNodeHandoff.test.mjs
+ * Desktop app automatically becomes render node for shared projects: page side (`renderNodeHandoff.ts`).
+ * Report `docs/archive/agent-reports/AGENT-desktop-auto-node.md`.
+ * Run: node --test src/editor/sync/renderNodeHandoff.test.mjs
  *
- *   RNH-01 接上共享项目:等本页面挑到素材服务再交(带素材基址与本页面签的 render 票据);同一个项目重复接不再交
- *   RNH-05 挑不到素材服务:最多等 ASSET_WAIT_MS 就不带基址照交;在等的时候离开照样撤
- *   RNH-02 项目文档 id 晚到、素材基址挑到:同一个项目再交一次,不另签票据
- *   RNH-03 票据往返:只答本页面连着的那个项目;签不出就交回错误
- *   RNH-04 离开:只撤同一个项目的;撤完再有票据请求不答
+ *   RNH-01 Connect to shared project: wait until page selects asset service before handoff (with
+ *          asset base URL and render ticket signed by this page); no duplicate handoff on reconnecting
+ *          to same project
+ *   RNH-05 Cannot select asset service: wait at most ASSET_WAIT_MS then hand off without base URL
+ *          as usual; leaving while waiting revokes as usual
+ *   RNH-02 Project document id arrives late, asset base URL selected: hand off again for same
+ *          project, no new ticket signed
+ *   RNH-03 Ticket round-trip: answer only for the project connected to this page; return error if
+ *          signing fails
+ *   RNH-04 Leave: revoke only for the same project; ignore subsequent ticket requests after revocation
  */
 import "../../testing/registerTs.mjs";
 import test from "node:test";
@@ -52,7 +58,7 @@ test("RNH-02 The document id arrives late and the asset base URL is picked: hand
   assert.deepEqual(posts.at(-1).body, { url: B.url, projectId: "P1", contentId: "doc-2", assetBase: "https://other.example/api/asset" });
   const n = posts.length;
   H.noteRenderNodeAssetBase("https://other.example/api/asset");
-  H.noteRenderNodeAssetBase(null); // 本机当主机:不交(预渲染进程推本机的)
+  H.noteRenderNodeAssetBase(null); // This machine as host: do not hand off (prerender process pushes local)
   await flush();
   assert.equal(posts.length, n);
   assert.equal(signed, before, "No additional ticket was signed");
@@ -84,9 +90,9 @@ test("RNH-04 Leaving: only withdraw the handoff for the same project", async () 
   H.unbindRenderNode("P1");
   await flush();
   assert.equal(posts.length, m, "After withdrawing, no more ticket answers and no repeated withdrawal");
-  // 再接别的项目:重新签票据交接
+  // Connect to another project: sign tickets again for handoff
   H.bindRenderNode({ url: "ws://192.168.1.5:5190/docservice", projectId: "P2", contentId: "doc-9" }, hooks);
-  H.noteRenderNodeAssetBase(null); // 局域网主机没登记素材服务:照交,不带基址(预渲染进程按登记或本机挑)
+  H.noteRenderNodeAssetBase(null); // LAN host has not registered asset service: hand off as usual without base URL (prerender process selects from registry or local)
   await flush();
   assert.equal(posts.at(-1).path, "/api/render-node/bind");
   assert.equal("assetBase" in posts.at(-1).body, false);
@@ -106,7 +112,7 @@ test("RNH-05 No asset service can be picked: hand off anyway once the wait is up
   await flush();
   assert.equal(posts.length, n + 1);
   assert.deepEqual(Object.keys(posts.at(-1).body).sort(), ["contentId", "projectId", "ticket", "url"]);
-  // 在等的时候离开
+  // Leave while waiting
   H.bindRenderNode({ url: B.url, projectId: "P4", contentId: "doc-4" }, hooks);
   const t4 = timers.at(-1);
   H.unbindRenderNode("P4");

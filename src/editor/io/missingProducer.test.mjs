@@ -1,10 +1,13 @@
 /**
- * 谁把一份素材认定为「确认缺失」(`mediaUpload.ts` 打开本机项目后的后台检查),以及认定之后:
- * 弹窗列项的通知、保存重开后记录还对得上、素材找回来以后记录清掉。
- * 对应 `docs/plan/account-binding-task.md`「逐项验收」的「缺失视觉/音频素材」一行里不需要页面的部分;
- * 素材全在 / 部分缺 / 全缺三格在最后一条。
+ * Who identifies an asset as "confirmed missing" (background check after opening local project in
+ * `mediaUpload.ts`), and after identification: dialog notification listing items, records still
+ * matching after save and reopen, and records cleared once assets are recovered.
+ * Corresponds to the part not requiring pages in the "Missing visual/audio assets" row of
+ * `docs/plan/account-binding-task.md` "Item-by-item acceptance checks"; the three cells for all
+ * assets present / partially missing / all missing are in the last test.
  *
- * `fetch` 换成假的编辑器进程:`/api/media/local`(内容库里有哪些哈希)、`/api/media/adopt`(按原路径找)、读接口。
+ * Replace `fetch` with mock editor process: `/api/media/local` (hashes existing in content store),
+ * `/api/media/adopt` (find by original path), read endpoints.
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test, { beforeEach, afterEach } from "node:test";
@@ -20,7 +23,7 @@ const H = (c) => c.repeat(64);
 const get = (id) => getState().project.media.find((m) => m.id === id);
 const fileUrl = (p) => `/api/media/file?path=${encodeURIComponent(p)}`;
 
-/** 假编辑器进程。`library`:内容库里有的哈希;`files`:原路径 → 那里的文件现在的哈希;`down`:整个进程不应答 */
+/** Mock editor process. `library`: hashes in content store; `files`: original path → current hash of file there; `down`: entire process does not respond */
 function editor({ library = [], files = {}, down = false, localStatus = 200, adoptFail = null, fileStatus = 404 } = {}) {
   const calls = [];
   const lib = new Set(library);
@@ -37,7 +40,7 @@ function editor({ library = [], files = {}, down = false, localStatus = 200, ado
       const hash = files[p];
       if (!hash && adoptFail) return new Response("failed", { status: adoptFail });
       if (!hash) return new Response("Media path is outside PromptCut media folders", { status: 403, headers: { "X-PC-Media-Verdict": "outside" } });
-      lib.add(hash); // 就地挂进内容库
+      lib.add(hash); // Mount into content store in place
       return Response.json({ ok: true, hash, ext: p.split(".").pop(), name: p.split(/[/\\]/).pop(), path: p, url: `/@media/${hash}`, bytes: 10 });
     }
     if (u.startsWith("/api/media/file?")) return new Response("not found", { status: fileStatus });
@@ -51,7 +54,7 @@ let realFetch;
 beforeEach(() => { realFetch = globalThis.fetch; resetTierBackfillForTest(); takeMissingMaterials(); });
 afterEach(() => { globalThis.fetch = realFetch; resetTierBackfillForTest(); });
 
-/** 存盘再打开:过一遍 JSON,再过打开文件时还原地址的那一步(两种路径写法都试) */
+/** Save and reopen: pass through JSON once, then through restoring address on open (test both path styles) */
 const reopen = (external) => restoreMediaUrls(JSON.parse(JSON.stringify(getState().project.media)), { externalPathUrl: external }).media;
 
 test("Order of media recovery: already in the content store → the originally recorded local path → declared missing only if neither exists", async () => {
@@ -106,7 +109,7 @@ test("After saving and reopening, the record still matches (the placeholder is s
   actions.newProject("Save and reopen");
   const hashed = actions.addMedia({ kind: "video", name: "Scene: Interview (1).mp4", url: `/@media/${H("a")}`, hash: H("a"), path: "C:/A/media/x.mp4" });
   actions.addMedia({ kind: "audio", name: "narration.wav", url: fileUrl("C:/A/media/narration.wav"), path: "C:/A/media/narration.wav" });
-  const bare = actions.addMedia({ kind: "image", name: "(missing) 封面.png", url: "" }); // 打开老文件时已被清空地址的那种
+  const bare = actions.addMedia({ kind: "image", name: "(missing) 封面.png", url: "" }); // Cases where address was already cleared when opening an old file
   actions.addMedia({ kind: "audio", name: "Scene: Interview (1).mp4", url: `/@media/${H("a")}`, hash: H("a"), soundOf: hashed.id });
   editor({});
   await ingestUnhashedMedia({ background: true, markMissing: true }); await checkHashedMedia();
@@ -118,7 +121,7 @@ test("After saving and reopening, the record still matches (the placeholder is s
     assert.deepEqual(media.map((m) => m.url), getState().project.media.map((m) => m.url), "The URL is unchanged after reopening");
     assert.equal(confirmedMissingAudio(media[3], { media }), true, "A sound derived from a missing video is missing along with it");
   }
-  // 再检查一轮(重开之后的后台检查):不重复写、不重复弹
+  // Another check round (background check after reopen): do not rewrite or pop up repeatedly
   const before = getState().project.media;
   await ingestUnhashedMedia({ markMissing: true }); await checkHashedMedia();
   assert.equal(getState().project.media, before, "Media already declared missing does not get a new object");
@@ -135,8 +138,10 @@ test("A file from an old version that only added the \"(missing) \" marker and c
   assert.deepEqual(takeMissingMaterials(), [{ id: m.id, name: "old.mp4", kind: "video" }]);
 });
 
-// 占位上要显示原名、不带标记。标记是写进素材名字里的,现在由 tr("(missing) ") 写;
-// 而 src/audio/missingMaterialRecord.ts 的 missingMaterialLabel 还只认「(缺失) 」,所以占位上会带着 "(missing) "。
+// The placeholder should display the original name without tags. The tag is written into the asset
+// name, and is now written by tr("(missing) "); whereas missingMaterialLabel in
+// src/audio/missingMaterialRecord.ts still only recognizes "(missing) " (in Chinese), so the
+// placeholder will carry "(missing) ".
 test("The placeholder shows the original name, without the missing marker", async () => {
   actions.newProject("占位原名");
   const hashed = actions.addMedia({ kind: "video", name: "Scene: Interview (1).mp4", url: `/@media/${H("a")}`, hash: H("a"), path: "C:/A/media/x.mp4" });
@@ -146,15 +151,15 @@ test("The placeholder shows the original name, without the missing marker", asyn
   editor({});
   await ingestUnhashedMedia({ background: true, markMissing: true }); await checkHashedMedia();
   const media = reopen(true);
-  assert.deepEqual(media.map(missingMaterialLabel), ["Scene: Interview (1).mp4", "narration.wav", "封面.png", "Scene: Interview (1).mp4"]);
+  assert.deepEqual(media.map(missingMaterialLabel), ["Scene: Interview (1).mp4", "narration.wav", "cover.png", "Scene: Interview (1).mp4"]);
 });
 
 test("Files from old versions that only got the Chinese \"(缺失) \" marker and lost their address: the record is added on open and the marker is not stacked", async () => {
   actions.newProject("旧标记-中文");
-  const m = actions.addMedia({ kind: "video", name: "(缺失) old.mp4", url: "", hash: H("a") });
+  const m = actions.addMedia({ kind: "video", name: "(missing) old.mp4", url: "", hash: H("a") });
   editor({});
   await checkHashedMedia();
-  assert.equal(get(m.id).name, "(缺失) old.mp4");
+  assert.equal(get(m.id).name, "(missing) old.mp4");
 });
 
 test("After media is found again, the record is cleared (the placeholder disappears): it is in the content store now, it was put back at the original path, or an old media without a hash can be fetched", async () => {
@@ -198,7 +203,7 @@ test("All media present / partly missing / all missing", async () => {
   }
 });
 
-/* ---------------- 还带着协作关联的文件不认定;检查中途换了项目不乱写 ---------------- */
+/* ---------------- Files still linked to collaboration are not identified; project switched midway through check does not write errantly ---------------- */
 
 const { startTierBackfill } = await import(srcUrl("editor/io/mediaUpload.ts"));
 const { publishGoneConversion, takeGoneNotices } = await import(srcUrl("editor/sync/recoveryAssociation.ts"));
@@ -218,7 +223,8 @@ test("Still carries a collaboration link but just isn't connected (offline, need
     for (const m of [hashed, old]) { assert.equal(get(m.id).missingMaterial, undefined); assert.equal(get(m.id).name, m.name); }
     assert.deepEqual(takeMissingMaterials(), [], "No dialog");
     assert.equal(ed.calls.some((u) => u.startsWith("/api/media/local?")), false, "Hashed media is not even queried");
-    // 文档服务证明项目已不存在、转成了本地项目:素材表没换,但要重新判一遍
+    // Document service proves project no longer exists and was converted to a local project:
+    // asset table unchanged, but must re-evaluate
     associated = false;
     publishGoneConversion({ projectId: getState().project.id, name: "With link", from: { v: 1, roomId: `sp_${"a".repeat(26)}`, service: "https://x.example", authorityId: "doc", tombstoneRevision: 1, kid: "k", convertedAt: "t" } });
     takeGoneNotices();
@@ -232,7 +238,7 @@ test("The project was switched midway through the check (the same file entered a
   const media = { id: "m-same", kind: "video", name: "v.mp4", url: `/@media/${H("a")}`, hash: H("a"), path: "D:/pc/media/v.mp4" };
   const oldMedia = { id: "m-old", kind: "audio", name: "o.mp3", url: fileUrl("C:/gone/o.mp3"), path: "C:/gone/o.mp3" };
   actions.addMedia(media); actions.addMedia(oldMedia);
-  // 请求挂着不回,趁这时候换项目
+  // Request hangs without responding; switch projects in the meantime
   let release; const gate = new Promise((r) => { release = r; });
   const real = editor({});
   const inner = globalThis.fetch;
@@ -250,7 +256,7 @@ test("The project was switched midway through the check (the same file entered a
   assert.deepEqual(takeMissingMaterials(), []);
 });
 
-/* ---------------- 只有明确的「没有」才认定;没读成(没权限、5xx、限速)不认定 ---------------- */
+/* ---------------- Identified only on explicit "not found"; not identified on read failure (no permission, 5xx, rate limit) ---------------- */
 
 const { mediaVerdictOf } = await import(srcUrl("editor/io/mediaUpload.ts"));
 
@@ -276,7 +282,7 @@ test("Failing to read does not declare missing: original path 403 (not the \"not
     for (const m of [hashed, old]) { assert.equal(get(m.id).missingMaterial, undefined, `${m.name} ${status}`); assert.equal(get(m.id).name, m.name); }
     assert.deepEqual(takeMissingMaterials(), []);
   }
-  // 对照:同样的两条,回答是明确的「没有」时才认定
+  // Comparison: for the same two entries, identified only when response is an explicit "not found"
   resetTierBackfillForTest();
   actions.newProject("Definitely absent");
   const hashed = actions.addMedia({ kind: "video", name: "h.mp4", url: `/@media/${H("a")}`, hash: H("a"), path: "D:/pc/media/h.mp4" });
@@ -285,7 +291,8 @@ test("Failing to read does not declare missing: original path 403 (not the \"not
   assert.deepEqual((await checkHashedMedia()).missing, [hashed.id]);
   assert.equal((await ingestUnhashedMedia({ markMissing: true })).failed[0].unreachable, true);
   assert.equal(confirmedMissing(get(hashed.id)) && confirmedMissing(get(old.id)), true);
-  // 原路径没读成、读接口明确没有:仍然说不清(文件可能就在那儿)
+  // Original path failed to read, read endpoint explicitly has none:
+  // still inconclusive (file might be right there)
   resetTierBackfillForTest();
   actions.newProject("Half unclear");
   const mixed = actions.addMedia({ kind: "audio", name: "m.mp3", url: fileUrl("D:/pc/media/m.mp3"), path: "D:/pc/media/m.mp3" });
@@ -305,10 +312,11 @@ test("Renaming missing media: the name in the record changes too, the placeholde
   assert.equal(get(m.id).missingMaterial.original.name, "new-name.mp4");
   assert.equal(missingMaterialLabel(get(m.id)), "new-name.mp4");
   assert.equal(confirmedMissing(reopen(true)[0]), true);
-  // 记录与素材对不上的(别处直接改了素材而没带上记录):不算确认缺失,各处一致地照普通素材办
+  // Record does not match asset (asset modified directly elsewhere without record): not counted as
+  // confirmed missing, handled consistently everywhere as normal asset
   const stale = { ...get(m.id), name: "renamed-elsewhere.mp4" };
   assert.equal(confirmedMissing(stale), false);
-  // 再检查一轮会重新认定并把记录写对
+  // Another check round will re-identify and correct the record
   resetTierBackfillForTest(); editor({});
   await checkHashedMedia();
   assert.equal(confirmedMissing(get(m.id)), true);

@@ -46,8 +46,8 @@ export const collectTools = [
       type: "object",
       properties: {
         url: { type: "string", description: "Video page link, BV id or short link" },
-        // 不写 enum:Gemini 的 OpenAI 兼容接口要求枚举值必须是字符串,数字枚举整个请求 400,
-        // agent 一个工具都调不了(诊断报告里抓到的)。取值范围写进说明,服务端照样有白名单兜底。
+        // Do not use enum: Gemini's OpenAI-compatible API requires string enum values; numeric enums 400 the whole request,
+        // agent cannot call any tools (caught in diagnostic reports). Allowed values in description, server whitelist fallback.
         quality: { type: "number", description: "Maximum resolution (pixel height), default 1080; only 2160 / 1440 / 1080 / 720 / 480 / 360 are accepted, other values are treated as 1080" },
         site: { type: "string", enum: ["auto", "bilibili", "generic"] },
         audioOnly: { type: "boolean", description: "Audio only (m4a)" },

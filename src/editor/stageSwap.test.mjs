@@ -1,14 +1,20 @@
 /**
- * K5 第二路(整场景后台补跑后互换角色,`stageSwap.ts`)的单测。跑:
+ * Unit tests for K5 path 2 (swap roles after whole-scene background catch-up run, `stageSwap.ts`).
+ * Run:
  *   node --experimental-test-module-mocks --test src/editor/stageSwap.test.mjs
  *
- * store、舞台桥、后台任务队列、分派表、身份表、快照投递、K6 父页一半都换成假的;
- * 判据用真的 `pipelinePlan.mjs` / `catchUpEstimate.mjs` / `frameWindow.mjs`。钉的是:
- *   - 谁要走第二路:判重 + `vtOk = false`、判轻 + (b) 档 + `vtOk = false`;没有成本记录的不走;
- *   - 补跑估时按播放位置、封顶整段,没有数就 1 秒;
- *   - 暂停态互换的顺序一步不能省(E0 / K5 (1)～(5));补跑期间用户动了就不换;
- *     运行中来的新请求只记最后一个,做完再补(R5-15);
- *   - 播放态互换:目标拍取整到拍格、武装停、换完 `play(T)`;两次追不上就降级且不清额外抑制(R5-11)。
+ * Store, stage bridge, background task queue, dispatch table, identity table, snapshot delivery,
+ * and half of K6 parent page are replaced with fakes; criteria use real `pipelinePlan.mjs` /
+ * `catchUpEstimate.mjs` / `frameWindow.mjs`. Pin down:
+ *   - Who takes path 2: classify as heavy + `vtOk = false`, classify as light + tier (b) +
+ *     `vtOk = false`; those without cost records do not take it;
+ *   - Catch-up run time estimate is based on playback position, capped at whole clip, 1 second if
+ *     no data;
+ *   - Order of pause-state swap cannot skip a single step (E0 / K5 (1) to (5)); do not swap if the
+ *     user moves during catch-up run; new requests arriving while running only record the last one,
+ *     caught up after finishing (R5-15);
+ *   - Playing-state swap: target tick rounded to tick grid, armed stop, `play(T)` after swap;
+ *     downgrade without clearing extra suppression if failing to catch up twice (R5-11).
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import { test, mock, beforeEach } from "node:test";
@@ -18,7 +24,7 @@ import { clipWeight } from "../render/pipelinePlan.mjs";
 
 globalThis.window = globalThis;
 
-/* ---------------------------------------------------------------- 假环境 */
+/* ---------------------------------------------------------------- Mock environment */
 
 const log = [];
 const state = { project: null, t: 0, playing: false };
@@ -38,13 +44,15 @@ mock.module(srcUrl("editor/stageBridge.ts"), {
     backStage: () => back,
     onStageEvent: (l) => { listeners.add(l); return () => listeners.delete(l); },
     pushProject: async (role, project, opts) => { log.push(["pushProject", role, project === state.project, opts]); },
-    // 根因 A:互换之后对新 front 补推一次增量
+    // Root cause A: push an extra delta to the new front after swap
     syncProject: async (role, project) => { log.push(["syncProject", role, project === state.project]); },
   },
 });
 /*
- * 后台任务队列:和真的 `stageJobs` 一样**单飞、先来后到**(同一档 `catchup`)。以前这里并发地直接跑,
- * 测不出「暂停态第二路排在播放态补跑后面、要等它让出队列」这件事。
+ * Background task queue: like the real `stageJobs`, **single-flight, FIFO** (within the same
+ * `catchup` tier). Previously this ran directly concurrently, which could not test the case where
+ * "pause-state path 2 queues behind playing-state catch-up run and must wait for it to yield the
+ * queue".
  */
 let jobChain = Promise.resolve();
 mock.module(srcUrl("editor/stageJobs.ts"), {
@@ -74,7 +82,7 @@ mock.module(srcUrl("editor/snapshotFeed.ts"), {
     markAllSettled: (role) => log.push(["markAllSettled", role]),
     setExtraSuppressed: (ids) => log.push(["setExtraSuppressed", [...ids]]),
     suppressedAt: () => ["h"],
-    // R8:播放态互换时也发流平面(和抑制集合同一组)
+    // R8: also send stream plane during playing-state swap (same group as suppression set)
     streamPlanesAt: () => [],
   },
 });
@@ -87,8 +95,8 @@ const {
 } = swap;
 
 /**
- * 假舞台客户端。每个方法都往 `log` 里记 `[名字, 方法, 参数…]`。
- * `render` / `setMediaT` / `pause` 的行为可以按测试换。
+ * Fake stage client. Every method records `[name, method, args…]` into `log`.
+ * The behavior of `render` / `setMediaT` / `pause` can be swapped per test.
  */
 function fakeStage(name) {
   const st = { name };
@@ -112,13 +120,13 @@ const FPS = 30;
 const card = (id, start, end) => ({ id, cardId: "c", start, end, params: {} });
 const project = (clips) => ({ version: 1, name: "p", width: 1920, height: 1080, fps: FPS, duration: 20, media: [], tracks: [{ id: "t", name: "t", clips }] });
 const segments = (heavyIds) => ({ segments: [{ fromSec: 0, toSec: 1000, heavy: new Set(heavyIds) }] });
-/** 给片段挂一条成本记录(身份键就用 `k-<clipId>`) */
+/** Attach a cost record to the clip (identity key uses `k-<clipId>`) */
 const withRecord = (clipId, record) => {
   identityKeys[clipId] = `k-${clipId}`;
   costs.push({ identityKey: `k-${clipId}`, device: "d", ...record });
 };
-const REC_B = { vtOk: false, stepMs: 2, stepMaxMs: 3, catchUpMs: 200 };   // 30 fps 下是 (b) 档
-const REC_A = { vtOk: false, stepMs: 2, catchUpMs: 10 };                   // (a) 档:一拍内补齐
+const REC_B = { vtOk: false, stepMs: 2, stepMaxMs: 3, catchUpMs: 200 };   // Tier (b) at 30 fps
+const REC_A = { vtOk: false, stepMs: 2, catchUpMs: 10 };                   // Tier (a): caught up within one tick
 
 let host;
 beforeEach(() => {
@@ -147,7 +155,7 @@ beforeEach(() => {
 
 const methodsOf = (name) => log.filter((e) => e[0] === name).map((e) => e[1]);
 
-/* ---------------------------------------------------------------- 判据 */
+/* ---------------------------------------------------------------- Criteria */
 
 test("Precondition: at 30 fps the two records are tier (b) and tier (a) respectively", () => {
   assert.equal(clipWeight(REC_B, undefined, FPS, undefined).tier, "catchup-b");
@@ -192,31 +200,35 @@ test("staleOnBackCatchUp: the two kinds are merged, deduplicated and sorted", ()
 test("guessCatchUpMs: estimate from the playback position, capped at the whole segment; 1 second when there is no data", () => {
   const p = project([card("b", 0, 10)]);
   withRecord("b", REC_B);
-  // 播放头在第 1 秒 = 第 30 帧,每帧最差 3 ms → 90 ms(比整段 200 小)
+  // Playhead at second 1 = frame 30, worst case 3 ms per frame → 90 ms (smaller than whole clip 200)
   assert.equal(guessCatchUpMs(p, ["b"], 1), 90);
-  // 第 5 秒:150 帧 × 3 = 450,封顶在整段 200
+  // Second 5: 150 frames × 3 = 450, capped at whole clip 200
   assert.equal(guessCatchUpMs(p, ["b"], 5), 200);
-  // 场上没有一张卡有数:兜底 1 秒(以前拿一个不在场的 id 测;现在同场的卡也算进来,那样会把 b 的 90 加上)
+  // No card on stage has data: fallback 1 second (previously tested with an id not on stage; now cards
+  // on the same stage are also counted, which would add b's 90)
   assert.equal(guessCatchUpMs(project([card("x", 0, 10)]), ["x"], 1), DEFAULT_CATCHUP_GUESS_MS);
 });
 
-/* ---------------------------------------------------------------- 整场景估时(C10-A4 后续) */
+/* ---------------------------------------------------------------- Whole-scene time estimation (C10-A4 follow-up) */
 
-/** 判重的慢卡:单帧 40 ms(c10-browser-probe 的 probe-slow-stepped burnMs 40) */
+/** Slow card classified as heavy: 40 ms per frame (c10-browser-probe's probe-slow-stepped burnMs 40) */
 const REC_SLOW = { vtOk: false, stepMs: 40, stepMaxMs: 40 };
 
 test("guessCatchUpMs: the background runs the whole scene as a catch-up run, so the frame-push cost of the heavy-classified cards in the same scene is counted together (C10-A4 follow-up)", () => {
-  // 轻卡 b 在第 1 秒 = 30 帧 × 3 ms = 90;同场判重的 h 从 0 推到 1 秒 = 30 帧 × 40 ms = 1200
+  // Light card b at second 1 = 30 frames × 3 ms = 90; h classified as heavy on the same stage pushed
+  // from 0 to 1 second = 30 frames × 40 ms = 1200
   const p = project([card("b", 0, 10), card("h", 0, 10)]);
   plan = segments(["h"]);
   withRecord("b", REC_B);
   withRecord("h", REC_SLOW);
   assert.equal(guessCatchUpMs(p, ["b"], 1), 90 + 1200);
-  // 起推点是此刻活跃的卡里最早的入点:早已出场的卡、起推点之前的那段不算
+  // Push start point is earliest in point among currently active cards: cards already exited and
+  // portion before push start point do not count
   const q = project([card("b", 0.5, 10), card("gone", 0, 0.4), card("late", 0.8, 10)]);
   withRecord("gone", REC_SLOW);
   withRecord("late", REC_SLOW);
-  // b 从 0.5 推到 1 = 15 帧 × 3 = 45;late 从 0.8 推到 1 = 6 帧 × 40 = 240;gone 在起推点 0.5 之前就出场了
+  // b pushed from 0.5 to 1 = 15 frames × 3 = 45; late pushed from 0.8 to 1 = 6 frames × 40 = 240; gone
+  // already exited before push start point 0.5
   assert.equal(Math.round(guessCatchUpMs(q, ["b"], 1)), 45 + 240);
 });
 
@@ -224,7 +236,7 @@ test("Playing state: when the cards in the same scene add up to more than one ti
   Object.assign(state, { project: project([card("b", 0, 10), card("h", 0, 10)]), t: 1, playing: true });
   plan = segments(["h"]);
   withRecord("b", REC_B);
-  withRecord("h", REC_SLOW);   // (3 + 40) ms × 30 fps = 1290 ms / 秒:推 1 秒时间线要 1.29 秒
+  withRecord("h", REC_SLOW);   // (3 + 40) ms × 30 fps = 1290 ms / s: pushing 1 s of timeline takes 1.29 s
   assert.equal(await runPlayingSwap(["b"]), false);
   assert.deepEqual(log, [], "No RPC, no background job, no extra suppression");
   assert.equal(swapInFlight(), false);
@@ -232,7 +244,8 @@ test("Playing state: when the cards in the same scene add up to more than one ti
 });
 
 test("Playing state: if the computed target tick falls after the target card exits, it is not started either", { timeout: 5000 }, async () => {
-  // rate = (3 + 20) × 30 = 690 ms/秒;积压 90 + 30 × 20 = 690 → 领先 690 / 0.31 ≈ 2226 ms → 目标 3.23 秒,b 在 1.2 秒就出场了
+  // rate = (3 + 20) × 30 = 690 ms/s; backlog 90 + 30 × 20 = 690 → lead 690 / 0.31 ≈ 2226 ms →
+  // target 3.23 s, b already exits at 1.2 s
   Object.assign(state, { project: project([card("b", 0, 1.2), card("h", 0, 10)]), t: 1, playing: true });
   plan = segments(["h"]);
   withRecord("b", REC_B);
@@ -242,17 +255,19 @@ test("Playing state: if the computed target tick falls after the target card exi
 });
 
 test("Playing state: the target tick's lead includes the stretch for \"being chased by the visible stage while catching up\" (backlog ÷ (1 − rate))", { timeout: 5000 }, async () => {
-  // 同场一张 10 ms/帧的轻卡:速率 (3 + 10) × 30 = 390 ms/秒,积压 90 + 300 = 390 → 领先 390 / 0.61 ≈ 639 ms
+  // Light card of 10 ms/frame on same stage: rate (3 + 10) × 30 = 390 ms/s, backlog 90 + 300 = 390 →
+  // lead 390 / 0.61 ≈ 639 ms
   Object.assign(state, { project: project([card("b", 0, 10), card("m", 0, 10)]), t: 1, playing: true });
   plan = segments([]);
   withRecord("b", REC_B);
   withRecord("m", { vtOk: true, stepMs: 10, stepMaxMs: 10 });
   assert.equal(await runPlayingSwap(["b"]), true);
-  // T = ceil((1 + 0.639) × 30) / 30 = 50 / 30(以前只按 b 自己的 90 ms 估:33 / 30,可见舞台先到、白补一趟)
+  // T = ceil((1 + 0.639) × 30) / 30 = 50 / 30 (previously only estimated by b's own 90 ms: 33 / 30,
+  // visible stage arrived first, wasted a catch-up pass)
   assert.deepEqual(log.find((e) => e[1] === "render").slice(2), [50 / 30, { jump: true, maxCatchUp: Infinity }]);
 });
 
-/* ---------------------------------------------------------------- 暂停态互换 */
+/* ---------------------------------------------------------------- Pause-state swap */
 
 test("Paused-state swap: the order of (1)~(5) has no step missing", async () => {
   plan = segments(["h"]);
@@ -334,7 +349,8 @@ test("Paused state: requests that arrive while running keep only the last one, a
   assert.equal(swapInFlight(), true);
   assert.equal(await runSettleSwap(2), false, "Running: note it first");
   assert.equal(await runSettleSwap(3), false);
-  // 用户最后停在第 3 秒:第 1 秒那次补完时 t 已经不对,不换;接着按 3 再做
+  // User finally stopped at second 3: when second 1 catch-up finishes, t is already wrong, do not swap;
+  // then redo for 3
   state.t = 3;
   open();
   assert.equal(await first, true);
@@ -343,14 +359,14 @@ test("Paused state: requests that arrive while running keep only the last one, a
   assert.equal(log.filter((e) => e[0] === "swapRoles").length, 1);
 });
 
-/* ---------------------------------------------------------------- 播放态互换 */
+/* ---------------------------------------------------------------- Playing-state swap */
 
 test("Playing-state swap: suppress extra first, round the target tick to the tick grid, swap once the armed stop is reached, then play(T) after the swap", async () => {
   Object.assign(state, { project: project([card("b", 0, 10)]), t: 1, playing: true });
   plan = segments([]);
   withRecord("b", REC_B);
   assert.equal(await runPlayingSwap(["b"]), true);
-  // 预估 90 ms:T = ceil((1 + 0.09) × 30) / 30 = 33 / 30
+  // Estimated 90 ms: T = ceil((1 + 0.09) × 30) / 30 = 33 / 30
   const T = 33 / 30;
   assert.deepEqual(log[0], ["setExtraSuppressed", ["b"]]);
   assert.deepEqual(log.find((e) => e[1] === "render").slice(2), [T, { jump: true, maxCatchUp: Infinity }]);
@@ -358,7 +374,9 @@ test("Playing-state swap: suppress extra first, round the target tick to the tic
   const i = (pred) => log.findIndex(pred);
   assert.ok(i((e) => e[0] === "A" && e[1] === "pause") > i((e) => e[1] === "setMediaT"), "The armed stop happens only after back is ready");
   assert.ok(i((e) => e[0] === "setExtraSuppressed" && e[1].length === 0) < i((e) => e[0] === "swapRoles"), "Clear the extra suppression before the swap");
-  // 先发流平面、后发抑制:舞台收到抑制时已经知道有流要来,流画出第一帧之前不藏补跑出来的精确画面(反过来发,这一层会空约 0.1 秒)
+  // Send stream plane first, then suppression: when stage receives suppression, it already knows a
+  // stream is coming, and does not hide precise picture from catch-up run before stream draws first
+  // frame (if sent in reverse, this layer would be blank for about 0.1 s)
   assert.deepEqual(methodsOf("B").slice(-8), ["setRole", "setLocalHashes", "setStreamPlanes", "setSuppressed", "setScrubbing", "setProxy", "play", "setPlaying"]);
   assert.deepEqual(log.find((e) => e[0] === "B" && e[1] === "play").slice(2), [T]);
   assert.deepEqual(log.find((e) => e[0] === "B" && e[1] === "setPlaying").slice(2), [true]);
@@ -374,7 +392,7 @@ test("Playing state: if the visible stage reaches T first, double and re-take T'
   assert.equal(await runPlayingSwap(["b"]), true);
   const renders = log.filter((e) => e[1] === "render");
   assert.equal(renders.length, 2);
-  // 翻倍到 180 ms:T' = ceil(1.18 × 30) / 30 = 36 / 30
+  // Doubled to 180 ms: T' = ceil(1.18 × 30) / 30 = 36 / 30
   assert.deepEqual(renders[1].slice(2), [36 / 30, { maxCatchUp: Infinity }]);
   assert.deepEqual(log.filter((e) => e[1] === "pause").map((e) => e[2].atSec), [33 / 30, 36 / 30]);
 });
@@ -416,8 +434,9 @@ test("Playing state: only one run at a time; an empty list does not run", async 
 });
 
 /**
- * 播放态互换的整场景补跑卡在后台舞台上(第一次 `render` 不回包,直到 `open()`),之后的 `render` 立刻回。
- * 模拟 C10-A4 实测:补到目标拍要推十几秒。
+ * Whole-scene catch-up run for playing-state swap is stuck on background stage (first `render` does
+ * not respond until `open()`), and subsequent `render` calls respond immediately.
+ * Simulates C10-A4 actual test: catching up to target tick takes over ten seconds to push.
  */
 function gateFirstRender() {
   let open;
@@ -434,8 +453,10 @@ function gateFirstRender() {
 
 test("On stopping, the playing-state catch-up run yields immediately: the second paused-state path starts right away without waiting for it to finish pushing (C10-A4 follow-up)", { timeout: 5000 }, async () => {
   /*
-   * 以前(C10-A4 的修法):停下那一次撞上 `running`,只记进 `pendingSettleT`,等播放态那一次整场景补跑推完、
-   * 收手时才交给暂停态那一路 —— 实测白等约 1.5 秒(重的项目十几秒),停下到精确活渲 7～8 秒。
+   * Previously (C10-A4 fix): when stopping hits `running`, it was only recorded into `pendingSettleT`,
+   * waiting until playing-state whole-scene catch-up run finished pushing and finished before handing
+   * over to pause-state path: actual tests showed waiting in vain for ~1.5 s (over ten seconds for
+   * heavy projects), taking 7 to 8 s from stopping to precise live render.
    */
   Object.assign(state, { project: project([card("h", 0, 10), card("b", 0, 10)]), t: 1, playing: true });
   plan = segments(["h"]);
@@ -445,7 +466,7 @@ test("On stopping, the playing-state catch-up run yields immediately: the second
   const playingSwap = runPlayingSwap(["b"]);
   await new Promise((r) => setImmediate(r));
   assert.equal(swapInFlight(), true);
-  // 用户暂停在 0.5 秒:后台舞台还在推播放态那一次(gate 没开)
+  // User pauses at 0.5 s: background stage is still pushing the playing-state run (gate not open)
   Object.assign(state, { t: 0.5, playing: false });
   const settled = await Promise.race([runSettleSwap(0.5), new Promise((r) => setTimeout(() => r("timeout"), 1000))]);
   assert.equal(settled, true, "Does not wait for the playing-state run to finish pushing; catches up to 0.5 seconds on the spot and swaps");
@@ -456,7 +477,7 @@ test("On stopping, the playing-state catch-up run yields immediately: the second
   assert.ok(log.some((e) => e[0] === "markAllSettled" && e[1] === "front"));
   assert.deepEqual(log.filter((e) => e[0] === "setExtraSuppressed").map((e) => e[1]), [["b"], []], "The playing-state extra suppression is still cleared");
   assert.equal(swapInFlight(), false);
-  // 让路之后旧的那次 render 才回包:不再引出任何动作
+  // Old render only responds after yielding: triggers no further action
   const before = log.length;
   open();
   for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
@@ -465,7 +486,9 @@ test("On stopping, the playing-state catch-up run yields immediately: the second
 });
 
 test("On stopping, this tick needs no catch-up run: the playing-state run still yields, and the catch-up run on the background stage that nobody is waiting for is cut off", { timeout: 5000 }, async () => {
-  // 播放到头(10 秒):场上的卡都出场了,暂停态第二路无事可做 —— 但后台还在推播放态那一次,不能让它白推十几秒
+  // Playback reaches the end (10 s): cards on stage have all exited, pause-state path 2 has nothing
+  // to do: but background is still pushing the playing-state run, cannot let it push in vain for over
+  // ten seconds
   Object.assign(state, { project: project([card("h", 0, 10), card("b", 0, 10)]), t: 1, playing: true });
   plan = segments(["h"]);
   withRecord("h", { vtOk: false });
@@ -493,7 +516,7 @@ test("Stopping only after the swap step has been entered: do not preempt (the ne
   plan = segments(["h"]);
   withRecord("h", { vtOk: false });
   withRecord("b", REC_B);
-  // 互换穿戴时卡在新 front(B)的 setRole('front') 上
+  // Swap and dress is stuck on setRole('front') of new front (B)
   let open;
   const gate = new Promise((r) => { open = r; });
   const setRole = back.setRole;
@@ -529,7 +552,7 @@ test("A settle that arrives while the playing-state swap is running: if playback
   assert.equal(swapInFlight(), false);
 });
 
-/* ---------------------------------------------------------------- 只有一个舞台:不经后台舞台追活渲(原 c10a 第 8 节「不追活渲」) */
+/* ---------------------------------------------------------------- Only one stage: catch up live render without background stage (original c10a section 8 "no live render catch-up") */
 
 test("Only one stage: neither the paused-state nor the playing-state catch-up run and swap takes a single step (no background job queued, no suppression, no swap)", async () => {
   host.singleStage = () => true;
@@ -546,9 +569,12 @@ test("Only one stage: neither the paused-state nor the playing-state catch-up ru
   assert.equal(swap.swapBlockedBySingleStage(), false, "Dual stage unchanged");
 });
 
-/* ---------------------------------------------------------------- 自然进场与从卡中间开始播放(swap-tuning 任务 C) */
+/* ---------------------------------------------------------------- Natural entrance and starting playback from middle of card (swap-tuning task C) */
 
-/** 起播在 `fromSec`,逐拍报到 `toSec`(含),每拍问一次这一拍要发起互换的卡,回每拍的结果里非空的那些 */
+/**
+ * Starts playback at `fromSec`, checks in tick-by-tick up to `toSec` (inclusive), asks once per
+ * tick for cards initiating swap on this tick, returns non-empty tick results
+ */
 function playAndAsk(p, fromSec, toSec) {
   const { notePlayRunStart, notePlayFrame, playingSwapTargets } = swap;
   notePlayRunStart(fromSec);
@@ -579,13 +605,13 @@ test("ST-C-12 seek into the middle of a card then play / resume mid-card after a
   withRecord("b", REC_B);
   const seek = playAndAsk(p, 3, 3.1);
   assert.deepEqual(seek[0], [91, ["b"]]);
-  // 先连续播过挂载帧,暂停在 4 秒,再继续播
+  // First play continuously past mount frame, pause at 4 s, then continue playing
   assert.deepEqual(playAndAsk(p, 0, 4), []);
   assert.deepEqual(playAndAsk(p, 4, 4.1)[0], [121, ["b"]]);
 });
 
 test("ST-C-13 start playing exactly at the mount frame: handed to the timing estimate as before; start playing one frame before the mount frame: natural entrance", () => {
-  const p = project([card("b", 2, 8)]);   // 挂载帧 59
+  const p = project([card("b", 2, 8)]);   // Mount frame 59
   Object.assign(state, { project: p, playing: true });
   plan = segments([]);
   withRecord("b", REC_B);
@@ -629,7 +655,7 @@ test("ST-C-16 the new stage swapped in during a playing-state swap keeps reporti
   assert.equal(await runPlayingSwap(["b"]), true);
   const T = 33 / 30;
   assert.equal(swap.stageSwapPlayingDebug().playRun.lastFrame, Math.round(T * FPS));
-  // 新舞台从 T 的下一拍接着报,走到 late 的挂载帧(89)之后
+  // New stage resumes checking in from next tick of T, reaching after late's mount frame (89)
   for (let f = Math.round(T * FPS) + 1; f <= 95; f++) assert.equal(notePlayFrame(f / FPS), "continuous");
   assert.deepEqual(playingSwapTargets(p, 95 / FPS), ["b"], "b still starts mid-card (deduplication is done by the host's swapTried)");
 });

@@ -1,20 +1,30 @@
 /**
- * 云端 Agent 在服务端实现的工具(任务书 `docs/plan/cloud-agent-task.md` J;契约 `docs/plan/cloud-agent-contract.md` 第 9 节)。
+ * Tools implemented on the server for Cloud Agent (task brief `docs/plan/cloud-agent-task.md` J;
+ * contract `docs/plan/cloud-agent-contract.md` section 9).
  *
- * 桌面版里这些工具由页面执行,背后打编辑器进程的 `/api/*`(入库、建卡、配音……)。云节点上没有页面、也没有编辑器进程,
- * 所以在这里各做一份服务端的实现,规矩是:
+ * In the desktop app, these tools are executed by the page, calling the editor process `/api/*`
+ * under the hood (storing into the library, creating cards, voiceover...). On cloud nodes there is
+ * no page and no editor process, so server-side implementations are provided here, with the following rules:
  *
- *   - **本地文件只进这个对话的工作区**(`workspace.mjs`):附件、下载、合成出来的语音都落在里面,路径由工作区核;
- *   - **按模型给的地址出网只经出网闸**(`egress.mjs`);
- *   - **素材字节经素材服务**:凭这个对话的连接向文档服务要一张素材票据(权限不超过成员本人,只读成员要不到读写的),
- *     按内容哈希分片写进 `media` 命名空间;
- *   - **项目改动经文档服务**:在项目副本上改、算差异、带期望版本提交(`agent-exec.mjs` 的 `mutate`),与路由表里的工具同一条路;
- *   - **卡片源码经文档服务的内容库**(`card-source`):建卡改卡只做静态的翻译、审查与语法检查,**不在本进程里执行卡片代码**;
- *     这张卡在别的成员的浏览器与渲染节点上执行,由那两处的隔离保护(与本机 Agent 在协作项目里建卡同一条路);
- *   - **花钱的外部调用**(配音)用托管方的配置,每次记一行用量。
+ *   - **Local files only go into this chat's workspace** (`workspace.mjs`): attachments, downloads,
+ *     and synthesized voice audio all land inside, with paths validated by the workspace;
+ *   - **Outbound network access via model-provided addresses only goes through the egress gate** (`egress.mjs`);
+ *   - **Media bytes go through the asset service**: request an asset ticket from the document service
+ *     via this chat's connection (permissions not exceeding the member themselves; read-only members
+ *     cannot get read-write tickets), and write chunked by content hash into the `media` namespace;
+ *   - **Project changes go through the document service**: modify on the project replica, compute diff,
+ *     and commit with expected version (`mutate` in `agent-exec.mjs`), taking the same path as tools
+ *     in the routing table;
+ *   - **Card source code goes through the document service content store** (`card-source`):
+ *     creating/editing cards only performs static translation, review, and syntax checks;
+ *     **card code is not executed in this process**; this card executes in other members' browsers
+ *     and render nodes, protected by isolation in those two places (same path as local Agent creating
+ *     cards in collaborative projects);
+ *   - **Paid external calls** (voiceover) use the host's configuration, recording one usage row each time.
  *
- * 外部的等待(下载、上传、合成)都在进程级的锁之外;进锁只做同步的改项目。
- * 本文件不引用 `src/`:前端代码只经 `ssr-host.mjs`(`ctx.host()`)。
+ * External waits (downloads, uploads, synthesis) are all outside the process-level lock; entering
+ * the lock only performs synchronous project modifications.
+ * This file does not import `src/`: frontend code only goes through `ssr-host.mjs` (`ctx.host()`).
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { findAgentExtension } from './extensions.mjs';
@@ -32,19 +42,19 @@ import { loadCardLib } from '../ssr-host.mjs';
 const SERVER_DIR = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 
 export const HOSTED_TOOL_DEFAULTS = Object.freeze({
-  /** 按地址导入素材时单个文件的上限 */
+  /** Single-file limit when importing media by URL */
   maxImportBytes: 512 * 1024 * 1024,
-  /** 下载的时限 */
+  /** Download time limit */
   downloadMs: 120_000,
-  /** 一份卡片源码的上限 */
+  /** Size limit for a single card source code */
   maxCardBytes: 256 * 1024,
-  /** 项目的卡片源码多久重列一次 */
+  /** How often project card source code is re-listed */
   cardListMs: 3_000,
-  /** 附件里的文本内联进提示词的上限 */
+  /** Limit for attachment text inlined into the prompt */
   inlineTextBytes: 64 * 1024,
 });
 
-/** 运行素材没开时给模型的话：不要重试，告诉它素材从哪儿来 */
+/** Message to the model when run assets are not enabled: do not retry, tell it where media comes from */
 export const RUN_ASSETS_OFF_TEXT = 'This cloud version cannot let the Agent add files to the media library (run assets is off); retrying will not help, do not retry.' +
   ' Images, videos and audio the user sent in the chat were already added to the media library when the page sent them; find that item with list_media and use it directly; ' +
   'for other files, tell the user to click "Import media" in the media library on the left to add them.';
@@ -56,7 +66,7 @@ export class HostedToolError extends Error {
   }
 }
 
-/* ---------------------------------------------------------------- 素材的种类与元数据 */
+/* ---------------------------------------------------------------- Media types and metadata */
 
 const EXT_KIND = {
   png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', bmp: 'image', avif: 'image', svg: 'image',
@@ -74,19 +84,26 @@ export const extOf = (name) => (/\.([A-Za-z0-9]{1,5})$/.exec(String(name ?? ''))
 export const kindOfName = (name) => EXT_KIND[extOf(name)] ?? null;
 
 /**
- * 入库时算「一时答不上」的错,只有这些才重试(按错误码列,不按状态码一概而论):
- * 连不上或中途断了(到素材服务、到文档服务)、素材服务或文档服务还在对账。别的 503 重试也没用,白等一轮再失败:
- * 任务已被停(`project-assets-closed`、`run-assets-unconfigured`)、配置或文件本身不对(`project-assets-workspace-unconfigured`、
- * `project-assets-unconfigured`)、素材服务等人处理的状态(`asset-run-recovery-pending`)、工作目录额度。
+ * Errors considered "temporarily unresponsive" when storing into the library; only these are
+ * retried (listed by error code, not generalized by status code):
+ * Unable to connect or connection dropped midway (to asset service, to document service), asset
+ * service or document service still reconciling. Other 503s are useless to retry and will just fail
+ * again after waiting an extra round:
+ * Task already stopped (`project-assets-closed`, `run-assets-unconfigured`), configuration or file
+ * itself invalid (`project-assets-workspace-unconfigured`, `project-assets-unconfigured`), states
+ * where asset service awaits manual intervention (`asset-run-recovery-pending`), working directory quota.
  */
 export const RUN_ASSET_TRANSIENT_CODES = Object.freeze(['run-asset-unavailable', 'run-client-unavailable', 'run-authority-unavailable',
   'asset-run-not-ready', 'asset-run-head-pending', 'asset-not-ready', 'asset-run-unavailable', 'run-assets-unavailable',
   'doc-agent-unavailable', 'account-event-gap']);
 
 /**
- * 账号模式把一份字节存进项目素材库时的重试。请求号**整次导入只生成一次**:导入号由它算出,素材服务按导入号放暂存的片,
- * 重试用同一个号就接着传已收到的片;每次换号会在素材服务上另开一个没人收的暂存目录。
- * @param {(requestId: string) => Promise<any>} importOnce 做一次导入(来源要每次重新打开)
+ * Retries when storing bytes into the project media library in account mode. The request id
+ * **is generated only once for the entire import**: the import id is derived from it, and the asset
+ * service stores staged chunks by import id; retrying with the same id resumes uploading beyond
+ * already received chunks, whereas changing the id each time opens another uncollected staging
+ * directory on the asset service.
+ * @param {(requestId: string) => Promise<any>} importOnce Perform one import (source must be reopened each time)
  */
 export async function runAssetImportWithRetry(importOnce, { attempts = 3, backoffMs = 500, onRetry = () => {}, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
   const requestId = `import-${randomUUID()}`;
@@ -100,14 +117,17 @@ export async function runAssetImportWithRetry(importOnce, { attempts = 3, backof
   }
 }
 
-/** 文件名里只留安全的字符(进工作区的文件名;原名另存在回包里给模型看) */
+/**
+ * Keep only safe characters in the filename (filename entering the workspace; original name
+ * stored separately in the response for the model)
+ */
 export function safeName(name, fallback = 'file') {
   const base = String(name ?? '').split(/[\\/]/).pop() ?? '';
   const cleaned = base.normalize('NFC').replace(/[\0-\x1f<>:"|?*\\/]/g, '_').replace(/^[.\s]+/, '').replace(/[.\s]+$/, '').slice(0, 96);
   return cleaned || fallback;
 }
 
-/** 读文件头认图片的宽高(PNG / JPEG / GIF / WebP);认不出回 {} */
+/** Read file header to determine image dimensions (PNG / JPEG / GIF / WebP); returns {} if not recognized */
 export function imageSize(buf) {
   try {
     if (buf.length >= 24 && buf.readUInt32BE(0) === 0x89504e47) return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
@@ -129,11 +149,14 @@ export function imageSize(buf) {
         i += 2 + buf.readUInt16BE(i + 2);
       }
     }
-  } catch { /* 文件头不完整 */ }
+  } catch { /* Incomplete file header */ }
   return {};
 }
 
-/** WAV 的时长(秒);`totalSize` 是整个文件的字节数(只读了文件头时给)。不是 WAV 或读不出回 undefined */
+/**
+ * WAV duration (seconds); `totalSize` is total file size in bytes (provided when only the header
+ * was read). Returns undefined if not WAV or unreadable
+ */
 export function wavDuration(buf, totalSize = buf.length) {
   try {
     if (buf.length < 44 || buf.toString('latin1', 0, 4) !== 'RIFF' || buf.toString('latin1', 8, 12) !== 'WAVE') return undefined;
@@ -146,11 +169,11 @@ export function wavDuration(buf, totalSize = buf.length) {
       if (id === 'data') return byteRate > 0 ? Math.min(size, Math.max(0, totalSize - i - 8)) / byteRate : undefined;
       i += 8 + size + (size % 2);
     }
-  } catch { /* 文件头不完整 */ }
+  } catch { /* Incomplete file header */ }
   return undefined;
 }
 
-/** 找 ffprobe(与 ffmpeg 同目录,或 PATH 上);找不到回 null。结果按进程缓存 */
+/** Find ffprobe (in the same directory as ffmpeg, or on PATH); returns null if not found. Results cached per process. */
 let ffprobeCache;
 export function findFfprobe() {
   if (ffprobeCache !== undefined) return ffprobeCache;
@@ -163,12 +186,12 @@ export function findFfprobe() {
     try {
       const r = spawnSync(cand, ['-version'], { timeout: 5000, windowsHide: true });
       if (r.status === 0 && !r.error) { ffprobeCache = cand; break; }
-    } catch { /* 下一个 */ }
+    } catch { /* Next */ }
   }
   return ffprobeCache;
 }
 
-/** 用 ffprobe 读时长与宽高(子进程经工作区起:工作目录与环境变量都收紧) */
+/** Use ffprobe to read duration and dimensions (subprocess launched via workspace: working directory and environment variables tightened). */
 function ffprobeMeta(workspace, abs) {
   const bin = findFfprobe();
   if (!bin) return Promise.resolve(null);
@@ -198,18 +221,21 @@ function sha256File(abs) {
   });
 }
 
-/* ---------------------------------------------------------------- 托管方的配音配置 */
+/* ---------------------------------------------------------------- Host voiceover configuration */
 
-/** 托管方的配音配置放哪(与模型配置同一个目录、同一套落盘加密;写它的是 `server/agent-service/import-key.mjs --service voice`) */
+/** Where host voiceover configuration is stored (same directory and same disk encryption as model configuration; written by `server/agent-service/import-key.mjs --service voice`). */
 export function voiceConfigPaths(dataDir) {
   const dir = path.join(dataDir, 'config');
   return { file: path.join(dir, 'voice.json'), keyFile: path.join(dir, 'keys', 'voice.key') };
 }
 
 /**
- * 读托管方的配音配置;没配回 null。回的对象形状与桌面版的 `readVoiceConfig()` 相同(`apiKey` 是明文,只在进程内用)。
- * 地址、提供方与令牌经 `server/agent-service/service-keys.mjs` 的 `readServiceKey(dataDir, 'voice')` 读(加密分发导入的那一份,
- * 不另造保存办法);`voice.json` 里若还写了各提供方的缺省音色、语速与登记的音色,一并按桌面版的规矩取。
+ * Read host voiceover configuration; returns null if not configured. Returned object shape is
+ * identical to desktop app `readVoiceConfig()` (`apiKey` is plaintext, used only in-process).
+ * Address, provider, and token are read via `readServiceKey(dataDir, 'voice')` in
+ * `server/agent-service/service-keys.mjs` (the copy imported from encrypted distribution, without
+ * creating a separate storage mechanism); if `voice.json` also specifies default voice, speech
+ * rate, and registered voices for each provider, fetch them together following desktop app rules.
  */
 export async function readHostedVoiceConfig(dataDir) {
   if (!dataDir) return null;
@@ -217,8 +243,10 @@ export async function readHostedVoiceConfig(dataDir) {
   let raw;
   try { raw = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
   const { normalizeVoiceConfig } = await import(new URL('../../voice/voice-config.mjs', import.meta.url).href);
-  // 服务密钥的真实现在闭源侧，从 Agent 扩展表里取（`./extensions.mjs`，白名单里的那个加载点）。
-  // 社区版没有那张表 → 没有这一项 → 回 null：托管方的配音配置本来就只有托管端才有。
+  // The actual implementation of service keys is on the closed-source side, retrieved from the Agent
+  // extensions table (`./extensions.mjs`, the loading point on the allowlist).
+  // Community edition does not have that table → no such entry → returns null: host voiceover
+  // configuration only exists on the hosted side in the first place.
   const keys = findAgentExtension('service-keys');
   if (!keys || typeof keys.readServiceKey !== 'function') return null;
   const key = keys.readServiceKey(dataDir, 'voice');
@@ -226,19 +254,22 @@ export async function readHostedVoiceConfig(dataDir) {
   return { ...cfg, effectiveBaseUrl: cfg.baseUrl, apiKey: key.apiKey ?? '' };
 }
 
-/* ---------------------------------------------------------------- 工具 */
+/* ---------------------------------------------------------------- Tools */
 
 /**
- * 进程级的那一份(各实例共用)。
+ * Process-level instance (shared across instances).
  * @param {object} o
- * @param {string} o.root 仓库根目录(读内置卡源码、建卡指南)
- * @param {(id: string) => Promise<any>} o.loadModule vite 的 `ssrLoadModule`(Node 不能直接载入 TypeScript 时用它载卡片检查)
+ * @param {string} o.root Repository root directory (read built-in card source, card authoring guide)
+ * @param {(id: string) => Promise<any>} o.loadModule Vite's `ssrLoadModule` (used to load card
+ *   checks when Node cannot directly load TypeScript)
  * @param {ReturnType<import('./workspace.mjs').createWorkspaces>} o.workspaces
  * @param {ReturnType<import('./egress.mjs').createEgressGate>} o.egress
- * @param {string | null} o.assetBase 同机素材服务的地址(`http://127.0.0.1:<端口>`);没配时导入素材、配音入库做不了
- * @param {() => Promise<object | null>} o.voiceConfig 托管方的配音配置
- * @param {(row: object) => void} o.recordService 记一行外部服务的用量
- * @param {object | null} [o.collect] 节点上的采集工具(`hosted-collect.mjs` 的 `readCollectConfig`;部署决定,没有就是 null)
+ * @param {string | null} o.assetBase Address of local asset service (`http://127.0.0.1:<port>`);
+ *   when not configured, media import and voiceover storage cannot be performed
+ * @param {() => Promise<object | null>} o.voiceConfig Host voiceover configuration
+ * @param {(row: object) => void} o.recordService Record one row of external service usage
+ * @param {object | null} [o.collect] Collection tool on node (`readCollectConfig` in
+ *   `hosted-collect.mjs`; determined by deployment, null if absent)
  */
 export function createHostedTools({
   root,
@@ -254,37 +285,45 @@ export function createHostedTools({
   log = () => {},
 } = {}) {
   const limits = { ...HOSTED_TOOL_DEFAULTS, ...limitsIn };
-  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响工具 */ } };
+  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* Logging failure does not affect tools */ } };
 
-  /** 网页采集:进程级的那一份(同时在跑的下载数是进程级的) */
+  /** Web collection: process-level instance (concurrent download count is process-wide) */
   const collector = createCollect({ config: collectConfig, egress, limits: limitsIn.collect ?? {}, log });
 
-  /** 音效合成在整个进程里同时只跑一个 */
+  /** Sound effect synthesis only runs one at a time across the entire process */
   const soundSlot = createSlot();
-  /** 测响度(ffmpeg 子进程)同理 */
+  /** Same for loudness measurement (ffmpeg subprocess) */
   const measureSlot = createSlot();
 
-  /** 卡片的翻译、审查、语法检查:纯函数,经 `ssr-host.mjs` 载入缝取(桌面版建卡用的同一份) */
+  /** Card translation, review, syntax check: pure functions loaded via `ssr-host.mjs` seam (same copy used by desktop app card creation) */
   const cardLib = () => loadCardLib(loadModule);
 
   /**
-   * 一个对话的工具上下文。
+   * Tool context for a chat.
    * @param {object} c
    * @param {{ projectId: string, userId: string, username?: string }} c.identity
    * @param {string} c.ownerKey
    * @param {string} c.conversationId
-   * @param {() => object} c.side `agent-side.mjs` 的那一套(执行器、连接)
+   * @param {() => object} c.side That set from `agent-side.mjs` (executor, connection)
    * @param {() => Promise<object>} c.host `ssr-host.mjs`
-   * @param {() => { online: boolean, t: number }} c.pageState 发起方在不在线、发消息时的播放头
+   * @param {() => { online: boolean, t: number }} c.pageState Whether sender is online, and playhead
+   *   when message was sent
    * @param {() => string | null} c.runId
-   * @param {{ cards: object }} c.shared 这个实例(项目 × 成员)各对话共用的:项目的卡片源码表(`newSharedState()`)
-   * @param {() => (Function | null)} [c.look] 这个项目问同机渲染服务的函数(看画面那条路);节点没配口子回 null
+   * @param {{ cards: object }} c.shared Shared across chats in this instance (project × member):
+   *   card source table of project (`newSharedState()`)
+   * @param {() => (Function | null)} [c.look] Function for this project to query local render service
+   *   (viewing video path); returns null if node has no endpoint configured
    * @param {{ authorizeWrite(): Promise<any>, import(source, o): Promise<any>, openRead(mediaId, o?): Promise<any> }} [c.runAssets]
-   *   账号模式下这条任务的「项目素材」(`project-assets.mjs`,凭任务授权,不借成员票据)。给了它,入库与按素材读取都走它,
-   *   不再向文档服务要成员的素材票据(任务的数据连接要不到那种票据)
+   *   "Project assets" for this task in account mode (`project-assets.mjs`, using task authorization,
+   *   without borrowing member ticket). When provided, storing into library and reading by media both
+   *   go through it, no longer requesting member's media ticket from document service (task data
+   *   connection cannot obtain such tickets)
    * @param {() => (null | { download: Function, login: Function, loginCheck: Function })} [c.collectDelegate]
-   *   账号模式下这一轮的采集委托口子(`collect-bridge.mjs` 的 `forRun(context)`):给了它,要登录的站点先试着由发起人的电脑代下,
-   *   `user_interface_collect_login`、`collect_login_check` 也经它;不给时采集的行为与原来一模一样,这两个登录工具也不在这里
+   *   Collection delegation hook for this round in account mode (`forRun(context)` in
+   *   `collect-bridge.mjs`): when provided, sites requiring login first try downloading via
+   *   sender's computer; `user_interface_collect_login` and `collect_login_check` also go through it;
+   *   when not provided, collection behavior is identical to before, and these two login tools are
+   *   not here
    */
   function forConversation(c) {
     const { identity, conversationId } = c;
@@ -292,7 +331,7 @@ export function createHostedTools({
     const exec = () => c.side().executor;
     const workspace = () => workspaces.open({ projectId: identity.projectId, ownerKey: c.ownerKey, conversationId });
 
-    /* ---------- 文档服务 ---------- */
+    /* ---------- Document service ---------- */
 
     async function docRequest(message, okTypes) {
       const reply = await exec().request(agentKey, message, (m) => okTypes.includes(m.type) || m.type === 'error');
@@ -305,7 +344,7 @@ export function createHostedTools({
       return reply;
     }
 
-    /* ---------- 素材服务 ---------- */
+    /* ---------- Asset service ---------- */
 
     function assetClient() {
       if (!assetBase) throw new HostedToolError('This cloud node has no asset service address configured, so the Cloud Agent cannot store files for now. Contact the host.', { code: 'no-asset-service' });
@@ -313,7 +352,8 @@ export function createHostedTools({
       return createAssetClient({
         base: `${assetBase.replace(/\/+$/, '')}/api/asset`,
         fetch: fetchImpl,
-        // 素材票据:凭这个对话的连接现要(权限不超过成员本人;只读成员要不到读写的,文档服务回 forbidden)
+        // Media ticket: requested on demand via this chat's connection (permissions do not exceed the
+        // member; read-only members cannot get read-write tickets, document service returns forbidden)
         ticket: async (opts) => {
           if (cached && !opts?.refresh && cached.exp - Date.now() > 20_000) return cached.ticket;
           const reply = await docRequest({ type: 'auth.ticket', kind: 'asset', access: 'rw' }, ['auth.ticket.ok']);
@@ -324,8 +364,9 @@ export function createHostedTools({
     }
 
     /**
-     * 动手之前先确认这位成员写得进素材(只读成员要不到读写的素材票据):下载、合成(要花钱)都排在它后面,
-     * 不让只读成员的对话白白占带宽、白白花托管方的钱。
+     * Before taking action, confirm this member can write to media (read-only members cannot obtain
+     * read-write media tickets): download and synthesis (costing money) are both queued after it,
+     * preventing read-only member chats from wasting bandwidth and wasting the host's money.
      */
     async function ensureCanWrite() {
       if (c.runAssets) {
@@ -342,10 +383,11 @@ export function createHostedTools({
       }
     }
 
-    /** 账号模式:凭这条任务的授权把一份字节存进本项目的素材库。只是「已存」,登记进项目是调用方的下一步 */
+    /** Account mode: store bytes into this project's media library with this task's authorization. Stored only; registering into the project is the caller's next step. */
     async function runAssetImport(sourceOf, { name, kind }, origin = {}) {
       try {
-        // 素材服务或文档服务一时答不上不算失败:隔一会儿再来,最多三次,用同一个请求号接着传(见 runAssetImportWithRetry)
+        // Temporary failure of asset service or document service to respond is not a failure: retry after
+        // a short delay, up to three times, continuing transfer with same request id (see runAssetImportWithRetry)
         const out = await runAssetImportWithRetry((requestId) => c.runAssets.import(sourceOf(), { name, kind, requestId }, origin),
           { onRetry: (row) => say('agent.run-assets.retry', row) });
         return { hash: out.assetRef.hash, size: out.assetRef.size };
@@ -359,7 +401,7 @@ export function createHostedTools({
       }
     }
 
-    /** 把工作区里的一个文件送进素材服务(`media` 命名空间);回 `{ hash, ext, bytes }` */
+    /** Send a file from workspace into asset service (`media` namespace); returns `{ hash, ext, bytes }` */
     async function ingest(rel, kindHint = null) {
       const ws = workspace();
       const abs = ws.resolve(rel);
@@ -371,7 +413,8 @@ export function createHostedTools({
       if (c.runAssets) {
         const kind = kindHint ?? kindOfName(rel);
         if (!kind || !ext) throw new HostedToolError('Cannot recognize this file\'s type; use a video, audio or image file.');
-        // 来源已经是工作目录里的文件(进来时按额度核过、也算在占用里):导入时临时落的那一份不再按额度算第二遍
+        // Source is already a file in working directory (verified against quota when incoming, also counted
+        // in usage): temporary copy written to disk during import is not counted against quota a second time
         const stored = await runAssetImport(() => fs.createReadStream(abs), { name: `import.${ext}`, kind }, { inWorkspace: true, size: st.size });
         if (stored.hash !== hash || stored.size !== st.size) throw new HostedToolError('The stored media does not match the original file, so it was not registered.');
         return { hash, ext, bytes: st.size };
@@ -387,7 +430,7 @@ export function createHostedTools({
       return { hash, ext, bytes: st.size };
     }
 
-    /** 读一个工作区文件的种类与元数据 */
+    /** Read kind and metadata of a workspace file */
     async function probe(rel, kind) {
       const ws = workspace();
       const abs = ws.resolve(rel);
@@ -414,7 +457,7 @@ export function createHostedTools({
       return { probeMissing: true };
     }
 
-    /** 素材入库后登记进项目(可选:放上时间轴);回 `{ media, clip }` */
+    /** Register media into project after storing into library (optional: place on timeline); returns `{ media, clip }` */
     async function registerMedia(track, { rel, name, kind, place = null }) {
       const [up, meta] = [await ingest(rel, kind), await probe(rel, kind)];
       let media = null;
@@ -437,13 +480,14 @@ export function createHostedTools({
       return { media, clip, meta };
     }
 
-    /* ---------- 导入素材 ---------- */
+    /* ---------- Import media ---------- */
 
     /**
-     * 模型给的地址 → 工作区里的文件。三种:
-     *   - `work:<相对路径>`:这个对话工作区里的文件(附件清单里给的就是这种);
-     *   - `/@pcwork/<对话 id>/<文件名>`:桌面版的附件地址写法,只认这个对话自己的,指到 `attachments/` 下;
-     *   - `http(s)://…`:经出网闸下载到 `downloads/` 下。
+     * Address given by model → file in workspace. Three kinds:
+     *   - `work:<relative-path>`: file in this chat's workspace (what is given in attachment manifest);
+     *   - `/@pcwork/<chat-id>/<filename>`: desktop app attachment address format, only recognizes this
+     *     chat's own, pointing under `attachments/`;
+     *   - `http(s)://…`: downloaded via egress gate under `downloads/`.
      */
     async function materialize(url, nameIn) {
       const ws = workspace();
@@ -479,7 +523,7 @@ export function createHostedTools({
         throw new HostedToolError(`Failed to fetch the file (HTTP ${res.status}); the address may be wrong or expired.`);
       }
       writer.end();
-      // 直链常常不带扩展名:按回包的类型补一个
+      // Direct links often lack an extension: supply one based on response type
       let rel = tmpRel;
       const mimeExt = MIME_EXT[String(res.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase()];
       if (mimeExt && !kindOfName(name)) {
@@ -501,7 +545,8 @@ export function createHostedTools({
       const ps = c.pageState();
       const { media, clip, meta } = await registerMedia(track, {
         rel: got.rel, name: got.name, kind,
-        // 与桌面版相同:视频导入后直接放到视频轨上。发起方在线放在他发消息时的播放头,不在线接在现有内容后面
+        // Same as desktop app: video is placed directly on video track after import. Placed at sender's
+        // playhead when sender is online, appended after existing content when offline
         place: kind === 'video' ? (ps.online ? { start: ps.t } : { atEnd: true }) : null,
       });
       if (got.downloaded) workspace().remove(got.rel);
@@ -517,7 +562,7 @@ export function createHostedTools({
       };
     }
 
-    /* ---------- 配音 ---------- */
+    /* ---------- Voiceover ---------- */
 
     async function voiceList() {
       const cfg = await voiceConfig();
@@ -562,13 +607,15 @@ export function createHostedTools({
           fetch: fetchImpl,
         });
       } catch (err) {
-        // 参数不对(音色不在列表里、语速越界)没有发出请求,不记用量;发出去失败了的照记(服务商可能已经计费)
+        // Invalid parameters (voice not in list, speech rate out of bounds) send no request, usage not
+        // recorded; requests that failed after being sent are still recorded (provider may have already billed)
         if (err?.name !== 'VoiceError' || /HTTP|gateway|timeout|timed out/.test(String(err?.message))) row(null, false);
         throw new HostedToolError(String(err?.message ?? err).slice(0, 300));
       }
       row(out, true);
       const rel = `voice/${out.name}`;
-      // 生成的文件计入工作区的总量(generateVoice 自己写的盘):超了就删掉、报错
+      // Generated files count toward workspace total (written to disk by generateVoice itself): delete
+      // and report error if exceeded
       const usage = ws.usage();
       if (usage.bytes > workspaces.limits.maxConversationBytes) { ws.remove(rel); throw new HostedToolError('The working directory of this chat is full, so the speech was not saved.'); }
       const place = typeof args.start === 'number' ? { start: args.start, trackId: args.trackId, required: true } : null;
@@ -583,12 +630,12 @@ export function createHostedTools({
       };
     }
 
-    /* ---------- 卡片源码(内容库 `card-source`) ---------- */
+    /* ---------- Card source (content store `card-source`) ---------- */
 
     const CARD_KIND = 'card-source';
     const USER_PREFIX = 'src/cards/user/';
     const ID_RE = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
-    /** 这个项目内容库里的卡片源码:键 → { hash, body? };入口文件解析出的定义。实例里各对话共用一份 */
+    /** Card source in this project's content store: key → { hash, body? }; definition parsed from entry file. Shared across chats in an instance */
     const cards = c.shared.cards;
 
     async function refreshCards(force = false) {
@@ -599,7 +646,8 @@ export function createHostedTools({
           const next = new Map();
           for (const it of listing.items ?? []) {
             const prev = cards.items.get(it.key);
-            // `rev`:内容库里这一条的版本(看画面时交给渲染服务,它等隔离工作进程把这份卡装到至少这个版本)
+            // `rev`: version of this entry in content store (passed to render service when viewing video,
+            // which waits for isolated worker process to install this card to at least this version)
             if (prev && prev.hash === it.hash && typeof prev.body === 'string') { next.set(it.key, { ...prev, rev: it.rev ?? prev.rev ?? null }); continue; }
             const item = await docRequest({ type: 'content.get', kind: CARD_KIND, key: it.key }, ['content.item']);
             if (item.missing || typeof item.body !== 'string') continue;
@@ -610,12 +658,13 @@ export function createHostedTools({
           const parsed = [];
           for (const [key, v] of next) {
             if (!/^src\/cards\/user\/[^/]+\.tsx$/.test(key)) continue;
-            try { for (const p of host.parseCard(v.body, { key, files: (k) => next.get(k)?.body ?? null })) parsed.push(p); } catch { /* 解析不了的不登记 */ }
+            try { for (const p of host.parseCard(v.body, { key, files: (k) => next.get(k)?.body ?? null })) parsed.push(p); } catch { /* Do not register if unparseable */ }
           }
           cards.parsed = parsed;
           cards.at = Date.now();
         } catch (err) {
-          // 读不到(连接刚断、只读权限也能读;被拒说明服务端还没开这一类)时手里的表不动
+          // When unreadable (connection just dropped; can read even with read-only permissions; rejection
+          // means server has not enabled this category yet), keep held table unchanged
           say('agent.cards.refresh-failed', { projectId: identity.projectId, message: String(err?.message ?? err).slice(0, 120) });
           cards.at = Date.now();
         } finally {
@@ -631,10 +680,10 @@ export function createHostedTools({
       if (!abs.startsWith(path.resolve(root, 'src') + path.sep)) return null;
       try { return fs.readFileSync(abs, 'utf8'); } catch { return null; }
     };
-    /** 一个文件此刻生效的源码:项目内容库里有就用它,否则是检出里的那一份 */
+    /** Effective source of a file right now: use from project content store if present, otherwise the copy in checkout */
     const effective = (rel) => cards.items.get(rel)?.body ?? repoFile(rel);
 
-    /** 这张卡的定义文件与它一路用到的文件 */
+    /** Definition file of this card and files used along the way */
     async function closureOf(id) {
       const lib = await cardLib();
       const userKey = `${USER_PREFIX}${id}.tsx`;
@@ -659,9 +708,13 @@ export function createHostedTools({
 
     async function putCard(key, source) {
       if (Buffer.byteLength(source, 'utf8') > limits.maxCardBytes) throw new HostedToolError(`The source is over ${Math.round(limits.maxCardBytes / 1024)}KB, which is too large.`);
-      // 渲染节点装卡时的那道预检(越界的 @import、@plugin、import.meta.glob 等写法会被拒装)提前在这里报:过不了的卡入了库也渲不出来
-      // 预检的真实现在闭源侧，从 Agent 扩展表里取。社区版没有那张表 → 跳过这道预检，
-      // 而它本来就是「云端渲染节点装不装得上」的事，社区版没有云端渲染节点。
+      // The precheck performed when render node installs cards (illegal constructs like out-of-bounds
+      // @import, @plugin, import.meta.glob will be rejected) is reported early here: cards that cannot pass
+      // will fail to render even if stored into the library.
+      // The actual implementation of the precheck is on the closed-source side, retrieved from Agent
+      // extensions table. Community edition does not have that table → skip this precheck,
+      // and it was originally about "whether cloud render nodes can install it"; community edition has no
+      // cloud render nodes.
       const gate = findAgentExtension('source-gate');
       if (gate && typeof gate.checkSyncedSource === 'function') {
         const pre = gate.checkSyncedSource(key, source);
@@ -770,9 +823,9 @@ export function createHostedTools({
       };
     }
 
-    /* ---------- 音效合成(`hosted-sound.mjs`) ---------- */
+    /* ---------- Sound effect synthesis (`hosted-sound.mjs`) ---------- */
 
-    /** 把生成出来的 WAV 写进素材服务(`media`,凭成员本人的票据) */
+    /** Write generated WAV into asset service (`media`, with member's own ticket) */
     const putWav = async (wav) => {
       if (c.runAssets) { const stored = await runAssetImport(() => wav, { name: 'sound.wav', kind: 'audio' }, { size: wav.length }); return { ...stored, uploaded: true }; }
       try {
@@ -800,7 +853,7 @@ export function createHostedTools({
       ToolError: HostedToolError,
     });
 
-    /* ---------- 卡片声音(`hosted-card-audio.mjs`):卡片代码只在渲染服务的工作进程里执行 ---------- */
+    /* ---------- Card audio (`hosted-card-audio.mjs`): card code only runs in render service worker processes ---------- */
 
     const cardAudio = createCardAudioTools({
       state: c.shared.cardAudio,
@@ -810,19 +863,21 @@ export function createHostedTools({
       mutate: (track, apply) => exec().mutate('render_card_audio', agentKey, track, apply),
       ensureCanWrite,
       put: putWav,
-      // 账号模式没有「按哈希问有没有」这一问(任务授权只按项目里登记的素材读):当作没有,重存一次同样的字节是幂等的
+      // Account mode has no "query existence by hash" check (task authorization only reads media
+      // registered in project): treat as not present; re-saving identical bytes is idempotent
       has: (hash) => (c.runAssets ? false : assetClient().has('media', hash)),
       record: usageRow,
       ToolError: HostedToolError,
       limits: limits.cardAudio ?? {},
     });
 
-    /* ---------- 测响度(`hosted-audio.mjs`) ---------- */
+    /* ---------- Measure loudness (`hosted-audio.mjs`) ---------- */
 
-    /** 凭成员本人的只读素材票据按哈希取一份素材(同机素材服务的地址是托管方配的,不经出网闸) */
+    /** Fetch an asset by hash with member's own read-only media ticket (local asset service address is configured by host, does not go through egress gate) */
     async function fetchAssetByHash(hash, onChunk, { timeoutMs }) {
       if (c.runAssets) {
-        // 任务授权只能读项目里登记着的素材:先在项目副本里找到哈希对应的那一项
+        // Task authorization can only read media registered in project: first find the entry corresponding
+        // to the hash in the project replica
         const { project } = await exec().snapshot(agentKey);
         const media = (project?.media ?? []).find((m) => m?.hash === hash || m?.tiers?.original === hash || String(m?.url ?? '').endsWith(`/${hash}`));
         if (!media?.id) return { status: 404 };
@@ -839,7 +894,7 @@ export function createHostedTools({
       const res = await fetchImpl(`${assetBase.replace(/\/+$/, '')}/api/asset/media/${hash}`, {
         headers: { Authorization: `Bearer ${reply.ticket}` }, signal: AbortSignal.timeout(timeoutMs),
       });
-      if (res.status < 200 || res.status >= 300 || !res.body) { try { await res.body?.cancel(); } catch { /* 已经读完 */ } return { status: res.status }; }
+      if (res.status < 200 || res.status >= 300 || !res.body) { try { await res.body?.cancel(); } catch { /* Finished reading */ } return { status: res.status }; }
       for await (const chunk of res.body) onChunk(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength));
       return { status: res.status };
     }
@@ -847,16 +902,17 @@ export function createHostedTools({
       workspace, host: c.host, slot: measureSlot, fetchAsset: fetchAssetByHash, ToolError: HostedToolError,
       limits: limits.audio ?? {},
       ...(limits.audioTools ? { tools: limits.audioTools } : {}),
-      // 只读:在放好项目副本的 store 上算「测谁」,不产生写入
+      // Read-only: compute "what to measure" on store holding project replica, produces no writes
       read: (apply) => exec().mutate('measure_audio', agentKey, {}, apply),
     });
 
-    /* ---------- 网页采集(`hosted-collect.mjs`):外部程序只经工作区的受限子进程起、只经出网闸的代理出网 ---------- */
+    /* ---------- Web collection (`hosted-collect.mjs`): external programs only launch via restricted workspace subprocesses, egress only via egress gate proxy ---------- */
 
     const collect = collector.forConversation({
       state: c.shared.collect, workspace, ensureCanWrite, record: usageRow, ToolError: HostedToolError, conversationId,
       ...(typeof c.collectDelegate === 'function' ? { delegate: c.collectDelegate } : {}),
-      // 下载物进素材库:与 import_media 同一条路(成员本人的素材票据、在项目副本上登记;视频照桌面版放上时间轴)
+      // Downloads enter media library: same path as import_media (member's own media ticket, registered
+      // on project replica; video placed on timeline as in desktop app)
       importFile: async (rel, name) => {
         const kind = kindOfName(rel) ?? kindOfName(name);
         if (!kind) throw new HostedToolError(`Cannot identify the type of file "${name}"`);
@@ -874,7 +930,8 @@ export function createHostedTools({
       collect_download: collect.collect_download,
       collect_job: collect.collect_job,
       collect_logout: collect.collect_logout,
-      // 只有给了委托口子(账号模式)才在这里:没有口子时这两个仍是「要操作发起人界面」的那一类,由工具表按原来的话答
+      // Only present here when delegation hook is provided (account mode): without the hook, these two
+      // still belong to "manipulating sender interface" category, answered by tool table using original wording
       ...(typeof c.collectDelegate === 'function' ? { user_interface_collect_login: collect.collect_login, collect_login_check: collect.collect_login_check } : {}),
       measure_audio: audio.measure_audio,
       render_card_audio: cardAudio.render_card_audio,
@@ -893,11 +950,11 @@ export function createHostedTools({
 
     return {
       has: (tool) => Object.hasOwn(TOOLS, tool),
-      /** 执行一个在服务端实现的工具。`track` 是这次调用的事件上下文(落地的写入记在它上面) */
+      /** Execute a tool implemented on the server. `track` is the event context for this call (persisted writes are recorded on it) */
       call(tool, args, track) {
         return TOOLS[tool](args ?? {}, track ?? {});
       },
-      /** 进锁前调:把这个项目的卡片源码列一遍(有变才取正文) */
+      /** Called before entering lock: list card sources for this project (fetch body only if changed) */
       refreshCards,
       workspace,
     };
@@ -905,24 +962,25 @@ export function createHostedTools({
 
   return {
     forConversation,
-    /** 一个实例(项目 × 成员)里各对话共用的状态 */
+    /** State shared across chats in an instance (project × member) */
     newSharedState: () => ({ cards: { at: -Infinity, items: new Map(), parsed: [], pending: null }, sound: newSoundState(), cardAudio: newCardAudioState(), collect: newCollectState() }),
-    /** 节点上装没装采集工具(状态口报它) */
+    /** Whether collection tools are installed on the node (reported by status endpoint) */
     collectInstalled: collector.available,
-    /** 测试用:把 ffprobe 的缓存清掉 */
+    /** For testing: clear ffprobe cache */
     _resetFfprobe() { ffprobeCache = undefined; },
   };
 }
 
-/* ---------------------------------------------------------------- 附件 */
+/* ---------------------------------------------------------------- Attachments */
 
 const TEXT_EXT = new Set(['txt', 'md', 'srt', 'vtt', 'json', 'csv', 'ass', 'lrc']);
 
 /**
- * 把页面传来的一个附件存进对话的工作区(`attachments/` 下)。回 `{ name, url, size, kind, text? }`:
- * `url` 是交给模型用的地址(`work:attachments/<文件名>`),不是磁盘路径。
+ * Save an attachment sent from page into chat workspace (under `attachments/`). Returns
+ * `{ name, url, size, kind, text? }`: `url` is address for model
+ * (`work:attachments/<filename>`), not a disk path.
  * @param {ReturnType<ReturnType<typeof import('./workspace.mjs').createWorkspaces>['open']>} workspace
- * @param {string} nameIn 页面报的文件名
+ * @param {string} nameIn File name reported by page
  * @param {AsyncIterable<Buffer>} stream
  */
 export async function saveAttachment(workspace, nameIn, stream, { maxBytes = HOSTED_TOOL_DEFAULTS.maxImportBytes, inlineTextBytes = HOSTED_TOOL_DEFAULTS.inlineTextBytes } = {}) {
@@ -949,12 +1007,12 @@ export async function saveAttachment(workspace, nameIn, stream, { maxBytes = HOS
   const ext = extOf(rel);
   const out = { name: rel.slice('attachments/'.length), url: `work:${rel}`, size, kind: kindOfName(rel) ?? (TEXT_EXT.has(ext) ? 'text' : 'file') };
   if (TEXT_EXT.has(ext) && size <= inlineTextBytes) {
-    try { out.text = workspace.read(rel).toString('utf8'); } catch { /* 读不出就不内联 */ }
+    try { out.text = workspace.read(rel).toString('utf8'); } catch { /* Do not inline if unreadable */ }
   }
   return out;
 }
 
-/** 这条消息带的附件 → 拼进提示词的那一段(只认这个对话工作区里真有的文件;不给磁盘路径) */
+/** Attachments on this message → snippet assembled into prompt (only recognizes files that actually exist in this chat's workspace; does not provide disk paths) */
 export function attachmentsPrompt(workspace, attachments, { inlineTextBytes = HOSTED_TOOL_DEFAULTS.inlineTextBytes } = {}) {
   const lines = [];
   let inLibrary = 0;
@@ -967,18 +1025,20 @@ export function attachmentsPrompt(workspace, attachments, { inlineTextBytes = HO
     if (!st) continue;
     const kind = kindOfName(rel);
     let line = `- [${kind ? KIND_LABEL[kind] : 'file'}] ${rel.slice('attachments/'.length)} · URL ${url}`;
-    // 页面发送时已经放进素材库的(云端对话,2026-10-18 用户定):直接用素材库那一条,不要再导入
+    // Already stored into media library when sent from page (cloud chat, user decision, 2026-10-18):
+    // use that media library entry directly, do not import again
     const lib = a?.library && typeof a.library === 'object' ? a.library : null;
     if (lib && typeof lib.mediaId === 'string' && typeof lib.url === 'string') {
       line += ` · Already in the media library: mediaId ${lib.mediaId} · cardUrl ${lib.url} (use this one directly, do not import_media again)`; inLibrary++;
     } else if (typeof a?.libraryError === 'string' && a.libraryError) line += ` · The page could not put it into the media library: ${a.libraryError}`;
     if (TEXT_EXT.has(extOf(rel)) && st.size <= inlineTextBytes) {
-      try { line += `\n\`\`\`\n${workspace.read(rel).toString('utf8')}\n\`\`\``; } catch { /* 读不出就不内联 */ }
+      try { line += `\n\`\`\`\n${workspace.read(rel).toString('utf8')}\n\`\`\``; } catch { /* Do not inline if unreadable */ }
     }
     lines.push(line);
   }
   if (!lines.length) return '';
-  // 都已经在素材库里时不再叫它 import_media(云端运行素材没开时那样做只会失败)
+  // When all are already in media library, do not invoke import_media (doing so only fails when cloud
+  // asset execution is not enabled)
   const head = inLibrary === lines.length
     ? 'Attachment (the page has put it into the media library; use the marked mediaId / cardUrl; the original file is also in the working directory)'
     : 'Attachment (in this chat\'s working directory; for those marked "Already in the media library", use that entry directly; for the rest, to edit, transcribe or add motion graphics, first pass its URL to import_media to load it into the media library)';

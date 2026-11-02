@@ -3,8 +3,8 @@ import type { PartDef, PartProps } from "../../kernel/partTypes";
 import { fitOr } from "../fit";
 
 /**
- * 引文署名:从 quote-lockup 拆出。
- * 单行署名，没有延迟，纯淡入，通常放置于 text-quote 之下。
+ * Quote attribution: extracted from quote-lockup.
+ * Single-line attribution, no delay, pure fade-in, usually placed below text-quote.
  */
 interface Params {
   author: string;

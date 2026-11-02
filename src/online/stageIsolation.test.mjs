@@ -1,7 +1,8 @@
 /**
- * 编辑器页这一侧的舞台隔离会话:自检结果的校验、每台舞台取素材走哪条路、本页能不能执行用户卡与素材效果卡、票据交接(契约
- * `docs/plan/online-card-exec-contract.md` 第 3.1、3.2、4.1 节)。
- * 跑:node --test src/online/stageIsolation.test.mjs
+ * Stage isolation session on editor page side: validation of self-test results, which route each
+ * stage takes to fetch assets, whether this page can execute user cards and media effect cards,
+ * and ticket handover (contract `docs/plan/online-card-exec-contract.md` sections 3.1, 3.2, 4.1).
+ * Run: node --test src/online/stageIsolation.test.mjs
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -16,7 +17,7 @@ const SID = "0123456789abcdef0123456789abcdef";
 const TICKET = "v1.payload-payload-payload.signature-signature";
 const S1 = "https://s1.x.io", S2 = "https://s2.x.io";
 
-/** 一份会话:总开关、交接都可控;定时器收在数组里手动触发 */
+/** A session: master switch and handover are both controllable; timers collected in array and manually triggered */
 function make({ enabled = true, grantOk = true } = {}) {
   const state = { enabled, grantOk, grants: [], timers: [] };
   const iso = createStageIsolation({
@@ -28,7 +29,7 @@ function make({ enabled = true, grantOk = true } = {}) {
   });
   return { iso, state };
 }
-/** 两台都握手、自检通过、交接成功 */
+/** Both stages handshake, pass self-test, and handover succeeds */
 async function bothIsolated(iso) {
   iso.setStages(["A", "B"]);
   iso.handshake("A"); iso.handshake("B");
@@ -45,11 +46,11 @@ test("OCS-S-01 the stage iframe sandbox enables only scripts and keeping its own
 
 test("OCS-S-02 self-check results sent by the stage are validated by shape; the verdict does not trust the stage's own conclusion and is recomputed from the individual facts", () => {
   assert.deepEqual(sanitizeIsolationReport(OK), OK);
-  // 舞台自称通过,但事实不齐:重算成不通过
+  // Stage claims to pass, but facts are incomplete: recomputed as not passing
   for (const lie of [{ ...OK, csp: "meta" }, { ...OK, csp: "none" }, { ...OK, crossOrigin: false }, { ...OK, hardened: false }, { ...OK, reasons: ["meta-only"] }]) {
     assert.equal(sanitizeIsolationReport(lie).ok, false, JSON.stringify(lie));
   }
-  // 多出来的字段丢掉;认不出的原因丢掉
+  // Extra fields dropped; unrecognized reasons dropped
   const extra = sanitizeIsolationReport({ ...BAD, ticket: "x", reasons: ["meta-only", "made-up", 42] });
   assert.deepEqual(extra, BAD);
   for (const bad of [null, undefined, 42, "ok", [], {}, { ok: true }, { ...OK, csp: "response" }, { ...OK, egress: "browser" }, { ...OK, trustedTypes: "yes" }, { ...OK, ok: "true" }, { ...OK, reasons: "none" }, { ...OK, hardened: 1 }]) {
@@ -67,11 +68,12 @@ test("OCS-S-03 both stages pass the self-check and the ticket handoff succeeds: 
   assert.deepEqual(b, { mode: "cookie", base: `/media-s/${SID}`, ticket: null, cardExec: true });
   assert.deepEqual(iso.state(), { enabled: true, reason: "ok", detail: {}, egress: "none" });
   assert.deepEqual(state.grants, [{ origin: S1, sid: SID, ticket: TICKET }, { origin: S2, sid: SID, ticket: TICKET }]);
-  // 同一张票据不重复交接;这回两台都点头
+  // Do not repeat handover for the same ticket; this time both stages acknowledge
   const again = await iso.plan("A", { active: true, stageOrigin: S1, ticket: TICKET });
   assert.equal(again.cardExec, true);
   assert.equal(state.grants.length, 2);
-  // 取档策略连着算几遍(还没交接完又来一次):同一张票据只发一次请求
+  // Tier selection policy computed several times in a row (called again before handover completes):
+  // send only one request for the same ticket
   {
     const m2 = make();
     m2.iso.setStages(["A", "B"]); m2.iso.handshake("A"); m2.iso.report("A", OK);
@@ -79,7 +81,7 @@ test("OCS-S-03 both stages pass the self-check and the ticket handoff succeeds: 
     assert.equal(m2.state.grants.length, 1);
     assert.ok(both.every((p) => p.mode === "cookie" && p.ticket === null));
   }
-  // 续票:换了一张就再交接一次
+  // Ticket renewal: hand over again if ticket changes
   await iso.plan("A", { active: true, stageOrigin: S1, ticket: `${TICKET}2` });
   assert.equal(state.grants.length, 3);
   assert.equal(iso.sid, SID);
@@ -142,18 +144,19 @@ test("OCS-S-09 after approval no stage receives a ticket again: any stage that l
   const { iso, state } = make();
   await bothIsolated(iso);
   assert.equal(iso.state().enabled, true);
-  // B 重载成了没隔离的文档
+  // B reloaded into an unisolated document
   iso.handshake("B");
   assert.equal(iso.state().enabled, false);
   iso.report("B", BAD);
   const b = await iso.plan("B", { active: true, stageOrigin: S2, ticket: TICKET });
   assert.deepEqual(b, { mode: "cookie", base: `/media-s/${SID}`, ticket: null, cardExec: false });
-  // A 续票时交接失败:留在 cookie 上(旧 cookie 还能用到过期),同样不给票据
+  // Handover fails during A's ticket renewal: stay on cookie (old cookie usable until expiration),
+  // ticket withheld likewise
   state.grantOk = false;
   const a = await iso.plan("A", { active: true, stageOrigin: S1, ticket: `${TICKET}2` });
   assert.equal(a.mode, "cookie");
   assert.equal(a.ticket, null);
-  // 退回单舞台(未配置 stageOrigin):抛错拒绝同源退回
+  // Fallback to single stage (stageOrigin not configured): throw error to reject same-origin fallback
   iso.setStages([]);
   assert.equal(iso.state().reason, "no-stage");
   await assert.rejects(
@@ -173,7 +176,7 @@ test("OCS-S-10 hardening blocked code that tried to create a child frame: this p
   assert.deepEqual({ enabled: iso.state().enabled, reason: iso.state().reason }, { enabled: false, reason: "breach" });
   const a = await iso.plan("A", { active: true, stageOrigin: S1, ticket: TICKET });
   assert.deepEqual(a, { mode: "cookie", base: `/media-s/${SID}`, ticket: null, cardExec: false });
-  // 重新握手、重新自检通过也不恢复
+  // Does not recover even if re-handshake and re-self-test pass
   iso.handshake("A"); iso.report("A", OK);
   await iso.plan("A", { active: true, stageOrigin: S1, ticket: TICKET });
   assert.equal(iso.state().reason, "breach");
@@ -244,10 +247,10 @@ test("OCS-S-14 only one stage (first level of the stage gate, falling back after
   assert.deepEqual({ enabled: iso.state().enabled, reason: iso.state().reason }, { enabled: true, reason: "ok" }, "Single stage is also cross-origin isolated: can execute user cards and media effect cards");
   const b = await iso.plan("B", { active: false, stageOrigin: S2, ticket: TICKET });
   assert.equal(b.ticket, null, "The stage not in the layout gets no ticket");
-  // 换回两个舞台:B 还没自检,回到等着
+  // Switch back to two stages: B has not self-tested yet, back to waiting
   iso.setStages(["A", "B"]);
   assert.equal(iso.state().enabled, false);
-  // 一台都不挂
+  // Mount neither stage
   iso.setStages([]);
   assert.equal(iso.state().reason, "no-stage");
 });
@@ -260,7 +263,7 @@ test("(f) path ID is fixed per account plus project (createStageSidStore and ses
     setItem(k, v) { setCalls++; backing.set(k, v); },
   };
 
-  // 1. 同一账号+同一项目 -> 同一 sid;键名 pc.stageSid.v1:<accountId>:<projectId>
+  // 1. Same account + same project -> same sid; key name pc.stageSid.v1:<accountId>:<projectId>
   const store1 = createStageSidStore({ storage: fakeStorage });
   const scopeA = { accountId: "acct:1", projectId: "proj/alpha" };
   const scopeB = { accountId: "acct:1", projectId: "proj/beta" };
@@ -271,11 +274,11 @@ test("(f) path ID is fixed per account plus project (createStageSidStore and ses
   const expectedKeyA = `${STAGE_SID_STORAGE_PREFIX}${encodeURIComponent(scopeA.accountId)}:${encodeURIComponent(scopeA.projectId)}`;
   assert.equal(backing.get(expectedKeyA), sidA1);
 
-  // 2. 两个 store 共用同一份存储(模拟新开页面会话) -> 同一 sid
+  // 2. Two stores share the same storage (simulating opening a new page session) -> same sid
   const store2 = createStageSidStore({ storage: fakeStorage });
   assert.equal(store2.sidFor(scopeA), sidA1, "A new page session reads the same sid back from localStorage");
 
-  // 3. 不同项目 -> 不同 sid;4. 不同账号 -> 不同 sid
+  // 3. Different projects -> different sids; 4. Different accounts -> different sids
   const sidB1 = store1.sidFor(scopeB);
   const sidC1 = store1.sidFor(scopeC);
   assert.match(sidB1, /^[0-9a-f]{32}$/);
@@ -284,7 +287,8 @@ test("(f) path ID is fixed per account plus project (createStageSidStore and ses
   assert.notEqual(sidC1, sidA1, "Different account, same project ID: sid differs");
   assert.notEqual(sidC1, sidB1);
 
-  // 5. getItem 或 setItem 抛错(或读取 storage 本身抛错) -> 退回内存随机 32 位十六进制 sid,store 内稳定、不同作用域不同
+  // 5. getItem or setItem throws (or reading storage itself throws) -> fall back to a random
+  //    32-character hex in-memory sid, stable within the store, different for different scopes
   for (const badStorage of [
     { getItem() { throw new Error("SecurityError: getItem blocked"); }, setItem() { throw new Error("SecurityError"); } },
     { getItem() { return null; }, setItem() { throw new Error("QuotaExceededError"); } },
@@ -300,7 +304,7 @@ test("(f) path ID is fixed per account plus project (createStageSidStore and ses
     assert.notEqual(fa, fb, "When storage throws, different scopes still do not share a sid");
   }
 
-  // 6. 存储里是脏值 -> 换新 sid 并覆盖写回
+  // 6. Dirty value in storage -> replace with new sid and overwrite
   for (const garbage of ["not-a-sid", "0123456789ABCDEF0123456789ABCDEF", "0123456789abcdef", `${"a".repeat(32)}-extra`]) {
     backing.set(expectedKeyA, garbage);
     const cleanStore = createStageSidStore({ storage: fakeStorage });
@@ -310,7 +314,8 @@ test("(f) path ID is fixed per account plus project (createStageSidStore and ses
     assert.equal(backing.get(expectedKeyA), fresh, "The dirty value is overwritten by a newly generated valid sid");
   }
 
-  // 7. 缺少任一 id -> 绝不触碰 storage,不同缺省作用域仍拿到各自稳定且互不相同的内存 sid
+  // 7. Missing any id -> never touch storage; different default scopes still get their own stable
+  //    and mutually distinct in-memory sids
   let touched = 0;
   const forbidStorage = {
     getItem() { touched++; return null; },
@@ -329,8 +334,11 @@ test("(f) path ID is fixed per account plus project (createStageSidStore and ses
   assert.equal(memStore.sidFor({ accountId: null, projectId: null }), m5);
   assert.ok(getCalls > 0 && setCalls > 0);
 
-  // 8. 会话级:setScope(B) 后已拿过 A 的 sid 的舞台返回 reload: true、不给新基址、不发 grant、cardExec 为假、状态未启用;
-  //    重载前切回 A 则清除 reload 需求并恢复就绪;握手后才拿到 B 的 sid 并用同一张票据为 B 的 sid 重新交接;单向规矩保持有效。
+  // 8. Session-level: after setScope(B), stages that already received A's sid return reload: true,
+  //    do not provide a new base URL, do not issue grant, cardExec is false, state is not enabled;
+  //    switching back to A before reloading clears reload requirement and restores ready state;
+  //    only gets B's sid after handshake and re-performs handoff for B's sid with the same ticket;
+  //    the one-way rule remains in effect.
   const sessionBacking = new Map();
   const sessionStorage = {
     getItem: (k) => sessionBacking.get(k) ?? null,
@@ -363,7 +371,8 @@ test("(f) path ID is fixed per account plus project (createStageSidStore and ses
   assert.equal(iso.state().enabled, true);
   assert.equal(state.grants.length, 2);
 
-  // 切换到项目 B:sid 变为 sidB,状态立刻变为未就绪(pending),对已拿过 sidA 的槽位 plan 返回 reload: true
+  // Switch to project B: sid changes to sidB, status immediately becomes pending,
+  // plan returns reload: true for slots that already took sidA
   const notifyBeforeSwitch = state.notifications;
   iso.setScope(scopeB);
   const sidB = iso.sid;
@@ -374,11 +383,13 @@ test("(f) path ID is fixed per account plus project (createStageSidStore and ses
   const reloadA = await iso.plan("A", { active: true, stageOrigin: S1, ticket: TICKET });
   assert.deepEqual(reloadA, { mode: "cookie", base: null, ticket: null, cardExec: false, reload: true });
   assert.equal(state.grants.length, 2, "No new handoff request is sent when a reload is needed");
-  // 安全兜底分支(active 为假、或 ticket 为空)同样不能把第二个 sid 交给旧文档
+  // Security fallback branch (active is false, or ticket is empty) likewise cannot pass the second
+  // sid to the old document
   assert.deepEqual(await iso.plan("A", { active: false, stageOrigin: S1, ticket: TICKET }), { mode: "cookie", base: null, ticket: null, cardExec: false, reload: true });
   assert.deepEqual(await iso.plan("B", { active: true, stageOrigin: S2, ticket: null }), { mode: "cookie", base: null, ticket: null, cardExec: false, reload: true });
 
-  // 重载(handshake)发生前切回项目 A:清除 reload 需求,直接恢复可执行且不重复交接
+  // Switch back to project A before reload (handshake) occurs: clears reload requirement,
+  // directly restores executability without repeating handoff
   iso.setScope(scopeA);
   assert.equal(iso.sid, sidA);
   assert.deepEqual({ enabled: iso.state().enabled, reason: iso.state().reason }, { enabled: true, reason: "ok" });
@@ -386,7 +397,8 @@ test("(f) path ID is fixed per account plus project (createStageSidStore and ses
   assert.deepEqual(backToA, { mode: "cookie", base: `/media-s/${sidA}`, ticket: null, cardExec: true });
   assert.equal(state.grants.length, 2, "When switching back to A the old handoff is still valid, no handoff is resent");
 
-  // 再次切到项目 B,模拟两台舞台整页重载后重新握手:拿到 sidB,同一张票据也为 sidB 重新交接
+  // Switch to project B again, simulating both stages re-handshaking after a full-page reload:
+  // obtains sidB, and the same ticket is re-handed off for sidB
   iso.setScope(scopeB);
   assert.equal(iso.state().enabled, false);
   iso.handshake("A"); iso.handshake("B");
@@ -401,7 +413,8 @@ test("(f) path ID is fixed per account plus project (createStageSidStore and ses
     { origin: S2, sid: sidB, ticket: TICKET },
   ], "The same ticket and stage origin must be handed off again under a new sid");
 
-  // 单向规矩 1:点过头之后切到项目 C,即使自检不过或交接失败也绝不退回带票据的旧办法
+  // One-way rule 1: after nodding, switch to project C; even if self-test fails or handoff fails,
+  // never fall back to the old ticket-bearing approach
   iso.setScope(scopeC);
   const sidC = iso.sid;
   iso.handshake("A"); iso.handshake("B");
@@ -414,7 +427,8 @@ test("(f) path ID is fixed per account plus project (createStageSidStore and ses
   assert.deepEqual(failB, { mode: "cookie", base: `/media-s/${sidC}`, ticket: null, cardExec: false });
   assert.equal(iso.state().enabled, false);
 
-  // 单向规矩 2:出过 breach 之后切换作用域并重握手也绝不恢复执行
+  // One-way rule 2: after a breach has occurred, switching scope and re-handshaking will never
+  // restore execution
   state.grantOk = true;
   iso.breach("create");
   iso.setScope(scopeA);
@@ -445,7 +459,9 @@ test("(g) page switches project in place while the media connection has not swit
   assert.equal(b.cardExec, true);
   assert.equal(iso.state().enabled, true);
 
-  // 项目已换成 B、素材连接仍是 A:路径号不变(cookie 里还是 A 的票据),但本页立刻不执行,并通知订阅方(Preview 据此重发策略、关掉舞台的闸门)
+  // Project changed to B, asset connection is still A: path id remains unchanged (cookie still has
+  // A's ticket), but this page halts execution immediately and notifies subscribers (Preview
+  // resends policy accordingly, closing the stage gate)
   const before = state.notifications;
   iso.setScope({ accountId: "acct-1", projectId: "A", codeProjectId: "B" });
   assert.equal(iso.sid, sidA);
@@ -454,11 +470,12 @@ test("(g) page switches project in place while the media connection has not swit
   const during = await iso.plan("A", { active: true, stageOrigin: S1, ticket: TICKET });
   assert.equal(during.cardExec, false, "The policy sent to the stage for the mismatched segment is not approved");
   assert.equal(during.ticket, null);
-  // 同一组再报一次是空操作
+  // Reporting the same group again is a no-op
   iso.setScope({ accountId: "acct-1", projectId: "A", codeProjectId: "B" });
   assert.equal(state.notifications, before + 1);
 
-  // 素材连接换成 B:路径号换成 B 的,拿过 A 的路径号的舞台文档要整页重载
+  // Asset connection switched to B: path id changes to B's; stage documents that took A's path id
+  // must undergo a full-page reload
   iso.setScope({ accountId: "acct-1", projectId: "B", codeProjectId: "B" });
   const sidB = iso.sid;
   assert.notEqual(sidB, sidA);
@@ -473,7 +490,8 @@ test("(g) page switches project in place while the media connection has not swit
   assert.equal(b2.cardExec, true);
   assert.equal(iso.state().enabled, true);
 
-  // 没有素材连接(本地项目、局域网项目不给账号项目号)时只按打开的项目算,不算对不上
+  // When there is no asset connection (local projects and LAN projects do not provide an account
+  // project id), only compute by the opened project; not considered a mismatch
   iso.setScope({ accountId: null, projectId: "L", codeProjectId: "L" });
   assert.notEqual(iso.state().reason, "ok");
   iso.handshake("A"); iso.handshake("B");
@@ -482,7 +500,8 @@ test("(g) page switches project in place while the media connection has not swit
   await iso.plan("B", { active: true, stageOrigin: S2, ticket: TICKET });
   assert.equal(iso.state().enabled, true);
 
-  // 接线(源码核对):Preview 的作用域里带 codeProjectId,发卡片包之前先重算作用域再看能不能执行
+  // Wiring (source check): Preview's scope includes codeProjectId; before sending the card bundle,
+  // recalculate scope first then check whether it can execute
   const fs = await import("node:fs");
   const preview = fs.readFileSync(new URL("../editor/Preview.tsx", import.meta.url), "utf8");
   assert.match(preview, /codeProjectId = currentDocProjectId\(\) \|\| null/);
@@ -491,7 +510,9 @@ test("(g) page switches project in place while the media connection has not swit
   const scoped = preview.indexOf(".setScope(stageSidScope());", push);
   const decided = preview.indexOf("cardExecAvailable()", push);
   assert.ok(push > 0 && scoped > push && scoped < decided, "pushCardBundles calls setScope before deciding cardExecAvailable");
-  // 2026-10-23 审查 P2:取票据要等;等的时候素材连接或打开的项目换了,这张票据作废,不交到按新作用域算的路径号下
+  // 2026-10-23 review P2: fetching ticket requires waiting; if asset connection or opened project
+  // changes while waiting, this ticket is invalidated, not handed over to the path id computed
+  // under the new scope
   const media = preview.indexOf("const pushMediaPolicy = useCallback(");
   const captured = preview.indexOf("const scopeBefore = scopeKey();", media);
   const awaited = preview.indexOf("await remoteAssetTicket()", media);
@@ -499,7 +520,9 @@ test("(g) page switches project in place while the media connection has not swit
   const mediaScoped = preview.indexOf("iso.setScope(stageSidScope());", media);
   assert.ok(media > 0 && captured > media && awaited > captured && recheck > awaited && mediaScoped > recheck, "pushMediaPolicy: read the scope once before and once after awaiting the ticket, abandon if they differ, then decide the path number");
   assert.match(preview, /const scopeKey = \(\) => JSON\.stringify\(\[remoteAssetBase\(\), stageSidScope\(\)\]\);/, "The scope includes the asset connection and the open project");
-  // 原地换项目(`plan.reload`):重建舞台 iframe 元素(key 带 stageFrameGen),不用 `frame.src = frame.src`(免得旧浏览上下文的会话历史留着)
+  // In-place project switch (`plan.reload`): rebuild the stage iframe element (key includes
+  // stageFrameGen), do not use `frame.src = frame.src` (to avoid retaining session history of the old
+  // browsing context)
   const reloadBranch = preview.indexOf("if (plan.reload)", media);
   const bumpGen = preview.indexOf("setStageFrameGen((prev) => ({ ...prev, [id]: prev[id] + 1 }));", reloadBranch);
   assert.ok(reloadBranch > mediaScoped && bumpGen > reloadBranch && bumpGen < preview.indexOf("return;", reloadBranch), "The plan.reload branch increments stageFrameGen to rebuild the stage iframe");

@@ -7,11 +7,14 @@ import "./DesktopSessionsStrip.css";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 桌面 APP 会话在 AI 栏里的分组(计划 `docs/plan/agent-workflow-plan.md` A4;语义 `user-workflow.md`「Agent 接入方式」
- * 「进度可见」):每个会话单独一组,标明厂商和正在进行的操作;它用 report_progress 交的进度条目用 AI 栏同一张报告卡
- * (`ReportCard`)显示。桌面 APP 的文字输出本软件拿不到,所以组里只有操作和报告,没有文字回复。
+ * Grouping of desktop app sessions in the AI panel (plan `docs/plan/agent-workflow-plan.md` A4; semantics
+ * `user-workflow.md` "Agent connection type" "Progress visibility"): each session gets its own group,
+ * showing the vendor and the operation in progress; the progress entries it submits with report_progress
+ * are shown with the same report card as the AI panel (`ReportCard`). This software cannot get the desktop
+ * app's text output, so a group only has operations and reports, and no text replies.
  *
- * 数据:`src/ai/desktopSessions.ts`(编辑器进程经 SSE 推来)。没有桌面会话时整块不画。
+ * Data: `src/ai/desktopSessions.ts` (pushed from the editor process via SSE). When there are no desktop
+ * sessions, the whole block is not drawn.
  */
 export function DesktopSessionsStrip(): JSX.Element | null {
   const sessions = useDesktopSessions();
@@ -25,7 +28,7 @@ export function DesktopSessionsStrip(): JSX.Element | null {
   );
 }
 
-/** 「正在修改 · update_clip」/「上一步:读取 · get_project」/「上一步失败:…」 */
+/** "Modifying · update_clip" / "Last step: reading · get_project" / "Last step failed: …" */
 export function operationText(s: DesktopSession): string {
   if (s.current) {
     const name = bareToolName(s.current.tool);

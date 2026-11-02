@@ -1,16 +1,17 @@
 /**
- * 随机与墙上时钟钉死的单测。跑:node --test src/kernel/pinEntropy.test.mjs
+ * Unit tests for pinning down randomness and wall clock. Run: node --test src/kernel/pinEntropy.test.mjs
  *
- * 这些错了都不会报错,只会让「导两遍」出两个画面 —— 而且只在用到随机的第三方素材上发作
- * (实测 lottie 的 wiggle / random 表达式)。所以把几条钉死:同一个起点出同一串数、
- * 墙上时钟跟着帧走、带参数的 Date 不受影响、crypto 也走种子。
+ * Bugs here throw no errors; they just make "exporting twice" produce two different outputs: and it
+ * only manifests on third-party assets using randomness (tested with lottie wiggle / random
+ * expressions). So pin down several rules: the same starting point produces the same sequence of
+ * numbers, wall clock tracks frames, Date with arguments is unaffected, and crypto also uses seeds.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import { installPinnedEntropy, withSeededRandom, PINNED_EPOCH_MS } from "./pinEntropy.ts";
 
-/** 沙箱:不碰测试进程自己的 Math / Date / crypto */
+/** Sandbox: do not touch the test process's own Math / Date / crypto */
 function makeHost() {
   const c = globalThis.crypto;
   return {
@@ -33,9 +34,9 @@ test("After two independent pages install it, Math.random produces the same sequ
 test("The sequence after __pcResetRandom(1) is bit-for-bit identical to the original exportClock's mulberry32", () => {
   const h = makeHost();
   installPinnedEntropy(h);
-  h.Math.random(); h.Math.random();          // 模块加载期先消耗几次
+  h.Math.random(); h.Math.random();          // Consume a few times during module loading
   h.__pcResetRandom(1);
-  // 原 exportClock 里的实现,照抄一份当参照
+  // Implementation from original exportClock, copied verbatim as a reference
   let s = 1;
   const ref = () => { s = (s + 0x6d2b79f5) | 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   for (let i = 0; i < 16; i++) assert.equal(h.Math.random(), ref());
@@ -83,17 +84,17 @@ test("withSeededRandom: inside it numbers start from the seed regardless of how 
   const a = makeHost(), b = makeHost();
   installPinnedEntropy(a);
   installPinnedEntropy(b);
-  // a 先取 5 次再进去,b 直接进去:里面拿到的应当一样
+  // a takes 5 times before entering, b enters directly: what they get inside should be identical
   for (let i = 0; i < 5; i++) a.Math.random();
   const inA = withSeededRandom(42, () => [a.Math.random(), a.Math.random(), a.Math.random()], a);
   const inB = withSeededRandom(42, () => [b.Math.random(), b.Math.random(), b.Math.random()], b);
   assert.deepEqual(inA, inB);
-  // 和 __pcResetRandom(42) 之后的头三个数相同:同一个算法、同一个起点
+  // Same as the first three numbers after __pcResetRandom(42): same algorithm, same starting point
   const c = makeHost();
   installPinnedEntropy(c);
   c.__pcResetRandom(42);
   assert.deepEqual(inA, [c.Math.random(), c.Math.random(), c.Math.random()]);
-  // 出来以后:a 接着的是它的第 6 个数,b 接着的是它的第 1 个数
+  // After exiting: a continues with its 6th number, b continues with its 1st number
   const d = makeHost();
   installPinnedEntropy(d);
   const plain = Array.from({ length: 7 }, () => d.Math.random());
@@ -123,8 +124,8 @@ test("withSeededRandom: can be nested; even if it throws inside, the outer state
   const got = withSeededRandom(3, () => {
     const x = h.Math.random();
     const inner = withSeededRandom(3, () => h.Math.random(), h);
-    assert.equal(inner, x);               // 里层同一个种子,从头出数
-    return [x, h.Math.random()];          // 回到外层,接着外层的第 2 个数
+    assert.equal(inner, x);               // Same seed in inner layer, generates numbers from the beginning
+    return [x, h.Math.random()];          // Back to the outer layer, continue with the outer layer's 2nd number
   }, h);
   ref.__pcResetRandom(3);
   assert.deepEqual(got, [ref.Math.random(), ref.Math.random()]);
@@ -133,7 +134,7 @@ test("withSeededRandom: can be nested; even if it throws inside, the outer state
 });
 
 test("withSeededRandom: in an unpinned page it temporarily swaps Math.random, the numbers match the pinned ones, and on exit the original is swapped back", () => {
-  const h = makeHost();                     // 不装钉子
+  const h = makeHost();                     // Do not install pins
   const real = () => 0.123;
   h.Math.random = real;
   const got = withSeededRandom(42, () => [h.Math.random(), h.Math.random()], h);

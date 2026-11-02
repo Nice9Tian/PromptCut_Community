@@ -1,13 +1,17 @@
 /**
- * 多 Agent 的服务端一侧(计划 docs/plan/agent-workflow-plan.md A3)。用例 MA-S1～MA-S14。
+ * Server side of multi-agent (plan docs/plan/agent-workflow-plan.md A3). Test cases MA-S1-MA-S14.
  *
- * - 纯逻辑:拉起子 Agent 的上限(深度 1、并发 4)、桌面 APP 会话没有页签可开、子 Agent 的等级不高于父对话、
- *   公告板的名单 / 投递(空闲立即、忙时攒着、下一次工具结果带上、连锁封顶)、写进别人声明的范围时双方提示;
- * - 端到端(真的文档服务 + 真的 src/mcp/handlers + createAgentSide + attachLink):父子并行写入各记各的身份、
- *   公告板由提交流喂(页面、两个 Agent 的写入都在)、被覆盖的一方下一次工具结果得知;
- * - 分工模式归档后没有残留入口(按标识符与路由的棘轮式检查)。
+ * - Pure logic: subagent spawn limits (depth 1, concurrency 4), desktop app sessions have no tabs
+ *   to open, subagent level cannot exceed parent chat, bulletin board list / delivery (immediate
+ *   when idle, queued when busy, included in next tool result, chained delivery cap), notices on
+ *   both sides when writing into another's declared scope;
+ * - End-to-end (real document service + real src/mcp/handlers + createAgentSide + attachLink):
+ *   parent and child write in parallel, each recording its own identity; bulletin board is fed by
+ *   commit stream (page and both Agents' writes are present); overwritten side is notified in next
+ *   tool result;
+ * - No leftover entry points after archiving split-work mode (ratchet check by identifier and route).
  *
- * 跑法:node --test server/test/multi-agent.test.mjs
+ * Run: node --test server/test/multi-agent.test.mjs
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -28,7 +32,10 @@ import { wsClient, waitFor } from './fake-ws-kit.mjs';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
-/** 一套拼装(与 vite-plugin-ai.ts 相同的接法):登记表、按项目的公告板、multiAgent;openTab 是假的页面 */
+/**
+ * Assembly setup (same wiring as vite-plugin-ai.ts): registry, per-project bulletin board,
+ * multiAgent; openTab is a mock page
+ */
 function rig({ projectLevel = 'high', openTab } = {}) {
   const sessions = createAgentSessions();
   const boards = createAgentBoards(() => ({ labelOf: (k) => sessions.get(k).vendor, infoOf: (k) => { const e = sessions.get(k); return { role: e.role, parent: e.parent }; } }));
@@ -44,7 +51,7 @@ function rig({ projectLevel = 'high', openTab } = {}) {
   return { sessions, boards, board, ma, opened, setProject: (k) => { projectKey = k; } };
 }
 
-/* ------------------------------------------------------------------ 纯逻辑 */
+/* ------------------------------------------------------------------ Pure logic */
 
 test('MA-S1 numbers and roles: depth 1, concurrency 4, chain of 3 levels; every spawnable role can read its prompt, and the enum in the tool table matches them; all five tools are answered on the server', () => {
   assert.equal(SPAWN_LIMITS.maxDepth, 1);
@@ -77,14 +84,15 @@ test('MA-S2 spawn_agent: the new identity is registered (vendor / driver inherit
   assert.equal(r.board().hasAutoDeliverable(out.conversationId), true, 'if the tab is idle, the page sends it');
   const first = r.board().takeInbox(out.conversationId, true);
   assert.deepEqual(first.map((m) => [m.from, m.text, m.hops]), [['conv-main', 'Put the media onto Cut 1->Track 1', 1]]);
-  // AI 栏以后每条消息的登记(role 固定 main)不改掉子 Agent 的角色与父对话
+  // Registration of subsequent messages in AI panel (fixed role main) does not overwrite subagent
+  // role and parent chat
   r.sessions.register(out.conversationId, { type: 'cli', vendor: 'claude', role: 'main', creativity: 'high' });
   assert.deepEqual([r.sessions.get(out.conversationId).role, r.sessions.get(out.conversationId).parent], ['director', 'conv-main']);
-  // API 直连的父对话:子 Agent 的驱动是 api
+  // Direct API parent chat: subagent driver is api
   r.sessions.register('conv-api', { type: 'api', vendor: 'anthropic' });
   const api = await r.ma.handle('spawn_agent', { role: 'collector', task: 'x' }, 'conv-api');
   assert.equal(api.provider, 'api');
-  // 参数不对
+  // Invalid parameters
   assert.equal((await r.ma.handle('spawn_agent', { role: 'manager', task: 'x' }, 'conv-main')).code, 'bad-role');
   assert.equal((await r.ma.handle('spawn_agent', { role: 'director', task: '  ' }, 'conv-main')).code, 'bad-task');
 });
@@ -116,7 +124,7 @@ test('MA-S4 concurrency limit: the same lead Agent can have at most 4 subagents 
   assert.deepEqual(fifth.children.sort(), [...kids].sort());
   assert.match(fifth.error, /already have 4 sub-Agents open at once \(limit 4\)/);
   assert.equal((await r.ma.handle('spawn_agent', { role: 'director', task: 'Someone else\'s' }, 'conv-other')).ok, true, 'counted separately per lead Agent');
-  // 用户关掉第一个子 Agent 的页签
+  // User closes the first subagent tab
   r.board().setTabs(r.board().listRaw('').filter((a) => a.id !== kids[0]).map((a) => ({ conversationId: a.id, title: a.title, busy: false })));
   assert.equal((await r.ma.handle('spawn_agent', { role: 'director', task: 'Fill the slot' }, 'conv-main')).ok, true);
 });
@@ -140,15 +148,15 @@ test('MA-S6 subagent creativity level: takes the level currently in effect on th
   const c = await r.ma.handle('spawn_agent', { role: 'director', task: 'x' }, 'conv-main');
   assert.equal(c.creativity, 'medium');
   assert.equal(r.sessions.creativityOf(c.conversationId, 'high').level, 'medium');
-  // 用户在子页签里调到「高」:仍只到父对话的「中」
+  // User sets to "high" in subtab: still capped at parent chat's "medium"
   r.sessions.register(c.conversationId, { type: 'cli', vendor: 'claude', creativity: 'high' });
   const up = r.sessions.creativityOf(c.conversationId, 'high');
   assert.equal(up.level, 'medium');
   assert.match(up.source, /not higher than the chat conv-main that launched it/);
-  // 父对话降到「低」:子跟着降
+  // Parent chat lowered to "low": child lowers accordingly
   r.sessions.register('conv-main', { type: 'cli', vendor: 'claude', creativity: 'low' });
   assert.equal(r.sessions.creativityOf(c.conversationId, 'high').level, 'low');
-  // 子自己往低调是可以的
+  // Subagent lowering itself is allowed
   r.sessions.register('conv-main', { type: 'cli', vendor: 'claude', creativity: 'high' });
   r.sessions.register(c.conversationId, { type: 'cli', vendor: 'claude', creativity: 'low' });
   assert.equal(r.sessions.creativityOf(c.conversationId, 'high').level, 'low');
@@ -177,13 +185,13 @@ test('MA-S8 message delivery: idle ones are picked up by the page (only those wh
   const r = rig();
   const b = r.board();
   b.setTabs([{ conversationId: 'conv-a', title: 'A' }, { conversationId: 'conv-b', title: 'B' }]);
-  // 空闲:可自动投递
+  // Idle: auto-delivery allowed
   const s1 = b.sendMessage('conv-a', { to: 'conv-b', text: 'I\'ll take Track 2' });
   assert.deepEqual(s1.delivered, ['conv-b']);
   assert.match(s1.note, /The recipient is idle/);
   assert.equal(b.hasAutoDeliverable('conv-b'), true);
   assert.deepEqual(b.takeInbox('conv-b', true).map((m) => m.text), ['I\'ll take Track 2']);
-  // 忙:B 正在跑一轮
+  // Busy: B is running a round
   b.beginRun('conv-b', 0);
   const s2 = b.sendMessage('conv-a', { to: 'conv-b', text: 'I finished editing Track 3' });
   assert.match(s2.note, /is running; the message will be included in the result of its next tool call/);
@@ -195,7 +203,8 @@ test('MA-S8 message delivery: idle ones are picked up by the page (only those wh
   const again = await r.ma.wrap('conv-b', 'get_project', async () => ({ ok: true }));
   assert.equal(again.notice, undefined);
   b.endRun('conv-b');
-  // 连锁封顶:B 在第 2 层自动投递里跑,它发给 A 的是第 3 层,不再自动触发
+  // Chained delivery cap: B runs in level-2 auto-delivery; what it sends to A is level 3, not
+  // automatically triggered
   b.beginRun('conv-b', 2);
   const s3 = b.sendMessage('conv-b', { to: 'conv-a', text: 'OK' });
   assert.match(s3.note, /messaged each other for several rounds in a row/);
@@ -203,10 +212,10 @@ test('MA-S8 message delivery: idle ones are picked up by the page (only those wh
   const notes = b.consumeNotes('conv-a');
   assert.match(notes, /Message to you from Agent conv-b \d\d:\d\d:\d\d: OK/, 'carried along the next time the user talks to A');
   b.endRun('conv-b');
-  // 发给不存在的 / all
+  // Send to non-existent / all
   assert.throws(() => b.sendMessage('conv-a', { to: 'nobody', text: 'x' }), /No such Agent/);
   assert.deepEqual(b.sendMessage('conv-a', { to: 'all', text: 'All done' }).delivered, ['conv-b']);
-  // check_messages 不取走
+  // check_messages does not consume messages
   assert.equal(b.checkMessages('conv-b').messages.length, 1);
   assert.equal(b.checkMessages('conv-b').messages.length, 1);
 });
@@ -230,15 +239,15 @@ test('MA-S9 writing into a scope declared by someone else: the writer is notifie
   assert.match(a1.notice, /^Someone else is editing a scope you declared: Agent conv-b using add_clip changed Cut 1->Track 2/);
   const a2 = await r.ma.wrap('conv-a', 'get_clip', async () => ({ ok: true }));
   assert.equal(a2.scopeChanges, undefined, 'the same entry is notified only once');
-  // 用户在页面上改了 A 的范围
+  // User changed A's scope on the page
   const p2 = { ...p1, tracks: [{ ...p1.tracks[0], clips: [] }] };
   b.noteCommit({ rev: 3, actor: { role: 'page', userId: 'local' }, before: p1, after: p2 });
   const a3 = await r.ma.wrap('conv-a', 'get_clip', async () => ({ ok: true }));
   assert.match(a3.notice, /Someone else is editing a scope you declared: User changed Cut 1->Track 2/);
-  // 这些提示不重复出现在下一轮的「其他 Agent 的动态」里
+  // These notices do not reappear in "Activity of other Agents" in the next round
   const notes = b.consumeNotes('conv-a');
   assert.equal(notes.includes('changed Cut 1->Track 2'), false, notes);
-  // 多 Agent 工具本身不带提示
+  // Multi-agent tools themselves do not carry notices
   b.deliver({ from: 'conv-b', to: 'conv-a', text: 'hi' });
   const chk = await r.ma.wrap('conv-a', 'check_messages', async () => b.checkMessages('conv-a'));
   assert.equal(chk.notice, undefined);
@@ -255,7 +264,7 @@ test('MA-S10 annotateBoard places things the same way as A2: the notice goes fir
   assert.deepEqual(arr.result, [1]);
 });
 
-/* ------------------------------------------------------------------ 端到端 */
+/* ------------------------------------------------------------------ End-to-end */
 
 async function startEnv(t) {
   const server = http.createServer((req, res) => { res.statusCode = 404; res.end(); });
@@ -265,7 +274,7 @@ async function startEnv(t) {
   const vite = await createVite({ configFile: false, root: ROOT, logLevel: 'silent', server: { middlewareMode: true, hmr: false, ws: false, watch: null }, appType: 'custom', optimizeDeps: { noDiscovery: true, include: [] } });
   const closers = [];
   t.after(async () => {
-    for (const c of closers) { try { c(); } catch { /* 已关 */ } }
+    for (const c of closers) { try { c(); } catch { /* Closed */ } }
     await vite.close();
     await built.service.close();
     await new Promise((resolve) => server.close(resolve));
@@ -307,7 +316,7 @@ async function startEnv(t) {
     return pg;
   }
 
-  /** 与 vite-plugin-ai.ts 同样的拼装:side 的 side:"server" 工具交给 multiAgent;每次调用包 wrap */
+  /** Same assembly as vite-plugin-ai.ts: tools with side:"server" handed to multiAgent; each call wrapped */
   function agentRig(projectId) {
     const r = rig();
     r.setProject(projectId);
@@ -345,7 +354,8 @@ test('MA-S11 to S13 end to end: spawned identities are isolated, the bulletin bo
     const sp = await g.call('spawn_agent', { role: 'fx-assistant', task: 'Add captions to Track 2' }, 'conv-main');
     assert.equal(sp.ok, true, JSON.stringify(sp));
     const kid = sp.conversationId;
-    // 两边各读一次,交替写各自的片段;每次写之前读到的是对方刚落地的版本(读后写)
+    // Both sides read once and alternately write their clips; each write reads the version just
+    // committed by the other (read-after-write)
     await Promise.all([g.call('get_project', {}, 'conv-main'), g.call('get_project', {}, kid)]);
     const w1 = await g.call('update_clip', { clipId: 'c1', opacity: 0.5 }, 'conv-main');
     assert.equal(w1.ok, true, JSON.stringify(w1));
@@ -355,15 +365,16 @@ test('MA-S11 to S13 end to end: spawned identities are isolated, the bulletin bo
     await g.call('get_clip', { clipId: 'c1' }, 'conv-main');
     const w3 = await g.call('update_clip', { clipId: 'c1', opacity: 0.7 }, 'conv-main');
     assert.equal(w3.ok, true, JSON.stringify(w3));
-    // 各自的写入身份:对话号不同、session 是各自的对话 ID
+    // Respective write identities: different chat numbers, session is each one's chat ID
     const hist = g.side.link.replica.history.filter((h) => h.rev >= w1.rev);
     assert.deepEqual(hist.map((h) => h.session), ['agent:conv-main', `agent:${kid}`, 'agent:conv-main']);
     assert.notEqual(g.side.conversationNumber('conv-main'), g.side.conversationNumber(kid));
     assert.deepEqual([g.side.executor.lastRead('conv-main'), g.side.executor.lastRead(kid)], [w3.rev, w2.rev], 'each records the version it read');
-    // 公告板里的改动记录也各记各的
+    // Change records on the bulletin board are also tracked separately
     const ch = g.board()._changes().filter((c) => c.kind === 'change');
     assert.deepEqual(ch.map((c) => [c.by.agent, c.tool, c.scopes.join()]), [['conv-main', 'update_clip', 'Cut 1->Track 1'], [kid, 'update_clip', 'Cut 1->Track 2'], ['conv-main', 'update_clip', 'Cut 1->Track 1']]);
-    // 注意:没重读就写仍按文档服务的期望版本拒(product/document-service.md「Agent 的写操作带期望版本」)
+    // Note: writing without re-reading is still rejected by document service expected version
+    // (product/document-service.md "Agent writes carry expected version")
     await assert.rejects(g.call('update_clip', { clipId: 'c2', opacity: 0.1 }, kid), /changed after your last read|Re-read/);
   });
 
@@ -382,7 +393,8 @@ test('MA-S11 to S13 end to end: spawned identities are isolated, the bulletin bo
     assert.deepEqual(ch.map((c) => [c.by.kind, c.by.agent ?? null, c.scopes.join()]), [
       ['agent', 'conv-a', 'Cut 1->Track 1'], ['agent', 'conv-b', 'Cut 1->Track 2'], ['user', null, 'Cut 1->Track 2'],
     ]);
-    // 共享项目里别的成员:写入身份是 page + 他的 userId(这里直接喂一条,跨设备的端到端见 multi-agent-presence.test.mjs)
+    // Other members in a shared project: write identity is page + their userId (fed directly here;
+    // see multi-agent-presence.test.mjs for cross-device end-to-end)
     const p = g.side.link.replica.project;
     g.board().noteCommit({ rev: 99, actor: { role: 'page', userId: 'bob' }, before: p, after: { ...p, tracks: [p.tracks[0], { ...p.tracks[1], clips: [] }] } });
     const notes = g.board().consumeNotes('conv-a');
@@ -411,20 +423,21 @@ test('MA-S11 to S13 end to end: spawned identities are isolated, the bulletin bo
     assert.match(b2.notice, /^You wrote clip c2 \(overwritten by Agent conv-a \(codex\), rev \d+\)/);
     const b3 = await g.call('get_clip', { clipId: 'c1' }, 'conv-b');
     assert.equal(b3.overwrittenBy, undefined, 'told only once');
-    // 页面(用户)覆盖了 Agent 写的
+    // The page (user) overwrites what the Agent wrote
     const a2 = await g.call('update_clip', { clipId: 'c1', opacity: 0.3 }, 'conv-a');
     assert.equal(a2.ok, true);
   });
 });
 
-/* ------------------------------------------------------------------ 归档 */
+/* ------------------------------------------------------------------ Archive */
 
 test('MA-S14 no leftover entry points after split-work mode was archived: identifiers, routes and files are all gone (ratchet: may only decrease)', () => {
   const gone = ['src/ai/teamMode.ts', 'src/ai/orchestrate.ts', 'src/ai/orchestrateGraph.ts', 'src/ai/triage.ts', 'src/ai/runRoleTask.ts', 'src/editor/right/OrchestrationBlock.tsx', 'src/editor/right/OrchestrationBlock.css', 'src/ai/roles/manager.md'];
   for (const f of gone) assert.equal(fs.existsSync(path.join(ROOT, f)), false, `${f} should have been deleted`);
   const patterns = [/\bteamMode\b/i, /\bisTeamMode\b/, /\borchestrat/i, /\btriage\b/i, /\brunRoleTask\b/, /\bOrchestrationBlock\b/, /\/api\/ai\/plan\b/, /\/api\/ai\/triage\b/, /data-pc="ai-team-mode"/, /Split-work mode<\//];
   const hits = [];
-  // 基线文件的说明里记着删了哪两条路由;它的 paths 在下面单独查
+  // Baseline file description records which two routes were deleted; its paths are checked separately
+  // below
   const skip = new Set(['server/test/multi-agent.test.mjs', 'server/test/c10-api-ratchet-baseline.json']);
   const walk = (dir) => {
     for (const item of fs.readdirSync(dir, { withFileTypes: true })) {

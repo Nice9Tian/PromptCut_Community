@@ -14,12 +14,17 @@ import "./agent.css";
 import { tr } from "../../../i18n/index.ts";
 
 /**
- * AI 栏底部的「Agent 操作」:原来气泡里的那套可视化(操作图标组、操作详细预览、阶段 / 本轮小结),按轮显示。
+ * "Agent actions" at the bottom of the AI panel: the visualization that used to live in the bubble
+ * (action icon group, action detail preview, stage / round summary), shown per round.
  *
- * 2026-10-20 用户定,原话「把Agent操作记录哪里换成气泡里面那个可视化组件。气泡里面只展示在做什么」。
- * 取代原来的「Agent 操作记录」(src/editor/sync/AgentEventLog.tsx:按项目频道列工具事件,来源不限于这个对话,
- * 会混进别的对话、别的成员、命令行的调用)。这里只看这个对话自己的消息,一次显示一轮:缺省跟着最新的一轮,
- * 点哪个气泡就切到哪一轮,也能用 ‹ › 前后翻。写了项目的那一步在操作详细预览里照旧有「撤销这步」(AgentUndoButton)。
+ * User decision, 2026-10-20, original words: "Replace the Agent action log with the visualization
+ * component from the bubble. The bubble should only show what is being done".
+ * It replaces the old "Agent action log" (src/editor/sync/AgentEventLog.tsx: lists tool events per
+ * project channel, not limited to this chat, so it mixes in other chats, other members and command
+ * line calls). This one looks only at this chat's own messages and shows one round at a time: by
+ * default it follows the latest round, clicking a bubble switches to that round, and you can also
+ * page with ‹ ›. A step that wrote to the project still has "Undo this step" (AgentUndoButton) in
+ * the action detail preview, as before.
  */
 
 const OPEN_KEY = "pc.ai.activity.open";
@@ -34,13 +39,14 @@ function writeOpen(v: boolean) {
   try {
     localStorage.setItem(OPEN_KEY, v ? "1" : "0");
   } catch {
-    /* 存不了就只在这一次有效 */
+    /* If it cannot be saved, it only applies this once */
   }
 }
 
 /**
- * 「Agent 操作」显示哪一轮:用户点过的那一轮;没点过、或点的那一轮已经不在了,就是最新的一轮。
- * 有新的一轮开始(最新一轮换了)时回到跟踪最新。
+ * Which round "Agent actions" shows: the round the user clicked; if none was clicked, or the clicked
+ * round no longer exists, the latest round.
+ * When a new round starts (the latest round changes), it goes back to following the latest.
  */
 export function useRoundSelection(messages: readonly ChatMessage[]): { id: string | null; select: (id: string) => void } {
   const latest = useMemo(() => {
@@ -57,7 +63,7 @@ export function useRoundSelection(messages: readonly ChatMessage[]): { id: strin
 
 type RowSeg = { tools: ToolCallInfo[]; report: ProgressReport | null; runs: IconRun[]; tone: SummaryTone | null };
 
-/** 一轮的可视化:简洁模式是图标组 + 操作详细预览;详细模式按发生顺序列每次操作和汇报卡 */
+/** Visualization of one round: Concise mode is the icon group + action detail preview; Detailed mode lists each action and report card in the order they happened */
 function RoundActivity(props: {
   m: ChatMessage;
   inbound?: InboundAgentMessage[];
@@ -78,7 +84,7 @@ function RoundActivity(props: {
     tools: s.tools,
     report: s.report,
     runs: iconRuns(s.tools),
-    // 小结的颜色:这一轮出错收尾(最后一段的小结)是红,报了问题是黄,否则绿
+    // Summary color: red if this round ended in an error (the summary of the last segment), yellow if it reported problems, otherwise green
     tone: s.report ? (si === segments.length - 1 && (m.error || m.outcome === "error") ? "err" : s.report.problems.length || s.report.blocked ? "warn" : "ok") : null,
   }));
   const items: DetailItem[] = [];
@@ -86,7 +92,7 @@ function RoundActivity(props: {
   segs.forEach((seg, si) => {
     for (const run of seg.runs) {
       const tools = run.items.map((i) => seg.tools[i]);
-      // 装引擎在图标行里有自己的进度条,不进操作详细预览
+      // Installing the engine has its own progress bar in the icon row, so it stays out of the action detail preview
       if (bareToolName(tools[0].name) === "stt_install") continue;
       items.push({ type: "run", key: `${prefix}:i${si}:${run.key}`, tools });
     }
@@ -114,7 +120,7 @@ function RoundActivity(props: {
   };
 
   if (!segs.length && !inboundIcon) {
-    // 出错留痕:失败的一轮不能只写「没有操作」,要说明是因为失败,并带上原因
+    // Leave a trace on errors: a failed round cannot just say "no actions"; it must say it was because of the failure, and include the reason
     if (!live && (m.error || m.outcome === "error")) {
       return (
         <div className="ai-activity-empty is-failed" data-pc="agent-activity-empty" data-failed="1">
@@ -169,7 +175,7 @@ function RoundActivity(props: {
 
 export function AgentActivityPanel(props: {
   messages: ChatMessage[];
-  /** 显示哪一轮(useRoundSelection 给的) */
+  /** Which round to show (given by useRoundSelection) */
   selectedId: string | null;
   onSelect: (id: string) => void;
   view: ViewMode;
@@ -211,7 +217,7 @@ export function AgentActivityPanel(props: {
       {open ? (
         <div className="pc-activity-body">
           {promptText ? <div className="pc-activity-prompt" title={promptText}>{tr("Reply: {0}", promptText)}</div> : null}
-          {/* 换一轮时整块重挂:操作详细预览翻到哪一页、点过哪个图标都是那一轮自己的 */}
+          {/* Remount the whole block when the round changes: the page the action detail preview is flipped to and the icon that was clicked belong to that round itself */}
           <RoundActivity key={m.id} m={m} inbound={plan.inboundFor.get(m.id)?.list} view={view} installJobs={installJobs} expanded={expanded} on={on} />
         </div>
       ) : null}

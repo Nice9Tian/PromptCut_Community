@@ -1,19 +1,26 @@
 /**
- * 清单进内容库与跨节点去重（契约 `docs/plan/manifest-contract.md` 第 1、3 节，第 6 节用例 U1～U5）。
- * 跑：node --experimental-test-module-mocks --test server/test/artifact-dedup.test.mjs
+ * Manifest ingestion into content store and cross-node deduplication (contract
+ * `docs/plan/manifest-contract.md` sections 1 and 3, section 6 test cases U1-U5).
+ * Run: node --experimental-test-module-mocks --test server/test/artifact-dedup.test.mjs
  *
- * 只照契约写，不看实现。
+ * Written strictly to the contract, without looking at the implementation.
  *
- * 约定（沿用 C6.2 `artifact-transfer.test.mjs` 的构造办法）：
- *   - 几个临时帧库 A、B、C，各一个真的 `FramePipeline`（注入 `environment`、不探测）；`server/bakery/index.mjs`
- *     整个换成假的（`mock.module`），它的每个函数被调一次就记一笔 —— 「没有渲染」就是这些计数为 0。
- *   - 一个素材服务（memory，端口 0）、一个文档服务（内容库模块，memory，端口 0）；客户端用 C6.2 的
- *     `createAssetClient` 与本阶段的 `createContentClient`（经 M5a 的 `createWsEndpoint`）。
- *   - sink：`createAssetSink({ pipeline, client, content })`；ref 带任务的 `input` 与 `requires`（C6.2 第 11 节第 3 条）。
- *   - 清单的键 `<resultKey>:<from>-<to>`，快照 kind `snapshot-manifest`、流 kind `render-manifest`（契约第 1 节）。
- *   - `resultFor(ref)` 按契约是「本机覆盖的由 collect* 现算、查内容库得到的回记下的清单」，这里一律 `await` 它。
+ * Conventions (following the construction method in C6.2 `artifact-transfer.test.mjs`):
+ *   - Several temporary frame stores A, B, and C, each with a real `FramePipeline` (injects
+ *     `environment`, without probing); `server/bakery/index.mjs` is replaced entirely with a mock
+ *     (`mock.module`), recording each time any of its functions is called: "no rendering" means
+ *     these counts are 0.
+ *   - One asset service (memory, port 0), one document service (content store module, memory,
+ *     port 0); clients use C6.2 `createAssetClient` and this stage's `createContentClient`
+ *     (via M5a `createWsEndpoint`).
+ *   - sink: `createAssetSink({ pipeline, client, content })`; ref carries task `input` and
+ *     `requires` (C6.2 section 11 item 3).
+ *   - Manifest key `<resultKey>:<from>-<to>`, snapshot kind `snapshot-manifest`, stream kind
+ *     `render-manifest` (contract section 1).
+ *   - `resultFor(ref)` per contract is "computed on the fly by collect* for local coverage, and
+ *     queried from content store to return the recorded manifest", always `await` it here.
  *
- * 实现模块还不存在时每条用例各自失败、报原因。
+ * When implementation modules do not exist yet, each test case fails individually and reports the reason.
  */
 import { test, mock, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -55,7 +62,7 @@ function newClient(base) {
 const harness = createAssetHarness();
 after(() => harness.cleanup());
 
-/** 每条用例一套：帧库、服务；t.after 收拾 */
+/** One set per test case: frame store, services; cleaned up in t.after */
 async function rig(t) {
   const roots = makeRoots(FramePipeline);
   t.after(() => roots.cleanup());
@@ -64,7 +71,7 @@ async function rig(t) {
   return { roots, svc };
 }
 
-/** A 产一段、sink.put（带 content）推上去：回 sink 回的 result */
+/** A produces a segment and pushes it up via sink.put (with content): returns result from sink */
 async function produceAndPut(A, svc, task, frames = range(task.range.from, task.range.to)) {
   await seedSnapshots(A, task, frames);
   const sink = T().createAssetSink({ pipeline: A, client: svc.client, content: svc.content });
@@ -73,7 +80,10 @@ async function produceAndPut(A, svc, task, frames = range(task.range.from, task.
   return r.result;
 }
 
-/** 内容库里出现这个键（sink.put 之后写清单；给一点时间，允许实现在回包之后才写完） */
+/**
+ * Key appears in content store (writes manifest after sink.put; allow time for implementation to
+ * finish writing after response)
+ */
 async function manifestOf(content, kind, key, ms = 3000) {
   const t0 = Date.now();
   for (;;) {
@@ -99,7 +109,7 @@ test('U1 After A\'s sink put of a segment: the content store has a manifest with
   const listed = await svc.content.list('snapshot-manifest', `${task.resultKey}:`);
   assert.deepEqual(listed.items.map((i) => i.key), [manifestKey(task)], 'Only this segment\'s key was written, with no single key for the whole card');
 
-  // 本地档：键用任务的 resultKey（不是落盘的 dirKey）
+  // Local tier: key uses the task's resultKey (not the dirKey written to disk)
   const entryKey = sha256('entry-U1');
   const local = snapshotTask({ tier: 'local', entryKey, contentKey: sha256('card-U1-local'), from: 0, to: 19, clipId: 'clip-l' });
   assert.notEqual(local.resultKey, dirKeyOf(local));
@@ -109,7 +119,7 @@ test('U1 After A\'s sink put of a segment: the content store has a manifest with
   assert.deepEqual(gotLocal.body, wire(localResult));
   assert.equal(await svc.content.get('snapshot-manifest', `${dirKeyOf(local)}:0-19`), null, 'No key is produced from dirKey');
 
-  // 流：render-manifest
+  // Stream: render-manifest
   const S = roots.make(await roots.root(), { interactive: true });
   const contentKey = sha256('stream-U1');
   const streamKey = resultKeyOf(contentKey, TASK_FP);
@@ -170,12 +180,12 @@ test('U2 B does not have it locally, but the content store has the manifest and 
   assert.equal(bakeryCalls.length, before, 'B called no rendering at all');
   assert.deepEqual(await filesOf(snapshotDir(rootB, { tier: 'shared', key: task.resultKey })), {}, 'has only checks and does not fetch: B\'s frame store was not written');
 
-  // A 自己（本机覆盖）：resultFor 由 collect* 现算
+  // A itself (local coverage): resultFor is computed on the fly by collect*
   const sinkA = T().createAssetSink({ pipeline: A, client: svc.client, content: svc.content });
   assert.equal(await sinkA.has(refOf(task)), true);
   assert.deepEqual(wire(await sinkA.resultFor(refOf(task))), unpack(await T().collectSnapshotResult(A, task)).result, 'Covered locally: collect* computes it on the spot');
 
-  // 流也一样：render-manifest + px 里的块
+  // Same for stream: render-manifest + chunks in px
   const S = roots.make(await roots.root(), { interactive: true });
   const contentKey = sha256('stream-U2');
   const streamKey = resultKeyOf(contentKey, TASK_FP);
@@ -239,7 +249,7 @@ test('U2 Wired into the local node (local-node): B claims this segment, complete
     lb.flush();
     queue.tick();
     lb.flush();
-    await new Promise((resolve) => setTimeout(resolve, 5)); // sink.has 走真网络，给它真时间
+    await new Promise((resolve) => setTimeout(resolve, 5)); // sink.has goes over real network; give it real time
     clock.advance(200);
   }
   node.stop();
@@ -268,7 +278,7 @@ test('U3 The manifest is present but one chunk is missing (deleted from the asse
   const sinkB2 = T().createAssetSink({ pipeline: B, client: svc.client, content: await svc.another('node-c') });
   assert.equal(await sinkB2.has(refOf(task)), false, 'One chunk missing → false');
 
-  // 流：删一个分段的块
+  // Stream: delete chunks of a segment
   const S = roots.make(await roots.root(), { interactive: true });
   const contentKey = sha256('stream-U3');
   const streamKey = resultKeyOf(contentKey, TASK_FP);
@@ -290,7 +300,8 @@ test('U4 The manifest covers only some frames (all chunks present): has is false
   const A = roots.make(await roots.root());
   const B = roots.make(await roots.root());
   const task = snapshotTask({ contentKey: sha256('card-U4'), from: 0, to: 59 });
-  // A 只有 0～29：它自己的 sink.put 回 complete: false，不写清单；这里手工把「部分清单」写进内容库
+  // A only has 0~29: its own sink.put returns complete: false and does not write manifest;
+  // manually write "partial manifest" into content store here
   await seedSnapshots(A, task, range(0, 29));
   const partial = unpack(await T().collectSnapshotResult(A, task));
   assert.equal(partial.result.frames.length, 30, 'Fixture: the manifest has only 30 frames');
@@ -298,10 +309,11 @@ test('U4 The manifest covers only some frames (all chunks present): has is false
   await svc.content.put('snapshot-manifest', manifestKey(task), partial.result);
   const sinkB = T().createAssetSink({ pipeline: B, client: svc.client, content: svc.content });
   assert.equal(await sinkB.has(refOf(task)), false, 'The manifest does not cover 30-59 → false');
-  // 只问被覆盖的那一段（另一个键）：内容库里没有这个键 → false；本机没有 → false
+  // Only query the covered segment (another key): key not in content store → false; not on this machine → false
   assert.equal(await sinkB.has(refOf(snapshotTask({ contentKey: sha256('card-U4'), from: 0, to: 29 }))), false, 'A different key cannot be found');
 
-  // 清单的 range 说是整段，frames 也列满了，但缺的是中间一帧（帧 17 不在 frames 里）
+  // The manifest range says full segment and frames are fully listed, but a middle frame
+  // is missing (frame 17 not in frames)
   const holey = { ...partial.result, frames: [] };
   await seedSnapshots(A, task, range(30, 59));
   const full = unpack(await T().collectSnapshotResult(A, task));
@@ -309,11 +321,11 @@ test('U4 The manifest covers only some frames (all chunks present): has is false
   holey.frames = full.result.frames.filter(([n]) => n !== 17);
   await svc.content.put('snapshot-manifest', manifestKey(task), holey);
   assert.equal(await T().createAssetSink({ pipeline: B, client: svc.client, content: svc.content }).has(refOf(task)), false, 'One frame missing in the middle → false');
-  // 补齐之后 → true（确认上面两个 false 不是别的原因）
+  // After completing → true (confirm that the two false results above were not due to other reasons)
   await svc.content.put('snapshot-manifest', manifestKey(task), full.result);
   assert.equal(await T().createAssetSink({ pipeline: B, client: svc.client, content: svc.content }).has(refOf(task)), true, 'Manifest complete → true');
 
-  // 流：清单缺一个分段号
+  // Stream: manifest is missing a segment number
   const S = roots.make(await roots.root(), { interactive: true });
   const contentKey = sha256('stream-U4');
   const streamKey = resultKeyOf(contentKey, TASK_FP);
@@ -342,7 +354,7 @@ test('U5 Two segments of the same card, one produced by A and one by B: both key
   const contentB = await svc.another('node-b');
   await seedSnapshots(A, seg1, range(0, 59), { tag: 'A' });
   await seedSnapshots(B, seg2, range(60, 119), { tag: 'B' });
-  // 两个节点并发推
+  // Two nodes push concurrently
   const [r1, r2] = await Promise.all([
     T().createAssetSink({ pipeline: A, client: svc.client, content: contentA }).put({ ...refOf(seg1), artifacts: null, meta: metaOf(seg1) }),
     T().createAssetSink({ pipeline: B, client: svc.client, content: contentB }).put({ ...refOf(seg2), artifacts: null, meta: metaOf(seg2) }),
@@ -359,7 +371,7 @@ test('U5 Two segments of the same card, one produced by A and one by B: both key
   const listed = await svc.content.list('snapshot-manifest', `${seg1.resultKey}:`);
   assert.deepEqual(listed.items.map((i) => i.key).sort(), [manifestKey(seg1), manifestKey(seg2)].sort());
 
-  // C：按键查清单、拉两段
+  // C: check manifest by key, pull two segments
   const contentC = await svc.another('node-c');
   const sinkC = T().createAssetSink({ pipeline: C, client: svc.client, content: contentC });
   for (const seg of [seg1, seg2]) assert.equal(await sinkC.has(refOf(seg)), true, `C can find ${manifestKey(seg)} and all chunks are present`);
@@ -374,7 +386,7 @@ test('U5 Two segments of the same card, one produced by A and one by B: both key
   for (const n of range(60, 119)) assert.ok(fc[`${n}.html`]?.equals(fb[`${n}.html`]), `C's frame ${n} matches B`);
   const idx = await C.snapshots().snapshotIndex({ tier: 'shared', key: seg1.resultKey });
   assert.deepEqual(idx.frames, [[0, 119]], 'C fetched both segments completely');
-  // 拉完之后 C 本机就覆盖了
+  // After pulling, C covers it locally
   const plain = T().createAssetSink({ pipeline: C, client: svc.client });
   for (const seg of [seg1, seg2]) assert.equal(await plain.has(refOf(seg)), true);
 });

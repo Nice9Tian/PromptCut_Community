@@ -19,9 +19,10 @@ test('the device string is exactly the eight segments of K1 / J4, order and form
 
 test('the two paths (offline probe / resident probe) produce byte-identical strings', () => {
   /*
-   * 这一条钉的就是 R4a 报告 §8 第 10 条要的东西:同一份输入,谁调都一样。
-   * 一边先 resolveTuning 过、另一边直接把 GET /api/data/costs 回来的裸覆盖值丢进来,
-   * 结果仍然必须逐字节相同(resolveTuning 幂等)。
+   * This nails down what R4a report §8 item 10 asks for: same input yields the same result no
+   * matter who calls it. One side calls resolveTuning first, the other directly passes raw override
+   * values returned from GET /api/data/costs; results must still be byte-for-byte identical
+   * (resolveTuning is idempotent).
    */
   const offline = costDeviceString(parts({ tuning: resolveTuning({ STEP_PERCENTILE: 0.95 }) }));
   const inEditor = costDeviceString(parts({ tuning: { STEP_PERCENTILE: 0.95 } }));
@@ -32,9 +33,10 @@ test('the two paths (offline probe / resident probe) produce byte-identical stri
 
 test('the two measurement coefficients go into the string, COST_SCALE does not', () => {
   const base = costDeviceString(parts());
-  // COST_SCALE 只影响怎么用这些数,不影响量出来的数本身 —— 改了它旧成绩照样能用
+  // COST_SCALE only affects how these numbers are used, not the measured numbers themselves:
+  // changing it still allows old scores to be used
   assert.equal(costDeviceString(parts({ tuning: { COST_SCALE: 4 } })), base);
-  // 量法变了旧记录必须不命中
+  // When measurement method changes, old records must not hit
   assert.notEqual(costDeviceString(parts({ tuning: { STEP_PERCENTILE: 1 } })), base);
   assert.notEqual(costDeviceString(parts({ tuning: { STEP_MIN_SAMPLES: 32 } })), base);
 });
@@ -42,7 +44,7 @@ test('the two measurement coefficients go into the string, COST_SCALE does not',
 test('dev and build each take one record', () => {
   assert.match(costDeviceString(parts({ mode: 'build' })), /\| mode=build \|/);
   assert.notEqual(costDeviceString(parts({ mode: 'build' })), costDeviceString(parts({ mode: 'dev' })));
-  // 认不出来的值一律当 dev(R1 之前的记录全是 dev 量的)
+  // Unrecognized values are treated as dev (records prior to R1 were all measured in dev)
   assert.equal(costDeviceString(parts({ mode: undefined })), costDeviceString(parts({ mode: 'dev' })));
   assert.equal(costDeviceString(parts({ mode: 'preview' })), costDeviceString(parts({ mode: 'dev' })));
 });
@@ -70,7 +72,7 @@ test('missing fields do not throw: empty UA, unknown GPU, all false', () => {
 test('readGpuRenderer returns unknown in Node without a document, does not throw', () => {
   assert.equal(readGpuRenderer(null), 'unknown');
   assert.equal(readGpuRenderer({ createElement() { throw new Error('no dom'); } }), 'unknown');
-  // 拿不到上下文(软件渲染 / --disable-gpu)也是 unknown
+  // If context cannot be obtained (software rendering / --disable-gpu), it is also unknown
   assert.equal(readGpuRenderer({ createElement: () => ({ getContext: () => null }) }), 'unknown');
 });
 

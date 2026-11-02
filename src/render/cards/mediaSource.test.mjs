@@ -1,17 +1,23 @@
 /**
- * 素材效果卡视频源的取帧边界(`docs/plan/TODO.md`「用户真机缺陷」:素材效果卡的视频输入源在 0.5 倍慢放导出时节奏不均)。
- * 规则:在时刻 t 取素材里时间戳不超过 t 的最后一帧;t 正好落在帧边界时取边界上这一帧。
+ * Frame-fetching boundary of media effect card video sources (`docs/plan/TODO.md`
+ * "User real-device defects": the video input source of a media effect card has uneven cadence
+ * when exporting at 0.5x slow motion).
+ * Rule: at time t, take the last frame in the asset whose timestamp does not exceed t;
+ * when t falls exactly on a frame boundary, take the frame on that boundary.
  *
- * 假视频元素按 Chrome 的做法取帧:帧时间戳换算成整微秒(四舍五入),seek 目标换算成微秒时截断,
- * 显示「时间戳 ≤ 目标的最后一帧」。这正是缺陷的成因 —— 原样 seek 到 k/30 时,k ≡ 2 (mod 3) 的帧时间戳进位、
- * 目标截断,取到前一帧(VC-01 先确认假元素复现了这一点)。端到端的同一条行为由
- * `scripts/probes/video-source-cadence-probe.mjs` 在真 Chrome 里核。用例名带 VC 编号(video cadence)。
+ * Mock video elements fetch frames following Chrome's behavior: frame timestamps are converted
+ * to integer microseconds (rounded), seek targets are truncated when converted to microseconds,
+ * displaying "last frame with timestamp ≤ target". This is the exact cause of the bug:
+ * when seeking to k/30 as-is, the frame timestamp for k ≡ 2 (mod 3) rounds up while the target
+ * is truncated, fetching the previous frame (VC-01 first verifies that the mock element reproduces
+ * this). The same end-to-end behavior is verified in real Chrome by
+ * `scripts/probes/video-source-cadence-probe.mjs`. Test case names include VC numbers (video cadence).
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "vite";
 
-/** 假视频:fps 帧率、duration 秒;记下每次 seek 设的值 */
+/** Mock video: fps frame rate, duration in seconds; records the value set on each seek */
 class FakeVideo extends EventTarget {
   constructor(fps = 30, duration = 3) {
     super();
@@ -24,13 +30,16 @@ class FakeVideo extends EventTarget {
     this._time = value; this.seeks.push(value);
     queueMicrotask(() => this.dispatchEvent(new Event("seeked")));
   }
-  /** 当前显示的是第几帧 */
+  /** Which frame is currently displayed */
   get frameIndex() { return shownFrame(this._time, this.fps, this.duration); }
   pause() {} load() {} removeAttribute() {}
 }
 class FakeImage extends EventTarget {}
 
-/** Chrome 的取法:帧时间戳 round(k × 1e6 / fps) µs,目标 trunc(t × 1e6) µs,取时间戳 ≤ 目标的最后一帧 */
+/**
+ * Chrome's approach: frame timestamp round(k × 1e6 / fps) µs, target trunc(t × 1e6) µs,
+ * take the last frame with timestamp ≤ target
+ */
 function shownFrame(time, fps, duration) {
   const target = Math.trunc(time * 1e6);
   const count = Math.round(duration * fps);
@@ -68,8 +77,9 @@ test("VC-01 fake video element reproduces the defect: seeking as is to frame bou
   assert.equal(shownFrame(2 / 30, 30, 3), 1);
   assert.equal(shownFrame(5 / 30, 30, 3), 4);
   assert.equal(shownFrame(1 / 30, 30, 3), 1);
-  // k ≡ 0 (mod 3) 的帧时间戳是整微秒,取前一帧还是本帧随浮点误差摆:片段从 4 s 起、第 3 帧,
-  // 局部时间 123/30 − 4 = 0.09999999999999964,比第 3 帧(0.1 s)早不到一微秒
+  // The frame timestamp for k ≡ 0 (mod 3) is an exact microsecond; whether the previous or current
+  // frame is picked fluctuates with floating-point error: clip starts at 4 s, frame 3,
+  // local time 123/30 − 4 = 0.09999999999999964, less than one microsecond earlier than frame 3 (0.1 s)
   assert.equal(shownFrame(3 / 30, 30, 3), 3);
   assert.equal(shownFrame(123 / 30 - 4, 30, 3), 2);
 });
@@ -86,7 +96,8 @@ test("VC-03 0.5x slow motion: time = 0.5 × n / 30 fetches 0,0,1,1,2,2…; same 
     const n = range(120);
     const want = n.map((i) => Math.floor(i / 2));
     assert.deepEqual(await framesAt(mod, 30, n.map((i) => (i / 30) * 0.5)), want);
-    // 播放头在 start + n/30、片段局部时间 = 播放头 − start(浮点误差落在帧边界两侧)
+    // Playhead at start + n/30, clip local time = playhead − start (floating-point error falls on both
+    // sides of frame boundary)
     for (const start of [4, 6, 17.87, 32.37]) {
       assert.deepEqual(await framesAt(mod, 30, n.map((i) => ((start * 30 + i) / 30 - start) * 0.5)), want, `start ${start}`);
     }
@@ -110,9 +121,10 @@ test("VC-05 cardSeekTarget: add 2 ms, clamp to [0, duration − 0.1 ms]; no uppe
     assert.equal(mod.cardSeekTarget(5, 3), 3 - 0.0001);
     assert.equal(mod.cardSeekTarget(2.9999, 3), 3 - 0.0001);
     assert.equal(mod.cardSeekTarget(7, NaN), 7.002);
-    // 比常见素材的一帧短得多(240 fps 一帧 4.17 ms),不会越过下一帧的边界
+    // Much shorter than a single frame of typical assets (4.17 ms per frame at 240 fps); will not cross
+    // the boundary of the next frame
     assert.ok(mod.CARD_SEEK_LEAD < 1 / 240);
-    // 实际设给 currentTime 的就是它
+    // This is what is actually set on currentTime
     video = new FakeVideo(30, 3);
     const source = new mod.CardMediaSource();
     await source.frame(MEDIA, 0.4);
@@ -122,9 +134,11 @@ test("VC-05 cardSeekTarget: add 2 ms, clamp to [0, duration − 0.1 ms]; no uppe
 });
 
 /**
- * seeked 先于帧槽换帧(Chrome 里两路跨线程送达,机器忙时主线程先收到 seeked;
- * `scripts/probes/video-seek-race-probe.mjs` 在真 Chrome 里复现)。假元素:seek 后 `seekMs` 发 seeked,
- * `slotMs` 后帧槽(createImageBitmap / VideoFrame 读到的那一帧)才换成新帧。
+ * seeked fires before the frame slot switches frames (delivered cross-thread via two paths
+ * in Chrome; when the machine is busy, the main thread receives seeked first; reproduced
+ * in real Chrome by `scripts/probes/video-seek-race-probe.mjs`). Mock element: fires seeked
+ * `seekMs` after seek; only after `slotMs` does the frame slot (the frame read by
+ * createImageBitmap / VideoFrame) switch to the new frame.
  */
 class LaggyVideo extends FakeVideo {
   constructor(fps, duration, { seekMs = 1, slotMs = 6, tsOffset = 0 } = {}) {
@@ -153,7 +167,8 @@ const RATE_HALF_WANT = RATE_HALF.map((t) => Math.floor(t * 30 + 1e-6));
 
 test("VC-06 seeked fires before the frame slot swaps frames: wait until the frame timestamp in the frame slot covers currentTime before fetching, and do not fetch the frame from before the seek", async () => {
   await withSource(async (mod) => {
-    // 没有 WebCodecs 时退回只等 seeked —— 假元素先确认复现了缺陷
+    // Falls back to only waiting for seeked when WebCodecs is absent: mock element first verifies
+    // reproducing the bug
     video = new LaggyVideo(30, 3);
     let source = new mod.CardMediaSource();
     const stale = [];
@@ -209,13 +224,13 @@ test("VC-09 media whose frame timestamps never match currentTime: each frame wai
     const waited = performance.now() - t0;
     assert.ok(waited >= 900, `the first two frames each waited about 500 ms, actual ${waited.toFixed(0)} ms`);
     const t1 = performance.now();
-    await source.frame(MEDIA, 1.0); // 放弃后退回只等 seeked(此时假元素的帧槽还没换,取到的是旧帧,和修之前一样)
+    await source.frame(MEDIA, 1.0); // Falls back to only waiting for seeked after giving up (at this point the mock element's frame slot has not switched yet, so an old frame is retrieved, just like before the fix)
     assert.ok(performance.now() - t1 < 200, "does not wait after giving up the check");
     assert.equal(source.settleWaits, 2);
-    // 某一帧当场对上就恢复核对
+    // Resumes verification once a frame matches on the spot
     video.tsOffset = 0;
     await new Promise((r) => setTimeout(r, 20));
-    await source.frame(MEDIA, 1.0); // 同一时刻不再 seek,帧槽已换好,当场对上
+    await source.frame(MEDIA, 1.0); // No longer seeks at the same timestamp; frame slot already switched and matches on the spot
     video.tsOffset = 10_000_000;
     await source.frame(MEDIA, 1.5);
     assert.equal(source.settleWaits, 3);

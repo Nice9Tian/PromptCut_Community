@@ -2,7 +2,7 @@ import type { ChatMessage, RunEvent } from './types';
 
 type Parts = NonNullable<ChatMessage['parts']>;
 
-/** 往有序片段里追加文字(接在末尾的文字片段后面,不新开一段) */
+/** Append text to the ordered parts (right after a text part at the end, without starting a new one) */
 export function appendTextPart(parts: Parts | undefined, delta: string): Parts {
   const next = parts ? [...parts] : [];
   const last = next[next.length - 1];
@@ -11,7 +11,10 @@ export function appendTextPart(parts: Parts | undefined, delta: string): Parts {
   return next;
 }
 
-/** 同上,但追加的是思考片段。思考和正文各自成段,不会互相吞并 */
+/**
+ * Same as above, but appends a thinking part. Thinking and body text each form their own part and
+ * never merge into each other
+ */
 export function appendThinkingPart(parts: Parts | undefined, delta: string): Parts {
   const next = parts ? [...parts] : [];
   const last = next[next.length - 1];

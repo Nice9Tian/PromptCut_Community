@@ -1,23 +1,31 @@
 /**
- * `POST /api/audio/measure-js` 的主体(自定义测量 `measure_audio_js`,计划 `docs/plan/agent-workflow-plan.md` A6):
- * 按「测谁」在素材服务上找到素材 → ffmpeg 解成 PCM(`audio-pcm.mjs`)→ 交沙箱跑 Agent 写的 JS(`audio-sandbox.mjs`)→ 只回 JSON。
+ * Main body of `POST /api/audio/measure-js` (custom measurement `measure_audio_js`, plan
+ * `docs/plan/agent-workflow-plan.md` A6): finds asset on the asset service by "target to measure" →
+ * ffmpeg decodes into PCM (`audio-pcm.mjs`) → hands over to sandbox to run Agent-written JS
+ * (`audio-sandbox.mjs`) → returns JSON only.
  *
- * 不依赖 vite:素材从哪儿读(`resolveSource`,和 `measure_audio` 同一个解析器:素材服务上的 HTTP 地址,见 `audio-source.mjs`)、
- * ffmpeg 在哪、沙箱,都由调用方注入,`server/test/custom-measure.test.mjs`、`audio-asset-path.test.mjs` 直接测它。
- * 素材服务不可达或拒绝读取时回 `kind: 'asset-service'`。
+ * Does not depend on vite: where to read assets (`resolveSource`, same resolver as `measure_audio`:
+ * an HTTP URL on the asset service, see `audio-source.mjs`), where ffmpeg is, and sandbox are all
+ * injected by caller; `server/test/custom-measure.test.mjs` and `audio-asset-path.test.mjs` test it
+ * directly. Returns `kind: 'asset-service'` when asset service is unreachable or refuses to read.
  *
- * body(由 `src/mcp/common.ts` 的 `measureAudioJs` 拼):
+ * body (assembled by `measureAudioJs` in `src/mcp/common.ts`):
  *   { scope: 'clip'|'media'|'timeline', media?, offset?, duration?, entries?, total?,
  *     start?, length?, sampleRate?, mono?, code, timeoutMs?, meta? }
- * clip / media 与 `measure_audio` 相同;timeline 的 entries 同 `timelineMeasureArgs`,total 是时间轴时长;
- * start / length 是在这段声音里再截的窗口(秒)。
+ * clip / media are the same as `measure_audio`; timeline's entries is the same as
+ * `timelineMeasureArgs`, total is the timeline duration; start / length is the sub-window (in
+ * seconds) sliced within this audio.
  */
 import { execFileSync } from "node:child_process";
 import { AssetSourceError, probeAudioChannelsAsync } from "./audio-source.mjs";
 import { PCM_LIMITS, pcmFormat, sampleBudgetError, windowOf, filePcmArgs, timelinePcmArgs, decodePcm } from "./audio-pcm.mjs";
 import { tr } from "./i18n.mjs";
 
-/** 第一条音频流的声道数;没有音频流回 0。同步版,只给单测和本地文件用;测量走 `probeAudioChannelsAsync`(输入是 HTTP 地址时同步会卡住事件循环) */
+/**
+ * Channel count of the first audio stream; returns 0 if there are no audio streams. Synchronous
+ * version, for unit tests and local files only; measurements use `probeAudioChannelsAsync`
+ * (synchronous calls block the event loop when input is an HTTP URL).
+ */
 export function probeAudioChannels(file, ffprobe) {
   try {
     const out = execFileSync(
@@ -37,9 +45,11 @@ const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : undefined)
 /**
  * @param {object} p
  * @param {object} p.body
- * @param {(media: any) => (string | null | Promise<string | null>)} [p.resolveSource] 素材 → ffmpeg 的输入(素材服务上的 HTTP 地址);
- *   没有这份素材回 null;素材服务不可达抛 `AssetSourceError`
- * @param {(media: any) => string | null} [p.resolveFile] 旧名,同 resolveSource(单测给本地文件用)
+ * @param {(media: any) => (string | null | Promise<string | null>)} [p.resolveSource] Asset → ffmpeg
+ *   input (HTTP address on asset service); returns null if asset is missing; throws
+ *   `AssetSourceError` if asset service is unreachable
+ * @param {(media: any) => string | null} [p.resolveFile] Old name, same as resolveSource
+ *   (used for local files in unit tests)
  * @param {string} p.ffmpeg
  * @param {string} p.ffprobe
  * @param {{ run: Function }} p.sandbox
@@ -101,7 +111,8 @@ async function measureJsInner({ body, resolve, ffmpeg, ffprobe, sandbox, pcmLimi
     if (skipped.length) notes.push(tr("Skipped {0} clips with no audio stream or missing file: {1}", skipped.length, skipped.join(", ")));
     if (!entries.length) return bad(tr("No decodable audio on the timeline"), "no-audio");
     channels = mono ? 1 : 2;
-    // 与导出一致(server/bakery/audio-mix.mjs 每段 -ac 2):单声道素材摊到立体声时每路低 3 dB
+    // Consistent with export (server/bakery/audio-mix.mjs -ac 2 per clip): mono asset spread to
+    // stereo is 3 dB lower per channel
     if (monoSources) notes.push(tr("The mix is stereo, as in export: {0} mono media clips are spread across both channels, each 3 dB lower (ffmpeg's default center mix coefficient)", monoSources));
     const total = num(body.total) > 0 ? num(body.total) : undefined;
     let win;

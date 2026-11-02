@@ -1,6 +1,7 @@
 /**
- * 最低一档(取档策略 `smallOnly`)的「素材只拉小尺寸」与在线浏览器模式的远程取回地址(`docs/plan/c10a-contract.md` 第 8 节)。
- * 跑:node --test src/render/mediaTierSmallOnly.test.mjs
+ * Lowest tier (tier selection policy `smallOnly`) "only fetch small-size assets" and remote
+ * retrieval address in online browser mode (`docs/plan/c10a-contract.md` section 8).
+ * Run: node --test src/render/mediaTierSmallOnly.test.mjs
  */
 import "../testing/registerTs.mjs";
 import test from "node:test";

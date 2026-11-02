@@ -1,11 +1,14 @@
 /**
- * K3(b) 追帧代价按播放位置估（pinned 渲染 4）。跑：node --test src/render/catchUpEstimate.test.mjs
+ * K3(b) Frame catch-up cost estimated by playhead position (pinned render 4). Run:
+ *   node --test src/render/catchUpEstimate.test.mjs
  *
- * 钉四件事：
- *   1. 公式就是 `frames × t_oc`，`t_oc` 优先取单帧最差 `stepMaxMs`；
- *   2. 没有 `stepMaxMs` 时退回 p90 的 `stepMs`；
- *   3. 位置估算封顶在整段 `catchUpMs` 上（`t_oc` 是单帧最差，乘满整段比实测还悲观）；
- *   4. 算不出位置（帧数 0 / 没有单帧成本）就退回整段代价。
+ * Pins four things:
+ *   1. The formula is simply `frames × t_oc`; `t_oc` prioritizes single-frame worst case `stepMaxMs`;
+ *   2. Falls back to p90 `stepMs` when `stepMaxMs` is absent;
+ *   3. Position estimation is capped at full-clip `catchUpMs` (`t_oc` is single-frame worst case,
+ *      multiplying across the entire clip is even more pessimistic than measured);
+ *   4. Falls back to full-clip cost when position cannot be calculated
+ *      (0 frames / no single-frame cost).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,7 +16,8 @@ import assert from 'node:assert/strict';
 import { catchUpEstimateMs, playingLeadMs, sceneCatchUpCost } from './catchUpEstimate.mjs';
 
 test('Estimate by position: frames × stepMaxMs', () => {
-  // 60 秒、30 fps 的长 motion：整段 1800 帧 × 2 ms = 3600 ms;播放头在第 2 秒 = 60 帧
+  // 60-second, 30 fps long motion: entire clip 1800 frames × 2 ms = 3600 ms;
+  // playhead at second 2 = 60 frames
   const record = { catchUpMs: 3600, stepMaxMs: 2, stepMs: 1 };
   assert.equal(catchUpEstimateMs(record, 60), 120, 'only catch up the 60 frames from the in point to now');
   assert.equal(catchUpEstimateMs(record, 300), 600);
@@ -24,7 +28,7 @@ test('Without a worst single frame, use stepMs (p90)', () => {
 });
 
 test('capped at the cost of the whole segment', () => {
-  // 位置估算 1800 × 2 = 3600 > 实测整段 1200：取整段那个
+  // Position estimate 1800 × 2 = 3600 > measured clip total 1200: take the clip total
   assert.equal(catchUpEstimateMs({ catchUpMs: 1200, stepMaxMs: 2 }, 1800), 1200);
 });
 
@@ -47,16 +51,17 @@ test('A random-access card (catchUpMs is 0) does not conjure up a cost estimate'
 
 test('Whole scene: the backlog is the sum, over every card on stage, of pushing from max(in point, push start point) to t; the rate is the sum of the single-frame costs of the currently active cards (the same figure as the backlog) × fps', () => {
   const entries = [
-    { start: 0, end: 10, record: { stepMs: 2, stepMaxMs: 3, catchUpMs: 200 } },   // 30 帧 × 3 = 90
-    { start: 0, end: 10, record: { stepMs: 40, stepMaxMs: 60 } },                 // 30 帧 × 60 = 1800;速率同样按 stepMaxMs 60
-    { start: 0, end: 0.5, record: { stepMs: 40 } },                               // 已出场:0～0.5 秒 15 帧 × 40 = 600,不进速率
-    { start: 0.5, end: 10, record: null },                                        // 没有记录:0
+    { start: 0, end: 10, record: { stepMs: 2, stepMaxMs: 3, catchUpMs: 200 } },   // 30 frames × 3 = 90
+    { start: 0, end: 10, record: { stepMs: 40, stepMaxMs: 60 } },                 // 30 frames × 60 = 1800; rate also uses stepMaxMs of 60
+    { start: 0, end: 0.5, record: { stepMs: 40 } },                               // Already exited: 0-0.5 s, 15 frames × 40 = 600, not included in rate
+    { start: 0.5, end: 10, record: null },                                        // No record: 0
   ];
   const { backlogMs, ratePerSec } = sceneCatchUpCost(entries, 1, 30);
   assert.equal(backlogMs, 90 + 1800 + 600);
   assert.equal(ratePerSec, (3 + 60) * 30);
   assert.deepEqual(sceneCatchUpCost([], 1, 30), { backlogMs: 0, ratePerSec: 0 });
-  // 只有整段代价的卡:积压取整段,速率按整段均摊(10 秒 300 帧、1200 ms → 每帧 4 ms → 120 ms/秒)
+  // Card with only full-clip cost: backlog takes full clip, rate is amortized over full clip
+  // (10 s, 300 frames, 1200 ms → 4 ms/frame → 120 ms/s)
   assert.deepEqual(sceneCatchUpCost([{ start: 0, end: 10, record: { catchUpMs: 1200 } }], 1, 30), { backlogMs: 1200, ratePerSec: 120 });
 });
 

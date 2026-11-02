@@ -1,11 +1,16 @@
 /**
- * 回复写到单次输出上限被截断时,把没写完的工具调用里已经写出来的内容存进代码块,并写好告诉模型怎么接着写的那段话
- * (A07,2026-10-22 用户定:「研究重试方法:是否可以把被截断的部分作为输入,让模型继续续写」)。
+ * When a reply is truncated upon hitting the single-output limit, save the content already written
+ * in the incomplete tool call into the code cache, and prepare instructions telling the model how
+ * to continue writing (A07, user decision, 2026-10-22: "Investigate retry methods: whether the
+ * truncated part can be used as input for the model to continue writing").
  *
- * 为什么不直接让模型「接着上一条回复往下写」:三家接口都不支持把一个**没写完的工具调用**交回去续写——
- * 历史里的 tool_use 必须是完整的 JSON 对象;Anthropic 的「预填 assistant」在 4.6 以后的型号上直接 400;
- * OpenAI 兼容口没有续写半截 tool_call 参数的写法。所以把写了一半的字段取出来放进代码块,让模型用 code_cache_append
- * 一段一段接着写,最后用 `@code_cache:名字` 交给原来那个工具。〔裁:output-cache 2026-10-22〕
+ * Why not directly let the model "continue writing from the previous reply": none of the three
+ * provider APIs support sending back an **incomplete tool call** for continuation: `tool_use` in
+ * history must be a complete JSON object; Anthropic's "assistant prefill" returns 400 directly
+ * on models after 4.6; OpenAI-compatible endpoints have no syntax for continuing partial
+ * `tool_call` arguments. Therefore, extract the half-written field into the code cache, let the
+ * model use `code_cache_append` to continue writing piece by piece, and finally pass it to the
+ * original tool via `@code_cache:name`. [ruling: output-cache 2026-10-22]
  */
 import { salvageToolCall, parsePartialObject } from './partial-json.mjs';
 
@@ -16,7 +21,7 @@ const DIRECT = new Set(['code_cache_append', 'code_cache_write']);
 const short = (value, max) => { const s = JSON.stringify(value); return s.length > max ? `${s.slice(0, max)}…(rest omitted)` : s; };
 
 /**
- * @param {Array<{ id?: string, name: string, args: string }>} partials 没写完的工具调用(provider 交的 tool_use_partial)
+ * @param {Array<{ id?: string, name: string, args: string }>} partials Incomplete tool calls (tool_use_partial delivered by the provider)
  * @param {ReturnType<import('../tools/code-cache.mjs').createCodeCacheStore> | null} store
  * @returns {{ progress: boolean, saved: Array<object>, note: string, status: string }}
  */
@@ -24,8 +29,11 @@ export function salvageTruncation(partials, store, { cause = 'length' } = {}) {
   const saved = [];
   const lines = [];
   /*
-   * cause:'length' 写到单次输出上限;'cut' 流写到一半被网关中途掐断(stream_cut,2026-10-22 用户定按截断处理)。
-   * 两种的做法相同,只是给模型和用户的话要说清是哪一种:被掐断不是写得太长超了上限,是这一次请求用的时间太长。
+   * cause: 'length' hit the single-output limit; 'cut' stream cut off halfway by the gateway
+   * (stream_cut, handled as truncation, user decision, 2026-10-22).
+   * Both approaches work the same way, but the message to the model and user must clarify which one
+   * occurred: being cut off is not because the output exceeded the limit, but because this request
+   * took too long.
    */
   const cutWord = cause === 'cut' ? 'cut off by the gateway' : 'truncated';
   for (const p of partials || []) {
@@ -33,8 +41,8 @@ export function salvageTruncation(partials, store, { cause = 'length' } = {}) {
     const s = salvageToolCall(p?.args ?? '');
     if (!store) { lines.push(`Your call to ${tool} was not finished and was not executed.`); continue; }
     try {
-      // 本来就在往代码块里写:写出来的那一截直接写进去
-      // (按字段名取,不按「最长的字符串」取:块名可能比写出的那一截还长)
+      // Already writing into the code cache: write the emitted segment directly into it
+      // (fetch by field name, not by "longest string": the cache name might be longer than the emitted segment)
       const nameField = DIRECT.has(tool) ? fieldsOf(p?.args).find((f) => f.key === 'name' && f.complete) : null;
       const textField = nameField ? fieldsOf(p?.args).find((f) => f.key === 'text' && f.string) : null;
       if (nameField && validCodeCacheName(nameField.value) && textField?.value) {

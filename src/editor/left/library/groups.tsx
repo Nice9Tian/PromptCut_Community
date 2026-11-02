@@ -4,8 +4,10 @@ import type { MediaAsset } from "../../../kernel/project";
 import { tr } from "../../../i18n/index.ts";
 
 /**
- * 素材库 / 动画 / 特效三个分区的「组定义」表。要挪组、改 layout、改名、换分类,只改这里。
- * 每个组的内容由对应的 *Group 钩子按搜索词算出来(GroupData),GroupBrowser 负责总览和详情。
+ * The "group definition" table for the three sections: media library / animations / effects. To move a
+ * group, change its layout, rename it or change its category, edit only this file.
+ * The content of each group is computed from the search term by the matching *Group hook (GroupData);
+ * GroupBrowser handles the overview and the detail.
  */
 
 export type GroupCategory = "visual" | "audio";
@@ -17,29 +19,29 @@ export interface GroupDef {
   layout: GroupLayout;
   category: GroupCategory;
   /**
-   * 组里 0 项(且没在搜索)时怎么办:
-   *   import  素材类组,画一个虚线「导入…」占位,点了直接导入
-   *   hint    照常显示组框,里面放组自己给的一句提示(GroupData.emptyHint)
-   *   hide    整组不显示(卡片类组)
-   * 搜索时没有命中的组一律隐藏。
+   * What to do when a group has 0 items (and no search is active):
+   *   import  media group: draw a dashed "Import…" placeholder; clicking it imports directly
+   *   hint    show the group box as usual, with a hint supplied by the group itself (GroupData.emptyHint)
+   *   hide    hide the whole group (card groups)
+   * Groups with no hits are always hidden while searching.
    */
   empty: "import" | "hint" | "hide";
-  /** 组详情根节点上的 data-pc,沿用改版前那几个容器的自动化钩子名 */
+  /** data-pc on the group detail root node, reusing the automation hook names of the containers from before the redesign */
   hook?: string;
-  /** 悬停在组框 / 详情计数上时的说明 */
+  /** Description shown when hovering over a group box / the detail count */
   hint?: string;
 }
 
-/** 素材库:导入进来的素材 */
+/** Media library: imported media */
 export const LIBRARY_GROUPS: readonly GroupDef[] = [
   { id: "videos", title: tr("Video"), layout: "big_16_9", category: "visual", empty: "import" },
   { id: "images", title: tr("Images"), layout: "big_16_9", category: "visual", empty: "import" },
   { id: "music", title: tr("Audio"), layout: "big_strip", category: "audio", empty: "import" },
-  // 项目里的每条剪辑(2026-10-20 用户定:「剪辑应该也出现在素材库中」);单击在时间轴上打开,拖到序列上放剪辑段
+  // Every cut in the project (2026-10-20 user decision: "cuts should also appear in the media library"); click to open on the timeline, drag onto a track to place a cut segment
   { id: "cuts", title: tr("Cut"), layout: "big_16_9", category: "visual", empty: "hint", hook: "lib-cuts", hint: tr("Click to open on the timeline, drag onto a track to place a cut segment that references it") },
 ];
 
-/** 动画:各类卡片和部件,全是视觉类(GroupBrowser 据此不画分类胶囊行) */
+/** Animations: all kinds of cards and parts, all visual (GroupBrowser uses this to skip the category pill row) */
 export const ANIMATION_GROUPS: readonly GroupDef[] = [
   {
     id: "user-cards",
@@ -83,10 +85,10 @@ export const LIBRARY_GROUP_IDS = LIBRARY_GROUPS.map((g) => g.id);
 export const ANIMATION_GROUP_IDS = ANIMATION_GROUPS.map((g) => g.id);
 export const EFFECTS_GROUP_IDS = EFFECTS_GROUPS.map((g) => g.id);
 
-/** 导入落到哪一类素材,就打开管这一类的组 */
+/** Whichever kind of media an import lands in, open the group that manages that kind */
 export const KIND_GROUP: Record<MediaAsset["kind"], string> = { video: "videos", image: "images", audio: "music" };
 
-/** 组里的一项:详情里按组的 layout 瀑布流排;aspect = 高 / 宽,未知给 undefined */
+/** One item in a group: laid out in the detail as a masonry layout by the group's layout; aspect = height / width, undefined if unknown */
 export interface GroupItem {
   id: string;
   node: ReactNode;
@@ -94,15 +96,15 @@ export interface GroupItem {
 }
 
 export interface GroupData {
-  /** 当前搜索词下的全部项。详情里排的是它,组框上的「N 个项」数的也是它 */
+  /** All items under the current search term. The detail lays these out, and the "N items" on the group box counts them too */
   items: GroupItem[];
-  /** 总览组框里的缩略预览:纯展示、不带自动化钩子。按组的 layout 取前几个 */
+  /** Thumbnail preview in an overview group box: display only, no automation hooks. Takes the first few by the group's layout */
   thumbs?: GroupItem[];
-  /** 详情里放在项目上方 / 下方的附加内容(时长选择、已有转场列表、参考说明……) */
+  /** Extra content placed above / below the items in the detail (duration picker, list of existing transitions, reference notes…) */
   detailTop?: ReactNode;
   detailBottom?: ReactNode;
-  /** 总览组框里 0 项时的一句提示(empty = "hint" 的组) */
+  /** One-line hint when an overview group box has 0 items (groups with empty = "hint") */
   emptyHint?: ReactNode;
-  /** 详情里 0 项时的说明(空态或「没有匹配的…」) */
+  /** Message when the detail has 0 items (empty state or "No matching…") */
   emptyDetail?: ReactNode;
 }

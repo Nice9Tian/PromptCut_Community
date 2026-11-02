@@ -37,30 +37,38 @@ import { shownName, shownNameOf } from "../../i18n/names.ts";
 
 export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
   const [volumeOpen, setVolumeOpen] = useState(false);
-  // 这个项目只给了只读权限(游客):拖、改时长、右键里改项目的项都不给,和锁定的序列一个待遇(但还能选中、看参数、打开剪辑)
+  // This project grants read-only access only (guest): no dragging, no duration changes, and no
+  // project-modifying items in the right-click menu, the same treatment as a locked track (but it can
+  // still be selected, its parameters viewed, and the cut opened)
   const ro = useReadOnly();
   const frozen = track.locked || ro.locked;
   const { pxPerSec, trackAreaRef, setDraggingClipId, setDraggingTrackId, rowSize, quoteClip, quoteOverlay } = useTimelineContext();
   const media = useStore((s) => s.project.media.find((m) => m.id === clip.mediaId));
   const selection = useStore((s) => s.selection);
   const isSelected = selection.includes(clip.id);
-  // 副标题看的参数视图:先查定义,没有再看同步来的用户卡的只读视图(源码里解析出的默认值与控件)
+  // Parameter view for the subtitle: look up the definition first; if none, use the read-only view of the
+  // synced user card (defaults and controls parsed from the source)
   const paramsView = clip.cardId ? paramsCardView(clip.cardId, { getCard, syncedCardView }) : undefined;
-  // 同步来的用户卡(在线页面从内容库卡片源码认出来的)表变了要重绘:标签换成真名
+  // Redraw when the table of synced user cards (recognized by online pages from the content store card
+  // source) changes: the label switches to the real name
   useSyncExternalStore(onSyncedUserCardsChanged, syncedUserCardsGen);
-  // 同步来的卡的运行状态变了也重绘(标签、轻重跟着它)
+  // Also redraw when the runtime state of a synced card changes (label, light/heavy follow it)
   useSyncExternalStore(onCardRunStatesChanged, cardRunStatesGen);
-  // 标签:构建时定义的名字 → 同步表里的名字 →「未知卡片」(C10 契约第 9 节)
-  // 剪辑段(kernel/cutSegments.ts):标签跟着被引用剪辑现在的名字走;找不到(悬空引用)就写明
+  // Label: name defined at build time → name in the sync table → "Unknown card" (C10 contract, section 9)
+  // Cut segment (kernel/cutSegments.ts): the label follows the current name of the referenced cut; if it
+  // cannot be found (dangling reference), say so explicitly
   const cutName = useStore((s) => (clip.cutId ? s.project.cuts?.find((c) => c.id === clip.cutId)?.name ?? null : null));
   const cutTotal = useStore((s) => (clip.cutId ? cutDuration(s.project, clip.cutId) : 0));
   const label = clip.cutId ? (cutName ? trText("Cut · {0}", shownName(cutName)) : trText("Cut · (no longer exists)")) : clip.cardId ? clipCardLabel(shownNameOf(knownCardName(clip.cardId)) ?? null) : clip.label;
-  // 变速的视频段:名字后面带上倍数(kernel/clipTime.mjs),一眼看得出这段改过速度
+  // Speed-changed video clip: append the multiplier after the name (kernel/clipTime.mjs), so it is clear
+  // at a glance that this clip's speed was changed
   const shownLabel = isSpeedChanged(clip) && clip.mediaId ? `${label ?? ""} · ${speedLabel(clipSpeed(clip))}` : label;
-  // 这台设备跑不了的卡不挂任何「本地 PC 辅助渲染」的徽标(2026-10-21 用户定:没有这种情况;画面由渲染节点出)
-  // 按素材类型上色:文字 / 视频 / 转场… 各一档,一眼读得出片段是什么
+  // A card this device cannot run gets no "local PC assisted render" badge (user decision, 2026-10-21:
+  // this case does not exist; the render node produces the picture)
+  // Color by media type: text / video / transition... one tier each, so what the clip is reads at a glance
   const trackKind = clipTrackKind(clip, (id) => getState().project.media.find((m) => m.id === id));
-  // 这一段是不是「有画面的素材」:只有它能转成声音(卡片、图片、已经是声音的都不行)
+  // Whether this clip is "media with picture": only it can be turned into sound (cards, images and
+  // things that are already sound cannot)
   const canBecomeAudio = !!clip.mediaId && getState().project.media.find((m) => m.id === clip.mediaId)?.kind === "video";
   const embeddedAudio = clipHasEmbeddedAudio(getState().project, clip, getCard);
   const hasAudio = clipHasAudio(getState().project, clip, getCard);
@@ -68,7 +76,8 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
   const selectedAudioIds = selection.includes(clip.id) ? selection : [clip.id];
   const reportAudio = (result: { ok: boolean; error?: string }) => reportClipAudioResult(result, message => window.alert(message));
 
-  // 字幕卡不走「标题 + 副标题」那一套:它的内容是一条条字幕,直接在色块里画出来
+  // A captions card does not use the "title + subtitle" scheme: its content is individual captions,
+  // drawn directly in the color block
   const isCaption = isCaptionClip(clip);
   const capCount = useMemo(() => (isCaption ? captionsOf(clip).length : 0), [isCaption, clip.params?.lines]);
 
@@ -76,22 +85,26 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
   if (isCaption) {
     subtitle = capCount > 0 ? trText("{0} captions", capCount) : trText("No captions yet, right-click the media to transcribe");
   } else if (clip.cardId && paramsView) {
-    // 第一个文字控件的值 → 卡片说明;同步来的用户卡(在线页面没有定义)用源码里解析出的视图
+    // Value of the first text control → card description; for a synced user card (no definition on online
+    // pages) use the view parsed from the source
     subtitle = clipSubtitleOf(paramsView, clip.params);
   } else if (clip.mediaId) {
     subtitle = trText("Duration ") + formatTime(clip.end - clip.start);
   } else if (clip.cutId) {
     subtitle = trText("{0}Duration {1} · double-click to open", (clip.cutOffset ?? 0) > 0 ? trText("From {0} · ", formatTime(clip.cutOffset ?? 0)) : "", formatTime(clip.end - clip.start));
   }
-  // 被引用剪辑事后变短:超出它总时长的那一截透明无声(段的起止不动),斜线标出来
+  // The referenced cut later became shorter: the part beyond its total duration is transparent and silent
+  // (the clip's start and end do not move), marked with diagonal lines
   const cutOverSec = clip.cutId && cutName ? Math.max(0, (clip.end - clip.start) - Math.max(0, cutTotal - (clip.cutOffset ?? 0))) : 0;
 
-  // 挂在这段上的转场:画出淡化区间、右键能删,而且它锁着这段的时间关系(单独拖会被 store 挡回来,整组一起走)
+  // Transition attached to this segment: draws the fade interval, can be deleted by right-click, and it
+  // locks this segment's timing relationship (dragging alone is blocked by the store; the whole group moves together)
   const allTransitions = useStore((s) => s.project.transitions);
   const myTransitions = useMemo(() => transitionsOfClip(getState().project, clip.id), [allTransitions, clip.id]);
   const lock = myTransitions.length > 0 ? timingLock(getState().project, clip.id) : null;
 
-  // 挂在这一段上的东西(滤镜、像素映射、音频效果、素材效果卡)收成一张清单,带和菜单都只认它
+  // Everything attached to this segment (filters, pixel maps, audio effects, media effect cards) is
+  // collected into one manifest; the strip and the menu both use only it
   const filterLib = useStore((s) => s.project.filters);
   const pixelMapLib = useStore((s) => s.project.pixelMaps);
   const audioFxLib = useStore((s) => s.project.audioFx);
@@ -106,7 +119,8 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
     { x: number; y: number; items?: ContextMenuItem[]; head?: { title: string; of?: string; trackKind?: string } | null } | null
   >(null);
 
-  // 拖动 / 改时长中:告诉 Agent 用户正在编辑这一段(A2;真的动起来才算,只点一下不算)
+  // During drag / duration change: tell the Agent the user is editing this segment (A2; counts only when
+  // it really moves, a single click does not count)
   useUserEditing(`timeline-clip:${clip.id}`, dragState ? clip.id : null, "drag");
 
   const displayStart = dragState ? dragState.start : clip.start;
@@ -114,7 +128,7 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
 
   const dragRef = useDrag(
     (e) => {
-      // 只读:点一下照样能选中(要看参数),但不开始拖
+      // Read-only: a click can still select it (to view parameters), but dragging does not start
       if (ro.locked && !track.locked) {
         if (!e.shiftKey) {
           if (!selection.includes(clip.id)) actions.select([clip.id]);
@@ -252,7 +266,8 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
     setContextMenu({ x: e.clientX, y: e.clientY });
   };
 
-  // 只读项目里右键只给不改项目的项:已有字幕的素材段能查看字幕;最后一行灰着,说明为什么别的都没有
+  // In a read-only project the right-click menu offers only items that do not modify the project: a media
+  // clip that already has captions can view them; the last row is greyed out and explains why nothing else is there
   const readOnlyItems = (() => {
     const m = clip.mediaId ? getState().project.media.find((x) => x.id === clip.mediaId) : null;
     return [
@@ -265,11 +280,11 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
 
   const isCrossTrackDrag = dragState && dragState.trackId !== track.id;
 
-  /* ── 叠加卡:带怎么画、菜单里有什么 ────────────────────────────────── */
+  /* ── Overlay cards: how the strip is drawn, what is in the menu ────────────────────────────────── */
   const widthPx = (displayEnd - displayStart) * pxPerSec;
   const plan = planClipLayout(widthPx, rowSize, overlays.length);
 
-  /** 停用 / 摘掉这两项:动作本身在 `overlayActions.ts`,手机版「调整」表单用的是同一份 */
+  /** Disable / remove these two items: the actions themselves are in `overlayActions.ts`, and the mobile app's "Adjust" form uses the same one */
   const lockNote = frozen ? { title: ro.locked ? ro.why : trText("This track is locked") } : null;
   const detachItem = (it: OverlayItem): ContextMenuItem =>
     it.canDetach
@@ -279,7 +294,8 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
           disabled: frozen,
           ...lockNote,
           action: () => {
-            // 素材效果卡要重接节点图,接不回去时 detachCardNode 抛出写明原因的话,原样给用户看
+            // A media effect card needs its node graph rewired; when it cannot be reconnected, detachCardNode
+            // throws with the reason spelled out, and it is shown to the user as is
             try { detachOverlay(actions, clip, it, getCard); }
             catch (e) { window.alert(e instanceof Error ? e.message : String(e)); }
           },
@@ -293,10 +309,11 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
         };
 
   /*
-   * 「引用到输入框」两条路:
-   * 氛围式的详细编辑自己有输入框,传 quoteClip / quoteOverlay 进来;
-   * 传统式的输入框在右边的 AI 栏里(本机和云端两块),走 `editor/quoteBus.ts` 那条总线 ——
-   * 预览右键「引用到 AI」用的就是它。两边写出来的引用块是同一份 `quoteToken`。
+   * Two paths for "quote into the input box":
+   * Vibe mode's detail editing has its own input box and is passed quoteClip / quoteOverlay;
+   * Classic mode's input box is in the AI panel on the right (local and cloud, two of them) and goes
+   * through the bus in `editor/quoteBus.ts` ——
+   * the preview right-click "Quote to AI" uses it too. Both sides write the same `quoteToken` quote block.
    */
   const quoteThisClip = () =>
     quoteClip ? quoteClip(clip, label || trText("Clips")) : requestQuote({ clipId: clip.id, label: label || trText("Clips") });
@@ -306,9 +323,11 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
       : requestQuote({ clipId: overlayQuoteId(clip, it), label: it.name, kind: OVERLAY_QUOTE_KIND });
 
   /**
-   * 停用 / 启用:挂载和逐段参数都留着,只翻 `off` —— 调不出想要的效果时先关掉比一比,
-   * 不用摘掉再回左栏的库里找回来重填参数。生不生效由各自的解析口判(kernel/filters.mjs 等)。
-   * 素材效果卡是节点图里的一个节点,绕不过去,所以这一项对它置灰。
+   * Disable / enable: the mount and the per-segment parameters are kept, only `off` is flipped. When you
+   * cannot get the effect you want, turn it off first to compare, instead of removing it and finding it
+   * again in the library in the left rail and refilling the parameters. Whether it takes effect is decided
+   * by each resolver (kernel/filters.mjs etc.).
+   * A media effect card is a node in the node graph and cannot be bypassed, so this item is greyed out for it.
    */
   const toggleItem = (it: OverlayItem): ContextMenuItem =>
     it.canToggle
@@ -320,7 +339,7 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
         }
       : { label: trText("Disable"), disabled: true, title: trText("Disabling a media effect card is done in the node graph of the edit section"), action: () => {} };
 
-  /** 这一张能做的事(菜单最里面那一级) */
+  /** What can be done with this one (the innermost level of the menu) */
   const overlayActions = (it: OverlayItem): ContextMenuItem[] => [
     { label: trText("Quote into input box"), action: () => quoteThisOverlay(it) },
     { label: trText("Edit parameters…"), hint: it.value, action: () => actions.select([clip.id]) },
@@ -328,7 +347,7 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
     detachItem(it),
   ];
 
-  /** 这一段挂的全部(中间那一级) */
+  /** Everything attached to this segment (the middle level) */
   const overlayList = (): ContextMenuItem[] =>
     overlays.length
       ? overlays.map((it) => ({
@@ -342,10 +361,12 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
       : [{ label: trText("Nothing is attached to this segment yet"), disabled: true, action: () => {} }];
 
   /*
-   * 菜单头只在**自己就是整张菜单**的时候写:点带里某一张卡,那一张的菜单是孤零零弹出来的,
-   * 头(填底、底色取那一段的轨道色)是「在动谁」的唯一凭据,而「摘掉」就在下面两行。
-   * 从片段菜单一级一级走下来的那两级不写头 —— 上一级面板还在屏幕上,片段名、卡片名都看得见,
-   * 再写一遍只是占一行(2026-10-24 用户定)。
+   * The menu header is written only when it **is the whole menu**: clicking a card in the strip pops up
+   * that card's menu on its own, and the header (filled background, in the track color of that segment)
+   * is the only evidence of "what is being changed", while "Remove" is two rows below.
+   * The two levels reached step by step from the clip menu get no header: the panel of the previous level
+   * is still on screen, and the clip name and card name are both visible,
+   * writing them again just wastes a row (user decision, 2026-10-24).
    */
   const openOverlayList = (at: { x: number; y: number }) =>
     setContextMenu({ ...at, head: null, items: overlayList() });
@@ -364,7 +385,7 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
     dragState?.forbidden ? "is-forbidden bg-red-500/50 border-red-500 border-dashed" : "",
   ].join(" ");
 
-  // 计算跨轨拖动时的垂直偏移量，视觉上把色块移到目标轨道
+  // Compute the vertical offset during a cross-track drag, visually moving the block to the target track
   let translateY = 0;
   if (isCrossTrackDrag && trackAreaRef.current) {
      const targetTrackEl = trackAreaRef.current.querySelector(`[data-track-id="${dragState.trackId}"]`);
@@ -392,7 +413,7 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
           transition: dragState ? 'none' : 'width 0.1s, left 0.1s',
         }}
         onContextMenu={handleContextMenu}
-        // 剪辑段:双击在时间轴上方打开被引用的剪辑(Argon 审核意见决定 3 补充)
+        // Cut segment: double-click opens the referenced cut above the timeline (Argon review decision 3, addendum)
         onDoubleClick={clip.cutId && cutName ? (e) => { e.stopPropagation(); openCutInTimeline(clip.cutId!); } : undefined}
       >
         <div
@@ -400,8 +421,9 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
           className={`absolute left-0 top-0 bottom-0 w-2 z-30 ${frozen ? "" : "cursor-col-resize pc-clip-trim"}`}
         />
         
-        {/* 叠加带:这一格每个片段都留着(小行高那一档不画),没挂东西时透明 —— 只给挂了东西的片段留,
-            同一行里的名字会一高一低。见 overlays.ts 文件头 */}
+        {/* Overlay strip: this slot is reserved for every clip (not drawn in the low row-height tier),
+            transparent when nothing is attached: reserving it only for clips with attachments would make names
+            in the same row vertically uneven. See overlays.ts file header */}
         {plan.band && (
           <OverlayBand
             items={overlays}
@@ -414,10 +436,11 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
           />
         )}
         {isCaption && capCount > 0 ? (
-          // 字幕卡:色块里画出一条条字幕,点它跳过去、拖它挪时间、双击改字
+          // Captions card: individual captions are drawn in the block; click to jump there, drag to move the time, double-click to edit text
           <CaptionLines clip={clip} height={ROW_SIZE_H[rowSize] - (plan.band ? BAND_H[rowSize] : 0)} />
         ) : (
-          // 名字和时长排同一行:分两行的话,中行高扣掉叠加带只剩 23px,两行放不下、标题会被切掉上半截
+          // Name and duration share one row: with two rows, the middle row height minus the overlay strip leaves
+          // only 23px, two rows do not fit and the top half of the title would be cut off
           <div className="pc-clip-body">
             {plan.name && (
               <span className="pc-clip-line" data-pc-clip-speed={isSpeedChanged(clip) ? clipSpeed(clip) : undefined}>
@@ -430,7 +453,7 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
         )}
         
         {media && media.kind !== "image" && <AudioWaveform media={media} clip={clip} width={(displayEnd - displayStart) * pxPerSec} />}
-        {/* 转场:两端的淡化区间铺一层渐变,成组的再挂一个链条角标 —— 一眼看出这段被绑着 */}
+        {/* Transition: a gradient over the fade interval at both ends, and a grouped one also gets a chain corner mark: shows at a glance that this segment is bound */}
         {(clip.fadeIn ?? 0) > 0 && (
           <div className="pc-clip-fade is-in" style={{ width: (clip.fadeIn ?? 0) * pxPerSec }} aria-hidden="true" />
         )}
@@ -450,7 +473,7 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
 
         {muteReason && (displayEnd - displayStart) * pxPerSec >= 76 && <ClipMuteBadge reason={muteReason} label={label} />}
 
-        {/* 镜头切换标记画在文字之上、把手之下:把手要能拖，标记只是看的 */}
+        {/* The shot-change marker is drawn above the text and below the handles: handles must be draggable, the marker is only for viewing */}
         <ShotMarkers clip={clip} rowHeight={ROW_SIZE_H[rowSize]} />
 
         <div
@@ -467,17 +490,18 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          // 带里点出来的菜单自带头和条目(叠加卡那一支);右键片段走下面这份
+          // The menu popped from the strip brings its own header and entries (the overlay card branch); right-clicking the clip uses the one below
           head={contextMenu.head === undefined ? { title: label || trText("Clips") } : contextMenu.head ?? undefined}
           onClose={() => setContextMenu(null)}
           items={contextMenu.items ?? [
             /*
-             * 「引用到输入框」放最上面,而且**只读也给** —— 它不改任何东西,只是把这一段说给 Agent 听,
-             * 恰恰是只读成员唯一能做的事。氛围式进 DetailEdit 的输入框,传统式进右边 AI 栏(quoteBus)。
+             * "Quote to the input box" goes at the very top, and is **given in read-only too**: it changes nothing,
+             * it only tells the Agent about this segment, which is exactly the one thing a read-only member can do.
+             * Vibe mode goes into the DetailEdit input box, Classic mode into the AI panel on the right (quoteBus).
              */
             { label: trText("Quote into input box"), action: quoteThisClip },
             ...(ro.locked ? readOnlyItems : [
-            // 转场在最上面:被绑住的时候用户第一件想做的事就是解开它
+            // Transition at the very top: when bound, the first thing the user wants to do is unbind it
             ...myTransitions.map((tr) => ({
               label: trText("Delete transition: {0}", describeTransition(getState().project, tr)),
               action: () => actions.removeTransition(tr.id),
@@ -486,7 +510,7 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
               ? [{ label: trText("Remove emphasis: {0}", describeEmphasis(clip.emphasis)), action: () => actions.setClipEmphasis(clip.id, null) }]
               : []),
             ...(clip.cutId && cutName ? [{ label: trText("Open cut \"{0}\"", cutName), action: () => openCutInTimeline(clip.cutId!) }] : []),
-            // 叠加卡在这里只占一项:停上去才列出这一段挂的全部,再停一张才是它能做的事
+            // Overlay cards take only one item here: hover to list everything attached to this segment, hover one more to get what it can do
             {
               label: trText("Overlay card"),
               hint: overlays.length ? trText("{0} cards", overlays.length) : trText("None yet"),
@@ -498,18 +522,18 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
               { label: clip.audioMuted ? trText("Unmute clip") : trText("Mute clip"), disabled: !!track.locked, action: () => reportAudio(actions.setClipMuted(clip.id, !clip.audioMuted)) },
               { label: trText("Adjust volume…"), disabled: !!track.locked, action: () => setVolumeOpen(true) },
             ] : []),
-            // 只要声音:画面没了,位置、长度、素材内偏移、淡入淡出都留着;素材库里同时多一份声音素材
+            // Sound only: the picture is gone; position, length, in-media offset and fades are all kept; the media library also gets an extra sound asset
             ...(canBecomeAudio || embeddedAudio ? [{ label: selectedAudioIds.length > 1 ? trText("Separate selected audio tracks ({0} segments)", selectedAudioIds.length) : trText("Separate audio from video"), disabled: !!track.locked,
               action: () => reportAudio(actions.separateAudios(selectedAudioIds)) }] : []),
             ...(canBecomeAudio && !embeddedAudio ? [{ label: trText("Convert to audio"), action: () => reportAudio(actions.convertClipToAudio(clip.id)) }] : []),
-            // 有声音的素材段可以直接去转写(图片没有声音,不给这一项)
+            // A media clip with sound can go straight to transcription (images have no sound, so this item is not offered)
             ...(() => {
               const media = clip.mediaId ? getState().project.media.find((m) => m.id === clip.mediaId) : null;
               if (!media || media.kind === "image") return [];
               return [{
                 label: media.transcript ? trText("View captions ({0} segments)", media.transcript.segments.length) : trText("Transcribe captions"),
                 action: () => requestCaptions(media.id),
-                // 在线浏览器模式没有语音识别(C10 契约第 10 节):只能转写的置灰,已有字幕的照常查看
+                // Online browser mode has no speech recognition (C10 contract, section 10): items that can only transcribe are greyed out, and ones that already have captions are viewed as usual
                 ...(!media.transcript && onlinePage() ? { disabled: true, title: onlineUnsupported(trText("Speech recognition")) } : {}),
               }];
             })(),
@@ -522,7 +546,7 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
               label: trText("Bring to front"),
               action: () => {
                 const tracks = getState().project.tracks;
-                // 最上面那条序列就是最上层(和时间轴上看到的一致)
+                // The topmost track is the top layer (consistent with what is seen on the timeline)
                 if (tracks.length > 0) actions.moveClip(clip.id, { trackId: tracks[0].id });
               }
             },

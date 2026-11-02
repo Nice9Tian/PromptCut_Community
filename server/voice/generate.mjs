@@ -1,8 +1,10 @@
 /**
- * voice_generate 的服务端主体:按设置补齐参数、校验音色、调服务商、落盘到素材目录。
+ * Server-side body of voice_generate: fills parameters from settings, validates voice, calls
+ * provider, and writes to disk in asset catalog.
  *
- * 音色只许用「系统音色」或「我的音色」里登记过的 —— agent 随手传一个没见过的 id,
- * 万一恰好是账号里一个没用过的新音色,第一次合成就会多扣 ¥9.9。
+ * Only voices registered under "System voices" or "My voices" are permitted: if an agent casually
+ * passes an unseen id that happens to be an unused new voice in the account, the first synthesis
+ * deducts an extra ¥9.9.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -11,13 +13,13 @@ import { synthesize, VoiceError } from './providers.mjs';
 import { PROVIDERS, SYSTEM_VOICES, EMOTIONS } from './presets.mjs';
 import { tr } from '../i18n.mjs';
 
-/** 这个音色在不在允许列表里 */
+/** Whether this voice is in the allowlist */
 export function voiceAllowed(cfg, provider, voiceId) {
   if ((SYSTEM_VOICES[provider] || []).some((v) => v.voiceId === voiceId)) return true;
   return cfg.customVoices.some((v) => v.provider === provider && v.voiceId === voiceId);
 }
 
-/** 按设置补齐一次合成的完整参数;args 里给了的覆盖设置里的 */
+/** Fill full params for a synthesis from settings; those provided in args override settings */
 export function resolveOptions(cfg, args = {}) {
   const provider = args.provider ?? cfg.provider;
   if (!PROVIDERS.includes(provider)) throw new VoiceError(tr("provider must be one of {0}", PROVIDERS.join(' / ')));
@@ -38,14 +40,15 @@ function stamp(d = new Date()) {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-/** 文件名里用得上的一小段文字:只留字母和数字(中英文都算),标点一律去掉,最多 12 个字 */
+/** Short text for filenames: keep alphanumeric only (Chinese and English), no punctuation, max 12 chars */
 function slug(text) {
   return [...String(text).replace(/[^\p{L}\p{N}]+/gu, '')].slice(0, 12).join('') || 'voice';
 }
 
 /**
- * 合成并写进 outDir。preview 为真时写固定文件名(覆盖上一次试听),不进素材库。
- * 返回 { name, path, url, bytes, provider, model, voiceId, chars, ms }。
+ * Synthesize and write into outDir. When preview is true, write to a fixed filename (overwriting
+ * previous preview) without adding to media library.
+ * Returns { name, path, url, bytes, provider, model, voiceId, chars, ms }.
  */
 export async function generateVoice({ cfg, args, outDir, fetch, preview = false }) {
   const opts = resolveOptions(cfg, args);

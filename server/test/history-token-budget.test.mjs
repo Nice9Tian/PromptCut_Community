@@ -1,6 +1,7 @@
 /**
- * 按真实 token 数截断:上下文拉满以后,截断不再靠「字符数 ÷ 3」猜 token,
- * 而是看每轮 API 报回的 input。中文差不多一字一 token,按字符猜会低估三倍。
+ * Truncate by actual token count: once context is full, truncation no longer relies on guessing
+ * tokens by "character count ÷ 3", but looks at the input reported back by the API in each round.
+ * Chinese is roughly one token per character, so guessing by character count underestimates by 3x.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -36,7 +37,8 @@ test('Agent: when maxInputTokens is given, trim by the reported input, and the u
   let n = 0;
   const provider = { name: 'fake', async *stream() {
     n++;
-    // 前三轮一直调工具,每轮报的 input 越来越大;第 3 轮超预算
+    // The first three rounds keep calling tools, with input reported each round getting larger;
+    // round 3 exceeds budget
     if (n <= 3) {
       yield { type: 'tool_use', id: `c${n}`, name: 'noop', input: { n } };
       yield { type: 'usage', input: n * 400_000, output: 10 };

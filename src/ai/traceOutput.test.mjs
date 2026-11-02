@@ -1,5 +1,5 @@
 /**
- * Tool result outputs stay out of the chat trace. 跑:node --test src/ai/traceOutput.test.mjs
+ * Tool result outputs stay out of the chat trace. Run: node --test src/ai/traceOutput.test.mjs
  */
 import test from "node:test";
 import assert from "node:assert/strict";

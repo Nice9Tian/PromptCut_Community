@@ -1,5 +1,6 @@
 /**
- * 序列在激活剪辑(/tracks)与停放剪辑(/cuts/@X/tracks)之间搬家时,路径与实体的换算。跑:node --test src/kernel/cutPaths.test.mjs
+ * Path and entity conversion when tracks move between active cut (/tracks) and parked cuts
+ * (/cuts/@X/tracks). Run: node --test src/kernel/cutPaths.test.mjs
  */
 import "../testing/registerTs.mjs";
 import test from "node:test";

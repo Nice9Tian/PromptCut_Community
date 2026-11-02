@@ -1,11 +1,17 @@
 /**
- * 读 Chrome 网络日志(`--log-net-log=<文件>`),列出 URL 含某段文字的请求在网络层的经过。浏览器还开着、文件没收尾时也能读。
- * 用于探针页面「等不到 DOMContentLoaded」一类的取证(`docs/archive/agent-reports/AGENT-nav-hang.md`):看请求是没发出去、没收完,还是网络层已收完而页面一直没收下。
+ * Read Chrome netlog (`--log-net-log=<file>`), listing the progress at the network layer of requests
+ * whose URL contains certain text. Can be read while the browser is still open and file is not
+ * finalized.
+ * Used for forensics such as probe page "never gets DOMContentLoaded"
+ * (`docs/archive/agent-reports/AGENT-nav-hang.md`): check whether request was not sent, not fully
+ * received, or already received at network layer but never accepted by the page.
  *
- *   node scripts/probes/netlog-request.cjs <网络日志> <URL 片段> [--all] [--events]
+ *   node scripts/probes/netlog-request.cjs <netlog> <url-fragment> [--all] [--events]
  *
- * 缺省列最后一个匹配的请求:网络层读到的正文字节数、最后一次读到正文的时刻、请求活了多久(REQUEST_ALIVE 起止)、绑定的连接。
- * `--all` 每个匹配的请求一行;`--events` 再把该请求的事件逐条打出来(正文读取的事件省略)。时刻都是相对该请求开始的毫秒。
+ * Defaults to listing the last matching request: body bytes read at network layer, timestamp of last
+ * body read, request lifetime (REQUEST_ALIVE start and end), bound connection.
+ * `--all` outputs one line per matching request; `--events` prints each event of the request (body
+ * read events omitted). Timestamps are all in milliseconds relative to the start of that request.
  */
 const fs = require('fs');
 
@@ -20,7 +26,7 @@ for (const l of lines) {
   if (!consts && t.startsWith('{"constants"')) { consts = JSON.parse(t.replace(/,$/, '') + '}').constants; continue; }
   t = t.replace(/,$/, '');
   if (!t.startsWith('{')) continue;
-  try { evs.push(JSON.parse(t)); } catch { /* 收尾的半行 */ }
+  try { evs.push(JSON.parse(t)); } catch { /* Finalizing half-line */ }
 }
 if (!consts) { console.error('Not a Chrome netlog (the first line has no constants)'); process.exit(2); }
 const typeName = Object.fromEntries(Object.entries(consts.logEventTypes).map(([k, v]) => [v, k]));

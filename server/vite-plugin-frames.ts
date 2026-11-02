@@ -13,11 +13,12 @@ import { isPrerender } from "./render-role.mjs";
 import { prerenderModeOf, modeServesPrerender } from "./prerender-mode.mjs";
 
 /**
- * 本进程的预渲染模式(`prerender-mode.mjs`;`PROMPTCUT_PRERENDER_MODE`,由编辑器进程拉起时传)。只在预渲染进程里有意义;
- * 编辑器进程恒为 `full`(它的管线 `interactive: false`,本来就没有这些 lane)。
+ * Prerender mode of this process (`prerender-mode.mjs`; `PROMPTCUT_PRERENDER_MODE`, passed when
+ * spawned by the editor process). Only meaningful in prerender processes; the editor process
+ * is always `full` (its pipeline has `interactive: false`, and lacks these lanes to begin with).
  */
 const prerenderMode = isPrerender ? prerenderModeOf(process.env) : "full";
-/** 本进程做不做预渲染:`agent` 模式不做 —— 不起渲染节点、不建推送队列、`/preload` 回 `skipped` */
+/** Whether this process performs prerendering: `agent` mode does not: does not start render nodes, does not create push queues, and `/preload` returns `skipped` */
 const servesPrerender = modeServesPrerender(prerenderMode);
 import { ensureMirror } from "./vite-plugin-mirror";
 
@@ -40,9 +41,10 @@ import { tr } from "./i18n.mjs";
 
 const services = new Map<string, FramePipeline>();
 /**
- * 卡片代码身份(c66-host-cards,`server/card-code.mjs`):每个根一份。算法由卡片插件注入(`setCardIdentifier`),
- * 卡片源码一变(Vite 已经作废了模块之后)整表清空。整场景键、队列切分的 `requires.cardSources`、节点的
- * `cardSourceVersions` 都从这里取。
+ * Card code identity (c66-host-cards, `server/card-code.mjs`): one per root. The algorithm is
+ * injected by the card plugin (`setCardIdentifier`), and the entire table is cleared whenever card
+ * source code changes (after Vite has invalidated the module). The whole-scene key, queue
+ * splitting's `requires.cardSources`, and node `cardSourceVersions` are all retrieved from here.
  */
 const cardCodes = new Map<string, ReturnType<typeof createCardCodeIndex>>();
 function cardCode(root: string) {
@@ -54,59 +56,75 @@ function cardCode(root: string) {
   return index;
 }
 onCardSourceChange(() => { for (const index of cardCodes.values()) index.invalidate(); });
-/** C6.4:每个帧库根上的推送队列怎么收尾(停队列、关文档服务连接);没建推送队列的根不在这里 */
+/** C6.4: how to finalize the push queue on each frame store root (stop queue, close document service connection); roots without push queues are not here */
 const pushTeardowns = new Map<string, () => Promise<void>>();
 
 const pushLog = (event: string, fields: object = {}) => {
-  // 每段推完一条太吵(预渲染进程的 stdout 由编辑器进程收走),只打建队、跳过、重试和出错
+  // Logging after each pushed segment is too noisy (stdout of the prerender process is captured
+  // by the editor process); only log queue creation, skip, retry, and error
   if (event === "push.done" || event === "push.empty") return;
   try { console.info("[artifact-push]", event, JSON.stringify(fields)); } catch { console.info("[artifact-push]", event); }
 };
 
 /**
- * C6.4 第 4 节末段的接线(`docs/plan/manifest-contract.md`;阶段报告 `docs/reports/REPORT-c6-4.md`):
- * 预渲染进程只在**同时**满足下面两条时才建推送队列,否则什么都不建,行为与现在相同 —— 这就是离线。
+ * Wiring at the end of C6.4 section 4 (`docs/plan/manifest-contract.md`; phase report `docs/reports/REPORT-c6-4.md`):
+ * The prerender process creates push queues only when **both** conditions below are met; otherwise
+ * nothing is created and behavior is identical to now: this is offline mode.
  *
- *   1. 能解析到素材服务的基址:`asset-client.ts` 的 `assetServiceOrigin()`(预渲染进程里就是 `PROMPTCUT_EDITOR_URL`),
- *      API 基址 `<源>/api/asset`;真正推到哪一台按 D7 选(`selectAssetClient`,契约 J.13);
- *   2. 能连上文档服务:`render-node` 的 `resolveDocservice()` 回 `remote`、`local` 或 `editor`(M5b J.3:编辑器里挂的
- *      那一份,地址从 `PROMPTCUT_EDITOR_URL` 推出)。**`editor` 只在显式要推送时才算**(契约 J.12):
- *      进程设了 `PROMPTCUT_QUEUE_NODE=1` 或 `PROMPTCUT_PUSH=1`。都没设时编辑器里挂的那一份不算,不建推送队列、
- *      preload 前也不拉别人的结果,行为与 C6.4 之前逐字节相同 —— 默认的开发环境(含用户常驻的编辑器)不变,
- *      探针能在同一个工作副本里反复跑。`remote`、`local`(显式设了地址、或起了独立文档服务)照旧建。
- *   3. `PROMPTCUT_PUSH=0`:一律不建,不管哪种模式。
+ *   1. Can resolve the asset service base URL: `assetServiceOrigin()` in `asset-client.ts` (which is
+ *      `PROMPTCUT_EDITOR_URL` in the prerender process), API base URL `<origin>/api/asset`; which
+ *      machine to actually push to is selected per D7 (`selectAssetClient`, contract J.13);
+ *   2. Can connect to document service: `resolveDocservice()` in `render-node` returns `remote`,
+ *      `local`, or `editor` (M5b J.3: the instance mounted in the editor, address derived from
+ *      `PROMPTCUT_EDITOR_URL`). **`editor` only counts when push is explicitly requested**
+ *      (contract J.12): the process sets `PROMPTCUT_QUEUE_NODE=1` or `PROMPTCUT_PUSH=1`. When neither
+ *      is set, the instance mounted in the editor does not count, no push queue is created, and
+ *      other nodes' results are not pulled before preload, behaving byte-for-byte identical to
+ *      before C6.4: default development environments (including user's resident editor) remain
+ *      unchanged, and probes can run repeatedly in the same working copy. `remote` and `local`
+ *      (explicitly configured address, or started a standalone document service) are created as before.
+ *   3. `PROMPTCUT_PUSH=0`: never create, regardless of mode.
  *
- * 内容库客户端 `createContentClient` 在 `render-node/index.mjs` 里(C6.4 节点侧);取不到这个函数也不建。
- * 任何一步出错都只打日志,不影响预渲染进程。
+ * The content store client `createContentClient` is in `render-node/index.mjs` (C6.4 node side);
+ * if this function cannot be obtained, do not create either.
+ * Any error in any step only logs and does not affect the prerender process.
  */
 /**
- * 推送、拉取用的素材服务客户端(契约 J.13,按 D7 选基址;实现与第一次调用前等登记见 `asset-select.mjs`)。
- * 这里只把日志接到 `[artifact-push]`。
+ * Asset service client used for pushing and pulling (contract J.13, selects base URL per D7; see
+ * `asset-select.mjs` for implementation and waiting for registration before the first call).
+ * Here logs are only routed to `[artifact-push]`.
  */
 function selectAssetClient(opts: { node: any; endpoint: any; origin: string; ticket: ((opts?: { refresh?: boolean }) => Promise<string | null>) | null; createAssetClient: any; owner: string;
-    /** 自动渲染节点:页面此刻用的素材服务基址(页面给了就排在登记之前;现取,页面换了基址下一次调用就换) */
+    /** Auto render node: asset service base URL currently used by the page (if provided by the page, takes precedence before registration; fetched fresh, changes on the next call if the page changes base URL) */
     preferred?: () => string | null }) {
   return selectAssetClientImpl({ ...opts, log: pushLog });
 }
 
 /**
- * `resolveDocservice` 这几种结果算「连得上文档服务」;`editor` 是 J.3 新加的(编辑器里挂的文档服务);`shared` 是 M6a 的共享项目配置;
- * `page` 是自动渲染节点(页面交来的共享配置,`auto-render-node.mjs`)
+ * These `resolveDocservice` results count as "connected to document service"; `editor` is newly
+ * added in J.3 (document service mounted in editor); `shared` is M6a shared project configuration;
+ * `page` is auto render node (shared configuration supplied by the page, `auto-render-node.mjs`).
  */
 const DOCSERVICE_MODES = new Set(["remote", "local", "editor", "shared", "page"]);
 
 /**
- * `contentIds`:这条连接只推哪几个项目文档的产物(`push-scope.mjs`)。老路径凭 `PROMPTCUT_SHARED_CONFIG` 进入、配置里写了
- * `contentId` 时是 `[contentId]`;没写、或本机身份(没有共享项目的边界)时不设 = 不限。
+ * `contentIds`: which project document deliverables this connection pushes (`push-scope.mjs`).
+ * When entering via legacy path with `PROMPTCUT_SHARED_CONFIG` and `contentId` is specified in
+ * config, it is `[contentId]`; when omitted, or for local identity (no shared project boundary),
+ * unset = unlimited.
  */
 type DocLink = { mode: string; url: string; tried?: any[]; protocols?: () => Promise<string[]>; shared: boolean; projectId?: string | null; contentIds?: string[] | null };
 
 /**
- * 连哪个文档服务、凭什么进入(M6a,`docs/plan/auth-contract.md` 第 11 节):
- *   - 设了 `PROMPTCUT_SHARED_CONFIG`:用配置的第一项(是数组时只取第一项,多项目留给独立主机),
- *     凭共享项目的证明进入,角色 `render`;素材票据经这条连接的 `auth.ticket` 取。配置读不了回 `bad-config`;
- *   - 没设:照原来按 `resolveDocservice` 探活(远端 → 编辑器 → 本机回环),不带任何凭证 —— 连回环时是本机身份,
- *     连不上就回落本机。集群令牌不再用于数据面。
+ * Which document service to connect to and with what credentials to enter (M6a,
+ * `docs/plan/auth-contract.md` section 11):
+ *   - When `PROMPTCUT_SHARED_CONFIG` is set: use the first item in the configuration (if an
+ *     array, take only the first item; multiple projects are reserved for standalone hosts),
+ *     enter with proof of shared project, role `render`; asset tickets are fetched via
+ *     `auth.ticket` of this connection. If config cannot be read, return `bad-config`;
+ *   - When not set: probe liveness via `resolveDocservice` as before (remote → editor → local
+ *     loopback), without any credentials: acts as local identity when connecting to loopback;
+ *     falls back to local if connection fails. Cluster tokens are no longer used for data plane.
  */
 async function resolveDocLink(node: any): Promise<DocLink | { mode: string; tried?: any[]; url?: undefined; shared: false; detail?: string }> {
   if (process.env.PROMPTCUT_SHARED_CONFIG) {
@@ -124,38 +142,46 @@ async function resolveDocLink(node: any): Promise<DocLink | { mode: string; trie
   return { mode: resolved?.mode, url: resolved?.url, tried: resolved?.tried, shared: false };
 }
 
-/** 凭共享项目进入的连接取素材票据;本机身份不要票据 */
+/** Connections entering via shared project fetch asset tickets; local identity requires no ticket */
 async function ticketFor(link: DocLink, endpoint: any) {
   if (!link.shared) return null;
   const { createTicketSource }: any = await import("./auth/ticket-source.mjs");
   return createTicketSource(endpoint, { access: "rw" });
 }
 /**
- * 到文档服务的端点(`createDocEndpoint`,HT-a 契约 `docs/plan/http-transport-contract.md` 第 9 节)打的日志里,
- * 会话事件(建成、结束、脱开、接续、接续被拒、建不成等,`render-node/session-diag.mjs` 的 `SESSION_FORWARD_EVENTS`)
- * 按事件节流后进预渲染进程的日志,行首 `[queue-node] docservice.session.*` / `[artifact-push] docservice.session.*`;
- * 编辑器进程(`vite-plugin-prerender.ts`)把这几行转进自己的日志,独立渲染主机(`cloud/scripts/render-host.mjs`)照转
- * `[queue-node]` 行。传输的断开与接续只进日志与诊断,不打断队列。
+ * In logs output by the endpoint to document service (`createDocEndpoint`, HT-a contract
+ * `docs/plan/http-transport-contract.md` section 9), session events (established, ended, detached,
+ * resumed, resume rejected, failed to establish, etc., `SESSION_FORWARD_EVENTS` in
+ * `render-node/session-diag.mjs`) are throttled per event and fed into the prerender process
+ * log, prefixed with `[queue-node] docservice.session.*` / `[artifact-push] docservice.session.*`;
+ * the editor process (`vite-plugin-prerender.ts`) forwards these lines into its own log, and the
+ * standalone render host (`cloud/scripts/render-host.mjs`) likewise forwards `[queue-node]`
+ * lines. Disconnects and resumes of the transport only enter logs and diagnostics, and do not
+ * interrupt the queue.
  */
-/** 诊断里的会话状态:实际用的传输(脱开时为 null)、接续次数、是否对着旧服务端退化,加会话计数 `session` */
+/** Session state in diagnostics: actual transport used (null when detached), resume count, whether degraded against an old server, plus session count `session` */
 const sessionDiag = (endpoint: any) => sessionDiagOf(endpoint);
 /**
- * 推送队列认哪几种文档服务(契约 J.12):`remote`、`local` 总认;`editor` 只在显式要推送时认 ——
- * `PROMPTCUT_QUEUE_NODE=1` 或 `PROMPTCUT_PUSH=1`。
+ * Which document services the push queue recognizes (contract J.12): `remote` and `local` are
+ * always recognized; `editor` is recognized only when push is explicitly requested:
+ * `PROMPTCUT_QUEUE_NODE=1` or `PROMPTCUT_PUSH=1`.
  */
 const pushModeAllowed = (mode: unknown) => mode === "remote" || mode === "local" || mode === "shared"
   || (mode === "editor" && (process.env.PROMPTCUT_QUEUE_NODE === "1" || process.env.PROMPTCUT_PUSH === "1"));
 async function startArtifactPush(root: string, service: FramePipeline, auto: AutoLink | null = null) {
   if (!isPrerender) return;
   if (process.env.PROMPTCUT_PUSH === "0") return pushLog("push.skip", { reason: "disabled" });
-  // M6b:独立渲染主机没有页面、不做 preload,产物由各项目节点的 sink 推(契约 render-host-contract 第 3 节「产物」)
+  // M6b: standalone render hosts have no page and do no preload; deliverables are pushed by each
+  // project node's sink (contract render-host-contract section 3 "Deliverables")
   if (hostProfile()) return pushLog("push.skip", { reason: "host-profile" });
   const origin = assetServiceOrigin();
   if (!origin) return pushLog("push.skip", { reason: "no-asset-service" });
   const node: any = await import("./render-node/index.mjs");
   if (typeof node.createContentClient !== "function") return pushLog("push.skip", { reason: "no-content-client" });
   /*
-   * 连哪个文档服务:自动渲染节点(页面交来的共享配置,`auto-render-node.mjs`)直接用它;否则照原来按环境变量解析(J.12 的开关只管这一支)。
+   * Which document service to connect to: auto render node (shared configuration supplied by the
+   * page, `auto-render-node.mjs`) uses it directly; otherwise resolves from environment variables
+   * as before (the toggle in J.12 only controls this branch).
    */
   let resolved: any;
   if (auto) resolved = autoDocLink(auto);
@@ -165,7 +191,8 @@ async function startArtifactPush(root: string, service: FramePipeline, auto: Aut
     if (!DOCSERVICE_MODES.has(resolved?.mode) || !resolved.url) {
       return pushLog("push.skip", { reason: "docservice-offline", tried: (resolved?.tried ?? []).map((t: any) => ({ url: t.url, ok: t.ok, reason: t.reason })) });
     }
-    // J.12:编辑器里挂的文档服务,没显式要推送就不建(开关关着时与 C6.4 之前相同)
+    // J.12: document service mounted in the editor; do not create unless push is explicitly
+    // requested (identical to before C6.4 when toggle is off)
     if (!pushModeAllowed(resolved.mode)) return pushLog("push.skip", { reason: "editor-docservice-not-enabled", mode: resolved.mode });
   }
   if (services.get(root) !== service || (service as any).closed || (auto && !auto.alive())) return;
@@ -174,22 +201,29 @@ async function startArtifactPush(root: string, service: FramePipeline, auto: Aut
     log: sessionLogger((event: string, fields: object) => pushLog(`docservice.${event}`, fields)) });
   const content = node.createContentClient(endpoint);
   const { createAssetClient }: any = await import("./asset-store/client.mjs");
-  // J.13:按 D7 选推送的素材服务(环境变量 → 页面给的(自动渲染节点)→ 别的机器登记的 → 本机)
-  // 第一次推送前先等登记(没有环境变量、页面也没给基址时),不先推到本机素材服务(`asset-select.mjs`)
+  // J.13: select asset service to push to per D7 (environment variable → provided by page
+  // (auto render node) → registered by other machines → local)
+  // Wait for registration before the first push (when there is no environment variable and
+  // the page provided no base URL); do not push to the local asset service first (`asset-select.mjs`)
   const assets = selectAssetClient({ node, endpoint, origin, ticket: await ticketFor(link, endpoint), createAssetClient, owner: "push", preferred: auto ? auto.assetBase : undefined });
   const client = assets.client;
   const { createPushQueue }: any = await import("./artifact-push.mjs");
-  // 只推绑定项目的(`push-scope.mjs`):自动渲染节点按页面交来的项目文档 id(还没交来时先扣着);老路径按配置的 `contentId`
+  // Only push for bound projects (`push-scope.mjs`): auto render nodes follow the project document
+  // id supplied by the page (hold off while not yet supplied); legacy path uses `contentId` from config
   const scoped = scopeOf(link, auto);
   const scope = scoped ? createPushScope({ pipeline: service, contentIds: scoped }) : null;
-  // settleMs:同一段最后一次进队后静置 1.5 s 再推,边渲边推时一段不被推十几遍。
-  // 限了项目的队列文件按项目分目录:撤掉时没推完的段留给同一个项目下次接着推,不推进别的项目的素材服务
+  // settleMs: wait 1.5 s after the last enqueue of the same segment before pushing, preventing a
+  // segment from being pushed dozens of times during concurrent render-and-push.
+  // Project-scoped queue files are partitioned into directories by project: segments not fully
+  // pushed upon teardown are kept for the same project to resume next time, not pushed to other
+  // projects' asset services
   const queue = createPushQueue({ pipeline: service, client, content, dir: scoped && link.projectId ? pushDirOf(service, link.url, link.projectId) : service.root,
     log: pushLog, settleMs: 1500, scope });
   queue.start();
   /*
-   * 卡片快照(bake_card、3D 视图的贴图)也是预渲染产物:写进本机素材服务之后再推一份到这一台(`bake-store.mjs`)。
-   * 选定的就是本机素材服务时 bake-store 自己跳过。
+   * Card snapshots (bake_card, textures in 3D view) are also prerender deliverables: after writing
+   * to the local asset service, push another copy to this machine (`bake-store.mjs`).
+   * When the selected target is the local asset service, bake-store skips automatically.
    */
   const bakeRemote = { get base() { return assets.base(); }, put: (ns: string, bytes: Buffer, o?: any) => client.put(ns, bytes, o) };
   setBakeRemote(() => bakeRemote);
@@ -205,10 +239,12 @@ async function startArtifactPush(root: string, service: FramePipeline, auto: Aut
 }
 
 /**
- * 推送队列只推哪几个项目文档的产物;回 null = 不限。
- *   - 自动渲染节点:页面交来的项目文档 id(`contentId`,现取;还没交来时回 null,推送队列先扣着);
- *   - 老路径凭 `PROMPTCUT_SHARED_CONFIG` 进入:配置里的 `contentId`;没写就不限(记一行 `push.scope`);
- *   - 本机身份(`editor` / `local` / `remote`,没有共享项目的边界):不限。
+ * Which project document deliverables the push queue pushes; returning null = unlimited.
+ *   - Auto render node: project document id supplied by the page (`contentId`, read fresh;
+ *     returns null when not yet supplied, and push queue holds off);
+ *   - Legacy path entering via `PROMPTCUT_SHARED_CONFIG`: `contentId` from config; unlimited
+ *     if omitted (logs a line of `push.scope`);
+ *   - Local identity (`editor` / `local` / `remote`, no shared project boundary): unlimited.
  */
 function scopeOf(link: DocLink, auto: AutoLink | null): (() => typeof SCOPE_ALL | string[] | null) | null {
   if (auto) return () => (auto.contentId ? [auto.contentId] : null);
@@ -217,45 +253,48 @@ function scopeOf(link: DocLink, auto: AutoLink | null): (() => typeof SCOPE_ALL 
   return null;
 }
 
-/** 自动渲染节点交来的链接(`auto-render-node.mjs` 的 `link`) */
+/** Link supplied by auto render node (`link` in `auto-render-node.mjs`) */
 type AutoLink = { mode: "page"; url: string; shared: true; projectId: string; contentId: string | null; assetBase: () => string | null; protocols: () => Promise<string[]>; alive: () => boolean };
 const autoDocLink = (auto: AutoLink): DocLink => ({ mode: "page", url: auto.url, protocols: auto.protocols, shared: true, projectId: auto.projectId });
-/** 限了项目的推送队列文件所在目录:帧库下 `push/<文档服务 host>-<项目 id>`(只留安全字符);自动渲染节点与老路径同一个规则 */
+/** Directory of project-scoped push queue files: `push/<docservice host>-<project id>` under frame store (only safe characters kept); same rule for auto render nodes and legacy path */
 function pushDirOf(service: FramePipeline, url: string, projectId: string) {
   let host = "doc";
-  try { host = new URL(url).host; } catch { /* 地址已经校验过 */ }
+  try { host = new URL(url).host; } catch { /* Address has already been validated */ }
   const name = `${host}-${projectId}`.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 160);
   return path.join((service as any).root, "push", name);
 }
 
 /* ======================================================================== *
- * 队列模式的预渲染进程(契约 `docs/plan/render-queue-contract.md` J.5)
+ * Prerender process in queue mode (contract `docs/plan/render-queue-contract.md` J.5)
  * ======================================================================== */
 
-/** 开关:`PROMPTCUT_QUEUE_NODE=1`,缺省关。关着时下面的东西一样都不建,行为与现在完全一样 */
+/** Toggle: `PROMPTCUT_QUEUE_NODE=1`, off by default. When off, none of the items below are created, behaving exactly the same as now */
 const queueNodeSwitch = () => process.env.PROMPTCUT_QUEUE_NODE === "1";
 /**
- * M6b(`docs/plan/render-host-contract.md`):`PROMPTCUT_NODE_PROFILE=host` 时这个预渲染进程是独立渲染主机 ——
- * 节点 `profile: 'host'`,`PROMPTCUT_SHARED_CONFIG` 每项一条 `render` 连接、一个节点,不发布也不认领 `plan`。
- * 其余取值(含不设)都是本机 PC 节点,行为与 M6a 相同。
+ * M6b (`docs/plan/render-host-contract.md`): when `PROMPTCUT_NODE_PROFILE=host`, this prerender
+ * process is a standalone render host: node `profile: 'host'`, one `render` connection and one
+ * node per item in `PROMPTCUT_SHARED_CONFIG`, neither publishing nor claiming `plan`.
+ * All other values (including unset) are local PC nodes, with behavior identical to M6a.
  */
 const hostProfile = () => process.env.PROMPTCUT_NODE_PROFILE === "host";
 /**
- * 测试开关(M6b 探针 H2 用):主机节点对外报的代码版本改用这个值,不取 `frameCode(root)`。
- * 只影响 `profile: 'host'` 的 `codeVersions`(本机 PC 节点与帧库的键都不看它)。生产不设。
+ * Test toggle (used by M6b probe H2): the code version reported externally by the host node
+ * uses this value instead of taking `frameCode(root)`.
+ * Only affects `codeVersions` for `profile: 'host'` (local PC nodes and frame store keys ignore
+ * it). Unset in production.
  */
 const TEST_CODE_VERSION_ENV = "PROMPTCUT_TEST_CODE_VERSION";
-/** 文档服务项目模块认的 projectId(`docservice/modules/project.mjs` 的 `PROJECT_ID_RE`) */
+/** projectId recognized by the document service project module (`PROJECT_ID_RE` in `docservice/modules/project.mjs`) */
 const PROJECT_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
-/** 发布 `plan` 之后等 `task.published` 的上限 */
+/** Maximum wait time for `task.published` after publishing `plan` */
 const PUBLISH_TIMEOUT_MS = 10_000;
-/** 节点节拍:续约、认领、让路都在这一拍里判 */
+/** Node tick: lease renewal, claim, and yielding are all evaluated in this tick */
 const QUEUE_TICK_MS = 500;
-/** 诊断里留最近这么多条事件 */
+/** Retain this many recent events in diagnostics */
 const QUEUE_LOG = 80;
-/** 诊断里认领先后的条数(`claims`,c10a 契约第 17 节的验收用) */
+/** Number of claim sequence entries in diagnostics (`claims`, used for acceptance check in c10a contract section 17) */
 const CLAIM_LOG = 400;
-/** 诊断里本机节点认领 / 完成的任务 id,每类最多留几个 */
+/** Maximum number of task IDs claimed / completed by local nodes retained per category in diagnostics */
 const MINE_MAX = 5000;
 
 const queueLog = (event: string, fields: object = {}) => {
@@ -263,10 +302,14 @@ const queueLog = (event: string, fields: object = {}) => {
 };
 
 /**
- * 逐任务的收尾事件进日志(`docs/archive/agent-reports/AGENT-stall-phases.md`):local-node 的 `lost` / `failed` / `discarded` / `completed` / `dedup`
- * 各打一行 `[queue-node] node.task-<类型> {…}`,带时刻、任务 id、原因、所处阶段、距上次帧数变化与距认领的毫秒数,推送阶段另带块数与用时
- * (task-runner 的 `info`)。编辑器进程的转发器(`session-diag.mjs` 的 `createSessionLineForwarder`)放行这几种行,
- * 独立渲染主机的日志(`cloud/scripts/render-host.mjs`)与 PC 编辑器的日志都看得到。只带诊断字段,不带会话号、票据、口令。
+ * Per-task finalize events enter the log (`docs/archive/agent-reports/AGENT-stall-phases.md`):
+ * each of `lost` / `failed` / `discarded` / `completed` / `dedup` from local-node logs one line
+ * `[queue-node] node.task-<type> {…}`, with timestamp, task id, reason, current phase, ms since
+ * the last frame count change, and ms since claim; the push phase additionally includes chunk count
+ * and elapsed time (task-runner `info`). The editor process forwarder (`createSessionLineForwarder`
+ * in `session-diag.mjs`) allows these lines, visible in both standalone render host logs
+ * (`cloud/scripts/render-host.mjs`) and PC editor logs. Contains only diagnostic fields, without
+ * session numbers, tickets, or passphrases.
  */
 const TASK_LOG_TYPES = new Set(["lost", "failed", "superseded", "discarded", "completed", "dedup"]);
 function taskEventLog(event: any, extra: object = {}) {
@@ -280,36 +323,44 @@ function taskEventLog(event: any, extra: object = {}) {
 }
 
 type QueueNode = {
-  /** 连着文档服务、本机节点已经报到:`/preload` 走队列模式 */
+  /** Connected to document service and local node has checked in: `/preload` uses queue mode */
   active(): boolean;
   /**
-   * `/preload` 的队列那一半:定版本、发布 `plan`。回 true = 这一版交给队列了;false = 本机自己产。
-   * `entryKey`:这一版的 entry(M6c X1 空档:切分方没切出流任务时,把这一版的流交还本机自动生产)
-   * `raw` 是页面推来的原样项目(`project` 是 `renderProject` 之后的):项目在文档服务里有真身时拿它与真身比对(C6.5)。
+   * The queue half of `/preload`: set version, publish `plan`. Returns true = this version is handed
+   * over to the queue; false = produce locally on this machine.
+   * `entryKey`: entry for this version (M6c X1 gap: when the splitter cuts out no stream tasks, hand
+   * this version's streams back to this machine for automatic production)
+   * `raw` is the as-is project pushed from the page (`project` is after `renderProject`): compare it
+   * against the canonical copy when the project has a canonical copy in the document service (C6.5).
    */
   publish(session: string, project: any, entryKey?: string, raw?: any): Promise<boolean>;
   describe(): object;
-  /** `GET /api/frames/queue`(契约 render-host-contract 第 3 节「诊断」):`{ nodes, codeVersion, envFingerprint, maxConcurrent }` */
+  /** `GET /api/frames/queue` (contract render-host-contract section 3 "Diagnostics"): `{ nodes, codeVersion, envFingerprint, maxConcurrent }` */
   summary(): object;
-  /** `POST /api/frames/queue/release`:让掉手里全部认领、停节点、关连接(主机退出前调)。回让掉的条数 */
+  /** `POST /api/frames/queue/release`: yield all held claims, stop nodes, close connections (called before host exit). Returns count of yielded items */
   release(): Promise<number>;
   close(): Promise<void>;
 };
 const queueNodes = new Map<string, QueueNode>();
 /**
- * M6c X5:每个帧库根最近一次交互帧请求的时刻(`/see` 的 `user` lane、`/playback`)。本机队列节点的闲时门槛
- * (`queue-idle.mjs`)读它:最近 500 ms 有过就不认领新任务。开关关着时只是记一个数,别的什么都不做。
+ * M6c X5: timestamp of the most recent interactive frame request for each frame store root (`user`
+ * lane of `/see`, `/playback`). Read by the local queue node's idle gate (`queue-idle.mjs`): if one
+ * occurred within the last 500 ms, do not claim new tasks. When switch is off, it only records
+ * a count and does nothing else.
  */
 const lastInteraction = new Map<string, number>();
 const noteInteraction = (root: string) => { lastInteraction.set(root, Date.now()); };
 
 /**
- * 本机节点(PC 与独立渲染主机)`node.hello` 报的能力(M6c X1,`docs/plan/m6c-contract.md`):
- *   - `userCards: true, graphCards: false`:同 M5b / M6b;
- *   - `streams`:按实报 —— 预渲染管线有轨道流生产者、开关开着(`PROMPTCUT_STREAMS` 不是 0)、探到了能用的 H.264
- *     编码器(`FramePipeline.streamCapable`,一次进程只探一次)才是 true;
- *   - `transcode`:与 `streams` 同一个判据(本机有 ffmpeg 且编码器能用)。节点侧过滤的规则 2 对流任务同时查
- *     `requires.capabilities.streams` 与转码能力(B.2),只报 `streams` 的节点认领不了流任务。
+ * Capabilities reported in `node.hello` by local nodes (PC and standalone render host)
+ * (M6c X1, `docs/plan/m6c-contract.md`):
+ *   - `userCards: true, graphCards: false`: same as M5b / M6b;
+ *   - `streams`: reported truthfully: true only if the prerender pipeline has track stream
+ *     producers, the switch is on (`PROMPTCUT_STREAMS` is not 0), and a usable H.264 encoder was
+ *     probed (`FramePipeline.streamCapable`, probed only once per process);
+ *   - `transcode`: same criterion as `streams` (ffmpeg is available locally and encoder is usable).
+ *     Node-side filter rule 2 checks both `requires.capabilities.streams` and transcode capability
+ *     (B.2) for stream tasks; nodes reporting only `streams` cannot claim stream tasks.
  */
 async function nodeCapabilities(service: FramePipeline) {
   let streams = false;
@@ -318,30 +369,44 @@ async function nodeCapabilities(service: FramePipeline) {
 }
 
 /**
- * J.5:开关打开、又连得上文档服务时,在预渲染进程里起一个本机渲染节点,并替页面发布 `plan`。
+ * J.5: when switch is on and document service is reachable, start a local render node in the
+ * prerender process and publish `plan` on behalf of the page.
  *
- *   - 节点:`createLocalNode`(`profile: 'pc'`、`maxConcurrent: 1`、`capabilities` 见 `nodeCapabilities`(M6c X1 起带 `streams`),
- *     `codeVersions: [frameCode(root)]`;环境指纹在报到前借一次流预渲染间来探),执行器是 J.4 的
- *     `createPrerenderExecutor`,产物库是 C6.2 / C6.4 的 `createAssetSink({ pipeline, client, content })`;
- *   - 发布:`/preload` 在 `service.preload(…, { queue: true })` 之前调 `publish`:`project.announce` 拿 `projectRev`、
- *     `putSnapshot` 传快照、以本节点的发布方身份发布 `plan:<projectId>@<projectRev>`(`requires` 带版本与指纹);
- *     项目在文档服务里有真身时(C6.5)不发号、不上传,以真身的 rev 发布(`server/queue-publish.mjs`);
- *   - 收到 `task.done`:细任务的清单经 C6.2 的 `applyResult` 拉取并发布(本机产的已经在盘上,按「已有跳过」处理);
- *   - 连不上文档服务(断线):`service.leaveQueueMode()` 退回本机自己产,在跑的任务让掉;重连后新的 preload 再走队列;
- *   - 远端素材回退(J.6):订阅服务地址登记里的 `asset`,排除自己,填进 `setMediaFallbackBases`。
+ *   - Node: `createLocalNode` (`profile: 'pc'`, `maxConcurrent: 1`, `capabilities` see
+ *     `nodeCapabilities` (includes `streams` starting from M6c X1),
+ *     `codeVersions: [frameCode(root)]`; environment fingerprint is probed by leasing a stream
+ *     bakery once before check-in); executor is J.4's `createPrerenderExecutor`, asset sink is
+ *     C6.2 / C6.4's `createAssetSink({ pipeline, client, content })`;
+ *   - Publish: `/preload` calls `publish` before `service.preload(…, { queue: true })`:
+ *     `project.announce` gets `projectRev`, `putSnapshot` uploads snapshot, publishes
+ *     `plan:<projectId>@<projectRev>` as this node's publisher identity (`requires` carries version
+ *     and fingerprint); when the project has a canonical copy in the document service (C6.5), do
+ *     not assign a number or upload, publish with the canonical rev (`server/queue-publish.mjs`);
+ *   - Receiving `task.done`: manifest of the fine-grained task is pulled and published via C6.2's
+ *     `applyResult` (items produced locally are already on disk, treated as "skip if exists");
+ *   - Cannot connect to document service (disconnected): `service.leaveQueueMode()` falls back to
+ *     producing locally on this machine, yielding running tasks; after reconnecting, new preload
+ *     uses the queue again;
+ *   - Remote media fallback (J.6): subscribe to `asset` in service address registrations, exclude
+ *     self, fill into `setMediaFallbackBases`.
  *
- * M6c(`docs/plan/m6c-contract.md`):
- *   - X2:`executor.plan` 之后按这一版项目加本地档能力闸(`queue-local-media.mjs`),用到没有内容哈希的素材的细任务
- *     只给发布方的节点;
- *   - X4:发布 `plan` 时 `requires.preferNode` = 本机节点(队列给它 `PLAN_PREFER_MS` 的独占窗口);
- *   - X5:闲时门槛换成 `queue-idle.mjs`(最近 500 ms 没有交互帧请求即可认领,不等 preload 到 ready),
- *     忙时不认领新的、手里在做的做完。
+ * M6c (`docs/plan/m6c-contract.md`):
+ *   - X2: after `executor.plan`, add local-tier capability gate (`queue-local-media.mjs`) based on
+ *     this version's project: fine-grained tasks using media without content hashes are only given
+ *     to the publisher's node;
+ *   - X4: when publishing `plan`, `requires.preferNode` = local node (the queue gives it an
+ *     exclusive window of `PLAN_PREFER_MS`);
+ *   - X5: replace idle gate with `queue-idle.mjs` (can claim as long as no interactive frame
+ *     requests in the last 500 ms, without waiting for preload to become ready); when busy, do not
+ *     claim new tasks, finish what is currently being worked on.
  *
- * `createProjectClient`(J.2)在 `render-node/index.mjs` 里;取不到它(svc 分支还没合进来)就不起,打日志,
- * 预渲染进程照原来的路径跑。任何一步出错都只打日志。
+ * `createProjectClient` (J.2) is in `render-node/index.mjs`; if it cannot be retrieved (svc branch
+ * not merged yet), do not start, log it, and prerender process runs along the original path.
+ * If any step fails, only log it.
  */
 async function startQueueNode(root: string, service: FramePipeline, auto: AutoLink | null = null) {
-  // 自动渲染节点(页面交来的共享配置)不看 `PROMPTCUT_QUEUE_NODE`:它由 `auto-render-node.mjs` 的开关管
+  // Auto render node (shared configuration passed from page) ignores `PROMPTCUT_QUEUE_NODE`:
+  // governed by switch in `auto-render-node.mjs`
   if (!isPrerender || (!auto && !queueNodeSwitch())) return;
   const stale = () => services.get(root) !== service || (service as any).closed || (auto !== null && !auto.alive());
   const origin = assetServiceOrigin();
@@ -358,12 +423,13 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
   }
   if (stale()) return;
   const link = resolved as DocLink;
-  /** 只替哪几个项目文档发布 plan(同推送队列的范围,`scopeOf`);null = 不限 */
+  /** Which project documents to publish plan for (same scope as push queue, `scopeOf`); null = unlimited */
   const publishScope = auto ? () => (auto.contentId ? [auto.contentId] : null)
     : link.shared && link.contentIds?.length ? (() => { const ids = [...link.contentIds!]; return () => ids; })() : null;
   const outOfScopePublishLogged = new Set<string>();
 
-  // 指纹:报到前借一次流预渲染间探(`leaseStreamBakery` 开起来就定下本进程的环境),什么都不做就还
+  // Fingerprint: lease a stream bakery once to probe before check-in (starting `leaseStreamBakery`
+  // sets this process's environment), release without doing anything
   try {
     const bakery = await (service as any).leaseStreamBakery();
     (service as any).returnStreamBakery(bakery);
@@ -384,10 +450,10 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
     log: sessionLogger((event: string, fields: object) => queueLog(`docservice.${event}`, fields)) });
   const projects = node.createProjectClient(endpoint);
   const content = node.createContentClient(endpoint);
-  // J.13:sink 推、task.done 拉,都用按 D7 选的素材服务
+  // J.13: sink push and task.done pull both use the asset service selected according to D7
   const assetTicket = await ticketFor(link, endpoint);
   const assets = selectAssetClient({ node, endpoint, origin, ticket: assetTicket, createAssetClient, owner: "queue", preferred: auto ? auto.assetBase : undefined });
-  // J.6 的回退读别的机器的素材服务:凭共享项目进入时带票据
+  // J.6 fallback reads asset services on other machines: carries ticket when entering via shared project
   setMediaFallbackTicket(assetTicket ? () => assetTicket() : null);
   const client = assets.client;
   const events: object[] = [];
@@ -400,15 +466,17 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
   const baseExecutor = createPrerenderExecutor({ pipeline: service, projects, prepareProject: renderProject, log, codeStamp: () => cardCode(root).epoch });
   const host = String(os.hostname() || "host").replace(/[^A-Za-z0-9._:-]/g, "-");
   let editorPort = "";
-  try { editorPort = new URL(origin).port; } catch { /* 没有端口就不带 */ }
-  // 同一台机器上可能有几个编辑器各带一个预渲染进程:按编辑器端口区分节点身份
+  try { editorPort = new URL(origin).port; } catch { /* Omit if there is no port */ }
+  // Multiple editors on the same machine may each have a prerender process: distinguish node identity by editor port
   const nodeId = `prerender:${host}${editorPort ? `:${editorPort}` : ""}`.slice(0, 128);
   const { withLocalMedia }: any = await import("./queue-local-media.mjs");
   const { createQueueIdleGate }: any = await import("./queue-idle.mjs");
   /**
-   * M6c X2:算完计划,按这一版 entry 里的项目给 PlanContext 加本地档能力闸 —— 有没有内容哈希的素材时,用到它们的
-   * 细任务写 `requires.localMedia = <plan 的发布方>`(素材在发布方本机;PC 节点的发布方 id 就是它的 nodeId)。
-   * 执行器本身不变(`prerender-executor.mjs` 的 `plan-mismatch` 照旧兜底)。
+   * M6c X2: after computing plan, add local-tier capability gate to PlanContext based on the project in
+   * this version's entry: when there are assets without content hashes, fine-grained tasks using them
+   * set `requires.localMedia = <plan publisher>` (asset is local to publisher; PC node publisher id
+   * is its nodeId). Executor itself does not change (`plan-mismatch` in `prerender-executor.mjs`
+   * provides fallback as usual).
    */
   const executor = {
     ...baseExecutor,
@@ -422,37 +490,45 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
     },
   };
   /**
-   * M6c X5 的闲时门槛:执行器有空位(会话自己守 maxConcurrent)且最近 500 ms 没有交互帧请求就认领细任务,
-   * 不再等 preload 到 ready。播放、拖动时不认领新的,手里在做的做完(不再 yieldAll)。
+   * M6c X5 idle gate: claims fine-grained tasks when executor has an open slot (session guards
+   * maxConcurrent itself) and there were no interactive frame requests in the last 500 ms, no longer
+   * waiting for preload to reach ready. Do not claim new tasks during playback or scrubbing; finish
+   * what is currently being worked on (no longer yieldAll).
    */
   const idleGate = createQueueIdleGate({ pipeline: service, lastInteractionAt: () => lastInteraction.get(root) ?? -Infinity });
   /**
-   * 认领闸(`queue-agent-spare.mjs`;`mechanism/rendering.md`「Agent 优先只是插队」):Agent 专用实例开着且空闲、
-   * `'queue'` 预渲染间正做着一项时,多认领一项快照任务交给专用实例做。专用实例没开时不多认领。
+   * Claim gate (`queue-agent-spare.mjs`; `mechanism/rendering.md` "Agent priority is just
+   * queue-jumping"): when Agent dedicated instance is running and idle, and `'queue'` prerender
+   * bakery is currently working on one item, claim an extra snapshot task for the dedicated instance.
+   * Do not claim extra when dedicated instance is not running.
    */
   const { createAgentSpareGate }: any = await import("./queue-agent-spare.mjs");
   const spareGate = createAgentSpareGate({ pipeline: service, base: 1 });
-  /** X5 的证据(诊断 `queue.firstClaims`):第一次认领 plan / 细任务时 preload 各代际的状态 */
+  /** Evidence for X5 (diagnostic `queue.firstClaims`): status of each preload generation upon first claim of plan / fine-grained tasks */
   const firstClaims: { plan: object | null, fine: object | null } = { plan: null, fine: null };
   const preloadStatuses = () => [...((service as any).generations?.values?.() ?? [])].map((g: any) => ({
     key: String(g?.key ?? "").slice(0, 12), status: (service as any).entries?.get(g?.key)?.status ?? null, aborted: g?.controller?.signal?.aborted === true,
   }));
 
-  /** 诊断与 queue-mode-probe 的读口 */
+  /** Read endpoint for diagnostics and queue-mode-probe */
   const stats = { claimed: 0, completed: 0, dedup: 0, failed: 0, discarded: 0, lost: 0, planSplit: 0, done: 0, failedTasks: 0, applied: 0, applyErrors: 0,
     written: 0, fetched: 0, skipped: 0 };
   const taskState = new Map<string, { state: string, at: number, error?: string }>();
-  /** M6b 探针 H1:每个任务收到几次 `task.done`(恰好一次才对) */
+  /** M6b probe H1: how many times `task.done` is received per task (must be exactly once) */
   const doneCounts = new Map<string, number>();
   const planDerived = new Map<string, string[]>();
   /**
-   * 本机节点自己认领、完成的任务 id(诊断 `queue.local`):W4 跨机时区分哪些活是本机做的。
-   * `claimed` 取自发给本连接的 `task.claimed`,其余取自 local-node 的 `onEvent`。每类最多留 MINE_MAX 个。
+   * Task ids claimed and completed by the local node itself (diagnostic `queue.local`): distinguishes
+   * which work was done by this machine during W4 cross-machine execution.
+   * `claimed` is taken from `task.claimed` sent to this connection, the rest from local-node `onEvent`.
+   * Keep at most MINE_MAX per category.
    */
   const mine = { claimed: new Set<string>(), completed: new Set<string>(), dedup: new Set<string>(), failed: new Set<string>() };
   /**
-   * 认领的先后(c10a 契约第 17 节的验收:预渲染重试细任务排在本机判重的任务之后):每条 `task.claimed` 记 id、时刻、优先级,
-   * 最多留 CLAIM_LOG 条。只给诊断与 c10a-demo-probe 看。
+   * Order of claims (c10a contract section 17 acceptance check: prerender retry fine-grained tasks
+   * are queued after tasks classified as heavy on this machine): record id, timestamp, priority for
+   * each `task.claimed`, keeping at most CLAIM_LOG entries. Visible only to diagnostics and
+   * c10a-demo-probe.
    */
   const claimLog: { id: string, at: number, priority: unknown }[] = [];
   const remember = (set: Set<string>, id: unknown) => {
@@ -460,11 +536,14 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
     set.delete(id); set.add(id);
     while (set.size > MINE_MAX) set.delete(set.values().next().value as string);
   };
-  /** `<projectId>\0<digest>` → 已发布的那一版 */
+  /** `<projectId>\0<digest>` → published version */
   const published = new Map<string, { projectId: string, projectRev: number, planId: string, digest: string, at: number, entryKey?: string }>();
   /**
-   * M6c X1 的空档(集成裁定,m6c-contract「集成时的裁定」):自己发布的 plan 完成了,切分方却一个流任务都没切
-   * (它关着流或探不到编码器),而本机能产流 —— 这一版的流交还本机自动生产(不经队列),快照照旧走队列。
+   * M6c X1 gap (integration ruling, m6c-contract "Integration ruling"): the plan published by this
+   * node completed, but the splitter cut out no stream tasks at all (streams are disabled on it or
+   * no encoder was probed), while this machine can produce streams: this version's streams are
+   * returned to this machine for automatic production (without going through queue), while snapshots
+   * still go through the queue as usual.
    */
   const streamsFallback = (planId: string, derived: unknown) => {
     if (capabilities.streams !== true || !Array.isArray(derived)) return;
@@ -477,7 +556,7 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
   };
 
   let codeVersion: string = frameCode(root);
-  /** 仅供测试(M7 契约 D15):只切分、不认领细任务 */
+  /** For testing only (M7 contract D15): only split, do not claim fine-grained tasks */
   const testPlanOnly: boolean = typeof node.testPlanOnly === "function" && node.testPlanOnly(process.env) === true;
   if (testPlanOnly) log("queue.test-plan-only", { nodeId });
   let localNode: any = null;
@@ -487,13 +566,17 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
     localNode?.stop();
     localNode = node.createLocalNode({
       nodeId,
-      // cardSourceVersions:本机此刻有的卡片代码(现取现算的视图),任务的 requires.cardSources 按它过滤(c66-host-cards)
+      // cardSourceVersions: card code currently on this machine (on-the-fly computed view),
+      // task requires.cardSources is filtered by it (c66-host-cards)
       node: { profile: "pc", envFingerprint, codeVersions: [codeVersion], capabilities, maxConcurrent: 1, cardSourceVersions: cardCode(root).view,
-        // 仅供测试(M7 契约 D15):PROMPTCUT_TEST_PLAN_ONLY=1 时只认领 plan、不认领细任务(节点侧过滤规则 8),验收时不和纯浏览器抢卡;生产不设
+        // For testing only (M7 contract D15): when PROMPTCUT_TEST_PLAN_ONLY=1, only claim plan, do not
+        // claim fine-grained tasks (node-side filter rule 8), avoiding competing for cards with pure
+        // browser during acceptance check; not set in production
         ...(testPlanOnly ? { planOnly: true } : {}) },
       endpoint, now: Date.now, isIdle: () => idleGate.idle(), maxConcurrent: 1, codeVersion, executor: spareGate.wrap(executor), sink,
       claimLimit: spareGate.claimLimit, canClaim: spareGate.canClaim,
-      // M7 D2:队列锁的锁定方闲置严格超 30 s、这张卡又没做完,切分时带 takeover 按本机指纹接手整张卡
+      // M7 D2: locker of queue lock has been idle strictly over 30 s and this card is not finished,
+      // split with takeover to take over the whole card based on this machine's fingerprint
       takeoverLocked: node.idleLockTakeover,
       onEvent: (event: any) => {
         const id = event?.id;
@@ -511,7 +594,7 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
   };
   buildNode();
 
-  /** 队列那边回来的消息:`task.done` 拉取并发布,`task.failed` 记下 */
+  /** Messages returning from queue side: pull and publish on `task.done`, record on `task.failed` */
   let applyChain: Promise<unknown> = Promise.resolve();
   endpoint.onMessage((message: any) => {
     if (message?.type === "task.claimed") {
@@ -535,7 +618,8 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
         planDerived.set(message.id, [...result.derived]);
         streamsFallback(message.id, result.derived);
       }
-      // 细任务的清单(C6.2 形状,`v: 1`)才拉;M5b 之前的 local-node 完成时不带清单,本机产的由执行器自己发层
+      // Only pull fine-grained task manifests (C6.2 shape, `v: 1`); local-node before M5b did not
+      // include manifests on completion; items produced locally have layers emitted by executor itself
       if (result && typeof result === "object" && result.v === 1 && (result.kind === "snapshot" || result.kind === "stream")) {
         applyChain = applyChain.catch(() => {}).then(async () => {
           try {
@@ -555,7 +639,7 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
   });
   const onOpen = () => {
     if (closed) return;
-    // G.7 约定写法:(重)连上就报到,接续本实例仍持有的认领
+    // G.7 convention: check in upon (re)connecting, resume claims still held by this instance
     localNode.start(localNode.session.held().map(({ id, token }: any) => ({ id, token })));
     started = true;
     log("queue.started", { docservice: resolved.mode, url: resolved.url, nodeId, envFingerprint, codeVersion: codeVersion.slice(0, 12), capabilities });
@@ -564,13 +648,14 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
   endpoint.onClose(() => {
     if (!started || closed) return;
     started = false;
-    // J.5「中途连不上文档服务」:退回本机自己产,已经排进去的任务作废(在跑的让掉;重连后新的 preload 重新发布)
+    // J.5 "Cannot connect to document service midway": fall back to producing locally on this machine,
+    // invalidate already queued tasks (yield running ones; republish new preload after reconnecting)
     published.clear();
-    try { localNode.yieldAll("offline"); } catch { /* 连接已断,放回的消息反正发不出去 */ }
+    try { localNode.yieldAll("offline"); } catch { /* Connection is broken; release messages cannot be sent anyway */ }
     const rerun = (service as any).leaveQueueMode?.() ?? 0;
     log("queue.offline", { rerun });
   });
-  // J.6:别的机器的素材服务地址,本机的排除(与 J.13 选推送基址同一个判据)
+  // J.6: asset service addresses of other machines, excluding local (same criterion as choosing push base in J.13)
   const stopWatch = node.watchServiceEndpoints(endpoint, ["asset"], (list: any[]) => {
     const urls = foreignAssetEndpoints(list, origin).flatMap(item => item.urls);
     const bases = setMediaFallbackBases(urls);
@@ -580,7 +665,8 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
   const timer = setInterval(() => {
     if (closed || !started) return;
     try {
-      // 代码变了(改了 src 或管线):节点的代码版本跟着换,重新报到,不然新发布的任务谁都认领不了
+      // Code changed (modified src or pipeline): node's code version changes accordingly, check in again,
+      // otherwise nobody can claim newly published tasks
       const now = frameCode(root);
       if (now !== codeVersion) {
         codeVersion = now;
@@ -588,8 +674,9 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
         localNode.start([]);
         log("queue.code-changed", { codeVersion: codeVersion.slice(0, 12) });
       }
-      // M6c X5:播放 / 拖动时不认领新的(闲时门槛管认领),手里在做的做完 —— 语义 product/platforms.md「手里在做的那一批做完为止」,
-      // 不再像 M5b 那样把在跑的任务 yieldAll 放回去
+      // M6c X5: do not claim new tasks during playback / scrubbing (idle gate governs claims), finish
+      // what is currently being worked on: semantics in product/platforms.md "until the batch currently
+      // being worked on is finished", no longer release running tasks via yieldAll like M5b
       localNode.tick();
     } catch (error: any) {
       note("queue.tick-error", { message: String(error?.message ?? error) });
@@ -597,7 +684,7 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
   }, QUEUE_TICK_MS);
   timer.unref?.();
 
-  /** 发布 `plan` 等同一 reqId 的回包(`task.published` 或 `error`);reqId 带自己的前缀,不和 local-node 的撞 */
+  /** Publishing `plan` waits for response with same reqId (`task.published` or `error`); reqId has its own prefix, avoiding collision with local-node */
   let publishSeq = 0;
   const waiting = new Map<string, (message: any) => void>();
   endpoint.onMessage((message: any) => {
@@ -627,8 +714,10 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
         : typeof session === "string" && PROJECT_ID_RE.test(session) ? session : null;
       if (!projectId) { log("queue.publish-skip", { reason: "no-project-id" }); return false; }
       /*
-       * 只替绑定项目发布(`push-scope.mjs`):别的本机项目的 plan 发进共享项目的队列,就会被本机或别的节点渲出来、
-       * 推进共享项目的素材服务。不属于的(或页面还没交项目文档 id)本机自己产。
+       * Only publish on behalf of bound projects (`push-scope.mjs`): if plans for other local projects
+       * are sent into the shared project's queue, they will be rendered by this machine or other nodes,
+       * and pushed into the shared project's asset service. Those that do not belong (or if the page has
+       * not provided the project document id yet) are produced locally on this machine.
        */
       const allowed = publishScope ? publishScope() : SCOPE_ALL;
       if (allowed !== SCOPE_ALL && !(Array.isArray(allowed) && typeof project?.id === "string" && allowed.includes(project.id))) {
@@ -644,9 +733,11 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
       if (published.has(key)) return true;
       try {
         /*
-         * 定版本(server/queue-publish.mjs):项目没有真身时照老流程 announce 发号、上传快照;
-         * 有真身(C6.5)时不再发号、不再上传,以真身的 rev 发布,节点取项目时由文档服务从真身发回。
-         * 页面推来的这一份与真身不同(还有没确认的修改)就不交给队列,本机自己产。
+         * Set version (server/queue-publish.mjs): when project has no canonical copy, follow the old flow
+         * to announce, assign a number, and upload snapshot; when it has a canonical copy (C6.5), no longer
+         * assign a number or upload, publish with the canonical rev, and the document service sends it back
+         * from the canonical copy when nodes fetch the project. If this copy pushed from page differs from
+         * the canonical copy (still has unconfirmed edits), do not give it to queue; produce locally.
          */
         const version = await resolvePublishVersion({
           projects, projectId, session: session && session.length <= 128 ? session : undefined,
@@ -657,15 +748,18 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
           return false;
         }
         const { projectRev } = version;
-        // M6c X4:`preferNode` = 本机节点,发布后 PLAN_PREFER_MS 之内只有它能认领;之后任何指纹符合的 pc 都能
+        // M6c X4: `preferNode` = local node, only it can claim within PLAN_PREFER_MS after publishing;
+        // afterwards any pc matching the fingerprint can
         const task = node.planTaskOf({ projectId, projectRev, codeVersion: frameCode(root), envFingerprint, preferNode: nodeId });
-        // J.3 的 `planTaskOf` 会自己写进 `requires`;合并之前的版本不认这几个参数,这里补上(两种都对)
+        // `planTaskOf` in J.3 writes into `requires` by itself; versions prior to merge do not recognize
+        // these parameters, patched here (both are valid)
         task.requires = { ...(task.requires ?? {}), codeVersion: frameCode(root), envFingerprint, preferNode: nodeId };
         const results = await publishPlan(task);
         const result = Array.isArray(results) ? results.find((r: any) => r?.id === task.id) : null;
         if (!result || result.error) throw Object.assign(new Error(`plan was not published: ${result?.error ?? "no-result"}`), { code: result?.error ?? "no-result" });
         published.set(key, { projectId, projectRev, planId: task.id, digest, at: Date.now(), ...(entryKey ? { entryKey } : {}) });
-        // plan 在发布回包之前就已经完成过(同一版别人发布过):按已知的切分结果补判一次流的空档
+        // plan had already completed before publish response (someone else published same version):
+        // re-evaluate stream gap once based on known split results
         if (planDerived.has(task.id)) streamsFallback(task.id, planDerived.get(task.id));
         if (!taskState.has(task.id)) taskState.set(task.id, { state: result.state ?? "open", at: Date.now() });
         log("queue.published", { planId: task.id, bytes: text.length, via: version.via, state: result.state ?? null, created: result.created ?? null });
@@ -680,9 +774,9 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
         mode: resolved.mode, url: resolved.url, connected: endpoint.connected === true, ...sessionDiag(endpoint), active: handle.active(), nodeId, envFingerprint, assetBase: assets.base(),
         codeVersion, running: localNode?.running?.() ?? [], held: localNode?.session?.held?.().map(({ id }: any) => id) ?? [],
         stats: { ...stats },
-        // M6c X5:闲时门槛此刻的判定(null = 能认领)与第一次认领时 preload 的状态
+        // M6c X5: idle gate evaluation at this moment (null = can claim) and preload status on first claim
         idle: { reason: idleGate.reason(), lastInteractionAt: Number.isFinite(idleGate.lastInteractionAt) ? idleGate.lastInteractionAt : null },
-        // 认领闸:此刻多出的那一格开不开、执行器手里几项快照
+        // Claim gate: whether the extra slot is open right now, how many snapshot items the executor holds
         spare: spareGate.describe(),
         firstClaims: { ...firstClaims },
         local: { nodeId, claimed: [...mine.claimed], completed: [...mine.completed], dedup: [...mine.dedup], failed: [...mine.failed] },
@@ -720,25 +814,30 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
     },
   };
   queueNodes.set(root, handle);
-  // 自动渲染节点起步期间被撤了(页面离开了项目):当场收掉
+  // Auto render node was torn down during startup (page left the project): clean up immediately
   if (auto && !auto.alive()) {
     if (queueNodes.get(root) === handle) queueNodes.delete(root);
     await handle.close();
     return;
   }
-  // 端点在挂上 onOpen 之前就连上了(一般不会):补一次报到
+  // Endpoint connected before attaching onOpen (rare): do a supplementary check-in
   if (endpoint.connected === true && !started) onOpen();
 }
 
 /**
- * 主机一个项目的素材服务客户端(契约 render-host-contract 第 3 节「产物」:推到该项目文档服务下发的素材服务),顺序:
- *   1. `PROMPTCUT_ASSET_URL`(显式指定,调试用);
- *   2. 这条连接上 `service.endpoints` 里的 `asset`:按 `announcerId` 字典序取第一个的第一个地址。
- *      只排除与本主机编辑器同 host:port 的地址 —— 主机在逻辑上是另一台设备,同一台机器上的创建者登记的
- *      `asset:<主机名>` 也要认(PC 节点的 `foreignAssetEndpoints` 会把它当本机排掉);
- *   3. 都没有:从文档服务地址推出同一进程的素材服务 `http(s)://<文档服务 host>/api/asset` —— 局域网模式的
- *      文档服务挂在创建者的编辑器里,素材服务就在同一个进程(auth-contract 第 8 节末条)。
- * 不回落到主机自己的素材服务:产物推到那里,发布方拉不到。读写都带这条连接取的素材票据。
+ * Asset service client for a host project (contract render-host-contract section 3 "Outputs":
+ * pushed to the asset service issued by that project's document service), order:
+ *   1. `PROMPTCUT_ASSET_URL` (explicitly specified, for debugging);
+ *   2. `asset` in `service.endpoints` on this connection: take first address of the first entry in
+ *      lexicographical order of `announcerId`. Only exclude addresses with same host:port as this
+ *      host editor: the host is logically another device, so `asset:<hostname>` registered by the
+ *      creator on the same machine must also be recognized (PC node `foreignAssetEndpoints` excludes
+ *      it as local);
+ *   3. If neither: deduce same-process asset service `http(s)://<document service host>/api/asset`
+ *      from document service address: LAN mode document service is attached to creator's editor,
+ *      and asset service is in the same process (auth-contract section 8 last clause).
+ * Does not fall back to host's own asset service: if outputs are pushed there, publisher cannot
+ * pull them. Reads and writes both carry the asset ticket obtained from this connection.
  */
 function hostAssetClient({ node, endpoint, docUrl, origin, ticket, createAssetClient, owner }:
   { node: any; endpoint: any; docUrl: string; origin: string | null; ticket: any; createAssetClient: any; owner: string }) {
@@ -746,9 +845,9 @@ function hostAssetClient({ node, endpoint, docUrl, origin, ticket, createAssetCl
   try {
     const u = new URL(docUrl);
     derived = `${u.protocol === "wss:" || u.protocol === "https:" ? "https:" : "http:"}//${u.host}/api/asset`;
-  } catch { /* 地址不对:只能靠登记 */ }
+  } catch { /* Invalid address: can only rely on registration */ }
   let selfHost = "";
-  try { selfHost = origin ? new URL(origin).host : ""; } catch { /* 没有就不排 */ }
+  try { selfHost = origin ? new URL(origin).host : ""; } catch { /* Do not exclude if not present */ }
   let current: any = null;
   let currentBase: string | null = null;
   const use = (base: string | null, source: "env" | "announced" | "docservice") => {
@@ -776,28 +875,42 @@ function hostAssetClient({ node, endpoint, docUrl, origin, ticket, createAssetCl
     });
   }
   const client = new Proxy({}, { get: (_target, key) => { const value = current?.[key]; return typeof value === "function" ? value.bind(current) : value; } });
-  return { client, stop: () => { try { stop(); } catch { /* 已经停了 */ } }, base: () => currentBase };
+  return { client, stop: () => { try { stop(); } catch { /* Already stopped */ } }, base: () => currentBase };
 }
 
 /**
- * M6b 独立渲染主机(`docs/plan/render-host-contract.md` 第 3 节;编排在 `render-node/host.mjs`):
+ * M6b standalone render host (`docs/plan/render-host-contract.md` section 3; orchestrated in
+ * `render-node/host.mjs`):
  *
- *   - 配置:`PROMPTCUT_SHARED_CONFIG`(一项或数组,每项一个共享项目),`maxConcurrent` 见 `loadHostConfig`;
- *   - 每项一条 `render` 连接(凭项目证明,每次重连现取挑战)、一个节点(`profile: 'host'`,
- *     `codeVersions: [本机 frameCode]`,能力与 PC 相同,指纹照本机探测);
- *   - 全部节点共用这个进程的 `FramePipeline`('queue' lane),并发总数由 host.mjs 的全局闸管;
- *     执行器与产物库按项目各一份:项目快照要从那个项目的连接取,产物推到那个项目的素材服务;
- *   - 不发布 `plan`、不认领 `plan`(filter 规则 6),不接 `/preload` 的队列发布(`active()` 恒为 false);
- *   - 闲时门槛只有全局闸;断线重连按 G.7 接续仍持有的认领;
- *   - 诊断 `GET /api/frames/queue`(`summary()`),退出前 `POST /api/frames/queue/release`(`release()`)。
+ *   - Configuration: `PROMPTCUT_SHARED_CONFIG` (single entry or array, each entry is one shared
+ *     project), `maxConcurrent` see `loadHostConfig`;
+ *   - Each entry has one `render` connection (via project proof, fetch challenge upon reconnect)
+ *     and one node (`profile: 'host'`, `codeVersions: [local frameCode]`, capabilities identical to
+ *     PC, fingerprint probed locally);
+ *   - All nodes share this process's `FramePipeline` ('queue' lane), total concurrency governed by
+ *     global gate in host.mjs; executor and asset sink are per-project: project snapshots are
+ *     fetched from that project's connection, outputs pushed to that project's asset service;
+ *   - Does not publish `plan`, does not claim `plan` (filter rule 6), does not take `/preload`
+ *     queue publishes (`active()` is always false);
+ *   - Idle gate is only the global gate; disconnect and reconnect resumes held claims per G.7;
+ *   - Diagnostics `GET /api/frames/queue` (`summary()`), and before exit `POST /api/frames/queue/release`
+ *     (`release()`).
  *
- * 代理模式(托管方的渲染节点,`docs/plan/hosted-render-contract.md` 第 7.1 节):设了 `PROMPTCUT_RENDER_BROKER` 时不读配置文件,
- * 项目清单与每条连接的票据向管理进程的本机代理口要(`render-node/host.mjs` 的 `createBrokerClient`):每秒对一次账,
- * 清单里新出现的项目当场连上、不在清单里的让掉认领后断开、标了排空的做完再断开;管理进程说暂停就不认领新任务(背压)。
- * 这个进程里没有服务私钥,也没有任何项目的口令,只有两分钟的连接票据。节点 id 用清单给的。
- * 清单每一项的 `streams`(这个项目此刻产不产轨道流:渲染节点开着并且「生成轨道流」开着,`hosted-render/broker.mjs`)随配置项进
- * `host.add`,每次对账更新:不产的项目这台主机不认领它的流任务,它的执行器切清单计划时也不出自己的那一份流(`render-node/host.mjs`
- * 文件头「按项目产不产轨道流」)。不走代理口的独立渲染主机没有这一项,不按项目管。
+ * Broker mode (render node on hosted side, `docs/plan/hosted-render-contract.md` section 7.1):
+ * when `PROMPTCUT_RENDER_BROKER` is set, configuration files are not read; project manifests and
+ * tickets for each connection are requested from management process local broker port
+ * (`createBrokerClient` in `render-node/host.mjs`): reconcile once per second, connect immediately
+ * to new projects in manifest, disconnect from those not in manifest after yielding claims, disconnect
+ * from those marked for draining only after finishing; if management process pauses, do not claim
+ * new tasks (backpressure).
+ * This process holds no service private key and no project passphrases, only two-minute connection
+ * tickets. Node id uses the one given in manifest.
+ * `streams` for each manifest entry (whether this project currently produces track streams: render
+ * node is running and "Generate track streams" is on, `hosted-render/broker.mjs`) enters `host.add`
+ * with config item, updated on each reconciliation: for non-producing projects this host does not
+ * claim their stream tasks, and its executor omits its share of streams when splitting manifest
+ * plans (`render-node/host.mjs` file header "Whether to produce track streams per project"). Standalone
+ * render hosts not using broker port lack this entry and do not manage per project.
  */
 async function startHostNode(root: string, service: FramePipeline, node: any, origin: string) {
   const hostMod: any = await import("./render-node/host.mjs");
@@ -816,7 +929,7 @@ async function startHostNode(root: string, service: FramePipeline, node: any, or
   if (!config) return queueLog("queue.skip", { reason: "no-shared-config", profile: "host" });
   if (services.get(root) !== service || (service as any).closed) return;
 
-  // 指纹:同 PC 节点,报到前借一次流预渲染间探
+  // Fingerprint: same as PC node, lease a stream bakery once to probe before check-in
   try {
     const bakery = await (service as any).leaseStreamBakery();
     (service as any).returnStreamBakery(bakery);
@@ -826,7 +939,7 @@ async function startHostNode(root: string, service: FramePipeline, node: any, or
   const envFingerprint: string | null = (service as any).envFingerprint;
   if (!envFingerprint) return queueLog("queue.skip", { reason: "no-environment", profile: "host" });
   if (services.get(root) !== service || (service as any).closed) return;
-  // M6c X1:能力与 PC 节点同一个判据(`streams` 按实报)
+  // M6c X1: capabilities use same criterion as PC node (`streams` reported truthfully)
   let capabilities = await nodeCapabilities(service);
   if (services.get(root) !== service || (service as any).closed) return;
 
@@ -844,24 +957,35 @@ async function startHostNode(root: string, service: FramePipeline, node: any, or
   const log = (event: string, fields: object = {}) => { note(event, fields); if (!/^executor\.render$/.test(event)) queueLog(event, fields); };
 
   /*
-   * c66-host-cards:主机加入共享项目时经内容库 `card-source` 拉下用户卡与改过的卡,装进它自己的改动层,别人改了卡按
-   * `content.watch` 当场同步(C6.6 设计稿第 5 节;`vite-plugin-cards.ts` 的 `createHostCardSync`,只读)。装上之后
-   * 卡片代码身份跟着变(`cardCode(root)`),要这张卡的任务下一拍就能认领。没有改动层(没设数据目录)时不同步:
-   * 那样会直接改仓库里的卡片文件。`PROMPTCUT_CARD_SYNC=0` 关掉。
+   * c66-host-cards: When a host joins a shared project, it pulls down user cards and modified cards
+   * via content store `card-source` and loads them into its own overlay layer; when others modify
+   * cards, they are synced on the spot via `content.watch` (C6.6 design doc section 5;
+   * `createHostCardSync` in `vite-plugin-cards.ts`, read-only). Once loaded, the card code identity
+   * changes accordingly (`cardCode(root)`), and tasks requiring this card can be claimed on the next
+   * tick. When there is no overlay layer (no data directory set), syncing is disabled: that would
+   * directly modify card files in the repository. Disable with `PROMPTCUT_CARD_SYNC=0`.
    */
   const cardSyncOn = process.env.PROMPTCUT_CARD_SYNC !== "0" && !!overridesRoot();
   const cardSyncDir = path.join(process.env.PROMPTCUT_DATA_DIR || path.join(root, ".pc-work"), "host-cards");
   const { createHostCardSync }: any = cardSyncOn ? await import("./vite-plugin-cards") : {};
   if (!cardSyncOn) queueLog("queue.card-sync-skip", { profile: "host", reason: process.env.PROMPTCUT_CARD_SYNC === "0" ? "disabled" : "no-overrides" });
-  // 托管方的渲染节点:能力位集中在 `render-node/host.mjs` 的 `hostedRenderCapabilities`(不同步卡的工作进程不报 userCards)
+  // Host render node: capability flags are centralized in `hostedRenderCapabilities` in
+  // `render-node/host.mjs` (worker processes that do not sync cards do not report userCards)
   if (broker) capabilities = hostMod.hostedRenderCapabilities(capabilities, { cardSync: cardSyncOn });
   /*
-   * 托管方渲染服务的用户卡隔离(`docs/plan/hosted-render-contract.md` 第 7.5 节),管理进程经两个环境变量告诉工作进程自己是哪一种:
-   *   - 常驻工作进程(`PROMPTCUT_HOSTED_WORKER=resident`,不同步卡)且 `PROMPTCUT_HOSTED_HOLD_CARDS=1`:内容库里有 `card-source` 的项目
-   *     它连着、看着队列,但一个任务也不认领(`card-presence.mjs`),把「这个项目要隔离、有几个任务等着」随诊断报上去;
-   *   - 隔离工作进程(`PROMPTCUT_HOSTED_WORKER=isolated`,开着卡片同步):装卡之前过同步文件预检(`source-gate.mjs`);
-   *     卡片同步对完第一次账、卡片代码身份稳定之前不认领(不然清单计划会在卡还没装上时被切分)。
-   * 没有这两个变量(桌面版、普通的独立渲染主机)时下面三个量都是空的,接线与原来逐项相同。
+   * User card isolation for the host render service (`docs/plan/hosted-render-contract.md`
+   * section 7.5); the manager process tells worker processes which type it is via two environment
+   * variables:
+   *   - Resident worker process (`PROMPTCUT_HOSTED_WORKER=resident`, does not sync cards) and
+   *     `PROMPTCUT_HOSTED_HOLD_CARDS=1`: For projects with `card-source` in the content store, it
+   *     stays connected and watches the queue, but claims no tasks (`card-presence.mjs`), reporting
+   *     "this project requires isolation, how many tasks are waiting" along with diagnostics;
+   *   - Isolated worker process (`PROMPTCUT_HOSTED_WORKER=isolated`, card sync enabled): Passes sync
+   *     file pre-check before loading cards (`source-gate.mjs`); does not claim until card sync
+   *     finishes the first reconciliation and card code identity stabilizes (otherwise the manifest
+   *     plan would be split before cards are loaded).
+   * Without these two variables (desktop app, ordinary standalone render host), the three variables
+   * below are empty, and the wiring is identical item by item to before.
    */
   const { buildExtensions }: any = broker ? await import("./vite-plugin-hosted-gate") : { buildExtensions: {} };
   const hostedKind: string | null = broker ? (buildExtensions.sourceGate?.hostedWorkerKind?.() ?? null) : null;
@@ -875,10 +999,10 @@ async function startHostNode(root: string, service: FramePipeline, node: any, or
   let codeVersion: string = override ?? frameCode(root);
   const hostName = String(os.hostname() || "host").replace(/[^A-Za-z0-9._:-]/g, "-");
   let editorPort = "";
-  try { editorPort = new URL(origin).port; } catch { /* 没有端口就不带 */ }
+  try { editorPort = new URL(origin).port; } catch { /* Omit if there is no port */ }
   const nodeIdBase = `host:${hostName}${editorPort ? `:${editorPort}` : ""}`;
 
-  /** 每项的连接记录:诊断用(连不上的次数、素材基址),退出时关 */
+  /** Connection record for each item: used for diagnostics (failure count, asset base URL); closed on exit */
   const wired: { projectId: string | null; endpoint: any; assets: any; ticket: any; connectFailed: number; opens: number; cards: any; presence?: any; cardsSynced?: boolean; closed?: boolean }[] = [];
   const { ticketProtocols }: any = broker ? await import("./auth/client.mjs") : {};
   const host = hostMod.createRenderHost({
@@ -893,11 +1017,13 @@ async function startHostNode(root: string, service: FramePipeline, node: any, or
     nodeIdOf: (entry: any, index: number) => (typeof entry?.nodeId === "string" && entry.nodeId ? entry.nodeId : `${nodeIdBase}/p${index}`).slice(0, 128),
     connect: (entry: any, index: number, live: { streams: () => boolean | null }) => {
       const rec: any = { projectId: entry.projectId ?? null, endpoint: null, assets: null, ticket: null, connectFailed: 0, opens: 0, cards: null, closed: false };
-      // 代理模式:每次建新会话向管理进程要一张连接票据(与桌面版「页面每次交一张 render 票据」同一做法)
+      // Proxy mode: each time a new session is created, request a connection ticket from the manager
+      // process (same approach as the desktop app "page provides a render ticket each time")
       const protocols = broker
         ? async () => ticketProtocols(await broker.ticket(entry.projectId))
         : sharedProtocols(entry, { role: "render" });
-      // 连不上时每次退避都会打一行:按事件节流(`sessionLogger`),免得刷屏
+      // Prints a line on each backoff when failing to connect: throttled by event (`sessionLogger`) to
+      // prevent flooding the log
       const sessionLog = sessionLogger((event: string, fields: object) => queueLog(`docservice.${event}`, fields), { extra: { project: index, projectId: rec.projectId } });
       rec.endpoint = node.createDocEndpoint({ url: entry.url, protocols, log: (event: string, fields: object) => {
         if (event === "session.connect-failed") rec.connectFailed++;
@@ -910,23 +1036,29 @@ async function startHostNode(root: string, service: FramePipeline, node: any, or
       rec.assets = hostAssetClient({ node, endpoint: rec.endpoint, docUrl: entry.url, origin, ticket: rec.ticket, createAssetClient, owner: `host:p${index}` });
       const sink = createAssetSink({ pipeline: service, client: rec.assets.client, content, log });
       /*
-       * C10 契约第 18 节第 9 条:主机认领在线页面的清单计划、预渲染重试计划时,按这条连接的内容库写这一版的层表(`layers:<项目文档 id>`,
-       * 在线页面按它找清单)。主机没有推送队列,管线自己的 publishLayerMap 写不出去。
+       * C10 contract section 18 item 9: When a host claims the online page's manifest plan or prerender
+       * retry plan, it writes this version's layer table (`layers:<project doc id>`, which the online
+       * page uses to find manifests) via this connection's content store. The host has no push queue,
+       * so the pipeline's own `publishLayerMap` cannot write out.
        */
       const publishLayerMap = (entry: any) => {
         const key = layerMapKeyOf(entry?.project?.id);
         if (!key || (service as any).pushQueue) return;
-        // M7 D12:层表 v 3 的候选按切分实际出键(管线 recordSplitCandidates 记的);执行器在切分完成后才调这里
+        // M7 D12: Layer table v3 candidates emit keys based on the actual split (recorded by the pipeline's
+        // `recordSplitCandidates`); the executor calls here only after splitting finishes
         const body = layerMapOf(entry, { picked: (clipId: string) => (service as any).prerenderPicked(entry, clipId), fingerprint: (service as any).envFingerprint,
           candidatesOf: (control: any) => (service as any).splitCandidatesFor?.(control?.contentKey) ?? null,
-          // 轨道流:这一版的流与它们的候选(主机缺省不产流,这时是空对象,层表不带 `streams`)
+          // Track stream: this version's streams and their candidates (hosts do not produce streams by
+          // default, in which case this is an empty object and the layer table does not include `streams`)
           ...((service as any).layerMapStreamOptions?.(entry) ?? {}) });
         void content.put("snapshot-manifest", key, body).then(
           () => log("host.layer-map", { project: index, key: key.slice(0, 24), layers: body.layers.length }),
           (error: any) => log("host.layer-map-failed", { project: index, message: String(error?.message ?? error) }),
         );
       };
-      // 托管方的渲染节点:这个项目此刻产不产轨道流(现读;管理进程的清单变了,一拍之内跟上)。别的主机不按项目管,不给
+      // Host render node: whether this project currently produces track streams (read on the fly; if
+      // the manager process manifest changes, caught up within one tick). Other hosts are not managed
+      // per-project and do not provide this
       const streamsEnabled = broker ? () => live.streams() === true : null;
       const executor = createPrerenderExecutor({ pipeline: service, projects, prepareProject: renderProject, log, codeStamp: () => cardCode(root).epoch, publishLayerMap, streamsEnabled });
       if (createHostCardSync && rec.projectId) {
@@ -944,16 +1076,18 @@ async function startHostNode(root: string, service: FramePipeline, node: any, or
           queueLog("queue.card-sync-failed", { project: index, projectId: rec.projectId, message: String(error?.message ?? error) });
         }
       }
-      // 常驻工作进程:这个项目带没带卡片代码(只列键,不取正文)
+      // Resident worker process: whether this project includes card code (lists keys only, does not fetch body)
       if (createCardPresence && rec.projectId) {
         rec.presence = createCardPresence({ endpoint: rec.endpoint, content, log: (event: string, fields: object = {}) => queueLog(event, { project: index, projectId: rec.projectId, ...fields }) });
       }
-      // 隔离工作进程:每次建新会话后等卡片同步对完账(列表里的卡都装上或被拒)才放开认领
+      // Isolated worker process: after each new session is created, wait until card sync finishes
+      // reconciliation (all cards in the list are loaded or rejected) before allowing claims
       if (hostedKind === "isolated" && rec.cards) {
         rec.cardsSynced = false;
         const settle = () => {
           rec.cardsSynced = false;
-          // 卡片同步自己的「连上」处理先排进队(它在本处理之前注册),这里晚一拍再等它的队列走空
+          // Card sync's own "connected" handler is queued first (registered before this handler); here we
+          // wait one tick later for its queue to drain
           setTimeout(() => { void rec.cards.idle().then(() => { if (!rec.closed) { rec.cardsSynced = true; queueLog("queue.cards-synced", { project: index, projectId: rec.projectId }); } }, () => {}); }, 200);
         };
         rec.endpoint.onOpen(settle);
@@ -969,10 +1103,10 @@ async function startHostNode(root: string, service: FramePipeline, node: any, or
       const close = () => {
         if (rec.closed) return;
         rec.closed = true;
-        try { rec.presence?.close(); } catch { /* 已关 */ }
-        try { rec.cards?.close(); } catch { /* 已关 */ }
-        try { rec.assets.stop(); } catch { /* 已停 */ }
-        try { rec.endpoint.close(); } catch { /* 已关 */ }
+        try { rec.presence?.close(); } catch { /* Closed */ }
+        try { rec.cards?.close(); } catch { /* Closed */ }
+        try { rec.assets.stop(); } catch { /* Stopped */ }
+        try { rec.endpoint.close(); } catch { /* Closed */ }
         log("queue.project-closed", { profile: "host", project: index, projectId: rec.projectId });
       };
       return { endpoint: rec.endpoint, executor, sink, close, ...(hold ? { hold } : {}), ...(cardsInfo ? { cards: cardsInfo } : {}) };
@@ -983,9 +1117,12 @@ async function startHostNode(root: string, service: FramePipeline, node: any, or
     },
   });
 
-  // J.6 的素材回退(读别的机器上的素材):各项目的素材服务都当回退基址;票据按基址挑,用那台素材服务所属项目的
-  // (票据只在签发它的素材服务上有效;同一台服务上有几个项目时用配置里靠前的那个,按哈希寻址,任一项目的有效票据都能读)
-  /** 还开着的连接记录(运行中摘掉的项目留着空位,序号不复用) */
+  // J.6 asset fallback (reading assets from other machines): each project's asset service acts as
+  // a fallback base URL; tickets are chosen by base URL, using the project belonging to that asset
+  // service (tickets are valid only on the asset service that issued them; when multiple projects
+  // share the same service, the earlier one in config is used; content-addressed by hash, so valid
+  // tickets from any project can read)
+  /** Open connection records (projects removed at runtime leave empty slots; indices are not reused) */
   const live = () => wired.filter(rec => rec && !rec.closed);
   let fallbackKey = "";
   const refreshFallback = () => {
@@ -998,10 +1135,13 @@ async function startHostNode(root: string, service: FramePipeline, node: any, or
   refreshFallback();
   setMediaFallbackTicket((base: string) => hostMod.fallbackTicketFor(live().map(rec => ({ base: () => rec.assets.base(), ticket: () => rec.ticket() })))(base));
   /*
-   * 托管方的渲染节点(代理模式):云端 Agent 的 `bake_card` 经管理进程转到这里出图(`hosted-render/look.mjs`)。卡片快照先写进这个工作进程
-   * 自己的素材库,再推一份到项目的素材服务(`bake-store.mjs` 的远程;成员与别的渲染节点按 `/api/asset/px/<哈希>` 从那里取)。
-   * 托管端各项目共用同一台素材服务、按内容哈希寻址,所以用此刻连着的任一个项目的客户端(渲染服务的身份,写 `px`)。
-   * 桌面版与普通的独立渲染主机不走这里(它们没有 Agent 的查询)。
+   * Host render node (proxy mode): Cloud Agent's `bake_card` is routed here via the manager process
+   * to render images (`hosted-render/look.mjs`). Card snapshots are first written into this worker
+   * process's own media library, and a copy is pushed to the project's asset service (remote in
+   * `bake-store.mjs`; members and other render nodes fetch from there via `/api/asset/px/<hash>`).
+   * On the hosted side, all projects share the same asset service and are addressed by content hash,
+   * so the client of any currently connected project is used (render service identity, writing `px`).
+   * Desktop app and ordinary standalone render hosts do not go through here (they have no Agent queries).
    */
   if (broker) {
     setBakeRemote(() => {
@@ -1016,7 +1156,8 @@ async function startHostNode(root: string, service: FramePipeline, node: any, or
   log("queue.started", { profile: "host", broker: !!broker, projects: config.entries.map((e: any) => e.projectId), maxConcurrent: host.maxConcurrent,
     envFingerprint, codeVersion: codeVersion.slice(0, 12), codeVersionOverride: override !== null, capabilities });
 
-  // 代理模式:每秒向管理进程对一次账(增删项目、成员在线与否、暂停),顺带把自己的诊断交过去
+  // Proxy mode: reconciles with the manager process every second (project additions/removals, member
+  // presence, pause status), passing along its own diagnostics
   let brokerBusy = false;
   let brokerAt = 0;
   let brokerError = "";
@@ -1027,7 +1168,7 @@ async function startHostNode(root: string, service: FramePipeline, node: any, or
     try {
       const listing = await broker.projects();
       if (closed) return;
-      // `streams` 一律给布尔:清单里没有这一项(或不是 true)按不产算
+      // `streams` is always a boolean: missing from the manifest (or not true) is treated as not producing
       const diff = hostMod.reconcileHostProjects(host, listing, (item: any) => ({ url: listing.docUrl, projectId: item.projectId, members: item.members === true, nodeId: item.nodeId, streams: item.streams === true }));
       if (diff.added.length || diff.removed.length || diff.drained.length) log("queue.broker-sync", { profile: "host", ...diff, paused: listing.paused === true });
       brokerError = "";
@@ -1065,16 +1206,18 @@ async function startHostNode(root: string, service: FramePipeline, node: any, or
     profile: "host",
     nodes: host.nodes().map((n: any) => { const rec = wired[n.index]; return { ...n, opens: rec?.opens ?? 0, connectFailed: rec?.connectFailed ?? 0, ...sessionDiag(rec?.endpoint), assetBase: rec?.assets.base() ?? null }; }),
     codeVersion, envFingerprint, maxConcurrent: host.maxConcurrent, ...(hostedKind ? { worker: hostedKind, limit: host.limit } : {}), paused: host.paused === true, quotaPausedUntil: host.quotaPausedUntil ?? null, capabilities,
-    // c66-host-cards:每个项目的卡片同步(记账:仓库相对路径 → 装到的 cardRev)与卡片代码身份的状态
+    // c66-host-cards: Card sync for each project (bookkeeping: repo-relative path → loaded cardRev)
+    // and card code identity state
     cardSync: live().map((rec) => hostCardSyncSummary(rec.projectId, rec.cards)),
     cardCode: { epoch: cardCode(root).epoch, settled: cardCode(root).settled() },
-    // 托管方的工作进程:这台预渲染 Vite 上页面请求闸与出口代理拦了多少(`hosted-render/vite-gate.mjs`)
+    // Host worker process: how many were blocked by the page request gate and egress proxy on this
+    // prerender Vite (`hosted-render/vite-gate.mjs`)
     ...(hostedGateStatus ? { pageGate: hostedGateStatus() } : {}),
   });
   const closeAll = async () => {
     clearInterval(timer);
     if (broker) setBakeRemote(null);
-    for (const rec of live()) { rec.closed = true; try { rec.cards?.close(); } catch { /* 已关 */ } rec.assets.stop(); try { rec.endpoint.close(); } catch { /* 已关 */ } }
+    for (const rec of live()) { rec.closed = true; try { rec.cards?.close(); } catch { /* Closed */ } rec.assets.stop(); try { rec.endpoint.close(); } catch { /* Closed */ } }
   };
   const handle: QueueNode = {
     active: () => false,
@@ -1087,14 +1230,15 @@ async function startHostNode(root: string, service: FramePipeline, node: any, or
       closed = true;
       const count = host.shutdown("shutdown");
       log("queue.release", { profile: "host", released: count });
-      // task.release 已经交给各条连接;留一点时间让它们发出去,再等执行收尾、关连接
+      // `task.release` has been handed to each connection; allow some time for them to send, then wait
+      // for execution to finalize and close connections
       await new Promise(resolve => setTimeout(resolve, 300));
       await Promise.race([host.settled(), new Promise(resolve => setTimeout(resolve, 5000))]);
       await closeAll();
       return count;
     },
     async close() {
-      if (!released) { released = true; try { host.shutdown("closing"); } catch { /* 已停 */ } }
+      if (!released) { released = true; try { host.shutdown("closing"); } catch { /* Stopped */ } }
       if (closed && live().length === 0) return;
       closed = true;
       await Promise.race([host.settled(), new Promise(resolve => setTimeout(resolve, 5000))]);
@@ -1103,7 +1247,10 @@ async function startHostNode(root: string, service: FramePipeline, node: any, or
   };
   queueNodes.set(root, handle);
 }
-/** 主机诊断里一个项目的卡片同步:连没连上、记账(仓库相对路径 → cardRev)、最近几条通知(装上、被拒) */
+/**
+ * Card sync for a project in host diagnostics: connection state, bookkeeping (repo-relative path →
+ * cardRev), recent notifications (installed, rejected)
+ */
 function hostCardSyncSummary(projectId: string | null, cards: any) {
   if (!cards) return { projectId, enabled: false };
   let st: any = {};
@@ -1119,16 +1266,19 @@ function requestSignal(req: any, res: any) {
   res.once?.("close", () => { if (!res.writableEnded) abort(); });
   return controller.signal;
 }
-/** 导出目录与帧库目录(`PROMPTCUT_EXPORT_DIR`,开发期缺省 `<root>/out`) */
+/** Export directory and frame store directory (`PROMPTCUT_EXPORT_DIR`, default `<root>/out` in dev) */
 const exportRoot = (root: string) => process.env.PROMPTCUT_EXPORT_DIR || path.join(root, "out");
 const libraryRoot = (root: string) => path.join(exportRoot(root), "frame-library");
 const storageLog = (event: string, fields: object = {}) => {
   try { console.info("[storage]", event, JSON.stringify(fields)); } catch { console.info("[storage]", event); }
 };
 /**
- * 帧库的使用索引、上限与淘汰(存储占用计划 B 部分,`frame-library-storage.mjs`)。**只在预渲染进程里建**:
- * 编辑器进程的管线几乎不写帧库,`/api/storage*` 它原样转过来。
- * `PROMPTCUT_STORAGE_EVICT=0` 只记只量、不删;`PROMPTCUT_TEST_STORAGE_MIN_CAP`(字节)仅供测试与探针,把用户可设的下限调小。
+ * Frame store usage index, cap, and eviction (storage footprint plan part B,
+ * `frame-library-storage.mjs`). **Created only in the prerender process**: the editor process
+ * pipeline barely writes to the frame store and forwards `/api/storage*` as is.
+ * `PROMPTCUT_STORAGE_EVICT=0` only records and measures without deleting;
+ * `PROMPTCUT_TEST_STORAGE_MIN_CAP` (bytes) is for testing and probes only, lowering the
+ * user-configurable lower limit.
  */
 function storageOf(root: string) {
   const testMin = Number(process.env.PROMPTCUT_TEST_STORAGE_MIN_CAP);
@@ -1149,67 +1299,91 @@ export function frameService(root: string, origin: string) {
   if (!service) {
     service = new FramePipeline({ root: libraryRoot(root), origin: () => origin,
       code: () => frameCode(root), captureCode: () => captureCode(root),
-      // c66-host-cards:全局代码版本不含用户卡与改动层,这一版用到的定制卡的身份另算(整场景键、requires.cardSources)
+      // c66-host-cards: Global code version does not include user cards or the overlay layer; identities
+      // of custom cards used in this version are computed separately (whole scene key, `requires.cardSources`)
       cardSources: (project: any) => cardCode(root).projectVersions(project),
-      // 成本记录和可调系数跟 vite-plugin-costs 同一个根(帧库目录不是它们的家)
+      // Cost records and adjustable coefficients share the same root as `vite-plugin-costs` (the frame
+      // store directory is not their home)
       dataRoot: root,
       /*
-       * D5 的 `interactive`(R7 的原子切换把编辑器进程这一侧翻了过来)。
+       * D5 `interactive` (R7 atomic switch flipped the editor process side).
        *
-       * **预渲染进程 `true`**:热池在它这里,改叫 `streamPool`,给 G 的分段和 C2 锚帧用;
-       * `?preview=legacy` 的服务端旧调度器(`acquireUser` / `updatePlayback`)也留在它这里 ——
-       * legacy 页面照今天的方式发 `user` / `playback` lane,只是打到预渲染的源上
-       * (`frameClient` 的缺省 `target` 已经是 `"prerender"`),服务端不另读开关。
+       * **Prerender process `true`**: The warm pool is here, renamed to `streamPool`, used for G segments
+       * and C2 anchor frames; the legacy server scheduler (`acquireUser` / `updatePlayback`) for
+       * `?preview=legacy` also stays here: legacy pages send `user` / `playback` lanes just as they do
+       * today, but targeting the prerender origin (the default `target` for `frameClient` is already
+       * `"prerender"`), and the server reads no extra toggle.
        *
-       * **编辑器进程 `false`**:不再养那对无头 Chrome。`user` / `playback` 两条 lane
-       * 立即回 `USE_PRERENDER`、不进 `acquireUser`,两处 `prewarmUser` 都不调。
-       * 页面侧的热渲染是可见舞台 iframe,和 Node 侧的热池不是一回事(总规则倒数第二条)。
+       * **Editor process `false`**: No longer maintains that pair of headless Chromes. The `user` /
+       * `playback` lanes immediately return `USE_PRERENDER` without entering `acquireUser`, and neither
+       * `prewarmUser` is called. Page-side warm rendering is the visible stage iframe, not the same thing
+       * as the Node-side warm pool (second-to-last item of general rules).
        */
       interactive: isPrerender,
-      /** 预渲染进程的模式(`user` / `agent` / `full`,见 `prerender-mode.mjs`) */
+      /** Prerender process mode (`user` / `agent` / `full`, see `prerender-mode.mjs`) */
       mode: prerenderMode,
-      /** C4:`wanted` 从镜像插件读(frame-pipeline 是 .mjs,镜像插件是 .ts) */
+      /** C4: `wanted` is read from mirror plugin (`frame-pipeline` is .mjs, mirror plugin is .ts) */
       playhead: () => latestPlayhead(),
-      /** 没有内容哈希的素材打戳时向素材服务发 HEAD 的地址(基址按 asset-client.ts 定,不读素材目录) */
+      /**
+       * Address to send HEAD to the asset service when stamping assets without content hash (base URL
+       * determined by `asset-client.ts`, does not read asset catalog)
+       */
       mediaUrl: (m: any) => mediaSourceOf(m),
     });
     services.set(root, service);
-    /* 存储占用:预渲染进程的管线接上帧库的使用索引(预加载时记使用、按它的会话判「开着」的项目) */
+    /*
+     * Storage footprint: prerender process pipeline connects to the frame store usage index (records
+     * usage during preload, determines "open" projects by its sessions)
+     */
     if (isPrerender) storageOf(root).attachPipeline(service);
     /*
-     * R8:轨道流分段的读口挂在下面的 `/api/frames/*` 上 —— 生产者要读口接上了才开工、才发 `stream` 层
-     * (`StreamProducer.routeAttached`)。编辑器进程(`interactive: false`)没有生产者,这里是空操作。
+     * R8: The read port for track stream segments is mounted on `/api/frames/*` below; producers only
+     * start work and emit `stream` layers after the read port is attached (`StreamProducer.routeAttached`).
+     * The editor process (`interactive: false`) has no producers; this is a no-op here.
      */
     service.streamProducer()?.attachRoute();
     /*
-     * F5:预渲染进程起来先扫盘重建「键 → 区间」。只挂在键上,不发 `layer` ——
-     * `clipId` 要等项目到位、重算 card plan 之后才反查得出来(`adoptCardPlan`)。
+     * F5: When the prerender process starts up, it first scans the disk to rebuild "key → interval".
+     * Attached only to keys without emitting `layer`: `clipId` can only be reverse-looked up after
+     * the project is ready and the card plan is recomputed (`adoptCardPlan`).
      */
     void service.rescanSnapshots().catch(() => {});
-    /* C6.4:连得上素材服务和文档服务时建推送队列(只在预渲染进程里;连不上就什么都不建) */
-    /* `agent` 模式不预渲染:不建推送队列、不起渲染节点(下面两处) */
+    /*
+     * C6.4: Creates a push queue when reachable to asset service and document service (prerender
+     * process only; creates nothing if unreachable)
+     */
+    /* `agent` mode does not prerender: does not create push queue, does not start render nodes (two places below) */
     if (servesPrerender) void startArtifactPush(root, service).catch(error => pushLog("push.skip", { reason: "error", message: String(error?.message ?? error) }));
     else console.info(`[frames] The prerender process is in ${prerenderMode} mode: it only serves Agent queries, and does not prerender or start render nodes`);
-    /* J.5:`PROMPTCUT_QUEUE_NODE=1` 又连得上文档服务时起本机渲染节点(开关关着时这里立即返回,什么都不建) */
+    /*
+     * J.5: Starts a local render node when `PROMPTCUT_QUEUE_NODE=1` and document service is reachable
+     * (returns immediately here creating nothing when the switch is off)
+     */
     if (servesPrerender && queueNodeSwitch()) void startQueueNode(root, service).catch(error => queueLog("queue.skip", { reason: "error", message: String(error?.message ?? error) }));
   }
   return service;
 }
 /* ======================================================================== *
- * 桌面应用自动成为共享项目的渲染节点(语义 product/platforms.md「渲染节点」;状态机在 `auto-render-node.mjs`)
+ * Desktop app automatically becomes a render node for shared projects
+ * (semantics product/platforms.md "Render Node"; state machine in `auto-render-node.mjs`)
  * ======================================================================== */
 
 const autoLog = (event: string, fields: object = {}) => {
   try { console.info("[queue-node]", event, JSON.stringify(fields)); } catch { console.info("[queue-node]", event); }
 };
-/** 每个帧库根一份 */
+/** One per frame store root */
 const autoNodes = new Map<string, ReturnType<typeof createAutoRenderNode>>();
-/** 补推已有层的节拍:页面交接之后 preload 才算完计划的 entry 也要补 */
+/**
+ * Tick for re-pushing existing layers: entries whose plan calculation only finishes during preload
+ * after page handoff must also be pushed
+ */
 const AUTO_BACKFILL_TICK_MS = 5_000;
 
 /**
- * 向页面要一张 render 连接票据:经编辑器进程(`PROMPTCUT_EDITOR_URL` 的 `/api/render-node/ticket-request`,编辑器再经 HMR 问页面)。
- * 要不到就抛(页面没了、页面签不出):会话层退避后再调,页面回来就续上。
+ * Request a render connection ticket from the page: via the editor process
+ * (`/api/render-node/ticket-request` on `PROMPTCUT_EDITOR_URL`, editor queries page via HMR).
+ * Throws if unobtainable (page gone, page cannot sign): retried after session layer backoff;
+ * resumes once page returns.
  */
 async function requestPageTicket(projectId: string): Promise<string> {
   const editor = String(process.env.PROMPTCUT_EDITOR_URL || "").replace(/\/+$/, "");
@@ -1222,18 +1396,24 @@ async function requestPageTicket(projectId: string): Promise<string> {
 }
 
 /**
- * 补推页面交接之前就已经在本机帧库里的层(用户在交接之前就打开过这个项目、渲过):推送队列只在帧**写进**帧库时进队,
- * 交接之后 preload 命中的已有帧不会再写,不补就永远到不了素材服务、层表也不写。
- * 只补这个项目的(`entry.project.id === contentId`;页面还没交 contentId 时不补,交来之后下一拍再补),每个 entry 补一次:
- * 写一次层表(`publishLayerMap`),每张卡已有的快照帧按段进推送队列(`enqueueSnapshotPush`,队列自己去重,素材服务已有的块跳过)。
- * 轨道流不补:在线页面不用轨道流(product/platforms.md「在线浏览器模式」)。
+ * Re-pushes layers that were already in the local frame store before page handoff (user had opened
+ * and rendered this project before handoff): push queue enqueues only when frames are **written into**
+ * the frame store; existing frames hit by preload after handoff are not rewritten, and without
+ * catch-up they would never reach the asset service, nor would the layer table be written.
+ * Only catches up for this project (`entry.project.id === contentId`; not pushed if page has not
+ * submitted `contentId` yet, pushed on next tick once submitted), once per entry: writes layer table
+ * once (`publishLayerMap`), and existing snapshot frames for each card enter push queue by segment
+ * (`enqueueSnapshotPush`, queue deduplicates itself, chunks already on asset service are skipped).
+ * Track streams are not pushed: online pages do not use track streams (`product/platforms.md`
+ * "online browser mode").
  */
 async function backfillPush(service: FramePipeline, auto: AutoLink, done: Set<string>) {
   const pipeline: any = service;
   if (!pipeline.pushQueue || !auto.alive()) return 0;
-  // 只推绑定项目的:页面还没交项目文档 id 时不补(不知道哪一版属于它),交来之后先把扣着的段再判一次
+  // Only push for bound projects: do not push when page has not submitted project doc id yet (unknown
+  // which version belongs to it); once submitted, re-evaluate withheld segments first
   if (!auto.contentId) return 0;
-  try { pipeline.pushQueue.rescope?.(); } catch { /* 判不了的继续扣着 */ }
+  try { pipeline.pushQueue.rescope?.(); } catch { /* Keep withholding if unable to determine */ }
   const live = new Set([...(pipeline.generations?.values?.() ?? [])].filter((g: any) => !g?.controller?.signal?.aborted).map((g: any) => g.key));
   let queued = 0;
   for (const entry of [...(pipeline.entries?.values?.() ?? [])]) {
@@ -1241,29 +1421,37 @@ async function backfillPush(service: FramePipeline, auto: AutoLink, done: Set<st
     if (done.has(entry.key) || !live.has(entry.key) || !Array.isArray(entry.cardPlan) || !entry.cardPlan.length) continue;
     if (entry.project?.id !== auto.contentId) continue;
     done.add(entry.key);
-    try { pipeline.publishLayerMap(entry); } catch { /* 层表写不了 */ }
+    try { pipeline.publishLayerMap(entry); } catch { /* Cannot write layer table */ }
     autoLog("render-node.backfill", { projectId: auto.projectId, entryKey: String(entry.key).slice(0, 12), controls: entry.cardPlan.length, frames: 0, segments: 0 });
   }
   return queued;
 }
 
-/** 撤掉自动渲染节点:让掉认领、停节点、停推送队列、清素材回退,在跑的交给本机自己产 */
+/**
+ * Tear down automatic render node: yield claims, stop node, stop push queue, clear asset fallback;
+ * hand running tasks to this machine to produce
+ */
 async function stopAutoNode(root: string, service: FramePipeline, reason: string) {
   const q = queueNodes.get(root);
   queueNodes.delete(root);
-  // 让掉认领、停节点:`release()` 最后要等手里在跑的那一批做完才关连接(可能要一阵),不挡下面停推送队列;最多等 AUTO_RELEASE_WAIT_MS
+  // Yield claims and stop node: `release()` finally waits for the running batch to finish before
+  // closing connections (may take a while), without blocking stopping push queue below; waits at
+  // most `AUTO_RELEASE_WAIT_MS`
   const releasing: Promise<number | "pending"> = q ? q.release().catch(() => 0) : Promise.resolve(0);
   const teardown = pushTeardowns.get(root);
   pushTeardowns.delete(root);
-  if (teardown) { try { await teardown(); } catch { /* 已停 */ } }
+  if (teardown) { try { await teardown(); } catch { /* Stopped */ } }
   setMediaFallbackTicket(null);
   setMediaFallbackBases([]);
   let rerun = 0;
-  try { rerun = (service as any).leaveQueueMode?.() ?? 0; } catch { /* 管线已关 */ }
+  try { rerun = (service as any).leaveQueueMode?.() ?? 0; } catch { /* Pipeline already closed */ }
   const released = await Promise.race([releasing, new Promise<"pending">((r) => { const t = setTimeout(() => r("pending"), AUTO_RELEASE_WAIT_MS); t.unref?.(); })]);
   autoLog("render-node.teardown", { reason, released, rerun, push: !!teardown, node: !!q });
 }
-/** 撤掉时等节点收尾(在跑的那一批做完、关连接)最多这么久;过了照样回,节点做完自己关 */
+/**
+ * Maximum time to wait for node finalization upon teardown (finishing running batch, closing
+ * connections); returns anyway once expired, node closes itself when done
+ */
 const AUTO_RELEASE_WAIT_MS = 10_000;
 
 function autoNodeFor(root: string, origin: string) {
@@ -1294,7 +1482,10 @@ function autoNodeFor(root: string, origin: string) {
   return ctl;
 }
 
-/** 原样搬到 `render-project.mjs`(契约 J.5),这里转出,调用方(`vision/render.ts`、脚本)不用改 */
+/**
+ * Moved as is to `render-project.mjs` (contract J.5) and re-exported here; callers
+ * (`vision/render.ts`, scripts) do not need to change
+ */
 export { renderProject };
 export function framesPlugin(): Plugin {
   return { name: "promptcut-frames", configureServer(server) {
@@ -1328,8 +1519,9 @@ export function framesPlugin(): Plugin {
       if (isPrerender) void closeStorage(libraryRoot(root)).catch(() => {});
     });
     /*
-     * 存储占用(计划第 4 节):`GET /api/storage`、`POST /api/storage/cap`、`POST /api/storage/clear-cache`。
-     * 扫描与淘汰在预渲染进程里做,编辑器进程原样转过去。路由与回包见 `storage-routes.mjs`。
+     * Storage footprint (plan section 4): `GET /api/storage`, `POST /api/storage/cap`,
+     * `POST /api/storage/clear-cache`. Scanning and eviction are handled in the prerender process,
+     * forwarded as is by the editor process. See `storage-routes.mjs` for routes and responses.
      */
     const storageHandler = isPrerender ? createStorageHandler({ storage: () => storageOf(root), exports: exportSummaryOf(root) }) : null;
     server.middlewares.use("/api/storage", (req, res, next) => {
@@ -1338,15 +1530,18 @@ export function framesPlugin(): Plugin {
       return storageHandler!(req, res, next);
     });
     /*
-     * D4(b) `/api/cards/layout`:Agent 的 `get_layout` —— 按 t 在**整场景**上实测实体框
-     * (pinned 架构 4:Agent 的 query 跑预渲染进程;用户交互的 query 走自己的离屏舞台,不走这里)。
-     * body `{ session, localRev, t, clipIds? }`,项目来路和 `/preload` / `/playback` / `/see`
-     * 同一套(A7 的镜像前奏,迁移期仍收 `project`)。
+     * D4(b) `/api/cards/layout`: Agent's `get_layout`: measures entity boxes on the **whole scene** at t
+     * (pinned architecture 4: Agent queries run in the prerender process; user interaction queries use
+     * their own offscreen stage, not here). body `{ session, localRev, t, clipIds? }`, project origin
+     * shares the same setup as `/preload` / `/playback` / `/see` (A7 mirror prelude, still accepts
+     * `project` during transition period).
      *
-     * **只在预渲染进程里答**(T1a 审查 #14;cloud-task.md I4(c):`/api/cards/layout` 只服务 Agent 的
-     * `get_layout`,走 `'agent'` 角色)。编辑器进程收到就原样转给预渲染进程,转不过去回
-     * `503 NO_AGENT_LANE` —— 以前这里直接调本进程的 `FramePipeline.layout`,会在编辑器这一侧开查询 Chrome。
-     * 预渲染进程里经 `runAgentTask` 借 agent lane 的 bakery,和 `see_frames` 的 agent 批排同一条队。
+     * **Answered only in the prerender process** (T1a review #14; `cloud-task.md` I4(c): `/api/cards/layout`
+     * only serves Agent's `get_layout`, using the `'agent'` role). When received by the editor process,
+     * forwarded as is to the prerender process; returns `503 NO_AGENT_LANE` if forwarding fails: previously
+     * this called `FramePipeline.layout` directly in this process, opening a query Chrome on the editor
+     * side. Inside the prerender process, borrows the agent lane bakery via `runAgentTask`, queuing in the
+     * same queue as the `see_frames` agent batch.
      */
     server.middlewares.use("/api/cards/layout", (req, res, next) => {
       if (req.method !== "POST") return next();
@@ -1386,19 +1581,24 @@ export function framesPlugin(): Plugin {
       const origin = `http://127.0.0.1:${(server.httpServer?.address() as any)?.port}`;
       const json = (status: number, data: unknown) => { res.statusCode = status; res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(data)); };
       /*
-       * M6b 队列节点的诊断与退出(`docs/plan/render-host-contract.md` 第 2、3 节):
-       *   GET  /api/frames/queue          `{ nodes: [{ projectId, connected, claimed, completed, dedup, failed, lost, … }],
-       *                                     codeVersion, envFingerprint, maxConcurrent }`;节点还没起来时 `nodes: []`、`starting: true`
-       *   POST /api/frames/queue/release  让掉全部认领、停节点、关连接(`cloud/scripts/render-host.mjs` 退出前调)
-       * 节点在预渲染进程里:编辑器进程原样转过去(不在编辑器这一侧建管线)。预渲染进程里第一次打 `/api/frames/*`
-       * 才建管线、起节点,所以 GET 这一下同时就是「开工」。
+       * M6b queue node diagnostics and exit (`docs/plan/render-host-contract.md` sections 2 and 3):
+       *   GET  /api/frames/queue          `{ nodes: [{ projectId, connected, claimed, completed, dedup,
+       *                                     failed, lost, … }], codeVersion, envFingerprint,
+       *                                     maxConcurrent }`;
+       *                                     `nodes: []`, `starting: true` before node starts
+       *   POST /api/frames/queue/release  Yield all claims, stop node, close connections
+       *                                   (called before `cloud/scripts/render-host.mjs` exits)
+       * Node is in the prerender process: forwarded as is by the editor process (pipeline is not built
+       * on the editor side). Pipeline is built and node is started only on the first hit to
+       * `/api/frames/*` in the prerender process, so this GET also acts as "start work".
        */
       const queuePath = (req.url || "/").split("?")[0];
       /*
-       * 自动渲染节点(`auto-render-node.mjs`;编辑器进程的中转在 `vite-plugin-prerender.ts` 的 `/api/render-node/*`):
-       *   POST /api/frames/render-node          { url, projectId, assetBase?, contentId?, ticket? }  交接 / 换票据
-       *   POST /api/frames/render-node/unbind   { projectId?, reason? }  撤掉(撤完才回)
-       *   GET  /api/frames/render-node          状态(不含票据)
+       * Automatic render node (`auto-render-node.mjs`; editor process relay at `/api/render-node/*`
+       * in `vite-plugin-prerender.ts`):
+       *   POST /api/frames/render-node          { url, projectId, assetBase?, contentId?, ticket? }  Handoff / ticket renewal
+       *   POST /api/frames/render-node/unbind   { projectId?, reason? }  Tear down (returns after teardown finishes)
+       *   GET  /api/frames/render-node          Status (excluding tickets)
        */
       if (queuePath === "/render-node" || queuePath === "/render-node/unbind") {
         if (!isPrerender) return proxyToPrerender(req, res);
@@ -1419,7 +1619,7 @@ export function framesPlugin(): Plugin {
             return json(200, r);
           }
           if (off) return json(200, { ok: true, enabled: false, reason: off });
-          // `agent` 模式不预渲染,也就不当渲染节点
+          // `agent` mode does not prerender, so it does not act as a render node
           if (!servesPrerender) return json(200, { ok: true, enabled: false, reason: `prerender-mode-${prerenderMode}` });
           try {
             const r = autoNodeFor(root, origin).bind(input, { ticket: input?.ticket });
@@ -1447,28 +1647,32 @@ export function framesPlugin(): Plugin {
       const service = frameService(root, origin);
       const url = new URL(req.url || "/", origin);
       /*
-       * C3 就绪索引的 SSE。**页面直连预渲染进程**(和 J3 的快照字节同源,同走
-       * `PROMPTCUT_CORS_ORIGINS`);编辑器进程不代理 —— D5 的 `/api/frames/*`
-       * 保留清单里没有它,这里的中间件对不认识的路径一律 `next()`。
+       * C3 ready index SSE. **Page connects directly to the prerender process** (same origin as J3
+       * snapshot bytes, sharing `PROMPTCUT_CORS_ORIGINS`); the editor process does not proxy: it is not
+       * in the D5 `/api/frames/*` reserved list, and middleware here passes any unrecognized path to `next()`.
        *
-       * 连上先灌 `reset` + 每层一条全量 `layer`(已经 done 的再补一条 `done`),
-       * 之后增量。断线由页面按 1s / 2s / 4s / 8s 退避重连同一条 SSE(J3),
-       * 重连就是再走一次这里 —— 和 F5 共用一条恢复路径,没有轮询端点。
+       * Upon connecting, first feeds `reset` + one full `layer` per layer (plus a `done` for layers already
+       * done), followed by deltas. On disconnect, the page backs off at 1s / 2s / 4s / 8s to reconnect to the
+       * same SSE (J3); reconnection simply goes through here again: shares a single recovery path with F5,
+       * with no polling endpoint.
        */
       if (req.method === "GET" && url.pathname === "/ready") {
-        // Item 4:按 `session` 分片订阅,只收自己这个页面会话的层(不带 session 的是缺省会话)
+        // Item 4: Sharded subscription by `session`, only receiving layers for its own page session (without
+        // session is the default session)
         const session = readySessionOf(url.searchParams.get("session") ?? undefined);
         if (session === null) return json(400, { error: "Invalid session parameter" });
         res.statusCode = 200;
         res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
         res.setHeader("Cache-Control", "no-store");
         res.setHeader("Connection", "keep-alive");
-        // 反向代理和 vite 的 compression 都可能攒着不发,SSE 攒一下就等于断线
+        // Both reverse proxies and Vite's compression may buffer without sending; buffering SSE is equivalent
+        // to a disconnection
         res.setHeader("X-Accel-Buffering", "no");
         res.flushHeaders?.();
         const send = (message: unknown) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(message)}\n\n`); };
         const off = service.ready.subscribe(session, send);
-        // 空闲连接被中间的代理掐掉之前先说句话(注释行不是事件,页面收不到)
+        // Say something before idle connections are cut by intermediate proxies (comment lines are not
+        // events, page will not receive them)
         const beat = setInterval(() => { if (!res.writableEnded) res.write(": beat\n\n"); }, 15000);
         beat.unref?.();
         const stop = () => { clearInterval(beat); off(); };
@@ -1477,25 +1681,28 @@ export function framesPlugin(): Plugin {
         return;
       }
       /*
-       * 诊断读口:A3c 的超限帧(卡 id、字节数)和 C4 的批次插队。预渲染进程的
-       * stdout 被编辑器进程收走了,端到端探针只能从这里看这两件事。
+       * Diagnostic read endpoint: oversized frames from A3c (card id, byte count) and batch queue
+       * jumping from C4. The prerender process's stdout is captured by the editor process, so end-to-end
+       * probes can only inspect these two things from here.
        */
       if (req.method === "GET" && url.pathname === "/diagnostics") {
-        // J.5:队列模式才多一个 `queue` 键(queue-mode-probe 读它);开关关着时形状不变
+        // J.5: only queue mode adds a `queue` key (queue-mode-probe reads it); when the switch is off,
+        // the shape is unchanged
         const queueNode = queueNodes.get(root);
         return json(200, { ok: true, ...service.diagnostics(), ...(queueNode ? { queue: queueNode.describe() } : {}) });
       }
       if (req.method === "GET") {
         /*
-         * R8 轨道流的字节(清单 / init / 分段),和快照字节同源、同走 `PROMPTCUT_CORS_ORIGINS`。
-         * 只有预渲染进程(`interactive: true`)有生产者;编辑器进程这里是 null,不答。
+         * Bytes of R8 track streams (manifest / init / segment) share the same origin as snapshot bytes
+         * and both follow `PROMPTCUT_CORS_ORIGINS`. Only the prerender process (`interactive: true`) has
+         * a producer; the editor process is null here and does not respond.
          */
         const producer = service.streamProducer();
         if (producer && producer.handle(req, res, url.pathname)) return;
         /*
-         * J3 / C3 的快照字节:`GET /api/frames/snapshot/<kind>/<key>/<localFrame>`。
-         * `kind` 为 `local` 时 `key` = `<entry.key>/<共享键>`,所以有两个键段。
-         * 键是内容寻址的,所以可以 immutable 缓存一年。
+         * Snapshot bytes for J3 / C3: `GET /api/frames/snapshot/<kind>/<key>/<localFrame>`.
+         * When `kind` is `local`, `key` = `<entry.key>/<shared-key>`, so there are two key segments.
+         * Keys are content-addressed, so they can be cached with immutable for a year.
          */
         const snapshot = /^\/snapshot\/(html|local)\/([a-f0-9]{64})(?:\/([a-f0-9]{64}))?\/(\d{1,8})$/.exec(url.pathname);
         if (snapshot) {
@@ -1545,18 +1752,23 @@ export function framesPlugin(): Plugin {
         return;
       }
       /*
-       * K1:**探针推过的帧直接存成死素材**。后台舞台第一趟(全局时钟逐帧推)每生成
-       * 一帧快照就把 `{ session, localRev, clipId, localFrame, html, environment }` 报上来,经编辑器
-       * 进程转到这里。`kind` / `key` 由**预渲染进程**按镜像里的项目用 A3a 的规则算
-       * (共享键要 `card-identity.mjs` 的 `digest`,本地模式里页面不算它)。
+       * K1: **Frames pushed by the probe are stored directly as dead assets**. Whenever the background
+       * stage's first pass (global clock pushes frame by frame) generates a snapshot frame, it reports
+       * `{ session, localRev, clipId, localFrame, html, environment }`, which is forwarded here via the
+       * editor process. `kind` / `key` are computed by the **prerender process** using A3a rules based on
+       * the project in the mirror (the shared key requires the `digest` from `card-identity.mjs`, which
+       * the page does not compute in local mode).
        *
-       * **只存审阅表 `independent` 的卡**(pinned 渲染 5 末句):`sourceDependent`
-       * (链上的源在缩水项目里没有)和 `belowDependent` / `unknown`(没有下层背景)
-       * 在缩水项目里都拿不到输入,存下去等于把错画面当死素材发出去;它们的本地档
-       * 仍由 C2 的整场景路产。
+       * **Only store cards that are `independent` in the review table** (final sentence of pinned
+       * render 5): `sourceDependent` (upstream sources on the chain are missing in the reduced project)
+       * and `belowDependent` / `unknown` (no lower-layer background) cannot obtain input in the reduced
+       * project, so storing them is equivalent to sending out erroneous visuals as dead assets; their
+       * local tier is still produced by the C2 whole-scene route.
        *
-       * 写进同一棵目录、进 C3 的索引,预渲染不再重新预渲染这些帧。键乘的是页面的环境指纹,
-       * 这张卡随之锁定到页面的环境(卡片级指纹锁,契约 F.3),见下面 `acceptMeasuredSnapshot` 那一段。
+       * Written into the same directory tree and into the C3 index, prerendering no longer re-prerenders
+       * these frames. The key incorporates the page's environment fingerprint, and this card is thereby
+       * locked to the page's environment (per-card fingerprint lock, contract F.3); see the
+       * `acceptMeasuredSnapshot` section below.
        */
       if (req.method === "PUT" && url.pathname === "/snapshot") {
         return json(200, { ok: true, stored: false, reason: "RETIRED" });
@@ -1568,7 +1780,8 @@ export function framesPlugin(): Plugin {
         if (over) return;
         try {
           const input = JSON.parse(body);
-          // Item 4:preload 一进门就替它的会话领号(在等镜像之前),乱序完成时按到达顺序定谁赢
+          // Item 4: preload takes a ticket for its session upon entry (before waiting for the mirror);
+          // when completing out of order, arrival order determines the winner
           let preloadSession: string | null = null, preloadTicket: number | undefined;
           if (url.pathname === "/preload") {
             preloadSession = readySessionOf(input.session);
@@ -1582,10 +1795,11 @@ export function framesPlugin(): Plugin {
             return json(200, { yielded: input.ttl !== 0 });
           }
           /*
-           * 项目从哪儿来(A7)。body 里带 `project` 的是迁移期的调用方(脚本、只读观看页、
-           * 舞台页、导出页)—— 照旧用它。编辑页只带 `{session, localRev}`:按这个键从
-           * **本进程**的镜像插件取,本进程没有就按 PROMPTCUT_EDITOR_URL 回拉一次。
-           * 还是取不到就回 409 MIRROR_MISSING,页面整份重推之后重试。
+           * Where the project comes from (A7). Callers during the transition period (scripts, read-only
+           * watch page, stage page, export page) include `project` in the body: use it as before. The editor
+           * page only includes `{session, localRev}`: fetch from **this process**'s mirror plugin using this
+           * key; if absent in this process, pull back once via PROMPTCUT_EDITOR_URL. If still not found,
+           * return 409 MIRROR_MISSING, and the page retries after re-pushing the whole thing.
            */
           let source = input.project;
           if (!source) {
@@ -1600,34 +1814,41 @@ export function framesPlugin(): Plugin {
             if (typeof input.owner !== "string" || input.owner.length > 100 || !Number.isSafeInteger(input.sequence)
               || !Number.isFinite(input.t) || typeof input.playing !== "boolean" || (input.rate !== undefined && (!Number.isFinite(input.rate) || input.rate <= 0 || input.rate > 8))
               || (input.deliveryMs !== undefined && (!Number.isFinite(input.deliveryMs) || input.deliveryMs < 0 || input.deliveryMs > 5000))) throw new Error("Invalid playback clock");
-            noteInteraction(root);   // M6c X5:播放时钟是交互帧请求,本机队列节点 500 ms 内不认领新任务
+            noteInteraction(root);   // M6c X5: playback clock is an interactive frame request; local queue nodes do not claim new tasks within 500 ms
             return json(200, await service.updatePlayback(project, input, { borrow, release }));
           }
           if (url.pathname === "/see") {
             const lane = input.lane === "agent" ? "agent" : input.lane === "background" ? "background" : "user";
-            if (lane === "user") noteInteraction(root);   // M6c X5:拖动取帧是交互帧请求
+            if (lane === "user") noteInteraction(root);   // M6c X5: scrubbing to fetch frames is an interactive frame request
             const frames = await service.see_frames(project, input.times || [0], { lane, signal: requestSignal(req, res) });
-            // `mov` 恒为 null:整场景的 full.mov 已不再产(legacy 整帧通道方案 B〔裁〕),字段留着给旧页面与探针认形状
+            // `mov` is always null: full.mov for the whole scene is no longer produced (legacy full-frame
+            // channel Proposal B [ruling]); the field is kept for legacy pages and probes to recognize the shape
             return json(200, { key: entry.key, incomplete: [...frames.values()].some((value: any) => value.incomplete),
               frames: [...frames].map(([frame, value]: any) => ({ frame, source: value.source, incomplete: !!value.incomplete, missing: value.missing || [],
                 url: `/api/frames/${entry.key}/${value.incomplete ? 'preview-frames' : value.source === "mov" ? "mov/frames" : "frames"}/${String(frame).padStart(6, "0")}.png` })), mov: null });
           }
-          // 会话「当前版本」的唯一来源(Item 4):页面的 preload 带着它的 `{ session, localRev }`
+          // Sole source of the session's "current version" (Item 4): the page's preload carries its
+          // `{ session, localRev }`
           if (url.pathname === "/preload" && !servesPrerender) {
-            // `agent` 模式不预渲染(cloud-task.md I1):明说跳过了,不排活、不登记会话版本
+            // `agent` mode does not prerender (cloud-task.md I1): explicitly skipped, does not schedule
+            // work, and does not register session versions
             return json(200, { ok: true, skipped: prerenderMode, key: entry.key });
           }
           if (url.pathname === "/preload") {
             /*
-             * J.5 队列模式:节点连着文档服务时,先替页面报摘要、传快照、发布 `plan`,成了就让这一版的快照交给队列产
-             * (`queue: true`),没成(发布失败、没有能用的 projectId)就本机自己产(`queue: false`)。
-             * 开关关着时 `queueNodes` 是空的,这里的调用和原来一字不差。
+             * J.5 queue mode: when the node is connected to the document service, it first reports the digest,
+             * uploads snapshots, and publishes `plan` on behalf of the page; if successful, snapshots for this
+             * version are handed off to the queue to produce (`queue: true`); if unsuccessful (publish failed,
+             * no usable projectId), produce locally on this machine (`queue: false`). When the switch is off,
+             * `queueNodes` is empty, and calls here remain verbatim as before.
              */
             const queueNode = queueNodes.get(root);
             const viaQueue = queueNode?.active() ? await queueNode.publish(preloadSession!, project, entry.key, source) : undefined;
             await service.preload(project, { session: preloadSession!, localRev: input.localRev, ticket: preloadTicket, ...(viaQueue === undefined ? {} : { queue: viaQueue }) });
-            // 报给编辑器进程登记(方案 A):这个进程崩溃重启后,由编辑器照表重放 preload。
-            // 只报这个会话此刻真正认下的版本 —— 被更新的 preload 取代了的请求不报
+            // Report to the editor process to register (Proposal A): after this process crashes and restarts,
+            // the editor replays preload according to the table.
+            // Only report the version actually accepted by this session right now: requests superseded by
+            // newer preloads are not reported.
             if (preloadSession && service.ready.current(preloadSession) === entry.key) reportReadySession(preloadSession, input.localRev);
           }
           else if (url.pathname === "/import" && typeof input.snapshots === "string") {
@@ -1649,8 +1870,10 @@ export function framesPlugin(): Plugin {
             return json(200, { key: entry.key, snapshots, localOnly: snapshots === null });
           } else if (url.pathname !== "/status") return json(404, { error: "Unknown frame operation" });
           await entry.mov?.ready;
-          // `video`、`mov` 恒为 null:preview.mp4 与整场景的 full.mov 已不再产、也从来没有消费方
-          // (legacy 整帧通道方案 B〔裁〕,AGENT-maint-3)。字段不删,旧页面与探针见到的回包形状不变
+          // `video` and `mov` are always null: preview.mp4 and full.mov for the whole scene are no longer
+          // produced and never had any consumers (legacy full-frame channel Proposal B [ruling],
+          // AGENT-maint-3). The fields are not removed, keeping the response shape seen by legacy pages
+          // and probes unchanged.
           return json(200, { key: entry.key, status: entry.status, sampled: entry.html.size, movSampled: entry.mov ? [...(entry.mov.frames || [])].length : 0, total: Math.max(1, Math.floor(project.duration * (project.fps || 30))), error: entry.error,
             video: null, mov: null });
         } catch (error: any) {

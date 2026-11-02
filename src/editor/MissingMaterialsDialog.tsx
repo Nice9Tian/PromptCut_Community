@@ -6,8 +6,10 @@ import { onMissingMaterials, takeMissingMaterials, type MissingMaterialNotice } 
 import { MISSING_MATERIALS_TEXT } from "./sync/recoveryTexts";
 
 /**
- * 打开项目后认定了「确认缺失」的素材时弹一次，把缺了哪些列出来。认定在 `io/mediaUpload.ts`，文字在 `sync/recoveryTexts.ts`。
- * 保存重开时已经认定过的不再弹（那时不会有新通知）。
+ * Pops up once when, after a project is opened, assets were judged "confirmed missing", and lists which
+ * ones are missing. The judgment is made in `io/mediaUpload.ts`, the text is in `sync/recoveryTexts.ts`.
+ * Ones already judged are not popped up again when the project is saved and reopened (there will be no
+ * new notification then).
  */
 export function MissingMaterialsDialog(): JSX.Element | null {
   const [items, setItems] = useState<MissingMaterialNotice[]>([]);
@@ -19,7 +21,8 @@ export function MissingMaterialsDialog(): JSX.Element | null {
     pull();
     return onMissingMaterials(pull);
   }, []);
-  // 无头实例是给导出、Agent 用的，不让一个只给人看的确认层挡住画面
+  // A headless instance serves export and Agent, so a confirmation layer meant only for humans must not
+  // block the picture
   const headless = (() => { try { return new URLSearchParams(location.search).has("headless"); } catch { return false; } })();
   if (headless || !items.length) return null;
   return createPortal(

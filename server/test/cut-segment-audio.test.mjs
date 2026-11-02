@@ -1,6 +1,8 @@
 /**
- * 剪辑段的声音进导出混音(ffmpeg 那条路):展开后的片段带着剪辑段的包络,每层的淡入淡出各一条 afade。
- * 规则见 src/kernel/cutAudio.mjs;展开本身的单测在 src/kernel/cutSegments.test.mjs。
+ * Audio of cut segments enters export mix (the ffmpeg path): expanded clips carry the cut segment's
+ * envelope, with one afade for fade-in and fade-out on each layer.
+ * See src/kernel/cutAudio.mjs for rules; unit tests for expansion itself are in
+ * src/kernel/cutSegments.test.mjs.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

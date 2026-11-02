@@ -1,32 +1,56 @@
 /**
- * 探针:Lottie 随机数固定——原型(`lottie-seed-probe.mjs`)没测到的那几样,加上「当场算一帧要多久」。
- * 出处:`docs/plan/render-refactor-task.md`「癸」「接的时候要做的」第 2 条。**升级播放库(lottie-web)之前和 `lottie-seed-probe.mjs` 一起重跑。**
+ * Probe: Lottie PRNG pinning: items not tested in prototype (`lottie-seed-probe.mjs`), plus "how
+ * long it takes to compute one frame on the fly".
+ * Source: `docs/plan/render-refactor-task.md` "Gui", item 2 under "Integration tasks". **Rerun
+ * together with `lottie-seed-probe.mjs` before upgrading player library (lottie-web).**
  *
- *   node scripts/probes/lottie-seed-extra-probe.mjs [--port 27602] [--out <目录>] [--only posterize,crossread,…] [--skip-build] [--skip-big] [--skip-timing]
+ *   node scripts/probes/lottie-seed-extra-probe.mjs [--port 27602] [--out <dir>] [--only posterize,crossread,…] [--skip-build] [--skip-big] [--skip-timing]
  *
- * 做法:起一个只服务本探针的 vite(根是本工作区,不读项目的 vite 配置,只占 --port;生产构建那一项另占 --port + 1 放静态文件),
- * 无头 Chrome 里装上和产品一样的随机数钉子,用卡片自己的 `loadLottie` 建实例,**不传开法**——测的就是缺省(正式的一组:
- * 换掉表达式里的随机函数、外面那一层、属性值不留旧数)。素材都是探针现造的,不落盘。
+ * Method: Start a Vite instance serving only this probe (root is this workspace, does not read
+ * project Vite config, occupies only --port; the production build item occupies --port + 1
+ * separately for static files), install the same PRNG pin in headless Chrome as in production, and
+ * create instances using the card's own `loadLottie`, **without passing configuration modes**:
+ * this tests defaults (the official set: replace random functions in expressions, outer wrapper
+ * layer, and do not retain stale attribute values). Assets are all created on the fly by the probe
+ * and not written to disk.
  *
- * 每份素材取若干个 N,每个 N 比六份画面(口径同 `lottie-seed-probe.mjs`:看得见的 SVG 文本逐字节相同,并且像素逐个相同):
- *   顺推、回跳、同页新建、新页新建、别的卡在前(先调 13 次 Math.random)、别的 Lottie 在前(先建一份关着开关的带随机表达式的 Lottie 推几帧)
- * 另把三个开关都关掉各做一遍当对照(只报告:关着时这些素材本来就对不上,说明用例确实踩到了随机数)。
+ * For each asset, sample several Ns, comparing six frames per N (criteria identical to
+ * `lottie-seed-probe.mjs`: visible SVG text byte-for-byte identical, and pixels identical one by
+ * one):
+ *   Sequential advance, jump back, new on same page, new on new page, other card first (call
+ *   Math.random 13 times first), other Lottie first (create an instance with switches off and
+ *   random expressions, advance a few frames first)
+ * Also run once with all three switches disabled as a control (report only: when disabled, these
+ * assets do not match initially, proving the test case actually exercises random numbers).
  *
- * 素材:
- *   posterize     表达式里先调 `posterizeTime()` 再调 wiggle / random / seedRandom
- *   crossread     一个表达式求值到一半去读另一个带随机表达式的属性(读的那一层先求值、后求值各一份)
- *   globalbypass  表达式绕过去直接用全局对象:`globalThis.Math.random()`、`globalThis.crypto.getRandomValues()`
- *   textexpr      表达式改文字内容,再配「随机顺序」的文字动画器
- *   nested        合成嵌套三层、每层各放几份,最里面带 random 和 wiggle;另核各份是不是各动各的
- *   netfont       带网络字体(探针把本机一个字体文件当网络字体发出去)的文字图层,装载是异步的;找不到字体文件就记「没跑」
- * 另外:
- *   build         生产构建(vite build,缺省的压缩):同一段页面代码打包后再跑一遍 fixture、exprcases、textrandom、nested、textexpr、globalbypass、happy2016,
- *                 六份画面相同,并且和开发构建取到的画面相同;页面没有 `[lottie]` 警告(几处靠播放库内部名字的钩子都包上了)
- *   big           大素材上复制合成的耗时和内存(只记录):一个 150 层、层层带随机表达式的合成放 30 份
- *   timing        当场算一帧要多久(只记录):5 个自带素材,跳一帧的同步耗时,和「跳一帧并等浏览器出一帧」的耗时;主线程不放慢、放慢 4 倍各量一遍
+ * Assets:
+ *   posterize     Call `posterizeTime()` first in expression, then wiggle / random / seedRandom
+ *   crossread     An expression reads another property with random expressions midway through
+ *                 evaluation (one instance each where the reading layer evaluates earlier and later)
+ *   globalbypass  Expression bypasses and directly accesses global objects:
+ *                 `globalThis.Math.random()`, `globalThis.crypto.getRandomValues()`
+ *   textexpr      Expression modifies text content, paired with a "random order" text animator
+ *   nested        Compositions nested three levels, multiple copies at each level, innermost with
+ *                 random and wiggle; also verifies that each copy animates independently
+ *   netfont       Text layer with web font (probe serves a local font file as web font), loading is
+ *                 asynchronous; recorded as "skipped" if font file is not found
+ * Additionally:
+ *   build         Production build (vite build, default minification): bundle the same page code
+ *                 and rerun fixture, exprcases, textrandom, nested, textexpr, globalbypass,
+ *                 happy2016; six frames identical, and identical to frames obtained in dev build;
+ *                 page has no `[lottie]` warnings (several hooks relying on player internal names
+ *                 are wrapped)
+ *   big           Duration and memory of duplicating compositions on large assets (record only):
+ *                 30 copies of a 150-layer composition with random expressions on every layer
+ *   timing        How long it takes to compute one frame on the fly (record only): 5 built-in
+ *                 assets, synchronous duration of jumping one frame, and duration of "jump one
+ *                 frame and wait for browser to render one frame"; measured with main thread
+ *                 unthrottled and throttled 4x
  *
- * 判定(不满足进 `fails`,退出码 1):开着时各素材所有 N 的六份画面相同;nested 的各份各动各的;globalbypass 的数确实随帧变;
- * build 各条成立;页面没有报错和警告。关着的对照、big、timing 只报告。
+ * Criteria (added to `fails` on failure, exit code 1): when enabled, all six frames across all Ns
+ * are identical for each asset; copies in nested animate independently; numbers in globalbypass
+ * change with frames; build checks pass; page has no errors or warnings. Disabled control, big,
+ * and timing are reported only.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -53,7 +77,7 @@ const BUNDLED = ['adrock', 'bodymovin', 'gatin', 'happy2016', 'navidad'];
 const fsPath = (rel) => path.join(ROOT, rel).split(path.sep).join('/');
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex').slice(0, 16);
 
-// ── 现造的素材 ──
+// ── Assets created on the fly ──
 const st = (v) => ({ a: 0, k: v });
 const base = (nm, extra = {}) => ({ v: '5.7.4', fr: 30, ip: 0, op: 60, w: 1920, h: 1080, nm, ddd: 0, assets: [], layers: [], ...extra });
 const ks = (pos, over = {}) => ({ o: st(100), r: st(0), p: st(pos), a: st([0, 0, 0]), s: st([100, 100, 100]), ...over });
@@ -80,7 +104,9 @@ function crossread() {
   const d = base('pc-extra-crossread');
   const read = (name) => `var $bm_rt;\nvar other = thisComp.layer('${name}').transform.position;\n$bm_rt = [other[0] + random(0, 60), other[1] + 250, 0];`;
   d.layers = [
-    // 播放库每帧从最后一层往前求值:reader-late 排在第一层,最后求值(读的时候 target-a 已经算过);reader-early 排最后一层,最先求值(读的时候 target-b 还没算)
+    // Player library evaluates backward from the last layer for each frame: reader-late is on layer 1,
+    // evaluating last (target-a is already computed when read); reader-early is on the last layer,
+    // evaluating first (target-b is not yet computed when read)
     shape(1, 'reader-late', [0, 0, 0], { p: expr([0, 0, 0], read('target-a')) }, [1, 0.4, 0.4, 1]),
     shape(2, 'target-a', [500, 250, 0], { p: expr([500, 250, 0], 'var $bm_rt;\n$bm_rt = wiggle(5, 90);') }),
     shape(3, 'tail-wiggle', [1500, 250, 0], { p: expr([1500, 250, 0], 'var $bm_rt;\n$bm_rt = wiggle(5, 90);') }, [0.9, 0.8, 0.2, 1]),
@@ -153,7 +179,7 @@ const CASES = {
 };
 const fixtureText = (name) => fs.readFileSync(name === 'fixture' ? path.join(FIX, 'expr-layers.json') : name === 'exprcases' ? path.join(FIX, 'expr-cases.json') : name === 'textrandom' ? path.join(FIX, 'text-random.json') : path.join(CATALOG, `${name}.json`), 'utf8');
 
-// ── 页面里跑的那一半(开发构建和生产构建用同一段)──
+// ── In-page execution half (shared between dev build and production build) ──
 const PIN_ID = 'virtual:lottie-extra-pin', ENTRY_ID = 'virtual:lottie-extra-entry';
 const PIN_SOURCE = `import { installPinnedEntropy } from ${JSON.stringify(fsPath('src/kernel/pinEntropy.ts'))};\n// Same as the product: install the random-number pin before the playback library loads\ninstallPinnedEntropy();\n`;
 const ENTRY_SOURCE = `import ${JSON.stringify(PIN_ID)};
@@ -330,7 +356,7 @@ try {
   const pixelDiff = (a, b) => call(tool, 'pixelDiff', a, b);
   const otherLottie = fixtureText('fixture');
 
-  /** 六份画面:返回 { shots, perN, same(各份都相同的 N 的个数) } */
+  /** Six frames: returns { shots, perN, same (count of Ns where all copies are identical) } */
   const sixWay = async (open, text, picks, off) => {
     const maxPick = Math.max(...picks);
     const frames = Array.from({ length: maxPick + 1 }, (_, i) => i);
@@ -372,7 +398,7 @@ try {
   };
   const badNs = (r) => Object.entries(r.perN).filter(([, v]) => Object.keys(v.differ).length).map(([n, v]) => `frame ${n} (${Object.keys(v.differ).join(', ')})`).join(';');
 
-  // ── 六种素材 ──
+  // ── Six asset types ──
   for (const [name, spec] of Object.entries(CASES)) {
     if (!want(name)) continue;
     if (name === 'netfont' && !FONT_FILE) { report.notRun.push('netfont: no font file that can be served as a web font was found on this machine'); console.log('netfont: not run (font file not found)'); continue; }
@@ -388,14 +414,15 @@ try {
     if (spec.asyncLoad && !on.first.asyncLoad) fail(`${name}: the instance was already loaded right after creation, async loading was not observed`);
     if (on.errors.length !== off.errors.length) fail(`${name}: expression error count is ${on.errors.length} with the switches on and ${off.errors.length} with them off, should be equal`);
 
-    // 各素材自己的补充核对
+    // Supplementary checks specific to each asset
     const frames = Array.from({ length: 16 }, (_, i) => i);
     const read = async (isOff) => { const p = await openDev(); const m = await call(p, 'make', text, isOff); const rows = await call(p, 'readLayers', m.id, frames); await p.close(); return rows; };
     const colOf = (rows, layer, k) => frames.map((f) => (rows[f].find((r) => r[0] === layer) ?? [])[k]);
     const distinct = (xs) => new Set(xs.map((x) => (typeof x === 'number' ? x.toFixed(3) : String(x)))).size;
     if (name === 'posterize') {
       const a = await read(false), b = await read(true);
-      // 观感对照(只报告):posterizeTime(4) 之后的 random,第 0～15 帧里取到几个不同的数;posterizeTime(3) 加 seedRandom(5, true) 的透明度几个
+      // Visual control (report only): random after posterizeTime(4), how many distinct numbers are
+      // sampled in frames 0-15; how many distinct opacities for posterizeTime(3) plus seedRandom(5, true)
       entry.look = { on: { random: distinct(colOf(a, 'post-random', 1)), seeded: distinct(colOf(a, 'post-seeded', 3)), wiggle: distinct(colOf(a, 'post-wiggle', 1)) }, off: { random: distinct(colOf(b, 'post-random', 1)), seeded: distinct(colOf(b, 'post-seeded', 3)), wiggle: distinct(colOf(b, 'post-wiggle', 1)) } };
       console.log(`posterize / number of distinct values over frames 0-15 (on vs off): random after posterizeTime(4) ${entry.look.on.random} vs ${entry.look.off.random}; opacity with posterizeTime(3) plus seedRandom ${entry.look.on.seeded} vs ${entry.look.off.seeded}; wiggle after posterizeTime(5) ${entry.look.on.wiggle} vs ${entry.look.off.wiggle}`);
       if (entry.look.on.seeded !== entry.look.off.seeded) fail(`posterize: for the layer with posterizeTime plus seedRandom, the number of distinct values is ${entry.look.on.seeded} with the switches on and ${entry.look.off.seeded} with them off, so the look changed`);
@@ -410,7 +437,8 @@ try {
     }
     if (name === 'nested') {
       const a = await read(false), b = await read(true);
-      // 最里面那一层一共放了几份、其中在第 13 帧位置两两不同的有几份
+      // Total copies placed on innermost layer, and how many have pairwise distinct positions at
+      // frame 13
       const copiesAt = (rows, f, layer) => rows[f].filter((r) => r[0] === layer).map((r) => `${r[1].toFixed(2)},${r[2].toFixed(2)}`);
       const on13 = copiesAt(a, 13, 'in-random'), off13 = copiesAt(b, 13, 'in-random'), onW = copiesAt(a, 13, 'in-wiggle');
       entry.copies = { count: on13.length, distinctOn: new Set(on13).size, distinctOff: new Set(off13).size, wiggleDistinctOn: new Set(onW).size };
@@ -420,14 +448,15 @@ try {
       if (on.first.rewritten !== 30) fail(`nested: 15 copies with 2 expressions each should rewrite 30 expressions, got ${on.first.rewritten}`);
     }
     if (name === 'textexpr') {
-      // 文字内容确实被表达式换过:第 0、16、40 帧第一层的画面互不相同
+      // Text content was indeed replaced by expression: layer 1 frames at 0, 16, and 40 are mutually
+      // distinct
       const hs = [0, 16, 40].map((f) => on.perN[f].hash);
       entry.textChanges = new Set(hs).size;
       if (entry.textChanges !== 3) fail(`textexpr: the expression should change the text at frames 15 and 36; frames 0, 16 and 40 show only ${entry.textChanges} distinct images`);
     }
   }
 
-  // ── 生产构建 ──
+  // ── Production build ──
   if (want('build') && !flag('--skip-build')) {
     const dist = path.join(OUT, 'build');
     fs.rmSync(dist, { recursive: true, force: true });
@@ -458,7 +487,7 @@ try {
     const list = [['fixture', fixtureText('fixture'), [0, 9, 21, 41, 59]], ['exprcases', fixtureText('exprcases'), [0, 18, 30, 37, 59]], ['textrandom', fixtureText('textrandom'), [0, 15, 31, 40, 45]], ['nested', JSON.stringify(nested()), [0, 13, 30, 59]], ['textexpr', JSON.stringify(textexpr()), [0, 14, 20, 40, 45]], ['globalbypass', JSON.stringify(globalbypass()), [0, 1, 25, 59]], ['happy2016', fixtureText('happy2016'), [0, 49, 68, 98]]];
     for (const [name, text, picks] of list) {
       const prod = await sixWay(openProd, text, picks, false);
-      // 开发构建同样的帧:新开页面直接跳
+      // Identical frames in dev build: open new page and jump directly
       let sameAsDev = 0;
       for (const n of picks) { const p = await openDev(); const m = await call(p, 'make', text, false); const shot = await call(p, 'jump', m.id, n); await p.close(); if (sha(shot.v) === prod.perN[n].hash) sameAsDev++; }
       section.assets[name] = { same: prod.same, of: prod.of, sameAsDev, rewritten: prod.first.rewritten, exact: prod.first.exact };
@@ -470,7 +499,7 @@ try {
     console.log(`Production build: took ${section.buildSeconds} s, entry ${section.entryKB} KB (${minified ? 'minified' : 'not minified'}), default switches ${JSON.stringify(section.switches)}`);
   }
 
-  // ── 大素材 ──
+  // ── Large assets ──
   if (want('big') && !flag('--skip-big')) {
     const p = await openDev();
     report.big = await call(p, 'bigCost', JSON.stringify(big()));
@@ -479,7 +508,7 @@ try {
     console.log(`Big asset (a 150-layer composition placed in 30 copies, 4500 expressions with random; record only): asset ${b.textKB} KB, ${b.afterKB} KB after rewriting and copying compositions, ${b.rewritten} rewrites took ${b.rewriteMs} ms; build one: off ${b.off.buildMs} ms / on ${b.on.buildMs} ms; jump one frame: off ${b.off.frameMs} / on ${b.on.frameMs} ms; extra heap after the build: off ${b.off.heapMB} MB / on ${b.on.heapMB} MB; ${b.on.nodes} nodes`);
   }
 
-  // ── 当场算一帧要多久 ──
+  // ── How long it takes to compute one frame on the fly ──
   if (want('timing') && !flag('--skip-timing')) {
     report.timing = {};
     for (const rate of [1, 4]) {

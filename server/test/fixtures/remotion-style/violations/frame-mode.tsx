@@ -1,4 +1,7 @@
-/** 违规样例（测试夹具，不进卡片库）：frameMode 读不出字面量。建卡时应当被拒绝并指出行号。 */
+/**
+ * Violation example (test fixture, not added to the card library): frameMode cannot read a literal.
+ * Should be rejected during card creation, pointing to the line number.
+ */
 import type { CardDef, CardProps } from "../../kernel/types";
 import { tween } from "../../kernel/remotionStyle";
 interface Params { text: string }

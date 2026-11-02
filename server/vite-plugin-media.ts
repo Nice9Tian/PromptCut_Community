@@ -12,11 +12,13 @@ import { pipeline } from "stream/promises";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 /**
- * 网盘连接器 A2 的授权弹窗落地页。
+ * Authorization popup landing page for cloud drive connector A2.
  *
- * 它不在 `/api/media/` 下面,因为这个地址要和 Google 控制台里登记的重定向 URI 逐字一致 ——
- * 改前缀就得同时改控制台,而控制台改完「可能需要 5 分钟到几小时才会生效」。所以是中间件的总入口
- * 特意放它过来,见下面 `media()` 里那条前缀过滤。
+ * It is not located under `/api/media/` because this URL must match verbatim the redirect URI
+ * registered in the Google Console: changing the prefix would require updating the console at the
+ * same time, and console changes "may take 5 minutes to a few hours to take effect". Therefore, the
+ * middleware's main entry point intentionally lets it through; see the prefix filter in `media()`
+ * below.
  */
 export const OAUTH_CALLBACK_PATH = "/oauth2callback";
 
@@ -41,7 +43,10 @@ function outRoot(root: string): string {
   return process.env.PROMPTCUT_EXPORT_DIR || path.resolve(root, "out");
 }
 
-/** 只读可信factory注册表；HTTP字段不能登记root，打包实例共享同一目录身份。 */
+/**
+ * Read-only trusted factory registry; HTTP fields cannot register root, and bundled instances
+ * share the same directory identity.
+ */
 function projectScope(root: string): any { return (globalThis as any)[Symbol.for("promptcut.asset.project-roots.v2")]?.get(path.resolve(root)) ?? null; }
 
 function inside(file: string, dir: string): boolean {
@@ -65,9 +70,15 @@ function allowedMediaRoots(root: string): string[] {
   return roots;
 }
 
-/** 「没有这个文件」的那几种系统错误码;别的(没权限、设备错误)都是没读成,不是不存在 */
+/**
+ * System error codes for "file not found"; others (no permission, device error) indicate read
+ * failures, not non-existence.
+ */
 const ABSENT_CODES = new Set(["ENOENT", "ENOTDIR", "EISDIR"]);
-/** 素材读接口给页面的判词:`absent` = 确实没有这个文件;`outside` = 路径不在素材目录里,这个接口不会给 */
+/**
+ * Status verdicts returned to the page by the asset read endpoint: `absent` = the file definitely
+ * does not exist; `outside` = the path is outside the asset catalog, this endpoint will not serve it.
+ */
 const MEDIA_VERDICT_HEADER = "X-PC-Media-Verdict";
 
 async function handleMediaFile(req: Connect.IncomingMessage, res: ServerResponse, root: string) {
@@ -79,7 +90,8 @@ async function handleMediaFile(req: Connect.IncomingMessage, res: ServerResponse
     const roots = allowedMediaRoots(root);
     if (!roots.some((dir) => inside(file, dir))) {
       res.statusCode = 403;
-      // 页面判「本机取不取得到」时要分得清:这是「这条路径不在素材目录里,这个接口永远不会给」,不是一次读取失败
+      // When the page determines whether it "can be retrieved locally", it must distinguish: this is
+      // "this path is not in the asset catalog, this endpoint will never serve it", not a read failure
       res.setHeader(MEDIA_VERDICT_HEADER, "outside");
       return res.end("Media path is outside PromptCut media folders");
     }
@@ -91,28 +103,29 @@ async function handleMediaFile(req: Connect.IncomingMessage, res: ServerResponse
 }
 
 /**
- * 素材落盘目录。上传和素材收集(vite-plugin-collect)都往这里写,
- * 所以 /@media/<文件名> 对两边的文件都能取到。
+ * Asset disk storage directory. Both uploads and media collection (vite-plugin-collect) write here,
+ * so /@media/<filename> can retrieve files from both sides.
  *
- * A1 之后这里同时是**本地内容库**:导入的素材按 `<sha256>.<原扩展名>` 存,
- * 同一份内容只有一份文件 —— 改了 mtime、换了文件名再导入一次还是同一个键。
+ * Since A1, this is also the **local content store**: imported assets are stored as
+ * `<sha256>.<originalExt>`, with only one file per identical content: importing again after
+ * modifying mtime or changing the filename still yields the same key.
  */
 export function mediaDir(root: string): string {
   return path.resolve(outRoot(root), "media");
 }
 
 /* ------------------------------------------------------------------ *
- * 内容哈希与本地内容库
+ * Content hash and local content store
  * ------------------------------------------------------------------ */
 
-/** 64 位 hex,可带扩展名:/@media/<hash> 和 /@media/<hash>.<ext> 都认 */
+/** 64-char hex, optional extension: both /@media/<hash> and /@media/<hash>.<ext> are recognized */
 const HASH_URL = /^([0-9a-fA-F]{64})(?:\.([A-Za-z0-9]+))?$/;
 
 export function isMediaHash(value: string): boolean {
   return /^[0-9a-f]{64}$/.test(String(value || "").toLowerCase());
 }
 
-/** 文件名里的扩展名(不含点,小写)。没有扩展名给空串 */
+/** File extension in the filename (without dot, lowercase). Returns an empty string if none */
 export function extOfName(name: string): string {
   const base = String(name || "").split(/[/\\]/).pop() || "";
   const i = base.lastIndexOf(".");
@@ -142,7 +155,7 @@ const CONTENT_TYPES: Record<string, string> = {
   svg: "image/svg+xml",
 };
 
-/** 扩展名 → Content-Type。认不出给 application/octet-stream */
+/** Extension → Content-Type. Defaults to application/octet-stream if unrecognized */
 export function contentTypeForExt(ext: string): string {
   return CONTENT_TYPES[String(ext || "").toLowerCase().replace(/^\./, "")] || "application/octet-stream";
 }
@@ -151,7 +164,10 @@ export function contentTypeForFile(filePath: string): string {
   return contentTypeForExt(extOfName(filePath));
 }
 
-/** Content-Type → 扩展名(按上表反查,同一类型取表里第一个);认不出给空串。按需拉取落盘时用 */
+/**
+ * Content-Type → extension (reverse lookup in the table above, taking the first match for the same
+ * type); returns an empty string if unrecognized. Used when writing to disk during on-demand pull.
+ */
 export function extForContentType(contentType: string): string {
   const type = String(contentType || "").split(";")[0].trim().toLowerCase();
   for (const [ext, t] of Object.entries(CONTENT_TYPES)) if (t === type) return ext;
@@ -159,9 +175,9 @@ export function extForContentType(contentType: string): string {
 }
 
 export interface MediaIndexEntry {
-  /** 本地内容库里的文件名(<hash>.<ext>) */
+  /** Filename in the local content store (<hash>.<ext>) */
   file: string;
-  /** 导入时的原文件名,只用来显示和 .procp 里还原 */
+  /** Original filename at import time, only used for display and restoration in .procp */
   name?: string;
   ext?: string;
   size?: number;
@@ -170,7 +186,10 @@ export interface MediaIndexEntry {
 
 type MediaIndex = Record<string, MediaIndexEntry>;
 
-/** 索引文件:out/media/index.json。丢了也不致命 —— 查不到会退回扫目录 */
+/**
+ * Index file: out/media/index.json. Not fatal if lost: falls back to scanning the directory if
+ * not found.
+ */
 function indexPath(root: string): string {
   return path.join(mediaDir(root), "index.json");
 }
@@ -185,7 +204,7 @@ export async function readMediaIndex(root: string): Promise<MediaIndex> {
     const text = await fs.readFile(indexPath(root), "utf8");
     const raw = JSON.parse(text);
     if (raw && typeof raw === "object" && raw.items && typeof raw.items === "object") parsed = raw.items as MediaIndex;
-  } catch { /* 没索引就是空索引 */ }
+  } catch { /* Missing index defaults to an empty index */ }
   indexCache.set(root, parsed);
   return parsed;
 }
@@ -201,7 +220,10 @@ export async function writeMediaIndex(root: string, hash: string, entry: MediaIn
   }
 }
 
-/** 从索引里去掉一条(文件已经删了,比如重封装前的那份);没有这条就什么都不做 */
+/**
+ * Remove an entry from the index (the file was deleted, e.g. the pre-remux copy); does nothing if
+ * absent.
+ */
 export async function forgetMediaIndex(root: string, hash: string): Promise<void> {
   const index = await readMediaIndex(root);
   if (!(hash in index)) return;
@@ -218,8 +240,9 @@ async function exists(file: string): Promise<boolean> {
 }
 
 /**
- * 哈希 → 本地内容库里的文件。三条路:URL 自带扩展名 → 索引 → 扫目录(索引丢了还能救)。
- * 找不到返回 null(读路由接着交给按需拉取,见 server/media-pull.mjs)。
+ * Hash → file in the local content store. Three paths: URL with extension → index → directory scan
+ * (recoverable if the index is lost). Returns null if not found (the read route then hands over to
+ * on-demand pull; see server/media-pull.mjs).
  */
 export async function resolveHashFile(root: string, hash: string, ext?: string): Promise<string | null> {
   const key = String(hash || "").toLowerCase();
@@ -242,19 +265,22 @@ export async function resolveHashFile(root: string, hash: string, ext?: string):
       if (!(hit.toLowerCase() === key || hit.toLowerCase().startsWith(key + "."))) continue;
       if (projectScope(root) && !/^[a-f0-9]{64}(?:\.[a-z0-9]+)?$/i.test(hit)) continue;
       if (!await visible(path.join(dir, hit))) continue;
-      // 索引缺了就地补上,下次不用再扫
+      // If missing from the index, backfill it on the spot so scanning is not needed next time
       indexCache.set(root, { ...index, [key]: { file: hit, ext: extOfName(hit), contentType: contentTypeForFile(hit) } });
       return path.join(dir, hit);
     }
-  } catch { /* 目录还不存在 */ }
+  } catch { /* Directory does not exist yet */ }
   return null;
 }
 
 /* ------------------------------------------------------------------ *
- * 按需拉取与预取(C6.6 第 4 节,实现在 server/media-pull.mjs)
+ * On-demand pull and prefetch (C6.6 Section 4, implemented in server/media-pull.mjs)
  * ------------------------------------------------------------------ */
 
-/** 本地内容库给拉取模块的几样操作:它不认目录布局,只经这里落盘、入库 */
+/**
+ * Operations provided by the local content store to the pull module: unaware of directory layout,
+ * it writes to disk and stores into the library only through here.
+ */
 function pullStore(root: string) {
   const dir = mediaDir(root);
   const ownership = mediaOwnership(root);
@@ -279,7 +305,7 @@ function pullStore(root: string) {
         try {
           await fs.rename(tmp, dest);
         } catch {
-          // 改名被占着(Windows 上有读句柄没带共享删除):复制一份,临时文件稍后再删
+          // Rename blocked (read handle without shared delete on Windows): make a copy, delete temp file later
           await fs.copyFile(tmp, dest);
           setTimeout(() => { void fs.rm(tmp, { force: true }).catch(() => {}); }, 5000).unref?.();
         }
@@ -293,8 +319,9 @@ function pullStore(root: string) {
 
 type PullModule = typeof import("./media-pull.mjs");
 /**
- * 惰性取拉取模块:好几个单测把本文件单独转译到临时目录再 import,静态 import 兄弟模块会解析失败;
- * 取不到就当没有按需拉取(和原来一样回 404)。
+ * Lazy-load the pull module: several unit tests transpile this file alone into a temporary
+ * directory before importing, so static imports of sibling modules fail to resolve; if unavailable,
+ * treat as no on-demand pull (returns 404 as before).
  */
 async function pullModule(): Promise<PullModule | null> {
   try { return await import("./media-pull.mjs"); } catch { return null; }
@@ -320,10 +347,13 @@ function sendJson(res: ServerResponse, status: number, body: unknown) {
 }
 
 /**
- * 页面管的几条(同源,`/api/**` 守卫照旧):
- * - `POST /api/media/remote { base, ticket }`:设当前连接的远程素材服务(null / DELETE 清掉);`GET` 看状态;
- * - `POST /api/media/prefetch { items: [{ hash }] }`:换一份预取清单(有序);
- * - `POST /api/media/originals { hashes }`:这些素材原尺寸在当前素材服务上哪些还没 `complete`(导出前的拦截)。
+ * Routes managed by the page (same-origin, `/api/**` guard as usual):
+ * - `POST /api/media/remote { base, ticket }`: set currently connected remote asset service (null /
+ *   DELETE clears it); `GET` inspects status;
+ * - `POST /api/media/prefetch { items: [{ hash }] }`: replace with a new prefetch manifest
+ *   (ordered);
+ * - `POST /api/media/originals { hashes }`: which of these original-size assets are not yet
+ *   `complete` on the current asset service (interception before export).
  */
 async function handlePullApi(req: Connect.IncomingMessage, res: ServerResponse, root: string): Promise<boolean> {
   const url = String(req.url || "").split("?")[0];
@@ -364,7 +394,10 @@ async function handlePullApi(req: Connect.IncomingMessage, res: ServerResponse, 
   return true;
 }
 
-/** 这些哈希里哪些已经完整落在本地内容库(A1 第 5 步的预取队列问的也是这条) */
+/**
+ * Which of these hashes are already fully stored in the local content store (the prefetch queue in
+ * A1 step 5 queries this same endpoint).
+ */
 export async function localHashes(root: string, hashes: string[]): Promise<string[]> {
   const out: string[] = [];
   for (const h of hashes) {
@@ -374,7 +407,7 @@ export async function localHashes(root: string, hashes: string[]): Promise<strin
   return out;
 }
 
-/** 已经落盘的文件算一次 sha256(流式,常数内存) */
+/** Compute sha256 once for files already on disk (streaming, constant memory) */
 export async function hashFile(filePath: string): Promise<string> {
   const digest = crypto.createHash("sha256");
   await pipeline(createReadStream(filePath), digest);
@@ -386,21 +419,27 @@ export interface StoredMedia {
   ext: string;
   name: string;
   bytes: number;
-  /** 本地内容库里的绝对路径 */
+  /** Absolute path in the local content store */
   path: string;
-  /** 素材地址:身份就是哈希,不带扩展名 */
+  /** Asset URL: identity is the hash, without extension */
   url: string;
   contentType: string;
-  /** 这次之前库里就有同样内容(mtime / 文件名不同也算同一份) */
+  /**
+   * Identical content already existed in the store prior to this (different mtime / filename still
+   * counts as the same copy).
+   */
   deduped: boolean;
 }
 
 /**
- * **边落盘边算哈希**:请求体一路 pipe 到临时文件,每块顺手 update 一次 sha256,
- * 全程常数内存 —— 4 GB 的视频不会有任何一刻整份待在内存里,也没有一个长任务
- * 卡住事件循环(每块几十 KiB 的 hash.update 是几十微秒级),所以主服务在导入
- * 期间照样能在 100 ms 内答别的请求。算完才按 <hash>.<ext> 改名落库:
- * 库里已经有同样内容就直接删掉临时文件(去重),两次导入同一内容拿到同一个键。
+ * **Compute hash while writing to disk**: the request body is piped all the way to a temporary
+ * file, updating sha256 with each chunk on the fly, with constant memory throughout: a 4 GB video
+ * never stays in memory in its entirety at any point, and no long-running task blocks the event
+ * loop (each chunk's tens of KiB `hash.update` takes tens of microseconds), so the main service
+ * can still answer other requests within 100 ms during import. Only after computation finishes is
+ * it renamed to `<hash>.<ext>` and stored: if identical content already exists in the store, delete
+ * the temporary file directly (deduplication); importing the same content twice yields the same
+ * key.
  */
 export async function storeMediaStream(root: string, name: string, source: Readable): Promise<StoredMedia> {
   const ownership = mediaOwnership(root);
@@ -411,7 +450,7 @@ export async function storeMediaStream(root: string, name: string, source: Reada
   const dir = mediaDir(root);
   await fs.mkdir(dir, { recursive: true });
   let decoded = String(name || "");
-  try { decoded = decodeURIComponent(decoded); } catch { /* 不是 %xx 就按原样 */ }
+  try { decoded = decodeURIComponent(decoded); } catch { /* Keep as is if not %xx */ }
   const safeName = sanitizeFilename(decoded);
   const ext = extOfName(safeName);
   const tmp = path.join(dir, `.upload-${crypto.randomBytes(8).toString("hex")}.part`);
@@ -452,13 +491,16 @@ export async function storeMediaStream(root: string, name: string, source: Reada
 }
 
 /**
- * 给一个**已经在素材目录里**的文件补算内容键(素材收集下载好的那种)。
+ * Backfill the content key for a file that is **already in the asset catalog** (such as one
+ * downloaded via media collection).
  *
- * 那条路不经过上传,文件本来就在服务端,再从浏览器 POST 一遍几百 MB 纯属浪费;
- * 但没有键它就进不了 .procp、也享受不到跨机器去重。所以在服务端就地流式算一遍
- * sha256(hashFile,常数内存、不卡事件循环),然后把它挂进内容库:
- * 先试硬链接(同一卷上不占第二份字节),不行才拷。原文件留在原处不动 ——
- * 素材收集那一侧可能还按原名在引用它。
+ * That path bypasses upload since the file is already on the server side, making a browser POST of
+ * hundreds of megabytes a complete waste; however, without a key it cannot enter `.procp` or
+ * benefit from cross-machine deduplication. Therefore, compute sha256 via streaming on the server
+ * side in place (`hashFile`, constant memory, does not block the event loop), and attach it into
+ * the content store: try hard links first (takes zero additional bytes on the same volume), copying
+ * only as fallback. The original file remains in place untouched: the media collection side may
+ * still be referencing it by its original name.
  */
 export async function adoptMediaFile(root: string, filePath: string): Promise<StoredMedia> {
   const ownership = mediaOwnership(root);
@@ -494,18 +536,23 @@ export async function adoptMediaFile(root: string, filePath: string): Promise<St
 }
 
 /* ------------------------------------------------------------------ *
- * 两档素材与上传队列(C6.6,`docs/plan/c66-design.md` 第 2、3 节)
+ * Two-tier assets and upload queue (C6.6, Sections 2 and 3 of docs/plan/c66-design.md)
  * ------------------------------------------------------------------ */
 
 /**
- * 每个项目根一份:两档管理器(`media-tiers.mjs`)、上传队列(`upload-queue.mjs`)、当前连接的素材服务。
- * 放在 globalThis 上:配置被打包过一次、模块可能有两份实例。
+ * One per project root: two-tier manager (`media-tiers.mjs`), upload queue (`upload-queue.mjs`),
+ * and currently connected asset service. Stored on `globalThis`: configuration has been bundled
+ * once, and modules may have two instances.
  *
- * **当前连接的素材服务**(上传队列的目标):
- *   - 缺省是本机素材服务(就是这个插件)—— 导入已经是本地写入,上传队列是空操作;
- *   - `PROMPTCUT_ASSET_URL`(形如 `http://192.168.50.96:5460/api/asset`,与预渲染进程推送用的是同一个变量)设了就是它;
- *   - 页面(连着共享项目、知道远端素材服务与票据的那一方)经 `POST /api/media/upload-queue/target` 改它,
- *     `{ base: null }` 换回缺省(设了 `PROMPTCUT_ASSET_URL` 就是它,否则本机)。票据由页面按时续上(素材票据 15 分钟,见 `docs/plan/auth-contract.md` 第 8 节)。
+ * **Currently connected asset service** (target of the upload queue):
+ *   - Defaults to the local asset service (this plugin itself): imports are already local writes,
+ *     so the upload queue is a no-op;
+ *   - Uses `PROMPTCUT_ASSET_URL` (formatted like `http://192.168.50.96:5460/api/asset`, sharing
+ *     the same variable used by prerender process pushes) if set;
+ *   - Changed via `POST /api/media/upload-queue/target` by the page (the party connected to a
+ *     shared project and aware of remote asset service and tickets); `{ base: null }` reverts to
+ *     default (`PROMPTCUT_ASSET_URL` if set, otherwise local). Tickets are renewed periodically
+ *     by the page (asset tickets last 15 minutes; see Section 8 of `docs/plan/auth-contract.md`).
  */
 type TierService = {
   manager: any;
@@ -525,7 +572,10 @@ const tiersLog = (event: string, fields: object = {}) => {
 };
 
 /**
- * 取(必要时建)这个根的两档服务。`withQueue: false` 只生成两档、不建上传队列。惰性 import:好几个单测把本文件单独转译到临时目录,静态 import 兄弟模块会解析失败。
+ * Get (or create if necessary) the two-tier service for this root. `withQueue: false` only
+ * generates two tiers without creating an upload queue. Lazy import: several unit tests transpile
+ * this file alone into a temporary directory, where static imports of sibling modules would fail
+ * to resolve.
  */
 export function mediaTierService(root: string, { withQueue = true }: { withQueue?: boolean } = {}): Promise<TierService> {
   const ownership = mediaOwnership(root);
@@ -545,26 +595,29 @@ export function mediaTierService(root: string, { withQueue = true }: { withQueue
       if (!base) { if (current) tiersLog("upload.target", { base: null }); current = null; return; }
       if (current?.base === base) return;
       const { createAssetClient }: any = await import("./asset-store/client.mjs");
-      // 票据只进 Authorization 头(客户端负责),这里不记
+      // Tickets only go into the Authorization header (client's responsibility) and are not recorded here
       const client = createAssetClient({ base, ticket: () => ticketValue, timeoutMs: 120_000 });
       current = { base, client, ...(ownership ? { projectId: ownership.projectId } : {}) };
       tiersLog("upload.target", { base });
     };
     /*
-     * 卡片快照(热备渲染器那条 `ui-render/bake-batch` 在编辑器进程里渲)写进本机素材服务之后,再推一份到当前连接的
-     * 素材服务(`bake-store.mjs`);连的是本机时 `current` 为 null,不推。惰性 import,理由同上。
+     * After card snapshots (rendered in the editor process via the hot-standby renderer's
+     * `ui-render/bake-batch`) are written into the local asset service, push a copy to the currently
+     * connected asset service (`bake-store.mjs`); when connected locally, `current` is null and does
+     * not push. Lazy import, for the same reason as above.
      */
     if (withQueue && !ownership) {
       try {
         const { setBakeRemote }: any = await import("./bake-store.mjs");
         setBakeRemote(() => (current ? { base: current.base, put: (ns: string, bytes: Buffer, o?: any) => current!.client.put(ns, bytes, o) } : null));
-      } catch { /* 没有就不推 */ }
+      } catch { /* Do not push if absent */ }
     }
     if (withQueue) {
       const { createUploadQueue }: any = await import("./upload-queue.mjs");
       const { sharedBandwidthGate, pushQueueFileProbe }: any = await import("./bandwidth-gate.mjs");
       const gate = sharedBandwidthGate();
-      // 推送队列在预渲染进程里:读它落盘的队列文件判断「产物还在推」(`bandwidth-gate.mjs` 文件头)
+      // Push queue is in the prerender process: read its on-disk queue file to determine
+      // "artifacts are still being pushed" (header of `bandwidth-gate.mjs`)
       gate.setExternal(pushQueueFileProbe(path.join(outRoot(root), "frame-library", "push-queue.json")));
       queue = createUploadQueue({
         file: path.join(outRoot(root), "upload-queue.json"),
@@ -595,7 +648,8 @@ export function mediaTierService(root: string, { withQueue = true }: { withQueue
     return {
       manager,
       queue,
-      // `{ base: null }`(页面离开共享项目 / 本机就是主机)= 回到缺省目标:设了 PROMPTCUT_ASSET_URL 就是它,否则本机
+      // `{ base: null }` (page leaves shared project / this machine is the host) = return to default target:
+      // use PROMPTCUT_ASSET_URL if set, otherwise this machine
       setTarget: (next) => setTargetImpl(next?.base ? next : { base: envBase || null, ticket: null }),
       target: () => (current ? { base: current.base } : null),
     };
@@ -605,7 +659,7 @@ export function mediaTierService(root: string, { withQueue = true }: { withQueue
   return pending;
 }
 
-/** 导入(`?tiers=1`)之后:视频做重封装判定、排素材小尺寸;回包字段 */
+/** After import (`?tiers=1`): determine video remux, queue small-size asset; response fields */
 async function prepareTiers(root: string, stored: StoredMedia) {
   const service = await mediaTierService(root, { withQueue: true });
   const out = await service.manager.prepareImport(stored);
@@ -635,7 +689,8 @@ async function handleMediaUpload(req: Connect.IncomingMessage, res: ServerRespon
         stored = prepared.stored;
         if (prepared.tiers) extra = { tiers: prepared.tiers, small: prepared.small, remux: prepared.remux };
       } catch (err) {
-        // 两档出了问题不挡导入:照原来的回包,只有素材原尺寸一档
+        // Issues with both tiers do not block import: respond as before,
+        // with only the original-size asset tier
         tiersLog("tiers.prepare-failed", { hash: stored.hash, message: err instanceof Error ? err.message : String(err) });
       }
     }
@@ -659,25 +714,26 @@ async function handleMediaUpload(req: Connect.IncomingMessage, res: ServerRespon
 }
 
 /* ------------------------------------------------------------------ *
- * GET /@media/<hash>/pcm —— 音频素材效果卡的素材输入
+ * GET /@media/<hash>/pcm: media input for audio media effect cards
  * ------------------------------------------------------------------ */
 
-/** 路由里的哈希。必须排在 /@media/<文件名> 之前,不然 `.pop()` 取出来的是 "pcm" */
+/** Hash in route. Must be placed before /@media/<filename>, otherwise `.pop()` extracts "pcm" */
 const PCM_URL = /^\/@media\/([^/?]+)\/pcm$/;
 const PCM_MAX_FRAMES = 1048576;
 const PCM_CHANNELS = 2;
 const PCM_MAX_BYTES = 256 * 1024 * 1024;
 
 /**
- * ffmpeg 在哪。**惰性**取:vite 配置加载时不该把整个 server/bakery 拖进来,
- * 而且 server/test 里把这个插件转译到临时目录再 import 的那几个测试也不能因此解析失败。
+ * Where ffmpeg is. Resolved **lazily**: loading vite config should not pull in the entire
+ * server/bakery, and the tests in server/test that transpile this plugin to a temp directory
+ * and then import it must not fail resolution because of this.
  */
 async function ffmpegCommand(): Promise<string> {
   const { findFfmpeg } = await import("./bakery/ffmpeg.mjs");
   return findFfmpeg();
 }
 
-/** card-service.mjs:47 的 commandBuffer。子进程的标准输出收成一个 Buffer,超预算就杀掉 */
+/** commandBuffer from card-service.mjs:47. Collect child process stdout to Buffer, kill if over budget */
 function commandBuffer(executable: string, args: string[], max = PCM_MAX_BYTES): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
@@ -696,16 +752,19 @@ function commandBuffer(executable: string, args: string[], max = PCM_MAX_BYTES):
 }
 
 /**
- * 素材的一段 PCM(交错 f32le,恒 2 通道)。`card-service.mjs:308-313` 那段搬过来的:
- * 参数校验一起搬,只是不再写 `.bin` 回描述符,直接回字节。
+ * A PCM slice of an asset (interleaved f32le, always 2 channels). Moved from
+ * `card-service.mjs:308-313`: parameter validation moved as well, but instead of writing `.bin`
+ * back to a descriptor, bytes are returned directly.
  *
- * **没有 `offset` 参数**:`clip.mediaOffset + 边.offset` 由页面折算一次,折进 `start`。
- * 所以服务端的 `position = start`,可以为负(前面补静音),素材短于请求时尾部补零。
+ * **No `offset` parameter**: `clip.mediaOffset + edge.offset` is converted once by the page
+ * into `start`. So on the server `position = start`, which can be negative (padded with leading
+ * silence); padded with trailing zeros when the asset is shorter than requested.
  */
 async function handleMediaPcm(req: Connect.IncomingMessage, res: ServerResponse, root: string, hash: string) {
   try {
     const query = new URL(req.url || "/", "http://promptcut.local").searchParams;
-    // 缺参数不能当 0:Number(null) 是 0,漏了 start 会静默从头裁
+    // Missing parameters cannot be treated as 0: Number(null) is 0,
+    // omitting start silently trims from the beginning
     const num = (name: string) => { const raw = query.get(name); return raw === null || raw.trim() === "" ? NaN : Number(raw); };
     const start = num("start"), count = num("count"), sampleRate = num("sampleRate");
     const channels = query.has("ch") ? num("ch") : PCM_CHANNELS;
@@ -724,7 +783,8 @@ async function handleMediaPcm(req: Connect.IncomingMessage, res: ServerResponse,
       "-t", String((count - leading) / sampleRate), "-vn",
       "-ar", String(sampleRate), "-ac", String(PCM_CHANNELS), "-f", "f32le", "pipe:1",
     ]);
-    // 素材短于请求时尾部补零;position 为负时前 leading 帧是静音
+    // Pad trailing zeros when the asset is shorter than requested;
+    // when position is negative, leading frames are silence
     const bytes = Buffer.alloc(count * PCM_CHANNELS * 4);
     pcm.copy(bytes, leading * PCM_CHANNELS * 4, 0, Math.min(pcm.length, (count - leading) * PCM_CHANNELS * 4));
     res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": bytes.length, "Cache-Control": "no-store" });
@@ -736,9 +796,11 @@ async function handleMediaPcm(req: Connect.IncomingMessage, res: ServerResponse,
 }
 
 /**
- * 解析 Range 头。只认单段 `bytes=a-b` / `bytes=a-` / `bytes=-n`(后缀);
- * 认不出的返回 null(当没带 Range,回整件 200),落在文件外的返回 "unsatisfiable"(回 416)。
- * 结尾超出文件的按 RFC 9110 截到最后一个字节。合法的 `bytes=a-b` 和原来的行为一字不差。
+ * Parse Range header. Only accepts single-range `bytes=a-b` / `bytes=a-` / `bytes=-n` (suffix);
+ * returns null if unrecognized (treated as without Range, returns whole file 200),
+ * and returns "unsatisfiable" (returns 416) if falling outside the file.
+ * Ends exceeding the file are clamped to the last byte per RFC 9110.
+ * Valid `bytes=a-b` behaves byte-for-byte identical to the original behavior.
  */
 export function parseRange(header: string, size: number): { start: number; end: number } | null | "unsatisfiable" {
   const m = /^bytes=(\d*)-(\d*)$/.exec(String(header || "").trim());
@@ -758,12 +820,15 @@ export function parseRange(header: string, size: number): { start: number; end: 
 }
 
 /**
- * 发一个文件(整件或一段 Range)。
+ * Send a file (whole file or a Range).
  *
- * 先把文件打开、在这个句柄上取大小,再从同一个句柄读:原来是先 `stat` 再按路径另开读流,文件在两步之间没了
- * (素材被清、内容库换目录、测试里删文件)时,读流的 `error` 没人接,会把整个编辑器进程带崩 ——
- * 页面上随后所有请求都是 `Failed to fetch`。
- * 现在打不开就回 404;打开之后文件被删,句柄仍然读得完;读到一半出错只断这一条响应。
+ * Open the file first, get its size on this handle, and read from the same handle: previously it
+ * ran `stat` first then opened a read stream by path. If the file disappeared between the two steps
+ * (assets cleared, content store directory changed, files deleted in tests), nothing caught the
+ * read stream `error`, crashing the entire editor process: all subsequent requests on the page
+ * became `Failed to fetch`.
+ * Now returns 404 if it cannot be opened; if deleted after opening, the handle can still be read
+ * to completion; errors midway only abort this single response.
  */
 async function serveFile(filePath: string, req: Connect.IncomingMessage, res: ServerResponse) {
   const ownedLease = mediaContext.getStore()?.lease, finish = ownedLease?.hold();
@@ -781,11 +846,12 @@ async function serveFile(filePath: string, req: Connect.IncomingMessage, res: Se
     if (lease && !await projectScope(mediaContext.getStore().root).projectFileAccepted(filePath)) throw Object.assign(new Error("project-publication-pending"), { status: 404 });
     if (lease) { await lease.assert(); res.setHeader("Cache-Control", "no-store"); }
     if (res.destroyed) return;
-    // Last-Modified:没有内容哈希的迁移期素材,帧管线按 `HEAD` 的 Content-Length + Last-Modified 打戳
-    // (server/media-stamp.mjs),不再自己去 stat 这个目录
+    // Last-Modified: for migration-period assets without a content hash, the frame pipeline stamps
+    // based on `HEAD` Content-Length + Last-Modified (server/media-stamp.mjs),
+    // instead of stat-ing this directory itself
     const lastModified = stat.mtime.toUTCString();
     const send = (opts?: { start: number; end: number }) => {
-      const stream = handle!.createReadStream(opts); // 读完或出错时流自己关句柄
+      const stream = handle!.createReadStream(opts); // Stream closes the handle itself on completion or error
       handle = null;
       mediaContext.getStore()?.lease.track(stream);
       stream.on("error", () => { res.destroy(); });
@@ -820,7 +886,9 @@ async function serveFile(filePath: string, req: Connect.IncomingMessage, res: Se
     }
   } catch (err) {
     if (res.headersSent) { res.destroy(); return; }
-    // 只有「确实没有这个文件」才回 404;没权限读、磁盘出错之类回 500 —— 页面据此判素材缺失,不能把读取失败说成不存在
+    // Only return 404 when "the file genuinely does not exist"; return 500 for no read permission,
+    // disk errors, etc.: the page uses this to determine missing assets, and read failures must not be
+    // reported as nonexistent
     const absent = ABSENT_CODES.has((err as any)?.code);
     res.statusCode = (err as any)?.status ?? (absent || !(err as any)?.code ? 404 : 500);
     if (absent) res.setHeader(MEDIA_VERDICT_HEADER, "absent");
@@ -834,8 +902,9 @@ async function serveFile(filePath: string, req: Connect.IncomingMessage, res: Se
 export { serveFile };
 
 /**
- * 媒体路由。和插件本身分开导出,单测可以直接把它架在一个裸 http server 上跑
- * (Range/206、哈希 URL 的 contentType、文件名回退都在这一层)。
+ * Media routes. Exported separately from the plugin itself, so unit tests can run it mounted
+ * directly on a bare http server (Range/206, hash URL contentType, and filename fallbacks
+ * are all at this layer).
  */
 export interface ProjectMediaOptions { projectAccess?: any; projectStores?: any; verifyRemoteTarget?: (req: Connect.IncomingMessage, target: any) => Promise<any> }
 export function mediaMiddleware(root: string, options: ProjectMediaOptions = {}) {
@@ -843,12 +912,13 @@ export function mediaMiddleware(root: string, options: ProjectMediaOptions = {})
   const local = async function scopedMedia(req: Connect.IncomingMessage, res: ServerResponse, next: () => void, root: string) {
     if (!req.url) return next();
 
-    // POST /api/media/upload/<文件名> —— 流式落盘 + 内容哈希
+    // POST /api/media/upload/<filename>: streaming persist to disk + content hash
     if (req.method === "POST" && req.url.startsWith("/api/media/upload/")) {
       return handleMediaUpload(req, res, root);
     }
 
-    // POST /api/media/adopt —— 给素材目录里已有的文件补算内容键(素材收集下载的那种)
+    // POST /api/media/adopt: backfill content keys for existing files in the asset catalog
+    // (such as downloads from media collection)
     if (req.method === "POST" && req.url.startsWith("/api/media/adopt")) {
       try {
         const query = new URL(req.url, "http://promptcut.local").searchParams;
@@ -860,7 +930,8 @@ export function mediaMiddleware(root: string, options: ProjectMediaOptions = {})
           res.setHeader(MEDIA_VERDICT_HEADER, "outside");
           return res.end("Media path is outside PromptCut media folders");
         }
-        // 文件确实不在:明确回 404(别的失败照旧 500),页面才分得清「没有」和「没读成」
+        // File genuinely absent: explicitly return 404 (other failures return 500 as usual),
+        // so the page can distinguish between "missing" and "failed to read"
         try { await fs.stat(file); }
         catch (err: any) {
           if (!ABSENT_CODES.has(err?.code)) throw err;
@@ -871,7 +942,9 @@ export function mediaMiddleware(root: string, options: ProjectMediaOptions = {})
         let extra: Record<string, unknown> = {};
         if (wantsTiers(req)) {
           try {
-            // 硬链接进库的那份若要重封装:重封装的结果另存一份,库里那份照常删(原处的文件不动,素材收集还按原名引用它)
+            // If the copy hard-linked into the store needs remuxing: save the remux result as a separate copy
+            // and delete the one in the store as usual (the file at the original location is untouched,
+            // and media collection still references it by its original name)
             const prepared = await prepareTiers(root, stored);
             stored = prepared.stored;
             if (prepared.tiers) extra = { tiers: prepared.tiers, small: prepared.small, remux: prepared.remux };
@@ -898,8 +971,10 @@ export function mediaMiddleware(root: string, options: ProjectMediaOptions = {})
       }
     }
 
-    // GET /api/media/storage/config —— 网盘连接器给页面的公开参数(任务书 docs/plan/drive-connector-task.md 第 5 节)。
-    // 没配环境变量就回 configured: false,界面把入口置灰并说明原因,不报错。
+    // GET /api/media/storage/config: public parameters from the cloud drive connector for the page
+    // (task brief docs/plan/drive-connector-task.md section 5).
+    // If env vars are not set, return configured: false; UI grays out the entry with an explanation,
+    // without throwing an error.
     if (req.method === "GET" && req.url.split("?")[0] === "/api/media/storage/config") {
       const { buildExtensions }: any = await import("./vite-plugin-hosted-gate");
       const storageConfig = buildExtensions.mediaStorage?.storageConfig;
@@ -908,20 +983,23 @@ export function mediaMiddleware(root: string, options: ProjectMediaOptions = {})
       return res.end(JSON.stringify(storageConfig()));
     }
 
-    // GET /oauth2callback —— A2 的授权弹窗落地页:把授权码 postMessage 回开它的页面,然后自己关掉。
-    // 这个地址要和 Google 控制台里登记的重定向 URI 逐字一致;上面那个总入口的前缀过滤也要放它过来。
+    // GET /oauth2callback: authorization popup landing page for A2: sends auth code back
+    // to the opening page via postMessage, then closes itself.
+    // This address must match byte-for-byte with the redirect URI registered in Google Console;
+    // the prefix filter at the main entry point above must also let it through.
     if (req.method === "GET" && req.url.split("?")[0] === OAUTH_CALLBACK_PATH) {
       const { buildExtensions }: any = await import("./vite-plugin-hosted-gate");
       const callbackHtml = buildExtensions.mediaStorage?.callbackHtml;
       if (typeof callbackHtml !== "function") return next();
       res.setHeader("Content-Type", "text/html; charset=utf-8");
-      // 授权码在地址栏里,别让它进任何缓存
+      // The auth code is in the address bar; do not let it enter any cache
       res.setHeader("Cache-Control", "no-store");
       return res.end(callbackHtml());
     }
 
-    // 网盘连接器的四个口(任务书第 5 节)。A3 把一次性令牌随 import 递进来;A2 先 connect 再 import(不带令牌)。
-    // 令牌与授权码只过手:不落盘、不进日志、不进回包。
+    // Four endpoints of the cloud drive connector (task brief section 5). A3 passes the one-time
+    // token in with import; A2 connects first, then imports (without token).
+    // Tokens and auth codes are pass-through only: not written to disk, not logged, not in responses.
     if (req.method && req.url.split("?")[0].startsWith("/api/media/storage/")) {
       const route = req.url.split("?")[0].slice("/api/media/storage/".length);
       const { buildExtensions }: any = await import("./vite-plugin-hosted-gate");
@@ -948,9 +1026,12 @@ export function mediaMiddleware(root: string, options: ProjectMediaOptions = {})
       }
     }
 
-    // POST /api/media/tiers/backfill { items: [{ hash, name? }] } —— 打开项目时补转素材小尺寸(C6.6 设计稿第 9 节第 2 条):
-    // 本地内容库里有这份素材原尺寸的视频排进后台转码,回 { ok, items: { [hash]: { state, small? } } };
-    // 本地没有素材原尺寸的回 state: 'absent'(不为了转素材小尺寸去拉素材原尺寸)
+    // POST /api/media/tiers/backfill { items: [{ hash, name? }] }: backfill small-size assets when
+    // opening project (C6.6 design doc section 9 item 2):
+    // videos with this original-size asset in local content store are queued for background transcoding,
+    // returning { ok, items: { [hash]: { state, small? } } };
+    // if original-size asset is not present locally, return state: 'absent'
+    // (do not pull original-size asset just to transcode small-size asset)
     if (req.method === "POST" && req.url.split("?")[0] === "/api/media/tiers/backfill") {
       try {
         const body = await readJsonBody(req);
@@ -971,9 +1052,12 @@ export function mediaMiddleware(root: string, options: ProjectMediaOptions = {})
       }
     }
 
-    // GET /api/media/tiers?hashes=a,b —— 这些素材原尺寸的素材小尺寸情况(C6.6):{ ok, items: { [素材原尺寸]: { state, small? } } }。
-    // state:pending(在转)、ready(small 是素材小尺寸哈希)、failed、none(没有视频流)、unknown(本机没登记过)。
-    // 页面导入后按它把素材小尺寸哈希写进 project.media[i].tiers.small;这不是同步状态(传没传完只问素材服务的 chunks)
+    // GET /api/media/tiers?hashes=a,b: small-size asset status for these original-size assets (C6.6):
+    // { ok, items: { [originalHash]: { state, small? } } }.
+    // state: pending (transcoding), ready (small is small-size asset hash), failed,
+    // none (no video stream), unknown (not registered locally).
+    // After import, the page writes the small-size asset hash into project.media[i].tiers.small based
+    // on it; this is not sync status (whether upload completed is only queried via asset service chunks)
     if (req.method === "GET" && req.url.startsWith("/api/media/tiers")) {
       const query = new URL(req.url, "http://promptcut.local").searchParams;
       const asked = (query.get("hashes") || "").split(",").map((h) => h.trim().toLowerCase()).filter(isMediaHash).slice(0, 200);
@@ -987,9 +1071,12 @@ export function mediaMiddleware(root: string, options: ProjectMediaOptions = {})
       }
     }
 
-    // GET /api/media/upload-queue —— 上传队列的状态(诊断、探针);POST …/target { base, ticket? } —— 换上传目标;
-    // POST …/enqueue { items: [{ name?, original, small? }] } | { hashes } —— 按哈希把本地内容库里已有的素材进队
-    // (C10a:开启「放云端」时项目里已有的素材也要上云;只收本地有的,回 queued / missing,见 upload-queue.mjs 的 enqueueLocalMedia)
+    // GET /api/media/upload-queue: upload queue status (diagnostics, probe);
+    // POST …/target { base, ticket? }: switch upload target;
+    // POST …/enqueue { items: [{ name?, original, small? }] } | { hashes }:
+    // enqueue existing assets from local content store by hash
+    // (C10a: when "move to the cloud" is enabled, existing assets in project must also go to cloud;
+    // only accepts local ones, returns queued / missing, see enqueueLocalMedia in upload-queue.mjs)
     if (req.url.startsWith("/api/media/upload-queue")) {
       try {
         const service = await mediaTierService(root, { withQueue: true });
@@ -1023,7 +1110,9 @@ export function mediaMiddleware(root: string, options: ProjectMediaOptions = {})
           res.setHeader("Content-Type", "application/json");
           return res.end(JSON.stringify({ ok: true }));
         }
-        // POST /api/media/upload-queue/cancel | DELETE /api/media/upload-queue[/<hash>] —— 撤回在途分片并从队列移除、删掉本机未登记的代下文件
+        // POST /api/media/upload-queue/cancel | DELETE /api/media/upload-queue[/<hash>]:
+        // abort in-flight chunks, remove from queue, and delete files downloaded on behalf
+        // not registered on this machine
         if ((req.method === "POST" && req.url.split("?")[0] === "/api/media/upload-queue/cancel") ||
             (req.method === "DELETE" && req.url.startsWith("/api/media/upload-queue"))) {
           res.setHeader("Content-Type", "application/json");
@@ -1044,13 +1133,14 @@ export function mediaMiddleware(root: string, options: ProjectMediaOptions = {})
           }
           const r = await service.queue.cancel(targets.length ? targets : undefined);
           const cleaned: string[] = [];
-          // 删掉从队列里撤回的在途/排队文件（已完整传完出队的文件不删，见 10-14 第 180 行）
+          // Delete in-flight/queued files cancelled from the queue
+          // (do not delete files dequeued after full upload, see 10-14 line 180)
           for (const cancelledId of r.cancelled) {
             const h = cancelledId.includes(":") ? cancelledId.split(":").pop()! : cancelledId;
             if (isMediaHash(h)) {
               const filePath = await resolveHashFile(root, h);
               if (filePath) {
-                try { await fs.rm(filePath, { force: true }); } catch { /* 忽略删除错 */ }
+                try { await fs.rm(filePath, { force: true }); } catch { /* Ignore delete errors */ }
                 await forgetMediaIndex(root, h);
                 cleaned.push(h);
               }
@@ -1065,12 +1155,13 @@ export function mediaMiddleware(root: string, options: ProjectMediaOptions = {})
       }
     }
 
-    // C6.6:当前连接的远程素材服务、预取清单、导出前的素材原尺寸检查
+    // C6.6: currently connected remote asset service, prefetch manifest,
+    // original-size asset check before export
     if (req.url.startsWith("/api/media/remote") || req.url.startsWith("/api/media/prefetch") || req.url.startsWith("/api/media/originals")) {
       if (await handlePullApi(req, res, root)) return;
     }
 
-    // GET /api/media/local?hashes=a,b —— 这些哈希里哪些已经在本地内容库
+    // GET /api/media/local?hashes=a,b: which of these hashes are already in the local content store
     if (req.method === "GET" && req.url.startsWith("/api/media/local")) {
       const query = new URL(req.url, "http://promptcut.local").searchParams;
       const asked = (query.get("hashes") || "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
@@ -1079,31 +1170,35 @@ export function mediaMiddleware(root: string, options: ProjectMediaOptions = {})
       return res.end(JSON.stringify({ ok: true, hashes: have }));
     }
 
-    // GET / HEAD /api/media/file?path=<legacy absolute path>(HEAD 给帧管线打戳用,见 server/media-stamp.mjs)
+    // GET / HEAD /api/media/file?path=<legacy absolute path>
+    // (HEAD is for frame pipeline stamping, see server/media-stamp.mjs)
     if ((req.method === "GET" || req.method === "HEAD") && req.url.startsWith("/api/media/file")) {
       return handleMediaFile(req, res, root);
     }
 
-    // GET /@media/<hash>/pcm?start=&count=&sampleRate=&ch=2 —— 音频素材效果卡的素材输入。
-    // 一定要排在下面 /@media/<文件名> 那支之前:那支用 .split("/").pop() 取名,
-    // 取到的会是 "pcm",取到了就直接 serveFile,这条路由永远轮不上。
+    // GET /@media/<hash>/pcm?start=&count=&sampleRate=&ch=2: media input for audio media effect cards.
+    // Must be placed before the /@media/<filename> branch below: that branch extracts the name
+    // with .split("/").pop(), which would get "pcm", and directly calls serveFile,
+    // so this route would never be reached.
     if (req.method === "GET") {
       const pcm = PCM_URL.exec(req.url.split("?")[0]);
       if (pcm) return handleMediaPcm(req, res, root, pcm[1]);
     }
 
-    // GET /@media/<hash> | /@media/<hash>.<ext> | /@media/<文件名>(迁移期)
+    // GET /@media/<hash> | /@media/<hash>.<ext> | /@media/<filename> (migration period)
     if ((req.method === "GET" || req.method === "HEAD") && req.url.startsWith("/@media/")) {
       const rawName = req.url.split("?")[0].split("/").pop();
       if (rawName) {
         let decoded = rawName;
-        try { decoded = decodeURIComponent(rawName); } catch { /* 原样 */ }
+        try { decoded = decodeURIComponent(rawName); } catch { /* As is */ }
         const name = sanitizeFilename(decoded);
         const hashed = HASH_URL.exec(name);
         if (hashed) {
           const file = await resolveHashFile(root, hashed[1].toLowerCase(), hashed[2]);
           if (file) return serveFile(file, req, res);
-          // C6.6 按需拉取:本地内容库没有,就向当前连接的远程素材服务流式拉、边落盘边服务;没连远程才直接 404
+          // C6.6 on-demand pull: if not in local content store, stream pull from the currently connected
+          // remote asset service, serving while writing to disk;
+          // only return 404 directly when not connected to remote
           let mod: any = await pullModule();
           if (mod && projectScope(root)) mod = mod.projectMediaPull(mediaContext.getStore());
           if (mod && await mod.pullThrough({ hash: hashed[1].toLowerCase(), req, res, store: pullStore(root), serveFile: (f: string) => serveFile(f, req, res) })) return;
@@ -1118,9 +1213,11 @@ export function mediaMiddleware(root: string, options: ProjectMediaOptions = {})
   };
   return async function media(req: Connect.IncomingMessage, res: ServerResponse, next: () => void) {
     const pathname = String(req.url ?? "").split("?")[0];
-    // `/oauth2callback` 不在前两个前缀里,但必须由这里接:它是网盘连接器 A2 的授权弹窗落地页,
-    // 地址要和 Google 控制台登记的重定向 URI 逐字一致,改不了前缀。漏掉它就被 vite 的 SPA 兜底
-    // 接走、弹窗里渲染出整个编辑器,授权码永远回不到开它的页面(2026-10-24 真这么踩过)。
+    // `/oauth2callback` is not in the first two prefixes, but must be handled here: it is the
+    // authorization popup landing page for cloud drive connector A2; the address must match
+    // byte-for-byte with the redirect URI registered in Google Console, so the prefix cannot be changed.
+    // Missing it causes vite's SPA fallback to catch it, rendering the entire editor in the popup,
+    // and the auth code will never return to the page that opened it (actually hit this on 2026-10-24).
     if (!pathname.startsWith("/@media/") && !pathname.startsWith("/api/media/") && pathname !== OAUTH_CALLBACK_PATH) return next();
     let context = (req as any)[Symbol.for("promptcut.asset.request.v2")];
     try {
@@ -1147,11 +1244,14 @@ export function mediaPlugin(): Plugin {
     name: "vite-plugin-media",
     async configureServer(server) {
       const root = server.config.root;
-      // 素材服务(第 5 步:分片上传、对账、按哈希取回、跨源)排在老路由前面:它先给 /@media/*
-      // 补上 CORS 头、答预检,不归它管的请求再交给下面的 mediaMiddleware。
-      // **惰性 import**:好几个单测把本文件单独转译到临时目录再 import,静态 import 兄弟模块会解析失败。
+      // Asset service (step 5: chunked upload, reconcile, retrieve by hash, cross-origin) is placed
+      // before legacy routes: it first adds CORS headers to /@media/* and answers preflight,
+      // passing requests not handled by it to mediaMiddleware below.
+      // **Lazy import**: several unit tests transpile this file separately to a temporary directory
+      // and then import it; static imports of sibling modules would fail to resolve.
       const { assetServiceMiddleware, assetPreflightMiddleware } = await import("./asset-service");
-      // 预检要抢在 vite 自带的 cors 中间件前面答(它不认局域网的源),理由见 assetPreflightMiddleware
+      // Preflight must be answered before vite's built-in cors middleware (it does not recognize
+      // LAN origins), see assetPreflightMiddleware for reasons
       server.middlewares.stack.unshift({ route: "", handle: assetPreflightMiddleware() as Connect.NextHandleFunction });
       const { rememberLocalAssetOrigin } = await import("./asset-client");
       rememberLocalAssetOrigin(server.httpServer);
@@ -1159,7 +1259,8 @@ export function mediaPlugin(): Plugin {
       const handler = mediaMiddleware(root);
       server.middlewares.use((req, res, next) => { void asset(req, res, () => { void handler(req, res, next); }); });
 
-      // 两档素材与上传队列(C6.6):只在编辑器进程(ui)里跑。预渲染进程不导入素材。
+      // Two-tier assets and upload queue (C6.6): only run in the editor process (ui).
+      // Prerender process does not import assets.
       const { isPrerender } = await import("./render-role.mjs");
       if (!isPrerender) {
         void mediaTierService(root).then((service) => {
@@ -1169,9 +1270,11 @@ export function mediaPlugin(): Plugin {
         }).catch((err) => tiersLog("tiers.start-failed", { message: err instanceof Error ? err.message : String(err) }));
       }
 
-      // 素材服务地址登记(C5 / D7,`docs/plan/asset-store-contract.md` 第 5 节):监听的不是回环、
-      // 又设了 PROMPTCUT_DOCSERVICE_URL,才把本机素材服务的局域网地址报给文档服务。
-      // 任何一步出错只打日志,不影响编辑器启动。令牌只交给 WebSocket 端点,不进日志。
+      // Asset service address registration (C5 / D7, docs/plan/asset-store-contract.md section 5):
+      // only report local asset service LAN address to document service if listening on non-loopback
+      // and PROMPTCUT_DOCSERVICE_URL is set.
+      // Errors at any step are only logged and do not affect editor startup.
+      // Tokens are only handed to WebSocket endpoint and not logged.
       const docservice = process.env.PROMPTCUT_DOCSERVICE_URL;
       const httpServer = server.httpServer;
       if (docservice && httpServer) {
@@ -1180,17 +1283,18 @@ export function mediaPlugin(): Plugin {
             const bound = httpServer.address();
             if (!bound || typeof bound === "string") return;
             const host = String(bound.address || "").toLowerCase();
-            if (host === "::1" || /^127\./.test(host) || /^::ffff:127\./.test(host)) return; // 只在本机回环上听,局域网连不进来
+            if (host === "::1" || /^127\./.test(host) || /^::ffff:127\./.test(host)) return; // Only listening on local loopback, LAN cannot connect
             const { lanAssetUrls, startAssetAnnounce } = await import("./asset-announce.mjs");
             let urls: string[] = lanAssetUrls({ port: bound.port });
-            // 绑在某一个具体地址上时,别的网卡连不进来,只报这一个
+            // When bound to a specific address, other network interfaces cannot connect; report only this one
             if (host !== "0.0.0.0" && host !== "::" && host !== "") urls = urls.filter((u) => new URL(u).hostname === host);
             const handle = startAssetAnnounce({
               url: docservice,
               token: process.env.PROMPTCUT_CLUSTER_TOKEN || null,
               urls,
               log: (event: string, fields: object) => {
-                // 会话端点的重试日志太密,只留会话建成、结束、传输脱开与接续和本模块自己的
+                // Session endpoint retry logs are too dense: keep only session established, ended,
+                // transport detach and resume, and this module's own
                 if (event.startsWith("asset-announce.") || event === "session.open" || event === "session.close" || event === "session.detach" || event === "session.resume") console.info("[asset-announce]", event, JSON.stringify(fields));
               },
             });

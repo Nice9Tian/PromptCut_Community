@@ -1,13 +1,17 @@
 /**
- * 素材服务 HTTP 层接数据层之后的用例（契约 `docs/plan/asset-store-contract.md` 第 3、4 节，用例 H1～H6）。
- * 跑：node --test server/test/asset-store-http.test.mjs
+ * Test cases for asset service HTTP layer after connecting data layer (contract
+ * `docs/plan/asset-store-contract.md` sections 3 and 4, test cases H1-H6).
+ * Run: node --test server/test/asset-store-http.test.mjs
  *
- * 只照契约写，不看实现。`asset-service.ts` 照 `asset-service.test.mjs` 的办法用 typescript 转译到临时目录再 import；
- * 转译前把源码里所有相对路径的 import（静态与动态）改成绝对地址：`.ts` 模块递归转译，`.mjs` / `.js` 直接指向仓库里的文件。
- * 这样实现方新加的 `./asset-store/index.mjs` 之类的引用不需要在这里逐条登记。
+ * Written against contract only, without looking at implementation. `asset-service.ts` is
+ * transpiled to a temp directory with typescript and imported, following `asset-service.test.mjs`;
+ * before transpilation, convert all relative-path imports (static and dynamic) in source code to
+ * absolute paths: `.ts` modules are recursively transpiled, `.mjs` / `.js` point directly to
+ * repository files. This way, new references added by implementers like `./asset-store/index.mjs`
+ * do not need to be registered here individually.
  *
- * 数据层（`server/asset-store/index.mjs`）和带选项的 `assetServiceMiddleware` 载不进来 / 不认选项时，
- * 每条用例各自失败、报原因。
+ * When the data layer (`server/asset-store/index.mjs`) and `assetServiceMiddleware` with options
+ * fail to load / do not accept options, each test case fails individually and reports the reason.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -31,7 +35,7 @@ delete process.env.PROMPTCUT_EDITOR_URL;
 delete process.env.PROMPTCUT_CLUSTER_TOKEN;
 
 /* ------------------------------------------------------------------ *
- * 转译
+ * Transpilation
  * ------------------------------------------------------------------ */
 
 const compiled = new Map();
@@ -42,13 +46,13 @@ function resolveRel(fromFile, spec) {
   }
   return null;
 }
-/** 转译一个 .ts 源文件，返回产物的 file:// 地址。相对 import 全部改成绝对地址 */
+/** Transpile a .ts source file, returning output file:// URL. All relative imports rewritten to absolute paths */
 function compileTs(absFile) {
   if (compiled.has(absFile)) return compiled.get(absFile);
   const rel = path.relative(ROOT, absFile).replace(/[\\/]/g, '__').replace(/\.ts$/, '');
   const outFile = path.join(OUT, `${rel}.mjs`);
   const url = pathToFileURL(outFile).href;
-  compiled.set(absFile, url); // 先登记，循环引用不会死循环
+  compiled.set(absFile, url); // Register first so circular references do not loop infinitely
   let src = fs.readFileSync(absFile, 'utf8');
   const rewrite = (spec) => {
     const hit = resolveRel(absFile, spec);
@@ -78,7 +82,7 @@ const CHUNK = 8 * 1024 * 1024;
 const memoryStore = () => needStore().createBlobStore({ kind: 'memory', chunkSize: CHUNK });
 
 /* ------------------------------------------------------------------ *
- * 服务与请求
+ * Server and requests
  * ------------------------------------------------------------------ */
 
 let rootSeq = 0;
@@ -89,8 +93,9 @@ function freshRoot() {
 }
 
 /**
- * 起一台服务：素材服务在前、老路由在后（和 mediaPlugin 同样的接法）。
- * `remote` 给了就把每个请求的 socket.remoteAddress 改成它，模拟局域网来的请求（不用真的绑到局域网网卡上）。
+ * Start a server: asset service first, old routes after (same wiring as mediaPlugin).
+ * If `remote` is given, set each request's socket.remoteAddress to it, simulating requests from
+ * LAN (without needing to actually bind to a LAN network adapter).
  */
 async function serve({ opts, remote } = {}) {
   const root = freshRoot();
@@ -125,7 +130,7 @@ const put = (base, hash, n, body, headers = {}) => fetch(`${base}/media/${hash}/
 const complete = (base, hash, headers = {}) => fetch(`${base}/media/${hash}/complete`, { method: 'POST', headers });
 const chunks = async (base, hash, headers = {}) => (await fetch(`${base}/media/${hash}/chunks`, { headers })).json();
 
-/** 发一片，只写一部分就掐断连接：模拟上传中途断网 */
+/** Send a chunk, abort connection after writing only a part: simulate network disconnection mid-upload */
 function putAndDrop(base, hash, n, size, part) {
   return new Promise((resolve) => {
     const u = new URL(`${base}/media/${hash}/${n}`);
@@ -139,7 +144,7 @@ function putAndDrop(base, hash, n, size, part) {
   });
 }
 
-/** 比较用的回包快照：状态码、一组响应头、回包体（JSON 解析；二进制取 sha256 和长度） */
+/** Response snapshot for comparison: status code, set of response headers, response body (JSON parsed; sha256 and length for binary) */
 const HEADERS = [
   'content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control',
   'access-control-allow-origin', 'access-control-expose-headers', 'access-control-allow-methods',
@@ -161,15 +166,15 @@ async function snap(resPromise) {
 }
 
 /**
- * H1 的剧本：断点续传、409 校验、Range 206 / 416、HEAD、跨源头。对 fs 与 memory 各跑一遍，
- * 返回 [步骤名, 快照] 列表，逐个字段比较。
+ * H1 script: resumable upload, 409 validation, Range 206 / 416, HEAD, cross-origin headers. Run once
+ * each for fs and memory, returning a list of [stepName, snapshot] to compare field by field.
  */
 async function script(base) {
   const LAN = 'http://192.168.1.50:8080';
   const out = [];
   const step = async (name, p) => { out.push([name, await snap(p)]); };
 
-  const size = CHUNK * 2 + 4321; // 3 片
+  const size = CHUNK * 2 + 4321; // 3 chunks
   const buf = bytesOf(size, 101);
   const hash = sha256(buf);
   const h = { 'X-Media-Size': String(size), 'X-Media-Ext': 'mp4' };
@@ -204,7 +209,7 @@ async function script(base) {
   await step('HEAD', fetch(`${base}/media/${hash}`, { method: 'HEAD' }));
   await step('HEAD with Range', fetch(`${base}/media/${hash}`, { method: 'HEAD', headers: { Range: 'bytes=0-9' } }));
 
-  // 409：全件哈希不符
+  // 409: whole file hash mismatch
   const small = bytesOf(3000, 102);
   const claimed = sha256(Buffer.from('not the same bytes'));
   await step('PUT (content that does not match the hash)', put(base, claimed, 0, small, { 'X-Media-Size': '3000', 'X-Media-Type': 'image/png' }));
@@ -213,7 +218,7 @@ async function script(base) {
   await step('finalize: after discard it is never seen', complete(base, claimed));
   await step('GET not stored', fetch(`${base}/media/${claimed}`));
 
-  // 分片校验
+  // Chunk verification
   const s2 = CHUNK + 10;
   const b2 = bytesOf(s2, 103);
   const h2 = sha256(b2);
@@ -230,7 +235,7 @@ async function script(base) {
   await step('wrong method 405 (complete)', fetch(`${base}/media/${h2}/complete`));
   await step('wrong method 405 (whole file)', fetch(`${base}/media/${h2}`, { method: 'DELETE' }));
 
-  // 小文件：扩展名由 X-Media-Type 反查
+  // Small files: extension is reverse-looked up from X-Media-Type
   const b3 = bytesOf(777, 104);
   const h3 = sha256(b3);
   await step('PUT (X-Media-Type reverse lookup)', put(base, h3, 0, b3, { 'X-Media-Size': '777', 'X-Media-Type': 'video/webm' }));
@@ -254,7 +259,8 @@ test('H1 with the memory implementation injected: resumable upload, 409 validati
     assert.deepEqual(b[i][1], a[i][1], `step ${i + 1} "${a[i][0]}": response bodies differ between memory and fs`);
   }
 
-  // 两边一样还不够：几处关键回包按第 5 步契约核对，免得两边一起错
+  // Matching on both sides is not enough: verify key responses against step 5 contract,
+  // to avoid both sides being wrong together
   const get = (name) => b.find(([n]) => n === name)[1];
   assert.deepEqual(get('reconcile: never seen').body, { size: null, chunkSize: CHUNK, received: [], complete: false });
   assert.deepEqual(get('reconcile: the chunk that was cut off does not count').body.received, [0, 2]);
@@ -288,21 +294,22 @@ test('H2 gatekeeper: asset-service.ts source has no file system references and n
   const src = fs.readFileSync(ASSET_SRC, 'utf8');
   const banned = ['from "fs"', 'from "fs/promises"', 'from "node:fs"', 'createReadStream', 'createWriteStream'];
   for (const s of banned) assert.ok(!src.includes(s), `${s} must not appear`);
-  // 目录名 .chunks：只拦字符串里的目录名（契约第 8 节第 2 条）：'.chunks'、".chunks"、`.chunks`、路径片段 /.chunks、\\.chunks；
-  // 方法调用 store.chunks(...) 不算
+  // Directory name .chunks: only intercept directory names in strings (contract section 8, rule 2):
+  // '.chunks', ".chunks", `.chunks`, path fragments /.chunks, \\.chunks;
+  // method call store.chunks(...) does not count
   const dirName = src.split(/\r?\n/).filter((line) => /['"`]\.chunks['"`]|[/\\]\.chunks\b/.test(line));
   assert.deepEqual(dirName, [], '.chunks directory name must not appear');
-  // 换个引号、换个写法也不行
+  // Switching quotes or different notation does not work either
   assert.doesNotMatch(src, /\bfrom\s*["'](node:)?fs(\/promises)?["']/, 'static import of fs');
   assert.doesNotMatch(src, /\bimport\s*\(\s*["'](node:)?fs(\/promises)?["']\s*\)/, 'dynamic import of fs');
   assert.doesNotMatch(src, /\brequire\s*\(\s*["'](node:)?fs(\/promises)?["']\s*\)/, 'require fs');
 });
 
 /* ------------------------------------------------------------------ *
- * H3～H6：写入鉴权
+ * H3-H6: Write authorization
  * ------------------------------------------------------------------ */
 
-/** 一片的小素材 */
+/** Small asset of one chunk */
 function smallAsset(seed, size = 1500) {
   const buf = bytesOf(size, seed);
   return { buf, hash: sha256(buf), h: { 'X-Media-Size': String(size), 'X-Media-Ext': 'png' } };
@@ -315,9 +322,11 @@ async function expect401(p, what) {
   assert.equal(r.headers.get('access-control-allow-origin'), '*', `${what}: 401 also carries CORS headers`);
 }
 
-// M6a（`docs/plan/auth-contract.md` 第 8 节）：集群令牌退役，非回环来源读写都凭素材票据。原来的 H3 / H4 测
-// 「写要令牌、读不要」，现在测「写要 rw 票据、读要票据（Bearer 或查询串只读票据）」，断言的形状（401 回包、跨源头、
-// 先鉴权后校验、被拒不落盘）不变；令牌换成票据。
+// M6a (`docs/plan/auth-contract.md` section 8): cluster token is retired, non-loopback reads and
+// writes both require asset tickets. The original H3 / H4 tested "writes require token, reads do
+// not"; now it tests "writes require rw ticket, reads require ticket (Bearer or query-string
+// read-only ticket)". Assertion shapes (401 response, cross-origin headers, auth before validation,
+// rejected writes do not touch disk) remain unchanged; tokens are replaced by tickets.
 test('H3 isTrusted is false: no ticket or a bad ticket → 401; writes with an rw ticket work as usual; reads also need a ticket (Bearer or a query-string read-only ticket); OPTIONS does not need one', async () => {
   const kit = await assetTicketKit();
   const ticket = kit.issue('rw');
@@ -342,19 +351,19 @@ test('H3 isTrusted is false: no ticket or a bad ticket → 401; writes with an r
   await expect401(complete(base, hash), 'POST complete without ticket');
   for (const [what, hdr] of wrongs) await expect401(complete(base, hash, hdr), `POST complete ${what}`);
 
-  // 票据区分大小写（签名是按原始字节验的）
+  // Tickets are case-sensitive (signatures are verified against raw bytes)
   const flipped = ticket.replace(/\.([^.]*)$/, (m, sig) => `.${sig.replace(/[a-zA-Z]/, (c) => (c === c.toUpperCase() ? c.toLowerCase() : c.toUpperCase()))}`);
   assert.notEqual(flipped, ticket);
   await expect401(put(base, hash, 0, buf, { ...h, ...bearer(flipped) }), 'ticket with different letter case');
 
-  // scheme 不区分大小写
+  // Scheme is case-insensitive
   for (const scheme of ['bearer', 'BEARER']) {
     const r2 = await put(base, hash, 0, buf, { ...h, Authorization: `${scheme} ${ticket}` });
     assert.equal(r2.status, 200, `scheme written as ${scheme}`);
     await r2.arrayBuffer();
   }
 
-  // 票据对：照常
+  // Valid ticket: as usual
   const ok = await put(base, hash, 0, buf, { ...h, ...bearer(ticket) });
   assert.equal(ok.status, 200);
   assert.deepEqual(await ok.json(), { ok: true, hash, n: 0, bytes: buf.length });
@@ -363,7 +372,8 @@ test('H3 isTrusted is false: no ticket or a bad ticket → 401; writes with an r
   assert.equal(fin.status, 200);
   assert.deepEqual(await fin.json(), { ok: true, hash, size: buf.length, complete: true, url: `/@media/${hash}` });
 
-  // 读：不带票据 401；Bearer 票据、查询串只读票据照常（M6a；原来是「读不要令牌」）
+  // Read: 401 without ticket; Bearer ticket and query-string read-only ticket work as usual
+  // (M6a; previously "reads do not require tokens")
   await expect401(fetch(`${base}/media/${hash}`), 'GET without ticket');
   await expect401(fetch(`${base}/media/${hash}`, { method: 'HEAD' }).then((r) => ({ status: r.status, headers: r.headers, json: async () => ({ ok: false, error: 'unauthorized' }) })), 'HEAD without ticket');
   await expect401(fetch(`${base}/media/${hash}/chunks`), 'chunks without ticket');
@@ -388,24 +398,26 @@ test('H3 isTrusted is false: no ticket or a bad ticket → 401; writes with an r
   const pre = await fetch(`${base}/media/${hash}/0`, { method: 'OPTIONS', headers: { Origin: 'http://192.168.1.50:8080', 'Access-Control-Request-Method': 'PUT' } });
   assert.equal(pre.status, 204);
 
-  // 只读票据写入 403；查询串用于写入 401
+  // Write with read-only ticket 403; query string used for write 401
   const r403 = await put(base, hash, 0, buf, { ...h, ...bearer(readOnly) });
   assert.equal(r403.status, 403);
   assert.deepEqual(await r403.json(), { ok: false, error: 'forbidden' });
   await expect401(fetch(`${base}/media/${hash}/complete?t=${encodeURIComponent(readOnly)}`, { method: 'POST' }), 'query string used for writing');
 
-  // 入库后的幂等重传也是写：照样要票据
+  // Idempotent re-upload after storing is also a write: still requires ticket
   await expect401(put(base, hash, 0, buf, h), 'PUT without ticket after storing');
   await expect401(complete(base, hash), 'complete without ticket after storing');
   assert.equal((await put(base, hash, 0, buf, { ...h, ...bearer(ticket) })).status, 200);
 
-  // 先鉴权：长度、分片号、size 都不对的未授权写也回 401，不看其它校验
+  // Auth first: unauthorized writes with invalid length, chunk number, or size still return 401
+  // without checking other validations
   await expect401(put(base, hash, 0, buf.subarray(1), h), 'unauthorized write with wrong length');
   await expect401(put(base, hash, 9, buf, h), 'unauthorized write out of range');
   await expect401(put(base, hash, '01', buf, h), 'unauthorized write with a malformed chunk number');
   await expect401(put(base, hash, 0, buf, { 'X-Media-Ext': 'png' }), 'unauthorized write missing size');
 
-  // 请求体比一片还大的未授权写：连接被掐断或回 401，都不能落进存储
+  // Unauthorized write with body larger than a chunk: whether connection is severed or 401 is
+  // returned, nothing may hit storage
   const big = bytesOf(CHUNK + 5, 302);
   const bh = sha256(big);
   const r = await put(base, bh, 0, big, { 'X-Media-Size': String(big.length) }).catch((e) => e);
@@ -425,14 +437,14 @@ test('H4 tickets is null and not local: reads and writes are all 401; local work
   }
   await expect401(fetch(`${remote.base}/media/${hash}/chunks`), 'no verifier: reads are also 401 (M6a; reads used to work as usual)');
 
-  // 本机（isTrusted 为真）：不带票据照常
+  // Local (isTrusted is true): works as usual without ticket
   const local = await serve({ opts: { store, tickets: null, isTrusted: () => true } });
   assert.equal((await put(local.base, hash, 0, buf, h)).status, 200);
   assert.equal((await complete(local.base, hash)).status, 200);
-  // 两台服务共用一个数据层：本机能读到
+  // Two services share one data layer: local can read
   assert.equal((await fetch(`${local.base}/media/${hash}`)).status, 200);
 
-  // 缺省 isTrusted：按 socket.remoteAddress 判回环
+  // Default isTrusted: determines loopback based on socket.remoteAddress
   const cases = [
     ['127.0.0.1', true], ['127.8.9.10', true], ['::1', true], ['::ffff:127.0.0.1', true],
     ['192.168.1.50', false], ['10.0.0.7', false], ['::ffff:192.168.1.50', false], ['fe80::1', false], ['8.8.8.8', false],
@@ -445,7 +457,8 @@ test('H4 tickets is null and not local: reads and writes are all 401; local work
     await r.arrayBuffer();
   }
 
-  // 集群令牌不再用于素材服务（C5 的做法退役）：环境变量设了、Bearer 带了也 401（原来这里测「缺省 token 取环境变量」）
+  // Cluster token is no longer used for asset service (C5 approach retired): returns 401 even when
+  // env var is set and Bearer is present (previously tested "default token takes env var")
   const envToken = randomToken();
   process.env.PROMPTCUT_CLUSTER_TOKEN = envToken;
   let s;
@@ -454,7 +467,8 @@ test('H4 tickets is null and not local: reads and writes are all 401; local work
   await expect401(put(s.base, y.hash, 0, y.buf, { ...y.h, ...bearer(envToken) }), 'cluster token write');
   await expect401(fetch(`${s.base}/media/${y.hash}/chunks`, { headers: bearer(envToken) }), 'cluster token read');
 
-  // 缺省核对器：按 <root>/out/docservice/auth 取进程内的凭证存储（与同进程的文档服务共用）
+  // Default verifier: gets in-process credential store via <root>/out/docservice/auth (shared with
+  // document service in the same process)
   const { credentialStoreFor, forgetCredentialStore } = await import('../auth/store.mjs');
   const d = await serve({ opts: { store: memoryStore(), isTrusted: () => false } });
   const authDir = path.join(d.root, 'out', 'docservice', 'auth');
@@ -484,7 +498,7 @@ test('H5 the Access-Control-Allow-Headers returned by preflight includes Authori
     assert.ok(names(pre.headers.get('access-control-allow-headers')).includes('authorization'), `${url}: ${pre.headers.get('access-control-allow-headers')}`);
   }
 
-  // 排在 vite cors 前面的那个预检中间件
+  // Preflight middleware placed before vite cors
   const fn = asset.assetPreflightMiddleware();
   const res = await new Promise((resolve) => {
     const r = { statusCode: 200, headers: {}, setHeader(k, v) { this.headers[k.toLowerCase()] = v; }, end() { resolve(this); } };
@@ -495,7 +509,7 @@ test('H5 the Access-Control-Allow-Headers returned by preflight includes Authori
   assert.ok(names(res.headers['access-control-allow-headers']).includes('authorization'));
 });
 
-// M6a：令牌换成素材票据，断言不变（日志与回包里都没有票据原文）
+// M6a: tokens replaced with asset tickets, assertions unchanged (neither logs nor responses contain raw ticket)
 test('H6 after several rejected and accepted attempts each: neither the logs nor the response bodies contain the raw ticket', async () => {
   const kit = await assetTicketKit();
   const token = kit.issue('rw');

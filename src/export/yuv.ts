@@ -1,11 +1,14 @@
 /**
- * RGBA → I420(BT.601 有限范围),和桌面导出里 ffmpeg 的 `-pix_fmt yuv420p`(swscale 缺省矩阵)同一个换算。
+ * RGBA → I420 (BT.601 limited range), same conversion as ffmpeg's `-pix_fmt yuv420p`
+ * (swscale default matrix) in desktop export.
  *
- * 为什么自己换:直接 `new VideoFrame(canvas)` 交给 `VideoEncoder`,Chrome 按它自己的矩阵把 RGB 换成 YUV,
- * 产物不带色彩标记,播放器(和 ffprobe / ffmpeg)按 BT.601 解回来,红色偏出十几个色阶;桌面导出没有这个偏差。
- * 这里先换成 I420 再交出去(`VideoFrame` 的 `format: 'I420'`),两条导出路解回来的颜色一致。
+ * Why convert ourselves: passing `new VideoFrame(canvas)` directly to `VideoEncoder`, Chrome
+ * converts RGB to YUV with its own matrix, leaving output without color tags. Players (and
+ * ffprobe / ffmpeg) decode it back using BT.601, shifting red by over a dozen color levels;
+ * desktop export does not have this deviation. Converting to I420 here first before passing it out
+ * (`format: 'I420'` in `VideoFrame`) ensures both export paths decode to consistent colors.
  *
- * 色度按 2×2 取平均;宽高是奇数时最后一行 / 列按边上的像素补。
+ * Chroma is averaged 2×2; when width or height is odd, the last row / column pads edge pixels.
  */
 export function rgbaToI420(rgba: Uint8ClampedArray | Uint8Array, width: number, height: number, out?: Uint8Array): Uint8Array {
   const cw = (width + 1) >> 1, ch = (height + 1) >> 1;

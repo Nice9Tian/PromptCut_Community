@@ -7,7 +7,7 @@ import { clearDragPayload, getDragPayload, MIME_CARD, MIME_CUT, MIME_MEDIA, type
 import { memberReadOnlyNow } from "../readOnlyCore";
 import { tr } from "../../i18n/index.ts";
 
-/** 拖动没经过本窗口的 dragstart(跨窗口拖进来)时的兜底:只认得种类,时长用默认值 */
+/** Fallback when the drag did not pass through this window's dragstart (dragged in from another window): only the kind is known, and the duration uses the default */
 function fallbackPayload(types: readonly string[]): DragPayload | null {
   const list = Array.from(types);
   if (list.includes(MIME_CARD)) return { kind: "card", cardId: "", name: tr("Cards"), duration: DEFAULT_CARD_DUR };
@@ -28,9 +28,10 @@ function samePlan(a: DropPlan | null, b: DropPlan | null) {
 }
 
 /**
- * 一个「能接住左栏拖来的卡片 / 素材」的落点(一条轨,或者一条新建轨的位置)。
- * dragover 时把落点预演写进 context(轨道行 / 落区据此画预览),drop 时照着预演落。
- * 返回的 plan 只在预演正指着自己时非空。
+ * A drop target that "can accept a card / media dragged from the left rail" (a track, or the position of a new track).
+ * On dragover it writes the drop preview into the context (track rows / drop zones draw the preview from it),
+ * and on drop it drops according to the preview.
+ * The returned plan is non-empty only while the preview points at this target.
  */
 export function useDropTarget(target: DropTarget) {
   const { pxPerSec, dropPlan, setDropPlan } = useTimelineContext();
@@ -44,8 +45,8 @@ export function useDropTarget(target: DropTarget) {
 
   const onDragOver = (e: React.DragEvent) => {
     const payload = getDragPayload() ?? fallbackPayload(e.dataTransfer.types);
-    if (!payload) return; // 不是左栏拖来的东西(比如轨道换序),让别人去处理
-    // 只读项目(游客):不接。不 preventDefault = 浏览器按「不能放」处理,光标显示禁止
+    if (!payload) return; // Not something dragged from the left rail (e.g. track reordering), leave it to others to handle
+    // Read-only project (guest): do not accept. Without preventDefault the browser treats it as "cannot drop" and the cursor shows forbidden
     if (memberReadOnlyNow()) {
       e.dataTransfer.dropEffect = "none";
       return;
@@ -58,7 +59,7 @@ export function useDropTarget(target: DropTarget) {
   };
 
   const onDragLeave = (e: React.DragEvent) => {
-    // 移到自己的子元素上不算离开
+    // Moving onto its own child element does not count as leaving
     if (e.currentTarget.contains(e.relatedTarget as Node)) return;
     setDropPlan(null);
   };
@@ -79,7 +80,7 @@ export function useDropTarget(target: DropTarget) {
     clearDragPayload();
     if (plan.status === "forbidden") return;
 
-    // 强调:给落点正下方那一段加阴影 / 描边
+    // Emphasis: add a shadow / outline to the segment right under the drop point
     if (payload.kind === "emphasis") {
       if (!plan.trackId) return;
       const rect = e.currentTarget.getBoundingClientRect();
@@ -89,7 +90,7 @@ export function useDropTarget(target: DropTarget) {
       return;
     }
 
-    // 转场:不放新片段,而是把落点处已有的那一 / 两段绑起来
+    // Transition: instead of placing a new clip, bind the one / two existing segments at the drop point
     if (payload.kind === "transition") {
       if (!plan.trackId) return;
       const rect = e.currentTarget.getBoundingClientRect();
@@ -100,7 +101,7 @@ export function useDropTarget(target: DropTarget) {
       return;
     }
 
-    // 剪辑:在激活剪辑里放一个引用它的剪辑段(循环引用在 planDrop 里已经拦下、写明了原因)
+    // Cut: place a cut segment that references it in the active cut (circular references are already blocked in planDrop, with the reason stated)
     if (payload.kind === "cut") {
       const cutId = dt.getData(MIME_CUT) || payload.cutId;
       let seg = null;
@@ -115,11 +116,11 @@ export function useDropTarget(target: DropTarget) {
       return;
     }
 
-    // id 以 dataTransfer 为准(它才是拖放契约里的正本),模块里那份只是兜底
+    // The id from dataTransfer takes precedence (it is the original in the drag-and-drop contract), and the copy in the module is only a fallback
     const cardId = dt.getData(MIME_CARD) || (payload.kind === "card" ? payload.cardId : "");
     const mediaId = dt.getData(MIME_MEDIA) || (payload.kind === "media" ? payload.mediaId : "");
 
-    // 素材格拖出来的卡带着填好的参数和时长(左栏 AssetCell);普通卡格两样都没有,走默认
+    // A card dragged out of a media cell carries filled-in parameters and duration (AssetCell in the left rail); a plain card cell has neither, so it takes the defaults
     const cardOpts = payload.kind === "card" ? { params: payload.params, duration: payload.params ? payload.duration : undefined } : {};
     let clip = null;
     if (plan.trackId) {
@@ -134,7 +135,7 @@ export function useDropTarget(target: DropTarget) {
         mediaId: payload.kind === "media" ? mediaId : undefined,
         start: plan.start,
       });
-      // 新建序列那条路不接参数,落完再补上
+      // The new-track path does not take parameters; add them after the drop
       if (clip && payload.kind === "card" && payload.params) {
         actions.setClipParams(clip.id, payload.params);
         if (cardOpts.duration) actions.moveClip(clip.id, { end: clip.start + cardOpts.duration });
@@ -142,7 +143,7 @@ export function useDropTarget(target: DropTarget) {
     }
     if (!clip) return;
 
-    // 落完把播放头挪进新片段,中间的画面立刻显示它(播放中不打断)
+    // After the drop, move the playhead into the new clip so the middle picture shows it right away (without interrupting playback)
     const st = getState();
     if (!st.playing && (st.t < clip.start || st.t >= clip.end)) actions.seek(clip.start);
   };

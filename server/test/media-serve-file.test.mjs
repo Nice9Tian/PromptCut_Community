@@ -1,7 +1,8 @@
 /**
- * `/@media` 路由发文件(`server/vite-plugin-media.ts` 的 `serveFile`):文件在「取大小」与「开始读」之间没了,
- * 不能把整个编辑器进程带崩(原来读流的 error 没人接,进程退出,页面上随后的请求全是 Failed to fetch)。
- * 跑:npm test -- server/test/media-serve-file.test.mjs
+ * `/@media` route serves files (`serveFile` in `server/vite-plugin-media.ts`): if file disappears
+ * between "getting size" and "starting read", it must not crash the entire editor process (previously
+ * read stream error was unhandled, process exited, subsequent requests on page all Failed to fetch).
+ * Run: npm test -- server/test/media-serve-file.test.mjs
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -40,7 +41,10 @@ function compileTs(absFile) {
 }
 const { serveFile } = await import(compileTs(path.join(ROOT, 'server', 'vite-plugin-media.ts')));
 
-/** 起一台只发这一个文件的服务;`beforeBody` 在响应头写出的那一刻(取完大小、还没开始读)调用 */
+/**
+ * Start a service that only serves this file; `beforeBody` is called when response headers
+ * are written (after getting size, before reading starts)
+ */
 async function serve(file, beforeBody) {
   const server = http.createServer((req, res) => {
     if (beforeBody) {

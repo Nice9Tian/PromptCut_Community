@@ -1,15 +1,20 @@
 /**
- * 卡片级指纹锁：队列这一侧（契约 `docs/plan/render-queue-contract.md` F.1 与 F.7，测试表 F.5 的 Q1～Q9、F.7 第 6 条的 Q10、Q11）。
- * 跑：node --experimental-test-module-mocks --test server/test/card-lock-queue.test.mjs
+ * Per-card fingerprint lock: queue side (contracts `docs/plan/render-queue-contract.md` F.1 and F.7,
+ * test table F.5 Q1-Q9, F.7 item 6 Q10, Q11).
+ * Run: node --experimental-test-module-mocks --test server/test/card-lock-queue.test.mjs
  *
- * 只照契约 F.1 以及它改动 / 引用的 A.4～A.8、A.10 写，不看实现。只经 A.3 的公开接口驱动
- * （connect / handle / tick / describe），`describe().locks` 是 F.1 新增的公开诊断。
+ * Written strictly against contract F.1 and modified/referenced A.4-A.8, A.10, without looking at
+ * the implementation. Driven only via A.3 public interfaces (connect / handle / tick / describe);
+ * `describe().locks` is a new public diagnostic added in F.1.
  *
- * 约定：
- *   - `lockKeyOf` 是 F.1 新增的出口，用命名空间引入（`queueIndex.lockKeyOf`），它还不存在时只有用到它的
- *     那条用例失败，不连累整个文件；`card.lock` 在不在 `PUBLISHER_TYPES` 里同理，从 `messages.mjs` 读。
- *   - F.1 写的「`DONE_TTL_MS`」就是 A.2 的 `DONE_TTL`（F.7 第 3 条），取缺省值 600 000；锁回收用严格大于。
- *   - 结果键按 B.1 的公式自己算（`resultKeyOf`），任务 id 按 A.4 自己算，不借实现。
+ * Conventions:
+ *   - `lockKeyOf` is a new export added in F.1, imported via namespace (`queueIndex.lockKeyOf`);
+ *     when it does not exist yet, only test cases using it fail, without breaking the whole file;
+ *     same for whether `card.lock` is in `PUBLISHER_TYPES`, read from `messages.mjs`.
+ *   - "`DONE_TTL_MS`" in F.1 is A.2's `DONE_TTL` (F.7 item 3), defaulting to 600 000; lock recycling
+ *     uses strictly greater than.
+ *   - Calculate result keys using B.1's formula (`resultKeyOf`) and task IDs using A.4, without
+ *     relying on the implementation.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,7 +26,7 @@ import { createQueueHarness, makeTaskInput, T0 } from './fake-render-queue-env.m
 const { createRenderQueue } = queueIndex;
 
 const LEASE = 30_000;
-const TTL = 600_000;          // A.2 的 DONE_TTL（F.1 称 DONE_TTL_MS）
+const TTL = 600_000;          // DONE_TTL in A.2 (called DONE_TTL_MS in F.1)
 
 const FP_A = 'aaaaaaaaaaaaaaaa';
 const FP_B = 'bbbbbbbbbbbbbbbb';
@@ -31,8 +36,9 @@ const sha256 = text => crypto.createHash('sha256').update(text, 'utf8').digest('
 const rk = (contentKey, fp) => sha256(`${contentKey}\n${fp}`);
 
 /**
- * 一张卡某个环境的一段快照任务：`input.contentKey = ck`、`requires.envFingerprint = fp`、
- * `resultKey = resultKeyOf(ck, fp)`（和 splitPlan 出的形状一致）。
+ * A snapshot task segment for a card in a given environment: `input.contentKey = ck`,
+ * `requires.envFingerprint = fp`, `resultKey = resultKeyOf(ck, fp)`
+ * (matches the shape produced by splitPlan).
  */
 function snap(ck, fp, from = 0, { to = from + 59, projectId = 'p1', kind = 'snapshot', requires, input, ...rest } = {}) {
   return makeTaskInput({
@@ -44,7 +50,7 @@ function snap(ck, fp, from = 0, { to = from + 59, projectId = 'p1', kind = 'snap
 }
 const stream = (sk, fp, from = 0, extra = {}) => snap(sk, fp, from, { to: from + 7, kind: 'stream', ...extra });
 
-/** 发布方 p（u1）、q（u1）、节点 a / a2（指纹 A）、b（指纹 B）、watch 者 w（pc，指纹 C；M6c X3 之前是 host） */
+/** Publishers p (u1), q (u1), nodes a / a2 (fingerprint A), b (fingerprint B), watcher w (pc, fingerprint C; host before M6c X3) */
 function setup(options = {}) {
   const h = createQueueHarness(createRenderQueue, options);
   h.publisher('p', 'pub-p');
@@ -52,7 +58,7 @@ function setup(options = {}) {
   h.node('a', 'node-A', { hello: { envFingerprint: FP_A } });
   h.node('a2', 'node-A2', { hello: { envFingerprint: FP_A } });
   h.node('b', 'node-B', { hello: { envFingerprint: FP_B } });
-  h.node('w', 'node-W', { profile: 'pc', hello: { envFingerprint: FP_C } });   // M6c X3：host 的 watch 'all' 只收摘要，watch 者改用 pc（原为 host）
+  h.node('w', 'node-W', { profile: 'pc', hello: { envFingerprint: FP_C } });   // M6c X3: host's watch 'all' only receives summaries; watcher changed to pc (formerly host)
   h.bus.clear();
   return h;
 }
@@ -62,9 +68,12 @@ const lockOf = (h, lockKey) => locks(h).find(l => l.lockKey === lockKey) ?? null
 const claimOk = (h, conn, id, expectVersion) => h.claim(conn, id, expectVersion).one(conn, 'task.claimed');
 const published = (out, conn) => out.one(conn, 'task.published').results;
 const cardLock = (h, conn, fields) => h.handle(conn, { type: 'card.lock', ...fields });
-/** F.1：takeover 是 TaskInput 上的可选字段（逐个任务带），splitPlan 也是给每个任务加 takeover: true（F.2） */
+/** F.1: takeover is an optional field on TaskInput (carried per task); splitPlan also adds takeover: true to each task (F.2) */
 const tk = (tasks, v = true) => tasks.map(t => ({ ...t, takeover: v }));
-/** M7 契约 D2（`docs/plan/m7-contract.md` 第 13 节）给 card-locked 的回包加了 lockIdleMs / lockedByProfile / lockUndone；这里只比 F.7 定的那几项 */
+/**
+ * M7 contract D2 (Section 13 of `docs/plan/m7-contract.md`) added lockIdleMs / lockedByProfile /
+ * lockUndone to card-locked responses; here only comparing items specified in F.7
+ */
 const f7 = r => { if (r == null) return r; const { lockIdleMs, lockedByProfile, lockUndone, ...rest } = r; return rest; };
 
 /* ================================================================== lockKeyOf */
@@ -75,7 +84,7 @@ test('Q0 lockKeyOf (F.1 "lock key"): for snapshot / stream with a non-empty stri
   assert.equal(lockKeyOf({ kind: 'snapshot', input: { contentKey: 'ck1' } }), 'snapshot:ck1');
   assert.equal(lockKeyOf({ kind: 'stream', input: { contentKey: 'sk1' } }), 'stream:sk1');
   assert.equal(lockKeyOf({ kind: 'snapshot', input: { contentKey: 'entry/ck1' } }), 'snapshot:entry/ck1', 'the content key of the local tier carries entryKey/');
-  // 任务视图照样认
+  // Task view is still recognized
   const t = snap('ck9', FP_A);
   assert.equal(lockKeyOf(t), 'snapshot:ck9');
   for (const [label, task] of [
@@ -157,12 +166,12 @@ test('Q2 addendum: card-locked is judged after taken and before stale (step 3a)'
   const x = snap('ck1', FP_A, 0), y = snap('ck1', FP_B, 0);
   h.publish('p', [x, y]);
   claimOk(h, 'a', x.id, 1);
-  // expectVersion 不对：第 4 步 stale 在 3a 之后，所以仍回 card-locked
+  // Incorrect expectVersion: step 4 stale is after 3a, so still returns card-locked
   const r = h.claim('b', y.id, 7).one('b', 'task.claim-rejected');
   assert.deepEqual([r.reason, r.state, r.version, r.lockedBy], ['card-locked', 'open', 1, FP_A]);
-  // 不存在的任务：第 1 步 gone 最先
+  // Non-existent task: step 1 gone comes first
   assert.equal(h.claim('b', snap('ck1', FP_B, 600).id, 1).one('b', 'task.claim-rejected').reason, 'gone');
-  // 锁指纹与任务指纹相同时 stale 照旧
+  // When lock fingerprint matches task fingerprint, stale behaves as usual
   const x2 = snap('ck1', FP_A, 60);
   h.publish('p', [x2]);
   assert.equal(h.claim('a2', x2.id, 5).one('a2', 'task.claim-rejected').reason, 'stale');
@@ -201,7 +210,7 @@ test('Q3 card.lock: with no lock it obtains the lock (source: lock); the same fi
   }
   assert.deepEqual(h.describe(), before, 'a rejected card.lock changes nothing (touchedAt is not refreshed either)');
 
-  // stream 同样可以锁
+  // Streams can also be locked
   m = cardLock(h, 'p', { kind: 'stream', contentKey: 'sk1', envFingerprint: FP_B }).one('p', 'card.locked');
   assert.deepEqual([m.lockKey, m.envFingerprint, m.granted], ['stream:sk1', FP_B, true]);
   assert.equal(lockOf(h, 'stream:sk1').source, 'lock');
@@ -252,17 +261,17 @@ test('Q3 card.lock is in PUBLISHER_TYPES; a connection that has not sent publish
   assert.ok(!queueMessages.NODE_TYPES.has('card.lock'));
 
   const h = setup();
-  // 只发过 node.hello 的连接
+  // Connection that has only sent node.hello
   let out = cardLock(h, 'a', { kind: 'snapshot', contentKey: 'ck1', envFingerprint: FP_A, reqId: 'n1' });
   let e = out.one('a', 'error');
   assert.deepEqual([e.reason, e.reqId], ['not-registered', 'n1']);
-  // 什么都没发过的连接
+  // Connection that has sent nothing
   h.connect('bare');
   out = cardLock(h, 'bare', { kind: 'snapshot', contentKey: 'ck1', envFingerprint: FP_A });
   e = out.one('bare', 'error');
   assert.equal(e.reason, 'not-registered');
   assert.deepEqual(locks(h), []);
-  // 先格式、后角色（A.10a）
+  // Format first, then role (A.10a)
   out = cardLock(h, 'bare', { kind: 'nope', contentKey: 'ck1', envFingerprint: FP_A });
   assert.equal(out.one('bare', 'error').reason, 'bad-message');
 });
@@ -270,7 +279,8 @@ test('Q3 card.lock is in PUBLISHER_TYPES; a connection that has not sent publish
 /* ================================================================== Q4 */
 
 /**
- * 锁在 A 上：T1 done、T2 被 a2 认领、T3 open（p 和 p2 都订阅）；另有别的卡的 A 任务 O、同卡的 B 任务 Yb（open）。
+ * Lock is on A: T1 done, T2 claimed by a2, T3 open (both p and p2 subscribed); also task O on A
+ * for another card, and task Yb (open) on B for the same card.
  */
 function takeoverScene(options) {
   const h = setup(options);
@@ -288,10 +298,10 @@ function takeoverScene(options) {
 }
 
 function assertSuperseded(h, out, { t1, t2, t3, o, c2 }, now, newFp) {
-  // T1 done 不动
+  // T1 done unchanged
   const v1 = h.task(t1.id);
   assert.deepEqual([v1.state, v1.version], ['done', 3], 'done tasks untouched');
-  // T2 claimed → failed(superseded)，原认领者先收 lease-lost
+  // T2 claimed → failed(superseded); original claimer receives lease-lost first
   const v2 = h.task(t2.id);
   assert.deepEqual([v2.state, v2.version, v2.attempts, v2.lastError, v2.claim, v2.finishedAt], ['failed', 3, 0, 'superseded', null, now],
     'claimed tasks: version+1, failed, attempts unchanged, lastError superseded, claim cleared');
@@ -300,21 +310,21 @@ function assertSuperseded(h, out, { t1, t2, t3, o, c2 }, now, newFp) {
   // T3 open → failed(superseded)
   const v3 = h.task(t3.id);
   assert.deepEqual([v3.state, v3.version, v3.attempts, v3.lastError, v3.finishedAt], ['failed', 2, 0, 'superseded', now]);
-  // 订阅者收 task.failed
+  // Subscribers receive task.failed
   for (const [conn, ids] of [['p', [t2.id, t3.id]], ['p2', [t3.id]]]) {
     const failed = out.of(conn, 'task.failed');
     assert.deepEqual(failed.map(m => m.id).sort(), [...ids].sort(), `task.failed received by ${conn}`);
     for (const m of failed) assert.equal(m.error, 'superseded');
   }
-  // watch 者收 task.closed { state: failed }
+  // Watchers receive task.closed { state: failed }
   for (const conn of ['a', 'b', 'w']) {
     const closed = out.of(conn, 'task.closed').filter(m => m.id === t2.id || m.id === t3.id);
     assert.deepEqual(closed.map(m => [m.id, m.state]).sort(), [[t2.id, 'failed'], [t3.id, 'failed']].sort(), `task.closed received by ${conn}`);
   }
-  // 别的卡不动
+  // Other cards unchanged
   const vo = h.task(o.id);
   assert.deepEqual([vo.state, vo.version], ['open', 1], 'tasks with other lock keys untouched');
-  // 锁转给新指纹
+  // Lock transferred to new fingerprint
   assert.deepEqual(lockOf(h, 'snapshot:ck1'), { lockKey: 'snapshot:ck1', envFingerprint: newFp, source: 'takeover', since: now, touchedAt: now });
   assert.equal(lockOf(h, 'snapshot:ck2'), null, 'no lock was created for other cards as a side effect');
 }
@@ -324,7 +334,7 @@ test('Q4 publishing with takeover: the lock moves to the new fingerprint; open t
   const { h, t2, c2 } = scene;
   const y1 = snap('ck1', FP_B, 0), y2 = snap('ck1', FP_B, 60);
   const now = h.now();
-  // 顺带让 ck2 有一把锁（别的锁键不受影响）
+  // Also give ck2 a lock (other lock keys unaffected)
   claimOk(h, 'a', scene.o.id, 1);
   h.bus.clear();
   const out = h.publish('q', tk([y1, y2], true));
@@ -332,12 +342,13 @@ test('Q4 publishing with takeover: the lock moves to the new fingerprint; open t
   assert.deepEqual(results.map(r => [r.id, r.state, r.created]), [[y1.id, 'open', true], [y2.id, 'open', true]]);
   for (const r of results) assert.equal('lockedBy' in r, false, 'after a takeover the lock is its own and carries no lockedBy');
 
-  // ck2 的任务此刻是 claimed（上面认领了），不受 ck1 接手影响
+  // ck2's task is claimed at this moment (claimed above), unaffected by ck1 takeover
   const vo = h.task(scene.o.id);
   assert.deepEqual([vo.state, vo.claim.nodeId], ['claimed', 'node-A']);
   const a = h.task(scene.t1.id);
   assert.equal(a.state, 'done');
-  // 其余断言（o 这里换成「claimed 不动」，单独核过了，跳过 assertSuperseded 里 o 的 open 检查）
+  // Remaining assertions (o replaced here with "claimed unchanged", verified separately;
+  // skip o's open check in assertSuperseded)
   const v2 = h.task(t2.id);
   assert.deepEqual([v2.state, v2.lastError, v2.attempts], ['failed', 'superseded', 0]);
   const ll = out.one('a2', 'task.lease-lost');
@@ -345,7 +356,7 @@ test('Q4 publishing with takeover: the lock moves to the new fingerprint; open t
   assert.deepEqual(lockOf(h, 'snapshot:ck1'), { lockKey: 'snapshot:ck1', envFingerprint: FP_B, source: 'takeover', since: now, touchedAt: now });
   assert.equal(lockOf(h, 'snapshot:ck2').envFingerprint, FP_A);
 
-  // 新指纹的节点能认领；原认领者拿旧令牌完成 → 令牌不符
+  // Node with new fingerprint can claim; original claimer completes with old token → token mismatch
   claimOk(h, 'b', y1.id, 1);
   const late = h.complete('a2', t2.id, c2.token, { ranges: [[60, 119]] });
   assert.equal(late.one('a2', 'task.lease-lost').reason, 'token');
@@ -358,7 +369,7 @@ test('Q4 publishing with takeover (full check): state, messages, lock', () => {
   const now = h.now();
   const out = h.publish('q', tk([snap('ck1', FP_B, 0)], true));
   assertSuperseded(h, out, scene, now, FP_B);
-  // 已经 failed 的旧任务再认领：第 3 步 taken 先于 3a
+  // Re-claiming an already failed old task: step 3 taken precedes 3a
   const r = h.claim('a', scene.t3.id, 2).one('a', 'task.claim-rejected');
   assert.deepEqual([r.reason, r.state], ['taken', 'failed']);
 });
@@ -377,12 +388,12 @@ test('Q4 addendum: at takeover, tasks with the same fingerprint as the new lock 
   const h = setup();
   const a0 = snap('ck1', FP_A, 0), b0 = snap('ck1', FP_B, 0), b1 = snap('ck1', FP_B, 60);
   h.publish('p', [a0, b0]);
-  claimOk(h, 'a', a0.id, 1);                          // 锁 A
-  h.publish('q', tk([b1], true));            // B 接手：a0 作废，b0（B 指纹、open）不动
+  claimOk(h, 'a', a0.id, 1);                          // Lock A
+  h.publish('q', tk([b1], true));            // B takes over: a0 invalidated, b0 (fingerprint B, open) untouched
   assert.deepEqual([h.task(a0.id).state, h.task(a0.id).lastError], ['failed', 'superseded']);
   assert.deepEqual([h.task(b0.id).state, h.task(b0.id).version], ['open', 1]);
   assert.deepEqual([h.task(b1.id).state, h.task(b1.id).version], ['open', 1]);
-  // 第三种指纹 C 用 card.lock 接手：B 的两个 open 作废
+  // Third fingerprint C takes over using card.lock: both open tasks of B invalidated
   const out = cardLock(h, 'p', { kind: 'snapshot', contentKey: 'ck1', envFingerprint: FP_C, takeover: true });
   assert.equal(out.one('p', 'card.locked').granted, true);
   for (const t of [b0, b1]) assert.deepEqual([h.task(t.id).state, h.task(t.id).lastError], ['failed', 'superseded'], t.id);
@@ -407,7 +418,8 @@ test('Q5 publishing an existing task without takeover while the lock is on anoth
   const h = setup();
   const x = snap('ck1', FP_A, 0);
   const y1 = snap('ck1', FP_B, 0), y2 = snap('ck1', FP_B, 60);
-  // y1 / y2 在锁建起来之前就发布了（两个节点几乎同时切分的情形）
+  // y1 / y2 were published before the lock was created (scenario where two nodes split
+  // almost simultaneously)
   h.publish('p', [x, y1, y2]);
   claimOk(h, 'a', x.id, 1);
   const before = lockOf(h, 'snapshot:ck1');
@@ -423,15 +435,15 @@ test('Q5 publishing an existing task without takeover while the lock is on anoth
   assert.deepEqual(lockOf(h, 'snapshot:ck1'), { ...before, touchedAt: T0 + 100 }, 'the task with the same fingerprint refreshed touchedAt, fingerprint unchanged');
   assert.equal(lockOf(h, 'snapshot:ck2'), null, 'no lock + no takeover: no lock is created');
 
-  // takeover: false 同不带
+  // takeover: false is equivalent to omitting it
   results = published(h.publish('p', tk([y1], false)), 'p');
   assert.deepEqual(f7(results[0]), { id: y1.id, state: 'open', version: 1, created: false, lockedBy: FP_A });
   assert.equal(lockOf(h, 'snapshot:ck1').envFingerprint, FP_A);
-  // 合并进来的异指纹任务仍然认领不了
+  // Merged tasks with different fingerprints still cannot be claimed
   assert.equal(h.claim('b', y1.id, 1).one('b', 'task.claim-rejected').reason, 'card-locked');
 });
 
-/* ================================================================== Q10（F.7 第 1、4 条） */
+/* ================================================================== Q10 (F.7 items 1 and 4) */
 
 test('Q10 creation rejection: the lock is on another fingerprint, no takeover, and the table has no task with the same id → not created, results[i] = { id, error: card-locked, lockedBy }; the other items in the same message proceed as usual', () => {
   const h = setup();
@@ -456,7 +468,7 @@ test('Q10 creation rejection: the lock is on another fingerprint, no takeover, a
   assert.equal(lockOf(h, 'snapshot:ck1').envFingerprint, lockBefore.envFingerprint, 'the lock is unchanged');
   assert.equal(lockOf(h, 'snapshot:ck1').source, 'claim');
 
-  // 锁上的指纹换了（被接手），lockedBy 跟着换
+  // Fingerprint on the lock changed (taken over), lockedBy updates accordingly
   cardLock(h, 'p', { kind: 'snapshot', contentKey: 'ck1', envFingerprint: FP_C, takeover: true });
   const again = published(h.publish('q', [y1]), 'q');
   assert.deepEqual(f7(again[0]), { id: y1.id, error: 'card-locked', lockedBy: FP_C });
@@ -466,22 +478,23 @@ test('Q10 addendum: an item that was not created because of limit gets no lock h
   const h = setup({ constants: { MAX_TASKS_PER_PROJECT: 1 } });
   const first = snap('k0', FP_A, 0);
   h.publish('p', [first]);
-  // 项目已满：带 takeover 的新任务因 limit 没建 → 不建锁
+  // Project full: new task with takeover not created due to limit → no lock created
   const r = published(h.publish('q', tk([snap('k1', FP_B, 0)], true)), 'q');
   assert.equal(r[0].error, 'limit');
   assert.equal(lockOf(h, 'snapshot:k1'), null, 'an item over limit creates no lock');
-  // 已锁在别的指纹上时：limit 的项不接手、锁不变
+  // When already locked to another fingerprint: items at limit do not take over, lock unchanged
   cardLock(h, 'p', { kind: 'snapshot', contentKey: 'k2', envFingerprint: FP_A });
   const r2 = published(h.publish('q', tk([snap('k2', FP_B, 0)], true)), 'q');
   assert.equal(r2[0].error, 'limit');
   assert.deepEqual([lockOf(h, 'snapshot:k2').envFingerprint, lockOf(h, 'snapshot:k2').source], [FP_A, 'lock']);
 });
 
-/* ================================================================== Q11（F.7 第 2 条） */
+/* ================================================================== Q11 (F.7 item 2) */
 
 test('Q11 publishing with takeover when there is no lock: creates a lock (source: takeover) and invalidates open tasks with the same lock key but a different fingerprint; same fingerprint and other cards untouched', () => {
   const h = setup({ constants: { PREFILTER: false } });
-  // 两个节点几乎同时切分：A 的任务先发布（没人认领，没锁），B 带 takeover 发布
+  // Two nodes split almost simultaneously: A's task published first (unclaimed, no lock),
+  // B publishes with takeover
   const x1 = snap('ck1', FP_A, 0), x2 = snap('ck1', FP_A, 60), otherCard = snap('ck2', FP_A, 0), sameFp = snap('ck1', FP_B, 120);
   h.publish('p', [x1, x2, otherCard]);
   h.publish('q', [sameFp]);
@@ -508,9 +521,9 @@ test('Q11 publishing with takeover when there is no lock: creates a lock (source
   assert.deepEqual([h.task(sameFp.id).state, h.task(sameFp.id).version], ['open', 1], 'same fingerprint untouched');
   assert.deepEqual([h.task(otherCard.id).state, h.task(otherCard.id).version], ['open', 1], 'other cards untouched');
   assert.equal(lockOf(h, 'snapshot:ck2'), null);
-  // 此后 A 指纹的新任务发布被拒建
+  // Thereafter, publishing new tasks with fingerprint A is rejected
   assert.equal(published(h.publish('p', [snap('ck1', FP_A, 180)]), 'p')[0].error, 'card-locked');
-  // B 指纹的照常认领
+  // Tasks with fingerprint B are claimed as usual
   claimOk(h, 'b', y.id, 1);
 });
 
@@ -523,14 +536,15 @@ test('Q6 a task takeover that is not a boolean → the whole message gets bad-me
   claimOk(h, 'a', x.id, 1);
   const before = h.describe();
   for (const takeover of ['yes', 1, 0, {}, [], 'false']) {
-    // 只有第二个任务的 takeover 不合法：整条不生效（第一个带合法 takeover 的也不接手）
+    // Only the second task has invalid takeover: entire batch fails to take effect (first task
+    // with valid takeover also does not take over)
     const out = h.publish('q', [{ ...snap('ck1', FP_B, 0), takeover: true }, { ...snap('ck3', FP_B, 0), takeover }], { reqId: 'bt' });
     const e = out.one('q', 'error');
     assert.deepEqual([e.reason, e.reqId], ['bad-message', 'bt'], `takeover = ${JSON.stringify(takeover)}`);
     assert.equal(out.of('q', 'task.published').length, 0);
     assert.deepEqual(h.describe(), before, `takeover = ${JSON.stringify(takeover)}: state unchanged (no task created, no takeover)`);
   }
-  // 合法的布尔：任务里不存 takeover
+  // Valid boolean: takeover is not stored in the task
   const y = snap('ck1', FP_B, 60);
   const out = h.publish('q', tk([y], true));
   const opened = out.ofType('task.opened').map(e => e.message.task).filter(t => t.id === y.id);
@@ -584,7 +598,7 @@ test('Q7 lock reclamation: not deleted while a task still references it, however
   assert.ok(h.task(x.id), 'open tasks do not expire');
   assert.ok(lockOf(h, 'snapshot:ck1'), 'referenced by an open task: the lock is not deleted');
 
-  // 另一把没人引用的锁：中途刷新一次，按新的 touchedAt 算
+  // Another unreferenced lock: refreshed once halfway through, evaluated by new touchedAt
   cardLock(h, 'q', { kind: 'stream', contentKey: 'sk', envFingerprint: FP_A });
   const t0 = h.now();
   h.at(t0 + TTL - 10);
@@ -629,15 +643,15 @@ test('Q8 shape and ordering of describe().locks (by lockKey), returns a deep cop
     assert.deepEqual(Object.keys(l).sort(), ['envFingerprint', 'lockKey', 'since', 'source', 'touchedAt']);
   }
   assert.deepEqual(list[0], { lockKey: 'snapshot:aa', envFingerprint: FP_C, source: 'lock', since: T0 + 2, touchedAt: T0 + 2 });
-  // 深拷贝
+  // Deep copy
   list[0].envFingerprint = 'mutated';
   list.pop();
   assert.equal(h.describe().locks[0].envFingerprint, FP_C);
   assert.equal(h.describe().locks.length, 3);
-  // 描述里的其它部分照旧（A.10）
+  // Other parts in description remain unchanged (A.10)
   assert.ok(Array.isArray(h.describe().tasks) && Array.isArray(h.describe().nodes) && Array.isArray(h.describe().publishers));
 
-  // 队列重启：新实例、新 epoch，锁只在内存里
+  // Queue restarted: new instance, new epoch, locks are in-memory only
   const h2 = createQueueHarness(createRenderQueue, { epoch: 'epoch-2', constants: { PREFILTER: false } });
   assert.deepEqual(h2.describe().locks, []);
   assert.equal(h2.describe().epoch, 'epoch-2');
@@ -645,7 +659,7 @@ test('Q8 shape and ordering of describe().locks (by lockKey), returns a deep cop
   h2.node('b', 'node-B', { hello: { envFingerprint: FP_B } });
   const y = snap('bb', FP_A, 0);
   h2.publish('p', [y]);
-  claimOk(h2, 'b', y.id, 1);   // 上一个实例里 bb 锁在 B 上，这里没有锁、谁先认领谁锁
+  claimOk(h2, 'b', y.id, 1);   // In previous instance bb was locked to B; here there is no lock, first to claim gets the lock
   assert.deepEqual(h2.describe().locks.map(l => [l.lockKey, l.envFingerprint, l.source]), [['snapshot:bb', FP_A, 'claim']]);
 });
 
@@ -654,10 +668,10 @@ test('Q8 shape and ordering of describe().locks (by lockKey), returns a deep cop
 test('Q9 tasks without input.contentKey or without requires.envFingerprint create no lock and are not affected by locks', () => {
   const h = setup();
   cardLock(h, 'p', { kind: 'snapshot', contentKey: 'ck1', envFingerprint: FP_A });
-  const noFp = snap('ck1', FP_B, 0, { requires: {} });                                  // 有锁键、没锁指纹
-  const emptyFp = snap('ck1', FP_B, 60, { requires: { envFingerprint: '' } });          // 锁指纹空串
-  const noCk = snap('ck1', FP_B, 120, { input: { clipId: 'c' } });                       // 没锁键
-  const emptyCk = snap('ck1', FP_B, 180, { input: { clipId: 'c', contentKey: '' } });   // 锁键空串
+  const noFp = snap('ck1', FP_B, 0, { requires: {} });                                  // Has lock key, no lock fingerprint
+  const emptyFp = snap('ck1', FP_B, 60, { requires: { envFingerprint: '' } });          // Lock fingerprint is empty string
+  const noCk = snap('ck1', FP_B, 120, { input: { clipId: 'c' } });                       // No lock key
+  const emptyCk = snap('ck1', FP_B, 180, { input: { clipId: 'c', contentKey: '' } });   // Lock key is empty string
   const plan = makeTaskInput({ kind: 'plan', projectId: 'p1', projectRev: 3, requires: { envFingerprint: FP_B }, input: { contentKey: 'ck1' } });
   const tasks = [noFp, emptyFp, noCk, emptyCk];
   const results = published(h.publish('q', tk([...tasks, plan], true)), 'q');
@@ -669,7 +683,7 @@ test('Q9 tasks without input.contentKey or without requires.envFingerprint creat
   assert.deepEqual(h.describe().locks.map(l => [l.lockKey, l.envFingerprint, l.source, l.touchedAt]), [['snapshot:ck1', FP_A, 'lock', T0]],
     'claiming them creates no lock and refreshes no lock');
 
-  // 空表：这些任务认领都不建锁
+  // Empty table: claiming these tasks creates no lock
   const h2 = setup();
   const more = [snap('k1', FP_A, 0, { requires: {} }), snap('k2', FP_A, 0, { input: { clipId: 'c' } })];
   h2.publish('p', more);

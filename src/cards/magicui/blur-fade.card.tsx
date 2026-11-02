@@ -28,7 +28,8 @@ export const blurFadeCard: CardDef<Params> = {
   useWhen: "Magic UI's whole-block blur fade. For the rhythm of word chunks fading in one by one, prefer blur-text.",
   tags: ["fade-in","blur","Text"],
   source: "magicui",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: { text: "你好世界", accent: "", position: "center" },
   controls: [

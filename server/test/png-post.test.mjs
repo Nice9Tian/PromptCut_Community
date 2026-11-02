@@ -1,4 +1,5 @@
-// 渲染 worker 里做的像素活(server/png-post.mjs):缩图、压底色、数透明像素、合成素材层
+// Pixel work done in the render worker (server/png-post.mjs): resize, underlay background
+// color, count transparent pixels, composite asset layer
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -23,7 +24,7 @@ test("shrink scales proportionally so the long edge is MAX_EDGE, and the output 
   assert.equal(width, MAX_EDGE);
   assert.equal(height, Math.round(1080 * (MAX_EDGE / 1920)));
   assert.equal(out.data[3], 255);
-  assert.equal(out.data[0], 255); // 全盖住的地方看不到棋盘格
+  assert.equal(out.data[0], 255); // Checkerboard is not visible where fully covered
 });
 
 test("shrink: fully transparent areas get a checkerboard (not black)", () => {
@@ -58,7 +59,7 @@ test("postFrame: the media layer goes under the card, then composite the backgro
   const dir = tmpDir();
   const cards = path.join(dir, "c.png");
   const layer = path.join(dir, "l.png");
-  // 卡片只盖左半边(蓝),素材层铺满(绿)
+  // Card covers only the left half (blue), asset layer fills completely (green)
   fs.writeFileSync(cards, PNG.sync.write(png(4, 2, (d, o, x) => { if (x < 2) { d[o + 2] = 255; d[o + 3] = 255; } })));
   fs.writeFileSync(layer, PNG.sync.write(png(4, 2, (d, o) => { d[o + 1] = 255; d[o + 3] = 255; })));
   const out = path.join(dir, "o.png");
@@ -66,8 +67,8 @@ test("postFrame: the media layer goes under the card, then composite the backgro
   assert.equal(r.width, 4);
   assert.equal(r.transparentRatio, 0);
   const img = PNG.sync.read(fs.readFileSync(out));
-  assert.deepEqual([...img.data.subarray(0, 4)], [0, 0, 255, 255]); // 卡片在上
-  assert.deepEqual([...img.data.subarray(12, 16)], [0, 255, 0, 255]); // 右边露出素材
+  assert.deepEqual([...img.data.subarray(0, 4)], [0, 0, 255, 255]); // Card is on top
+  assert.deepEqual([...img.data.subarray(12, 16)], [0, 255, 0, 255]); // Asset is exposed on the right
 });
 
 test("postFrame: the order of bg + stats is the same as before (composite the background color first, then count)", async () => {

@@ -59,8 +59,8 @@ export const cardsTools = [
       },
       required: ["clipId"]
     },
-    // 不放宽超时:片段会被挪到 0.5 秒的起跑线上再渲(见 vite-plugin-cards 的 /api/cards/dom),
-    // 不管它排在时间轴哪里都只推几十帧,远在桥的默认 60 秒以内
+    // Do not relax timeout: clip is moved to 0.5s starting line before rendering (see /api/cards/dom in vite-plugin-cards),
+    // no matter where it sits on timeline only dozens of frames pushed, well within bridge default 60s
     side: "agent"
   },
   {
@@ -117,7 +117,7 @@ export const cardsTools = [
       required: ["clipId"],
     },
     side: "agent",
-    // 和 see_frames 一样要当场起一个 Chrome 渲一帧
+    // Like see_frames, launches a Chrome instance on the spot to render a single frame
     timeoutMs: 150000
   }
 ];

@@ -1,13 +1,20 @@
 /**
- * 让模型第一眼就看见别的剪辑里的片段 id(线上 2026-10-21:工具说明与系统提示词都写了「改别的剪辑里的片段不用 switch_cut」,
- * 新对话里模型仍 switch_cut -> update_clip -> switch_cut,两次尝试两次如此;它先读的 get_project / timeline 只有激活剪辑,
- * 切过去是它「看进」剪辑2 的办法)。钉住:
- *   - get_project 最前面有 parkedCuts(停放剪辑的片段索引,不带 params),单剪辑项目没有;
- *   - list_cuts 不带 cutId 也有 parkedCuts,带 cutId 时给那条的 timeline、不重复;
- *   - 工具回包的 timeline 有 otherCuts 提示(只在别的剪辑有内容时),就地改停放剪辑时的回包没有(视图是颠倒的);
- *   - switch_cut 的回包 note 说明切换会让所有成员的界面翻、改已有片段不需要它;
- *   - 一个照着工具回包办事的「模型」(只读 get_project 的 parkedCuts 找片段)全程不 switch_cut 就改成了停放剪辑里的片段。
- * 跑:node --experimental-test-module-mocks --test src/mcp/handlers/parkedCutOverview.test.mjs
+ * Let the model see clip ids in other cuts at first glance (production, 2026-10-21: tool
+ * descriptions and system prompts both stated "editing clips in other cuts does not require
+ * switch_cut", yet in new chats the model still did switch_cut -> update_clip -> switch_cut,
+ * twice across two attempts; the get_project / timeline it reads first only had the active cut,
+ * so switching over was its way of "looking into" cut 2). Pin down:
+ *   - get_project includes parkedCuts at the very top (clip index for parked cuts, without
+ *     params), while single-cut projects do not;
+ *   - list_cuts without cutId also includes parkedCuts; with cutId it returns that cut's timeline
+ *     without duplication;
+ *   - Tool response timeline includes an otherCuts hint (only when other cuts have content);
+ *     responses when editing a parked cut in place do not (the view would be inverted);
+ *   - The switch_cut response note explains that switching flips the UI for all members, and
+ *     editing existing clips does not require it;
+ *   - A "model" acting strictly on tool responses (only reading parkedCuts from get_project to find
+ *     clips) modifies clips in parked cuts without ever calling switch_cut.
+ * Run: node --experimental-test-module-mocks --test src/mcp/handlers/parkedCutOverview.test.mjs
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test, { mock } from "node:test";
@@ -128,9 +135,11 @@ test("System prompt: the multi-cut section opens by saying not to use switch_cut
 });
 
 /**
- * 一个照着工具回包办事的「模型」:用户说「把剪辑2里「粒子背景」卡的粒子数量改成 120」,激活的是剪辑1。
- * 它只能靠读到的 JSON 决定下一步 —— 先 get_project,找 parkedCuts 里标签 / 卡名对得上的片段,再 update_clip。
- * 记下它调过的工具:不许出现 switch_cut。
+ * A "model" acting strictly on tool responses: user says "change particle count of the "Particle
+ * Background" card in cut 2 to 120", with cut 1 active.
+ * It can only decide next steps based on the JSON it reads: first get_project, find the clip in
+ * parkedCuts matching the label / card name, then update_clip.
+ * Record the tools it invoked: switch_cut is not allowed to appear.
  */
 function mockModel(userText) {
   const calls = [];
@@ -145,7 +154,8 @@ function mockModel(userText) {
     hit = cut.clips.find((c) => c.label === wantCard || c.cardName === wantCard) ?? null;
   }
   if (!hit) {
-    // 没找到才会想到去切 —— 这条路径就是线上观察到的行为,测试要求不要走到
+    // Only thinks of switching if not found: this path is the behavior observed in production,
+    // which the test requires avoiding
     run("user_interface_switch_cut", { name: wantCut });
     throw new Error("The model did not find the parked cut's clip in get_project");
   }

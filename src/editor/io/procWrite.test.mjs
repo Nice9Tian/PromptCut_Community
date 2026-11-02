@@ -1,18 +1,23 @@
 /**
- * `.proc` 写盘那一步(`proc.ts` 的 `writeProcToDisk`):收预渲染快照、写临时副本、出错不碰原文件。
- * 跑:node --experimental-test-module-mocks --test src/editor/io/procWrite.test.mjs
+ * The `.proc` disk-write step (`writeProcToDisk` in `proc.ts`): collects prerender snapshots,
+ * writes temporary replica, and does not touch original file on error.
+ * Run: node --experimental-test-module-mocks --test src/editor/io/procWrite.test.mjs
  *
- * 钉死:
- *   - 渲染(预渲染快照)等到时限还没收到:项目照存(快照是可丢的缓存),但结果里标出这次没带快照、保存流程告诉用户 —— 不静默放过;
+ * Enforce:
+ *   - Rendering (prerender snapshot) not received by timeout: project is saved anyway (snapshots
+ *     are disposable cache), but result flags that no snapshot was included, and the save flow
+ *     notifies the user: do not silently pass;
  *
- * 文件句柄是假的:`createWritable` 回的流照浏览器的规矩办(写进临时副本,`close` 才替换原文件,`abort` 丢掉临时副本)。
- * 真浏览器里这条规矩成不成立由探针 `scripts/probes/save-state-probe.mjs --phases fail` 验。
+ * Fake file handle: the stream returned by `createWritable` follows browser rules (writes to a
+ * temporary replica, replaces original file only on `close`, discards temporary replica on `abort`).
+ * Whether this rule holds in real browsers is verified by probe
+ * `scripts/probes/save-state-probe.mjs --phases fail`.
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 
-/** 预渲染快照这次怎么回:ok 立刻回;hang 一直不回(等到时限) */
+/** How prerender snapshot responds this time: ok returns immediately; hang never returns (waits until timeout) */
 let archiveMode = "ok";
 mock.module(srcUrl("render/frameClient.ts"), {
   namedExports: {
@@ -25,7 +30,7 @@ mock.module(srcUrl("render/frameClient.ts"), {
   },
 });
 
-/** 照浏览器规矩办的假文件:内容在 `bytes`,流写进临时副本 */
+/** Fake file following browser rules: content in `bytes`, stream writes into temporary replica */
 function fakeFile(name, initial = "") {
   const file = { name, kind: "file", bytes: initial, swaps: 0, log: [] };
   file.createWritable = async () => {
@@ -101,7 +106,7 @@ test("The prerender snapshots were not received by the time limit: the project i
   archiveMode = "ok";
 });
 
-/* ── 写到一半失败:旧保存不能被覆盖 ── */
+/* ── Failed halfway through write: old save must not be overwritten ── */
 
 test("Error halfway through writing: the original file is byte-for-byte unchanged, the temporary copy is discarded (abort), and there is no close", async () => {
   archiveMode = "ok";

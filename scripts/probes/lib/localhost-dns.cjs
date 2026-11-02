@@ -1,14 +1,18 @@
 /**
- * 让 Node 把 `*.localhost` 解析到回环(Chrome 本来就这么做,Node 在这台 Windows 上不行:`pc.localhost` 报 ENOTFOUND)。
+ * Makes Node resolve `*.localhost` to loopback (Chrome already does this, but Node fails on
+ * this Windows machine: `pc.localhost` reports ENOTFOUND).
  *
- * 为什么要:`lib/hosted-proxy.mjs` 的三个源是 `pc.localhost`、`s1.pc.localhost`、`s2.pc.localhost`(同站跨源才测得出隔离)。
- * 托管组合对外说的地址(`docPublicUrl`、`assetPublicUrl`)只有一个值,浏览器页面和 Node 这边的进程(桌面版 dev server、渲染主机、
- * 探针自己的 fetch / WebSocket)读的是同一个,所以 Node 这边也得认得这个主机名。只改本进程与探针自己起的子进程的解析,
- * 不动系统的 hosts、DNS、代理(约束「不动宿主机的网络」)。
+ * Why needed: the three origins in `lib/hosted-proxy.mjs` are `pc.localhost`, `s1.pc.localhost`,
+ * and `s2.pc.localhost` (only same-site cross-origin can properly test isolation).
+ * The publicly advertised addresses of the hosted stack (`docPublicUrl`, `assetPublicUrl`) have
+ * only one value; browser pages and Node-side processes (desktop app dev server, render host, the
+ * probe's own fetch / WebSocket) read the exact same value, so Node must also recognize this
+ * hostname. Only modifies resolution for this process and child processes launched by the probe,
+ * without touching system hosts, DNS, or proxies (constraint: "do not modify host machine network").
  *
- * 用法:
- *   探针进程自己:`import './lib/localhost-dns.cjs';`(放在别的 import 之前)
- *   探针起的 Node 子进程:`env.NODE_OPTIONS = withLocalhostDns(env.NODE_OPTIONS)`(`import { withLocalhostDns } from './lib/localhost-dns.cjs'`)
+ * Usage:
+ *   Probe process itself: `import './lib/localhost-dns.cjs';` (placed before other imports)
+ *   Node child processes launched by probe: `env.NODE_OPTIONS = withLocalhostDns(env.NODE_OPTIONS)` (`import { withLocalhostDns } from './lib/localhost-dns.cjs'`)
  */
 'use strict';
 const dns = require('node:dns');
@@ -41,7 +45,7 @@ if (!dns.lookup.__pcLocalhostPatched) {
   };
 }
 
-/** 给子进程的 `NODE_OPTIONS` 加上本文件的预加载(已经有就不重复) */
+/** Adds preloading of this file to the child process's `NODE_OPTIONS` (does not duplicate if already present). */
 function withLocalhostDns(nodeOptions) {
   const me = `--require=${__filename.replace(/\\/g, '/')}`;
   const cur = String(nodeOptions ?? '');

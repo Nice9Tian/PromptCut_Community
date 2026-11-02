@@ -1,12 +1,15 @@
 /**
- * 「2D 视角框」的几何。跑:node --test src/editor/preview/frustum2d.test.mjs
+ * Geometry of the "2D view frustum". Run: node --test src/editor/preview/frustum2d.test.mjs
  *
- * 要钉两样东西:
- *   - **形状**:它必须是一个尖在相机、底在画幅的四角锥,而不是几条戳出去的平行线;
- *   - **朝向**:y 翻没翻、相机在 +z 还是 -z。写反了不报错,只是框和卡对不上,
- *     而 3D 页正是靠这个框判断"哪边是正面",框自己是反的就全乱了。
+ * Two things must be pinned down:
+ *   - **Shape**: it must be a four-sided pyramid with apex at camera and base at aspect ratio,
+ *     not parallel lines poking out;
+ *   - **Orientation**: whether y is flipped, whether camera is at +z or -z. Inverting them throws
+ *     no error, but frustum and cards won't match, and the 3D page relies on this frustum to
+ *     judge "which side is front"; if the frustum itself is inverted, everything breaks.
  *
- * 判据不是把公式再抄一遍,而是拿 space3d 的 stageToWorld / cameraFor 当基准。
+ * The criterion is not copying formulas again, but using space3d's stageToWorld / cameraFor as
+ * the baseline.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -15,7 +18,7 @@ import { frustum2d } from "./frustum2d.ts";
 import { cameraFor, stageToWorld, perspectivePx, DEFAULT_FOV_DEG } from "../../kernel/space3d.ts";
 
 const STAGE = { width: 1920, height: 1080 };
-/** positions 每 6 个数一条线,拆回点对好断言 */
+/** positions has 6 numbers per line; unpack back into point pairs for assertion */
 const segments = (f) => {
   const out = [];
   for (let i = 0; i < f.positions.length; i += 6) out.push([f.positions.slice(i, i + 3), f.positions.slice(i + 3, i + 6)]);
@@ -57,13 +60,13 @@ test("The shape is a rectangular pyramid: four base edges + four lateral edges, 
   assert.equal(segs.length, 8, "4 base edges + 4 lateral edges");
   assert.equal(f.positions.length, 8 * 6);
 
-  // 底面:首尾相接绕一圈,而且全在 z=0
+  // Base: loops around end-to-end, and all at z=0
   for (let i = 0; i < 4; i++) {
     assert.deepEqual(segs[i][0], f.corners[i]);
     assert.deepEqual(segs[i][1], f.corners[(i + 1) % 4]);
     assert.equal(segs[i][0][2], 0);
   }
-  // 四条棱:都从相机出发,分别落到四个角
+  // Four edges: all start from camera and land at the four corners respectively
   const edges = segs.slice(4);
   for (const [a] of edges) assert.deepEqual(a, f.apex, "Every lateral edge should start from the apex");
   assert.deepEqual(edges.map(([, b]) => b), f.corners, "The four lateral edges land exactly on the four corners, with no duplicates or omissions");
@@ -74,7 +77,7 @@ test("There **must not** be parallel lines: that is what was drawn before when \
     const f = frustum2d(STAGE, fov);
     const edges = segments(f).slice(4);
     const dirs = edges.map(([a, b]) => [b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
-    // 四条棱两两不平行:锥的棱必然是发散的
+    // Four edges are pairwise non-parallel: edges of a pyramid must diverge
     for (let i = 0; i < dirs.length; i++) {
       for (let j = i + 1; j < dirs.length; j++) {
         const cross = [
@@ -85,7 +88,7 @@ test("There **must not** be parallel lines: that is what was drawn before when \
         assert.ok(Math.hypot(...cross) > 1e-6, `At fov=${fov}, lateral edges ${i} and ${j} are parallel: that is not a pyramid`);
       }
     }
-    // 而且都指向 -z(从相机看向屏幕)
+    // And all point toward -z (looking from camera toward screen)
     for (const d of dirs) assert.ok(d[2] < 0, "The lateral edges should go from the camera toward the screen");
   }
 });
@@ -96,8 +99,9 @@ test("When fov is not set, the default 40° is used, consistent with how Scene3D
   assert.deepEqual(frustum2d(STAGE, null).apex, def.apex, "null also counts as not set");
   assert.deepEqual(frustum2d(STAGE, NaN).apex, def.apex, "A non-number also counts as not set");
   /*
-   * 这条是防一个具体的坑:clampFov(null) 会把 null 当成 0,再夹到下限 5° ——
-   * 那是极窄的长焦,相机被推到十几倍画幅远,锥细得像根针,看着就像四条平行线。
+   * This guards against a specific pitfall: clampFov(null) treats null as 0, then clamps to the 5°
+   * lower bound: that is an extremely narrow telephoto lens, pushing the camera more than ten times
+   * the aspect ratio away, with the frustum thin as a needle, looking just like four parallel lines.
    */
   assert.notDeepEqual(def.apex, cameraFor(STAGE, 5).position, "null must not be treated as 0 and then clamped to 5°");
   assert.ok(def.apex[2] < perspectivePx(STAGE, 5) / 2, "The default camera position should be at a normal distance, not as far as a telephoto");

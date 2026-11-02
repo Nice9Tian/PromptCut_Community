@@ -1,19 +1,29 @@
 /**
- * M7「纯浏览器节点」队列与凭证一侧（契约 `docs/plan/m7-contract.md`，按第 13 节主会话裁定）。
- * 跑：node --experimental-test-module-mocks --test server/test/m7-queue.test.mjs
+ * M7 "pure browser node" queue and credential side (contract `docs/plan/m7-contract.md`, per
+ * Section 13 lead session ruling).
+ * Run: node --experimental-test-module-mocks --test server/test/m7-queue.test.mjs
  *
- *   M7Q-D1  切分方对浏览器可做的卡按两种指纹各出一份（`splitPlan` 的 `browserFingerprints`）；
- *           浏览器指纹以文档服务上本项目在线、同一用户的 browser 节点为准（plan 的 `task.claimed` 带 `browserFingerprints`）；
- *           建锁时作废另一份（`input.dual` 为真、还 open 的异指纹任务）；作废过的任务可以重新发布
- *   M7Q-D2  锁闲置接手：回包带 `lockIdleMs` / `lockedByProfile`（另带 `lockUndone`）；续约刷新 `touchedAt`；
- *           切分方闲置超 30 s、锁定方还没做完才带 takeover 重发（`idleLockTakeover`）
- *   M7Q-D9  render 票据的 `owner: { kind: 'browser' }`：队列模块固定 profile；nodeId 绑到 userId
- *   M7Q-D10 页面报原始环境值，队列模块按 describeEnvironment 算指纹、node.welcome 回给页面
- *   M7Q-D14 非 Chromium 内核的浏览器拒当节点（`not-chromium`）
- *   M7Q-D12 层表 v 3：每层带候选；页面读 v 2 时当作一个候选
- *   M7Q-D11 `session.mjs` 与细任务编排（`task-runner.mjs`）不引 `node:` 内置模块、不引 `split.mjs` / 队列本体
+ *   M7Q-D1  Splitter issues one copy for each of two fingerprints for cards the browser can do
+ *           (`browserFingerprints` of `splitPlan`); browser fingerprints are determined by online
+ *           browser nodes of the same user on the document service for this project (`task.claimed`
+ *           of plan includes `browserFingerprints`); invalidates the other copy upon lock creation
+ *           (still open tasks with different fingerprints where `input.dual` is true); previously
+ *           invalidated tasks can be republished
+ *   M7Q-D2  Idle lock takeover: response includes `lockIdleMs` / `lockedByProfile` (also includes
+ *           `lockUndone`); lease renewal refreshes `touchedAt`; splitter re-issues with takeover
+ *           only if idle for over 30 s and locking party has not finished (`idleLockTakeover`)
+ *   M7Q-D9  `owner: { kind: 'browser' }` for render tickets: queue module fixes profile; nodeId
+ *           binds to userId
+ *   M7Q-D10 Page reports raw environment values; queue module computes fingerprint via
+ *           describeEnvironment and returns node.welcome to the page
+ *   M7Q-D14 Browsers with non-Chromium engines refuse to act as nodes (`not-chromium`)
+ *   M7Q-D12 Layer table v3: each layer includes candidates; page reading v2 treats it as a single
+ *           candidate
+ *   M7Q-D11 `session.mjs` and fine-grained task orchestration (`task-runner.mjs`) do not import
+ *           `node:` built-in modules or `split.mjs` / queue itself
  *
- * 结果键、指纹用 `node:crypto` 自己算，不借实现。
+ * Result keys and fingerprints are computed independently with `node:crypto`, not borrowed from
+ * implementation.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -38,12 +48,12 @@ const { describeEnvironment } = fingerprintModule;
 const sha256 = (text) => crypto.createHash('sha256').update(text, 'utf8').digest('hex');
 const rk = (contentKey, fp) => sha256(`${contentKey}\n${fp}`);
 
-const P = 'pppppppppppppppp';    // 切分方（pc / host）自己的指纹
-const B = 'bbbbbbbbbbbbbbbb';    // 浏览器的指纹
-const X = 'xxxxxxxxxxxxxxxx';    // 第三种环境
+const P = 'pppppppppppppppp';    // Splitter's own fingerprint (pc / host)
+const B = 'bbbbbbbbbbbbbbbb';    // Browser's fingerprint
+const X = 'xxxxxxxxxxxxxxxx';    // Third environment
 const CV = 'c0de5a';
 
-/* ================================================================== 切分（D1） */
+/* ================================================================== Splitting (D1) */
 
 const SHARED_INDEPENDENT = { frameMode: 'stateful', compositing: 'independent' };
 
@@ -106,7 +116,7 @@ test('M7Q-D1-S2 a card the browser can render: its own copy is emitted first, th
     assert.equal(t.requires.graphCards, false);
     assert.equal('takeover' in t, false);
   }
-  // 同一段两份的优先级一样（锚帧照旧）
+  // Both copies of the same segment have equal priority (anchor frame as usual)
   assert.deepEqual(own.map((t) => t.priority), browser.map((t) => t.priority));
 });
 
@@ -149,12 +159,12 @@ test('M7Q-D1-S5 a locked card emits one copy as the lock dictates: if the lock i
   assert.deepEqual(onP.map((t) => t.requires.envFingerprint), [P]);
   const onX = splitPlan(splitArgs({ cardPlan: [a], browserFingerprints: [B], cardLocks: { [lockKey]: X } }));
   assert.deepEqual(onX.map((t) => t.requires.envFingerprint), [X]);
-  // 接手：锁在 B 上、接手 → 只出自己那一份，带 takeover
+  // Takeover: lock is on B, takeover → only issue its own copy, with takeover
   const take = splitPlan(splitArgs({ cardPlan: [a], browserFingerprints: [B], cardLocks: { [lockKey]: B }, takeover: true }));
   assert.deepEqual(take.map((t) => [t.requires.envFingerprint, t.takeover]), [[P, true]]);
 });
 
-/* ================================================================== 队列（D1、D2、D9） */
+/* ================================================================== Queue (D1, D2, D9) */
 
 function snap(ck, fp, from = 0, { to = from + 59, projectId = 'p1', dual = false, input, ...rest } = {}) {
   return makeTaskInput({
@@ -165,7 +175,7 @@ function snap(ck, fp, from = 0, { to = from + 59, projectId = 'p1', dual = false
   });
 }
 
-/** 发布方 p（u1）、切分节点 pc（指纹 P）、同用户的浏览器节点 bw（指纹 B，只 watch p1） */
+/** Publisher p (u1), splitter node pc (fingerprint P), same user's browser node bw (fingerprint B, only watches p1) */
 function setup() {
   const h = createQueueHarness(createRenderQueue);
   h.publisher('p', 'pub-p');
@@ -178,16 +188,16 @@ const published = (out, conn) => out.one(conn, 'task.published').results;
 
 test('M7Q-D1-Q1 task.claimed of a plan carries the fingerprints of the browser nodes that are online in this project, belong to the same user and are watching it; if there are none, this field is omitted', () => {
   const h = setup();
-  // 别的用户的浏览器、没 watch 这个项目的浏览器、pc 节点都不算
+  // Browsers of other users, browsers not watching this project, and pc nodes do not count
   h.node('bw2', 'node-bw2', { profile: 'browser', userId: 'u2', watch: ['p1'], hello: { envFingerprint: X } });
   h.node('bw3', 'node-bw3', { profile: 'browser', watch: ['other'], hello: { envFingerprint: X } });
-  h.node('bw4', 'node-bw4', { profile: 'browser', watch: ['p1'], hello: { envFingerprint: B } });   // 同指纹去重
+  h.node('bw4', 'node-bw4', { profile: 'browser', watch: ['p1'], hello: { envFingerprint: B } });   // Deduplicate identical fingerprints
   const plan = clipsPlanTaskOf({ projectId: 'p1', projectRev: 2, clips: ['a'], codeVersion: CV });
   h.publish('p', [plan]);
   const claimed = h.claim('pc', plan.id, 1).one('pc', 'task.claimed');
   assert.deepEqual(claimed.browserFingerprints, [B]);
 
-  // 浏览器节点断开之后：不带
+  // After browser node disconnects: not included
   const h2 = setup();
   h2.disconnect('bw');
   h2.publish('p', [plan]);
@@ -199,7 +209,7 @@ test('M7Q-D1-Q2 when both copies are open and the splitter claims its own copy a
   const h = setup();
   const own0 = snap('ck1', P, 0, { dual: true }), own1 = snap('ck1', P, 60, { dual: true });
   const br0 = snap('ck1', B, 0, { dual: true }), br1 = snap('ck1', B, 60, { dual: true });
-  const other = snap('ck2', B, 0, { dual: true });   // 别的卡不受影响
+  const other = snap('ck2', B, 0, { dual: true });   // Other cards are unaffected
   h.publish('p', [own0, own1, br0, br1, other]);
   const out = h.claim('pc', own0.id, 1);
   assert.ok(out.one('pc', 'task.claimed'));
@@ -216,7 +226,7 @@ test('M7Q-D1-Q3 browser claims first: the splitter copy (dual) is voided; behavi
   const h = setup();
   const own0 = snap('ck1', P, 0, { dual: true });
   const br0 = snap('ck1', B, 0, { dual: true });
-  const legacy = snap('ck1', X, 60);   // 不带 dual：留着（被锁挡住，行为同改动之前）
+  const legacy = snap('ck1', X, 60);   // Without dual: retained (blocked by lock, behavior identical to before change)
   h.publish('p', [own0, br0, legacy]);
   assert.ok(h.claim('bw', br0.id, 1).one('bw', 'task.claimed'));
   assert.deepEqual([h.task(own0.id).state, h.task(own0.id).lastError], ['failed', 'superseded']);
@@ -258,7 +268,7 @@ test('M7Q-D2-L2 claim rejected by a lock (card-locked): the response carries loc
   h.publish('p', [own0, br0]);
   h.claim('bw', br0.id, 1);
   h.clock.advance(12_000);
-  // 前置过滤把 own0 对 pc 藏了起来，但 pc 仍可能拿着旧视图来认领
+  // Pre-filtering hides own0 from pc, but pc may still claim with an outdated view
   const rej = h.claim('pc', own0.id, 1).one('pc', 'task.claim-rejected');
   assert.equal(rej.reason, 'card-locked');
   assert.equal(rej.lockedBy, B);
@@ -275,7 +285,7 @@ test('M7Q-D2-L3 lease renewal (task.progress) also refreshes touchedAt of the lo
   h.progress('bw', br0.id, c.token, 5);
   assert.equal(h.describe().locks.find((l) => l.lockKey === 'snapshot:ck1').touchedAt, T0 + 20_000);
   h.clock.advance(7_000);
-  h.progress('bw', br0.id, c.token, 5);   // done 没变也刷新
+  h.progress('bw', br0.id, c.token, 5);   // Also refreshes when done has not changed
   assert.equal(h.describe().locks.find((l) => l.lockKey === 'snapshot:ck1').touchedAt, T0 + 27_000);
 });
 
@@ -298,7 +308,7 @@ test('M7Q-D9-Q5 the same nodeId cannot be checked in by a different userId (answ
   assert.equal(out.of('evil', 'node.welcome').length, 0);
   assert.equal(h.nodeInfo('node-bw').profile, 'browser');
   assert.equal(h.nodeInfo('node-bw').connected, true);
-  // 同一个 userId 换连接照旧取代
+  // Same userId replacing connection still supersedes as usual
   const again = h.node('bw-new', 'node-bw', { profile: 'browser', watch: ['p1'], hello: { envFingerprint: B } });
   assert.ok(again.one('bw-new', 'node.welcome'));
 });
@@ -311,7 +321,7 @@ test('M7Q-D10-Q6 node.welcome returns the fingerprint of this node', () => {
   assert.equal(none.one('b', 'node.welcome').envFingerprint, null);
 });
 
-/* ================================================================== 队列模块（D9、D10、D14） */
+/* ================================================================== Queue module (D9, D10, D14) */
 
 const UA_CHROME = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
 const UA_EDGE = `${UA_CHROME} Edg/138.0.3351.65`;
@@ -420,9 +430,9 @@ test('M7Q-D9-A1 ownership gains one more kind, { kind: browser } (auth-contract 
   assert.deepEqual(normalizeOwner({ kind: 'user' }), { kind: 'user' });
 });
 
-/* ================================================================== 切分方（local-node）：D1 接线、D2 接手、D12 写层表 */
+/* ================================================================== Splitter (local-node): D1 wiring, D2 takeover, D12 write layer table */
 
-/** 手动驱动的端点：发出的消息记下来，task.publish 由 `respond(tasks)` 决定回包 */
+/** Manually driven endpoint: sent messages are recorded; task.publish response is determined by `respond(tasks)` */
 function scriptedEndpoint(respond) {
   let handler = () => {};
   const sent = [];
@@ -520,7 +530,7 @@ test('M7Q-D12-N3 after splitting, the fine-grained tasks that were finally publi
   assert.deepEqual(calls[0].info.tasks.map((t) => [t.requires.envFingerprint, t.resultKey]), [[B, rk('ck-a', B)]]);
 });
 
-/* ================================================================== 层表 v 3（D12） */
+/* ================================================================== Layer table v 3 (D12) */
 
 function entryWith(controls) {
   return { key: 'entry-1', project: { id: 'doc-1', fps: 30, width: 1920, height: 1080 }, cardPlan: controls };
@@ -566,7 +576,7 @@ test('M7Q-D12-T4 splitCandidatesOf: collects, by content key, the fingerprints t
   assert.deepEqual([...got.entries()], [['ck-a', [P, B]]]);
 });
 
-/* ================================================================== D11：页面要用的节点模块不牵进 node: 内置模块 */
+/* ================================================================== D11: Node modules used by page do not pull in node: built-ins */
 
 const serverDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SPEC = [
@@ -616,9 +626,9 @@ test('M7Q-D11-G3 local-node arranges fine-grained tasks with task-runner (the de
   assert.match(text, /from '\.\/task-runner\.mjs'/);
 });
 
-/* ================================================================== 进程内：真队列 + 真切分方（pc 的 local-node） */
+/* ================================================================== In-process: real queue + real splitter (pc's local-node) */
 
-/** 同步直连：队列的 send 按 connId 交给注册的收件函数 */
+/** Synchronous direct connection: queue send delivers to registered recipient function by connId */
 function inproc() {
   let t = T0;
   const routes = new Map();
@@ -634,12 +644,12 @@ function inproc() {
 function pcSplitter(env, { cardPlan, afterSplit, cardLocks } = {}) {
   const endpoint = env.endpointOf('pc', { userId: 'rig@pc', tenantId: 't1' });
   const executor = {
-    // cardLocks:执行器(本机锁库)已知的锁,切分照它出键(契约 F.2)
+    // cardLocks: locks known to executor (local lock store); splitting issues keys accordingly (contract F.2)
     plan: async () => ({ entryKey: 'entry-1', cardPlan, weightOf, anchorFrames: [], ...(cardLocks ? { cardLocks } : {}) }),
     render: async () => null,
     ...(afterSplit ? { afterSplit } : {}),
   };
-  // 细任务不让 pc 做（isIdle 只在视图里有 plan 时为真），浏览器那份与锁的走向由测试掌握
+  // Fine-grained tasks not given to pc (isIdle true only when plan in view); test controls browser copy and lock progression
   const local = createLocalNode({
     nodeId: 'pc-1', node: { profile: 'pc', envFingerprint: P, codeVersions: [CV] }, endpoint, now: env.now, codeVersion: CV,
     executor, sink: { has: async () => false, put: async () => ({ complete: true }) },
@@ -676,17 +686,17 @@ test('M7Q-A10 in-process: the browser claims a segment and then goes away; at th
   assert.equal(brTasks.length, 2, JSON.stringify(d1.tasks.map((t) => t.id)));
   assert.equal(pcTasks.length, 2);
 
-  // 浏览器先认领第一段：锁到 B，切分方那份作废
+  // Browser claims first segment first: lock moves to B, splitter's copy is invalidated
   br.send({ type: 'task.claim', id: brTasks[0].id, expectVersion: 1 });
   assert.ok(env.of('br', 'task.claimed').some((m) => m.id === brTasks[0].id));
   for (const t of pcTasks) assert.equal(env.q.describe().tasks.find((x) => x.id === t.id).lastError, 'superseded');
 
-  // 浏览器走掉：宽限期过后它那段回到 open；锁还在 B 上
+  // Browser leaves: its segment returns to open after grace period; lock remains on B
   env.q.disconnect('br');
   env.advance(11_000);
   env.advance(5_000);
   assert.equal(env.q.describe().tasks.find((x) => x.id === brTasks[0].id).state, 'open');
-  // 离浏览器最后一次产出过了 30 s 以上，页面发布下一版计划
+  // Over 30 s since browser's last output; page publishes next version of plan
   env.advance(20_000);
   const plan2 = clipsPlanTaskOf({ projectId: 'p1', projectRev: 2, clips: ['a'], codeVersion: CV });
   page.send({ type: 'task.publish', tasks: [plan2] });
@@ -748,13 +758,13 @@ test('M7Q-D12-E1 executor afterSplit: records split candidates; a plan with a cl
   await exec.afterSplit(listPlan, { tasks });
   assert.deepEqual([...recorded[0].entries()], [['ck-a', [P, B]]]);
   assert.deepEqual(written, ['entry-1'], 'Written once after splitting completes');
-  // 不带片段清单的 plan：只记候选，不写层表
+  // Plan without clip manifest: records candidates only, does not write layer table
   await exec.afterSplit(planTaskOf({ projectId: 'proj-m7', projectRev: 4 }), { tasks });
   assert.equal(recorded.length, 2);
   assert.deepEqual(written, ['entry-1']);
 });
 
-/* ================================================================== M7-A10 真页面上查出的缺陷:切分方已知锁、照锁出键时从不接手 */
+/* ================================================================== M7-A10 Bug found on real page: splitter knows lock, never takes over when issuing keys per lock */
 
 test('M7Q-A10c queue: when a splitting node publishes per a lock on another fingerprint (merging into the task of the lock holder), the response also carries lockIdleMs / lockedByProfile / lockUndone, but not lockedBy', () => {
   const h = setup();
@@ -762,7 +772,7 @@ test('M7Q-A10c queue: when a splitting node publishes per a lock on another fing
   h.publish('p', [br0, br1]);
   h.claim('bw', br0.id, 1);
   h.clock.advance(40_000);
-  // pc（指纹 P）以自己的发布身份照锁发 B 那份
+  // pc (fingerprint P) publishes B's copy per lock under its own publisher identity
   h.handle('pc', { type: 'publisher.hello', publisherId: 'pub-pc' });
   const r = published(h.publish('pc', [br0, br1]), 'pc');
   for (const x of r) {
@@ -770,7 +780,7 @@ test('M7Q-A10c queue: when a splitting node publishes per a lock on another fing
     assert.equal('lockedBy' in x, false, 'The lock is on the fingerprint of this copy, so lockedBy is not carried');
     assert.deepEqual([x.lockIdleMs, x.lockedByProfile, x.lockUndone], [40_000, 'browser', 2], JSON.stringify(x));
   }
-  // 发布方不是节点、或节点指纹与锁相同：形状不变
+  // Publisher is not a node, or node fingerprint matches lock: shape unchanged
   const plain = published(h.publish('p', [br0]), 'p')[0];
   assert.equal('lockIdleMs' in plain, false, JSON.stringify(plain));
 });
@@ -824,9 +834,9 @@ test('M7Q-A10e in-process (a scenario from the real page): b1 goes away while ho
   env.advance(11_000); env.advance(5_000); env.advance(20_000);
   assert.equal(env.q.describe().tasks.find((x) => x.id === brTasks[0].id).state, 'open');
 
-  // pc 重启：本机锁库已知这张卡锁在 B 上（照锁出键）
+  // pc restarts: local lock store knows this card is locked on B (issues keys per lock)
   const pc2 = pcSplitter(env, { cardPlan: [a], cardLocks: { 'snapshot:ck-a': B } });
-  // 另一个用户的页面 b2，同指纹 B，在线、watch 本项目，发布计划
+  // Page b2 of another user, with same fingerprint B, online, watching this project, publishes plan
   const page2 = env.endpointOf('page2', { userId: 'yan@devB', tenantId: 't1' });
   page2.send({ type: 'publisher.hello', publisherId: 'pub-page2' });
   const b2 = env.endpointOf('b2', { userId: 'yan@devB', tenantId: 't1' });
@@ -848,7 +858,7 @@ test('M7Q-A10e in-process (a scenario from the real page): b1 goes away while ho
 
 test('M7Q-D1-Q5 the splitter copy was first built as a single copy and a later version arrives as dual copies: dual is added on merge; the browser copy claims first and is voided all the same', () => {
   const h = setup();
-  const own0 = snap('ck1', P, 0);                     // 页面报到之前那一版：单份
+  const own0 = snap('ck1', P, 0);                     // Version before page checked in: single copy
   h.publish('p', [own0]);
   const r = published(h.publish('p', [snap('ck1', P, 0, { dual: true }), snap('ck1', B, 0, { dual: true })]), 'p');
   assert.deepEqual(r.map((x) => [x.created, x.error]), [[false, undefined], [true, undefined]]);
@@ -862,7 +872,7 @@ test('M7Q-D1-Q6 when the lock is already on another fingerprint, the dual copy b
   const own0 = snap('ck1', P, 0);
   const br0 = snap('ck1', B, 0, { dual: true });
   h.publish('p', [own0, br0]);
-  h.claim('bw', br0.id, 1);                          // 锁到 B；own0 不带 dual，没被作废
+  h.claim('bw', br0.id, 1);                          // Lock moves to B; own0 lacks dual, not invalidated
   assert.equal(h.task(own0.id).state, 'open');
   const r = published(h.publish('p', [snap('ck1', P, 0, { dual: true })]), 'p')[0];
   assert.deepEqual([r.state, r.lockedBy], ['failed', B], JSON.stringify(r));
@@ -899,19 +909,19 @@ test('M7Q-D12-P1 the split candidates of the pipeline are persisted to disk: aft
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-/* ================================================================== 锚帧段先认领（笔记本 M7-A4 查出，主会话〔裁〕改契约 B.3） */
+/* ================================================================== Anchor frame segment claimed first (found on laptop M7-A4, lead session [ruling] amended contract B.3) */
 
 test('M7Q-PICK-1 an anchor-frame segment (50) and a normal segment (10) are claimable at the same time: pickCandidate always hands out the anchor-frame segment first, and within the same tier the pick is still random', async () => {
   const { pickCandidate } = await import('../render-node/pick.mjs');
   const t = (id, priority, publishedAt) => ({ id, priority, source: { projectId: 'p1', publishedAt } });
-  // 普通段发布得更早，前 4 名里混着两档
+  // Regular segments were published earlier; top 4 positions mix two tiers
   const tasks = [t('h1:60', 10, 1), t('h2:120', 10, 2), t('h1:0', 50, 3), t('h2:0', 50, 4), t('h3:60', 10, 5)];
   for (const r of [0, 0.3, 0.6, 0.99]) {
     const got = pickCandidate(tasks, { k: 4, random: () => r });
     assert.equal(got.priority, 50, `random=${r} picked ${got.id}`);
   }
   assert.deepEqual(new Set([0, 0.99].map((r) => pickCandidate(tasks, { k: 4, random: () => r }).id)), new Set(['h1:0', 'h2:0']), 'Still random within the same tier');
-  // 锚帧段都认领完：普通段照旧前 k 个里随机
+  // All anchor frame segments claimed: regular segments pick randomly from top k as usual
   const rest = tasks.filter((x) => x.priority === 10);
   assert.equal(pickCandidate(rest, { k: 4, random: () => 0.99 }).id, 'h3:60');
 });
@@ -919,7 +929,8 @@ test('M7Q-PICK-1 an anchor-frame segment (50) and a normal segment (10) are clai
 test('M7Q-PICK-2 within the same tier, plans come before fine-grained tasks (AGENT-m7-race): backlogged anchor-frame and normal segments all rank after a manifest plan published later; prerender retry plans still rank after all normal ones', async () => {
   const { pickCandidate, rankCandidates } = await import('../render-node/pick.mjs');
   const t = (id, priority, publishedAt, kind = 'snapshot') => ({ id, kind, priority, source: { projectId: 'p1', publishedAt } });
-  // pc 手里积压着接手来的重卡段（50、10），之后页面为新加的卡发布清单计划（'normal'，名次 0），还有一份预渲染重试计划
+  // pc holds a backlog of heavy card segments taken over (50, 10); then page publishes manifest plan
+  // for newly added cards ('normal', rank 0), plus a prerender retry plan
   const backlog = [t('z1:0', 50, 1), t('h1:60', 10, 2), t('h2:120', 10, 3), t('h3:180', 10, 4), t('z1:60', 10, 5)];
   const plan = t('plan:p@5#clips:w', 'normal', 9, 'plan');
   const backfillPlan = t('plan:p@5#backfill:w', 'backfill', 8, 'plan');
@@ -927,11 +938,11 @@ test('M7Q-PICK-2 within the same tier, plans come before fine-grained tasks (AGE
   const all = [...backlog, backfillFine, backfillPlan, plan];
   for (const r of [0, 0.3, 0.6, 0.99]) assert.equal(pickCandidate(all, { k: 4, random: () => r }).id, plan.id, `random=${r}`);
   assert.deepEqual(rankCandidates(all).map((x) => x.id), [plan.id, 'z1:0', 'h1:60', 'h2:120', 'h3:180', 'z1:60', backfillPlan.id, 'lite:0']);
-  // 计划认领走了：细任务照旧锚帧段先
+  // Plans have been claimed: fine-grained tasks still prioritize anchor frame segments as usual
   assert.equal(pickCandidate([...backlog, backfillPlan], { k: 4, random: () => 0.99 }).id, 'z1:0');
-  // 两份 normal 计划：照发布先后；只在计划里挑，不混进细任务
+  // Two normal plans: by publication order; chosen only among plans, not mixed with fine-grained tasks
   const plan4 = t('plan:p@4#clips:x', 'normal', 7, 'plan');
   assert.deepEqual(new Set([0, 0.99].map((r) => pickCandidate([...backlog, plan, plan4], { k: 4, random: () => r }).id)), new Set([plan4.id, plan.id]));
-  // normal 都没了才轮到预渲染重试：预渲染重试计划先于预渲染重试细任务
+  // Only turns to prerender retry once all normal are gone: prerender retry plan precedes prerender retry fine-grained tasks
   assert.equal(pickCandidate([backfillFine, backfillPlan], { k: 4, random: () => 0.99 }).id, backfillPlan.id);
 });

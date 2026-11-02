@@ -25,10 +25,17 @@ export type ApiVendor = "anthropic" | "openai" | "gemini";
 
 export type LoginState = "idle" | "waiting" | "ok" | "timeout" | "failed";
 
-/** API Key 的两路来源:自定义 API 里自己填的 / Router 分发密文导入的。各自加密、各自成文件,不混用 */
+/**
+ * The two sources of an API Key: the one filled in by hand under custom API / the one imported
+ * from a Router distribution string. Each is encrypted separately and kept in its own file; they
+ * are never mixed
+ */
 export type KeyKind = "custom" | "router";
 
-/** 一路的连接配置。model 用 | 分隔多个备选,面板输入框旁的模型选择器按它列 */
+/**
+ * The connection config of one source. model separates several alternatives with |, and the model
+ * selector beside the panel's input box lists them from it
+ */
 export interface ApiProfile {
   vendor: ApiVendor;
   baseUrl: string;
@@ -45,24 +52,32 @@ export interface PublicAiConfig {
     baseUrl: string;
     model: string;
     maxTokens: number;
-    /** 当前生效的那一路的 Key(脱敏) */
+    /** The Key of the source currently in effect (masked) */
     apiKey: KeyState;
-    /** 当前生效的是哪一路;没设 Key 时为空串 */
+    /** Which source is currently in effect; an empty string when no Key is set */
     source: KeyKind | "";
-    /** 两路各自的连接配置;上面的 vendor / baseUrl / model 是生效那一路的镜像。老服务端没有这个字段 */
+    /**
+     * The connection config of each of the two sources; the vendor / baseUrl / model above mirror the
+     * source in effect. Old servers do not have this field
+     */
     profiles?: Record<KeyKind, ApiProfile>;
   };
-  /** 两路各自存没存 Key */
+  /** Whether each of the two sources has a Key stored */
   keys: Record<KeyKind, KeyState>;
-  /** 三家 CLI 各自的可选模型清单,用 | 分隔 */
+  /** The selectable model list of each of the three CLIs, separated by | */
   cliModels: { claude: string; codex: string; agy: string };
   toolProtocol: boolean;
   /**
-   * 「深度自主」开着时这一次运行最多跑多少轮。**0 = 不限**。老服务端没有这个字段,
-   * 界面按 300 显示。没开深度自主时它不起作用,走各条路自己的常规上限。
+   * The maximum number of rounds a run may take when "deep autonomy" is on. **0 = unlimited**. Old
+   * servers do not have this field, and the UI displays it as 300. When deep autonomy is off it has no
+   * effect, and each route uses its own usual limit.
    */
   deepAutoRounds?: number;
-  /** CLI 额度熔断(Claude Code / Codex):任一用量窗口到 thresholdPercent 就中断;每新增 checkEveryBytes 字节重查。老服务端没有这个字段 */
+  /**
+   * CLI quota circuit breaker (Claude Code / Codex): interrupt when any usage window reaches
+   * thresholdPercent; recheck for every checkEveryBytes of new bytes. Old servers do not have this
+   * field
+   */
   quota?: QuotaConfig;
 }
 
@@ -72,7 +87,7 @@ export interface QuotaConfig {
   checkEveryBytes: number;
 }
 
-/** /api/ai/quota 返回的用量 */
+/** The usage returned by /api/ai/quota */
 export interface QuotaWindow {
   id: string;
   label: string;
@@ -101,14 +116,17 @@ export interface AiConfigPatch {
     model?: string;
     maxTokens?: number;
     apiKey?: string | null;
-    /** 这次的 Key 写进哪一路(缺省 custom);不带 apiKey 时表示切换生效的那一路 */
+    /**
+     * Which source this Key is written into (default custom); without apiKey it means switching which
+     * source is in effect
+     */
     source?: KeyKind | "";
-    /** 显式改某一路的连接配置,不受 source 影响 */
+    /** Explicitly change the connection config of a given source, independent of source */
     profiles?: Partial<Record<KeyKind, Partial<ApiProfile>>>;
   };
   cliModels?: Partial<{ claude: string; codex: string; agy: string }>;
   toolProtocol?: boolean;
-  /** 「深度自主」下的轮次上限;0 = 不限 */
+  /** Round limit under "deep autonomy"; 0 = unlimited */
   deepAutoRounds?: number;
   quota?: Partial<QuotaConfig>;
 }
@@ -123,7 +141,10 @@ export type RunEvent =
   | { type: "run"; runId: string }
   | { type: "session"; sessionId: string }
   | { type: "text"; delta: string }
-  /** 模型的思考过程。和正文分开走,默认不显示,勾了「显示思考」才渲染 */
+  /**
+   * The model's thinking process. It travels separately from the body text and is hidden by default;
+   * it is rendered only when "Show thinking" is checked
+   */
   | { type: "thinking"; delta: string; round?: number }
   | { type: "tool_call"; name: string; input?: unknown; callId?: string; round?: number }
   | { type: "tool_result"; name: string; ok: boolean; summary?: string; files?: string[]; callId?: string; output?: unknown; durationMs?: number; round?: number }
@@ -132,15 +153,18 @@ export type RunEvent =
   | { type: "status"; text: string }
   | { type: "done"; sessionId?: string; usage?: unknown; outcome?: string; completed?: number; failed?: number }
   /**
-   * 出错。
+   * An error.
    *
-   * `retryable` 是**驱动那边**判定的:这一轮是不是「接着说就有可能成」的那种中断
-   * (比如 agy 把自己的内建工具拒了之后直接放弃,什么都没产出)。
-   * 密钥错、模型名错、额度用光这些不带这个标记 —— 它们重试一百次也是同一个结果,
-   * 自动续跑只会空烧额度。
+   * `retryable` is determined **on the driver side**: whether this round is the kind of interruption
+   * where "just continuing might work" (for example, agy gives up outright after rejecting its own
+   * built-in tool, producing nothing).
+   * Wrong keys, wrong model names and exhausted quotas do not carry this flag: retrying a hundred
+   * times gives the same result, and automatic resuming would only burn quota for nothing.
    *
-   * `retryPrompt` 是续跑时要发的那句话,**由驱动把中断原因拼进去**,前端原样发出去。
-   * 这样模型不用自己开口问「刚才怎么了」,上下文直接摆在它面前。
+   * `retryPrompt` is the sentence to send when resuming, **with the interruption reason spliced in by
+   * the driver**, and the frontend sends it out unchanged.
+   * That way the model does not have to ask "what just happened" itself, and the context is laid out
+   * in front of it directly.
    */
   | { type: "error"; message: string; retryable?: boolean; retryPrompt?: string; authProvider?: 'codex'; authReason?: string; authGeneration?: string };
 
@@ -160,13 +184,20 @@ export interface ChatAttachment {
   jobId?: string;
   conversationId?: string;
   /**
-   * 素材库里已经有的素材(不是用户这一轮用「+」发的附件)。
-   * 这一类的 url 是卡片能直接引用的 /@media/<文件名>,服务端按「素材库」单列一段,不给磁盘路径。
+   * Media that is already in the media library (not an attachment the user sent this round with "+").
+   * For this kind, url is a /@media/<file name> that a card can reference directly, and the server
+   * lists it in a separate "media library" section without giving disk paths.
    */
   library?: boolean;
-  /** 云端对话的附件发送时由页面放进了素材库:素材库里的哪一条(随消息告诉 Agent 直接用它) */
+  /**
+   * A cloud chat attachment is put into the media library by the page when it is sent: which entry
+   * in the media library it is (told to the Agent along with the message, so it uses it directly)
+   */
   inLibrary?: { mediaId: string; url: string };
-  /** 云端对话的附件没能放进素材库的原因(随消息告诉 Agent) */
+  /**
+   * The reason a cloud chat attachment could not be put into the media library (told to the Agent
+   * along with the message)
+   */
   libraryError?: string;
 }
 
@@ -182,42 +213,48 @@ export interface ToolCallInfo {
 }
 
 /**
- * 一条助手消息里按**发生顺序**排列的片段。
- * 只有 text / tools / statuses 三个数组时,渲染只能把文字全堆在最上面、
- * 工具调用全堆在下面,时序丢失——一轮里有多次工具调用时,用户滚到底只看得见工具块,
- * 看不见回复。parts 保留真实顺序,详细模式按它渲染。
+ * The parts of an assistant message, arranged in **order of occurrence**.
+ * With only the three arrays text / tools / statuses, rendering can only pile all the text at the
+ * top and all the tool calls below it, and the timing is lost: when one round has several tool
+ * calls, a user who scrolls to the bottom sees only tool blocks and not the reply. parts keeps the
+ * true order, and detailed mode renders from it.
  */
 export type MessagePart =
   | { kind: "text"; text: string }
-  /** 思考片段:和 text 一样按发生顺序插在 parts 里,渲染时由「显示思考」开关决定显不显示 */
+  /**
+   * Thinking part: like text, it is inserted into parts in order of occurrence, and whether it is
+   * shown at render time is decided by the "Show thinking" switch
+   */
   | { kind: "thinking"; text: string }
   | { kind: "status"; text: string }
   | ({ kind: "tool" } & ToolCallInfo);
 
 /**
- * 这条回复实际是拿什么跑出来的。
+ * What this reply was actually produced with.
  *
- * 必须逐条记,不能只记「现在选的是什么」:模型 / 推理档 / 加速档都是**发送那一刻
- * 现读**的(见 modelOptions.readChoice),用户中途换一次,同一段对话里前后几条就
- * 来自不同的模型;分工模式下还会按角色临时改用别家。排查时只看当前选择会认错人。
+ * It must be recorded per message, not just "what is selected now": the model / reasoning tier / fast
+ * mode are all **read at the moment of sending** (see modelOptions.readChoice), so if the user
+ * switches once midway, the messages before and after in the same chat come from different models;
+ * and in split-work mode another provider is temporarily used per role. Looking only at the current
+ * selection when troubleshooting would blame the wrong party.
  */
 export interface MessageRuntime {
   provider: AiProvider;
-  /** 空 = 用该驱动自己的默认模型 */
+  /** Empty = use that driver's own default model */
   model: string;
-  /** 推理强度档;空 = 跟随驱动自己的默认 */
+  /** Reasoning effort tier; empty = follow the driver's own default */
   effort: string;
-  /** 加速档(目前只有 Claude Code 有) */
+  /** Fast mode (currently only Claude Code has it) */
   fast: boolean;
-  /** 深度自主:轮次上限放宽到 300,且不给模型任何轮次提示 */
+  /** Deep autonomy: the round limit is raised to 300, and the model is given no round hints */
   deepAuto?: boolean;
-  /** 文本协议模式:工具调用写在回复正文里。工具相关的异常先看这一条 */
+  /** Text protocol mode: tool calls are written in the reply body. For tool-related anomalies, check this one first */
   toolProtocol: boolean;
 }
 
-/** 其他 Agent 用 send_message 发来的一条消息 */
+/** A message sent by another Agent with send_message */
 export interface InboundAgentMessage {
-  /** 发来的 Agent 的对话 ID;不知道时是「未知」 */
+  /** The chat ID of the sending Agent; "Unknown" when it is not known */
   from: string;
   text: string;
 }
@@ -226,28 +263,42 @@ export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   /**
-   * 这条用户消息其实是其他 Agent 发来的(AiPanel 自动投递时带上,text 仍是给模型看的 agentBus.formatInbound 全文)。
-   * 界面据此不画用户气泡,交给紧跟着的回复在操作详细预览控件里展示;不靠正文前缀认,用户自己发的消息不会被误判。
+   * This user message was actually sent by another Agent (attached by AiPanel on automatic delivery;
+   * text is still the full agentBus.formatInbound text meant for the model).
+   * The UI therefore does not draw a user bubble, and leaves it to the reply that follows to show it
+   * in the operation-detail preview control; it is not recognized by a prefix in the body text, so a
+   * message the user sent themselves is never misjudged.
    */
   inbound?: InboundAgentMessage[];
   /**
-   * 这条回复是哪个角色产出的(角色的 id,如 director;旧记录里分工模式的角色回复带它)。
-   * 界面用它取头像和角色名;普通对话没有这个字段,退回中性的「AI 助手」。
+   * Which role produced this reply (the role's id, such as director; role replies in split-work mode
+   * in old records carry it).
+   * The UI uses it to get the avatar and role name; a normal chat has no such field and falls back to
+   * the neutral "AI assistant".
    */
   roleId?: string;
-  /** 纯文字部分的拼接;简洁模式和会话历史都用它 */
+  /** The concatenation of the plain text parts; both concise mode and the session history use it */
   text: string;
   /**
-   * 云端对话里这一页刚发出、服务端的记录还没回来的那条用户消息(乐观显示,`src/ai/cloud/session.ts` 的 `stage`):
-   * `sending` 正在发、`accepted` 云端已收下、等它开始处理、`failed` 没发出去(原因在 `error`)、
-   * `queued` 断网时发的、排着等网络恢复后自动发出(`src/ai/cloud/outbox.ts`)。
-   * 服务端的记录到了就换成它,这个字段跟着本地气泡一起消失。
+   * In a cloud chat, the user message this tab has just sent whose server record has not come back yet
+   * (optimistic display, `stage` in `src/ai/cloud/session.ts`):
+   * `sending` being sent, `accepted` the cloud has received it and is waiting to start processing,
+   * `failed` not sent (the reason is in `error`), `queued` sent while offline, queued to be sent
+   * automatically once the network is back (`src/ai/cloud/outbox.ts`).
+   * When the server's record arrives it replaces this, and this field disappears along with the local
+   * bubble.
    */
   sendState?: "sending" | "accepted" | "failed" | "queued";
-  /** 断网待发里不发了的那条(`sendState: "failed"`):气泡上带「重新发送」 */
+  /**
+   * The one in the offline outbox that will no longer be sent (`sendState: "failed"`): the bubble
+   * carries "Resend"
+   */
   resendable?: boolean;
   attachments?: ChatAttachment[];
-  /** 按发生顺序的片段,渲染以它为准;旧历史里没有时由 text/tools/statuses 兜底 */
+  /**
+   * The parts in order of occurrence, which rendering goes by; in old history where it is absent,
+   * text/tools/statuses serve as the fallback
+   */
   parts?: MessagePart[];
   tools?: ToolCallInfo[];
   statuses?: string[];
@@ -258,11 +309,21 @@ export interface ChatMessage {
   progress?: RunProgress;
   outcome?: string;
   usage?: unknown;
-  /** 这条回复用的模型/推理档/加速档/文本协议。旧历史里没有,报告里显示为「未记录」 */
+  /**
+   * The model / reasoning tier / fast mode / text protocol used for this reply. Absent in old history,
+   * shown as "Not recorded" in the report
+   */
   runtime?: MessageRuntime;
-  /** 云端对话(`src/ai/cloud/events.ts`):这条回复折到过的最大事件序号,重复到达的事件据此只折一次 */
+  /**
+   * Cloud chat (`src/ai/cloud/events.ts`): the largest event sequence number this reply has been
+   * folded up to, so that an event arriving repeatedly is folded only once
+   */
   cloudSeq?: number;
-  /** 云端对话:这一轮的改动引出的预渲染重试此刻的进展(契约 cloud-agent-contract.md 第 16 节),气泡末尾常驻一行;失败与暂不可用用出错的样式 */
+  /**
+   * Cloud chat: the current progress of the prerender retry triggered by the changes of this round
+   * (contract cloud-agent-contract.md section 16), shown as a persistent line at the end of the bubble;
+   * failure and temporarily unavailable use the error style
+   */
   cloudRender?: { state: string; text: string };
   trace?: { at: string; event: RunEvent }[];
   traceTruncated?: boolean;
@@ -292,6 +353,9 @@ export interface CliSetupJob {
   logs: string[];
   url?: string;
   deviceCode?: string;
-  /** 这条登录任务的标准输入接着，能接用户粘贴的授权码（只有 Claude Code 的登录有；任务一结束就变 false） */
+  /**
+   * The standard input of this login task is still attached and can take an authorization code pasted
+   * by the user (only Claude Code's login has this; it becomes false as soon as the task ends)
+   */
   acceptsCode?: boolean;
 }

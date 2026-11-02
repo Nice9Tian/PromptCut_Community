@@ -2,55 +2,66 @@ import type { CardNode } from '../kernel/cardGraph.mjs';
 import type { CardCostRecord } from './cardCostKey.mjs';
 import type { PipelineTuning, PipelineTuningOverrides } from './pipelineTuning.mjs';
 
-/** 一个位置（相邻两个分段边界之间）的实时判定结果 */
+/** Real-time evaluation result at a position (between two adjacent segment boundaries) */
 export interface PipelineSegment {
   fromSec: number;
   toSec: number;
-  /** 该位置贴死素材的卡 */
+  /** Cards pasting dead assets at this position */
   heavy: Set<string>;
-  /** 该位置活渲的卡 */
+  /** Cards rendered live at this position */
   light: Set<string>;
 }
 
 export interface PipelinePlan {
   segments: PipelineSegment[];
-  /** 任一位置判重的卡的并集（pinned 渲染 9）：进预渲染管线的静态集合，整段预渲染 */
+  /**
+   * Union of cards classified as heavy at any position (pinned render 9): static set entering the
+   * prerender pipeline, prerendered for the entire segment.
+   */
   prerenderSet: Set<string>;
 }
 
-/** 片段 → 成本记录的索引。Map 和普通对象都收。 */
+/** Clip → cost record index. Accepts both Map and plain objects. */
 export type ClipIndex<V> = Readonly<Record<string, V>> | ReadonlyMap<string, V>;
 
 export interface PlanPipelinesOptions {
   /**
-   * 一个重卡每拍贴一帧死素材的固定成本（ms）。缺省 `DEAD_MS`；只有 L4 换成实测换帧成本：
-   * 数字每张一样，函数按片段各取各的（给不出非负数的按 `DEAD_MS`）。
+   * Fixed cost (ms) for a heavy card to paste one frame of dead asset per tick. Defaults to `DEAD_MS`;
+   * replaced with measured frame swap cost only in L4: a number is identical for every card, while a
+   * function is queried per clip (falls back to `DEAD_MS` if non-negative number is not provided).
    */
   deadMs?: number | ((clipId: string) => number);
-  /** 可调系数的覆盖值，或已经 `resolveTuning` 过的一份。两端必须一样。 */
+  /** Override values for tunable parameters, or a copy already processed by `resolveTuning`. Both ends must match. */
   tuning?: PipelineTuning | PipelineTuningOverrides;
-  /** clipId → `cardCostKey` 的结果（见 `clipCostIndex`）。缺的片段按「没有记录」兜底。 */
+  /** Result of clipId → `cardCostKey` (see `clipCostIndex`). Missing clips fall back to "no record". */
   identityKeys?: ClipIndex<string>;
-  /** clipId → 声明的帧模式。只在这张卡没有成本记录时用：`direct` 视为轻，其余视为重。 */
+  /** clipId → declared frame mode. Used only when this card has no cost record: `direct` is treated as light, others as heavy. */
   frameModes?: ClipIndex<string>;
   /**
-   * 每张卡在每个位置都判重、整段进预渲染集合,不看成本记录与声明。最低一档的**显示**用它(播放时一律不活渲,
-   * 语义 `product/platforms.md`「在线浏览器」的「最低一档」);轻重判定看 `searchLight`。
+   * Every card is classified as heavy at every position and enters the prerender set for the entire
+   * segment, ignoring cost records and declarations. Used for **display** in the lowest tier (never
+   * rendered live during playback; semantics in `product/platforms.md` "online browser" > "lowest
+   * tier"); light/heavy classification depends on `searchLight`.
    */
   allHeavy?: boolean;
   /**
-   * 界限搜索的判定(在线页面只有一个舞台时,`src/render/boundarySearch.mjs`):判轻的卡的 identityKey。给了就不看成本记录与声明,
-   * 集合里的卡在每个位置都判轻(不受预算挤出),其余在每个位置都判重。`allHeavy` 为 true 时不看它。
+   * Determination for bounds search (when an online page has only one stage,
+   * `src/render/boundarySearch.mjs`): `identityKey` of cards classified as light. When provided, cost
+   * records and declarations are ignored: cards in the set are classified as light at every position
+   * (not squeezed out by budget), while the rest are classified as heavy at every position. Ignored
+   * when `allHeavy` is true.
    */
   searchLight?: Iterable<string> | null;
   /**
-   * 打开 3D 模式时把原本判轻的独立卡片也纳入单卡轨道流生产计划 prerenderSet，
-   * scene-3d 自身在 3D 视图里是真三维网格，照旧除外，使得 3D 视图播放时所有卡片板子都有轨道流可贴。
+   * When 3D mode is enabled, standalone cards originally classified as light are also included in the
+   * single-card track stream production plan `prerenderSet`. `scene-3d` itself is a true 3D mesh in 3D
+   * view and is excluded as before, so that all card boards have track streams to paste during 3D view
+   * playback.
    */
   includeLightCardsFor3D?: boolean;
-  /** `includeLightCardsFor3D` 的简写 */
+  /** Shorthand for `includeLightCardsFor3D` */
   view3d?: boolean;
-  /** 判卡片是否为独立卡的能力表 / 函数，不给时除 scene-3d 外一律纳入 */
+  /** Capability table / function to determine whether a card is a standalone card; when omitted, all except `scene-3d` are included */
   isIndependent?: ((clip: any) => boolean) | null;
   compositing?: ClipIndex<string> | ((clip: any) => string | undefined) | null;
   capabilities?: ClipIndex<{ compositing?: string }> | ((clip: any) => { compositing?: string } | undefined) | null;
@@ -59,10 +70,10 @@ export interface PlanPipelinesOptions {
 export const DEAD_MS: number;
 export const CATCHUP_STEPS_PER_BEAT: number;
 export function maxCatchUpBeats(fps: number): number;
-/** pinned 渲染 3 的预算：`1000 / fps × 70%` */
+/** Budget for pinned render 3: `1000 / fps × 70%` */
 export function budgetOf(fps: number): number;
 
-/** 一张卡走的档位。`pinned` 的三档（`capped` / `over-catchup` / `declared-heavy`）每个位置都判重。 */
+/** Tier of a card. The three `pinned` tiers (`capped` / `over-catchup` / `declared-heavy`) are classified as heavy at every position. */
 export type PipelineTier =
   | 'declared-light' | 'declared-heavy'
   | 'capped' | 'over-catchup'
@@ -70,14 +81,14 @@ export type PipelineTier =
   | 'search-light';
 
 export interface ClipWeight {
-  /** 每个位置都判重、不参加贪心 */
+  /** Classified as heavy at every position, does not participate in greedy selection */
   pinned: boolean;
-  /** 每拍权重（`pinned` 时是 Infinity） */
+  /** Weight per tick (Infinity when `pinned`) */
   w: number;
   tier: PipelineTier;
 }
 
-/** 一张卡的每拍权重和档位。导出只为诊断和单测，`planPipelines` 内部用同一份。 */
+/** Weight per tick and tier of a card. Exported only for diagnostics and unit tests; `planPipelines` uses the same copy internally. */
 export function clipWeight(
   record: CardCostRecord | null | undefined,
   frameMode: string | undefined,
@@ -102,11 +113,11 @@ export function clipCostIndex(
 ): { identityKeys: Record<string, string>; frameModes: Record<string, string> };
 
 export interface ClipCostNodeOptions {
-  /** 片段自己那个素材效果卡节点(没有 `clipId`)算不算它的成本身份节点;不给 = 不算。见 `clipCostNodes` */
+  /** Whether clip's own media effect card node (without `clipId`) counts as its cost identity node; omitted = no. See `clipCostNodes` */
   ownNode?: (node: CardNode, clip: any) => boolean;
 }
 
-/** 片段 → 成本身份用的那个节点 */
+/** Clip → node used for cost identity */
 export function clipCostNodes(
   project: any,
   graph: { nodes?: CardNode[] } | null | undefined,

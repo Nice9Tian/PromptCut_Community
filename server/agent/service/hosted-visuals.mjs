@@ -1,15 +1,21 @@
 /**
- * 云端 Agent 的用户可视记录提供者（`get_gif` 及操作可视记录；拆包表 V1 `server/agent/service/hosted-visuals.mjs`）。
+ * User visual record provider for Cloud Agent (`get_gif` and operation visual records; package
+ * breakdown table V1 `server/agent/service/hosted-visuals.mjs`).
  *
- * 规矩：
- *   - 在对话目录 `visuals/<visualId>.json` 持久化保存可视记录元数据：
- *     `{ visualId, kind, tool, spec, sourceRev, projectId, conversationId, aclRevision, frames, gifAssetRef?, createdAt, images?, before?, after?, diff? }`；
- *   - 动图/拼图/前后对比文件保存在同一个对话的 `visuals/files/<name>` 下，每次写均采用原子写（`atomicWrite`）；
- *   - 即使底层关联了 `gifAssetRef`（只保存在服务端内部元数据或独立索引中），对外返回的记录与 URL 一律走 Agent 受权对话路由
- *     `/v1/conversations/<conversationId>/visuals/<visualId>/files/<name>`，绝不暴露可通过已知 asset hash 绕过对话 ACL 直取的地址；
- *   - 每次调用 `get_gif` 或写记录前经 `resources.authorize(context, 'read')`（或 `contextAccess.authorize(context, 'read')`）核验当前 `runGrant` 与 `fenceRevision`。
+ * Rules:
+ *   - Persistently store visual record metadata in chat directory `visuals/<visualId>.json`:
+ *     `{ visualId, kind, tool, spec, sourceRev, projectId, conversationId, aclRevision, frames, gifAssetRef?, createdAt, images?, before?, after?, diff? }`;
+ *   - Animated GIFs / collages / before-and-after comparison files are stored under
+ *     `visuals/files/<name>` of the same chat, with every write using atomic write (`atomicWrite`);
+ *   - Even if `gifAssetRef` is associated at the underlying layer (stored only in server internal
+ *     metadata or standalone index), records and URLs returned externally always use the Agent
+ *     authorized chat route `/v1/conversations/<conversationId>/visuals/<visualId>/files/<name>`,
+ *     never exposing addresses that could bypass chat ACL to fetch directly via a known asset hash;
+ *   - Before each call to `get_gif` or writing records, verify the current `runGrant` and
+ *     `fenceRevision` via `resources.authorize(context, 'read')` (or
+ *     `contextAccess.authorize(context, 'read')`).
  *
- * 纯 Node 模块，不直接 import `src/`。
+ * Pure Node module, does not directly import `src/`.
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -57,7 +63,7 @@ const sha1Hex20 = (buf) => crypto.createHash('sha1').update(buf).digest('hex').s
 const sha256Hex = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
 /**
- * 对话可视记录在 `dataDir` 下的标准持久化目录：
+ * Standard persistence directory for chat visual records under `dataDir`:
  * `<dataDir>/tenants/<projectId>/conversations/<conversationId>/visuals`
  */
 export function conversationVisualsDir(dataDir, projectId, conversationId) {
@@ -71,19 +77,20 @@ export function conversationVisualsDir(dataDir, projectId, conversationId) {
   return path.join(path.resolve(dataDir), 'tenants', String(projectId), 'conversations', String(conversationId), 'visuals');
 }
 
-/** 绑定 projectId + conversationId + visualId + aclRevision 的缓存键 */
+/** Cache key binding projectId + conversationId + visualId + aclRevision */
 export function visualCacheKey({ projectId, conversationId, visualId, aclRevision }) {
   return `${projectId}:${conversationId}:${visualId}:acl:${Number(aclRevision) || 0}`;
 }
 
-/** 对外受权文件地址（带 aclRevision 参数，visibility/ACL 变更即废） */
+/** Externally authorized file address (with aclRevision parameter, invalidated upon visibility/ACL change) */
 export function visualFileUrl(conversationId, visualId, fileName, aclRevision = null) {
   const base = `/v1/conversations/${encodeURIComponent(conversationId)}/visuals/${encodeURIComponent(visualId)}/files/${encodeURIComponent(fileName)}`;
   return Number.isInteger(aclRevision) && aclRevision >= 0 ? `${base}?aclRevision=${aclRevision}` : base;
 }
 
 /**
- * 持久化可视记录存储（支持 `dataDir` 及可选的对话 `workspace` 同步写入，跨重启保留）。
+ * Persistent visual record store (supports synchronous writes to `dataDir` and optional chat
+ * `workspace`, preserved across restarts).
  */
 export function createVisualsStore({ dataDir = null, workspace = null, now = Date.now } = {}) {
   if (!dataDir && !workspace) {
@@ -165,7 +172,7 @@ export function createVisualsStore({ dataDir = null, workspace = null, now = Dat
     if (!safe) return null;
     const rec = await readRecord(scope, visualId);
     if (!rec) return null;
-    // 校验该文件名确实属于这条 visualId 记录，防止跨 visualId 枚举文件
+    // Verify that the file name indeed belongs to this visualId record to prevent enumerating files across visualIds
     const allowedFiles = new Set();
     if (Array.isArray(rec.frames)) {
       for (const f of rec.frames) if (typeof f?.file === 'string') allowedFiles.add(f.file);
@@ -208,7 +215,10 @@ export function createVisualsStore({ dataDir = null, workspace = null, now = Dat
   });
 }
 
-/** 最小合法 1x1 GIF 与 1x1 PNG（当测试未注入渲染器或 ffmpeg 时用作合成帧兜底） */
+/**
+ * Minimal valid 1x1 GIF and 1x1 PNG (used as synthetic frame fallback when tests do not inject a
+ * renderer or ffmpeg)
+ */
 const MINIMAL_GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
 const MINIMAL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
@@ -290,7 +300,8 @@ export function createVisualsTools({
   }
 
   /**
-   * 写入一条通用可视记录（支持 see_frames 截图、卡片修改前后对比动图、或 get_gif）。
+   * Write a generic visual record (supports see_frames snapshots, card edit before-and-after
+   * comparison GIFs, or get_gif).
    */
   async function recordVisual(context, input = {}) {
     const auth = await authorize(context, 'read');
@@ -413,7 +424,7 @@ export function createVisualsTools({
     gifBuf ??= MINIMAL_GIF;
     gridBuf ??= MINIMAL_PNG;
 
-    // 落盘与返回前重验当前授权
+    // Re-verify current authorization before persisting to disk and returning
     const authAfter = await authorize(context, 'read');
     const aclRevision = await resolveAclRevision(context, authAfter);
     const scope = { projectId: context.projectId, conversationId: context.conversationId, ...context };

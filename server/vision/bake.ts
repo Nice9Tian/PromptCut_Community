@@ -1,14 +1,18 @@
 /**
- * 单卡预渲染:算缓存键(`bakeTarget`)、渲单张(`bakeOne`)、渲同一张卡的一批时刻(`bakeClip`)。
- * 从 server/vite-plugin-vision.ts 逐字搬来。
+ * Single-card prerender: computes cache key (`bakeTarget`), renders a single image (`bakeOne`),
+ * renders a batch of moments for the same card (`bakeClip`).
+ * Moved verbatim from server/vite-plugin-vision.ts.
  *
- * **这份模块状态只有这里能写**:`bakeInFlight`(同一个键正在飞的那一趟)、`stores`(每个根一份 PNG 快照存取)。
+ * **This module state is writable only here**: `bakeInFlight` (the in-flight pass for the same
+ * key), `stores` (one PNG snapshot store per root).
  *
- * 产物(PNG)经素材服务的接口写进 `px` 命名空间,缓存键 → 内容哈希记在小索引里(`server/bake-store.mjs`),
- * 不再直接写、列、删素材目录(`docs/semantics/product/asset-service.md`「预渲染的产物」)。
- * 画面是当场渲出的位图(`card-bitmap.ts`):不经帧库,落盘和推送的只有这张 PNG,不存这张卡的 HTML
- * (`docs/semantics/mechanism/asset-service.md`「不经任务队列的单张卡片画面」)。
- * 依赖方向:bake → render / render-queue,单向。
+ * Outputs (PNG) are written into the `px` namespace via asset service APIs; cache key → content
+ * hash is recorded in a small index (`server/bake-store.mjs`), no longer directly writing, listing,
+ * or deleting the asset catalog (`docs/semantics/product/asset-service.md` "Prerender output").
+ * The frame is a bitmap rendered on the spot (`card-bitmap.ts`): bypassing the frame store, only
+ * this PNG is written to disk and pushed; the card's HTML is not stored
+ * (`docs/semantics/mechanism/asset-service.md` "Single-card frame bypassing the task queue").
+ * Dependency direction: bake → render / render-queue, unidirectional.
  */
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -23,30 +27,39 @@ import type { FrameResult, RenderOpts } from "./render";
 import type { Runner } from "./worker-pool";
 
 /**
- * 预渲染时把片段挪到第几秒开始(起跑线)。理由和实测数据见 bakeTarget 里那段长注释。
+ * The second at which clips are moved to start during prerendering (starting line).
+ * See the long comment in bakeTarget for rationale and measured data.
  *
- * 不能是 0:预热在 t=0 上走四帧再重挂载卡片,压着第 0 帧的段会多经历这一段,画出来不一样
- * (实测 step-timeline 差 15164 个像素)。0.5 秒 = 15 帧,推过去约 0.24 秒,买的是
- * 「34/34 张卡挪位置逐字节相同」。
+ * Cannot be 0: warm-up steps through four frames at t=0 before remounting the card, so clips
+ * overlapping frame 0 go through this extra phase and render differently (measured: step-timeline
+ * differs by 15164 pixels). 0.5s = 15 frames, advancing past it takes ~0.24s, which buys us
+ * "34/34 cards are byte-for-byte identical when repositioned".
  */
 const BAKE_LEAD = 0.5;
 
-/** 单张卡片位图的出法版本,进缓存键(见 bakeTarget 里 `store` 那段说明)。出法换了、旧图不该再命中时加一 */
+/**
+ * Single-card bitmap generation method version, included in cache key (see `store` description in
+ * bakeTarget). Incremented when the generation method changes and old images should no longer hit.
+ */
 export const BAKE_STORE_VERSION = 2;
 
 /**
- * 正在渲的:键 → 那次渲染的 promise。同一个键同时被要好几次时共用一次渲染。
- * 并行池之前不需要它(串行天然错开),之后才需要 —— 见 bakeOne 里的说明。
+ * In-flight renders: key → promise of that render. When the same key is requested multiple times
+ * concurrently, they share a single render. Not needed before the parallel pool (serial execution
+ * naturally staggered them), needed only afterwards: see explanation in bakeOne.
  */
 const bakeInFlight = new Map<string, { promise: Promise<any>; priority: number }>();
 
-/** 每个根一份 PNG 快照存取(索引在 `<outRoot>/bake-index`,字节经素材服务) */
+/** One PNG snapshot store per root (index in `<outRoot>/bake-index`, bytes via asset service) */
 const stores = new Map<string, ReturnType<typeof createBakeStore>>();
 const bakeLog = (event: string, fields: object = {}) => {
   try { console.info("[bake-store]", event, JSON.stringify(fields)); } catch { console.info("[bake-store]", event); }
 };
 
-/** 这个根的 PNG 快照存取:编辑器进程和预渲染进程各一份实例,共用同一个索引目录 */
+/**
+ * PNG snapshot store for this root: one instance each for editor process and prerender process,
+ * sharing the same index directory.
+ */
 export function bakeStoreFor(root: string) {
   const key = path.resolve(root);
   let s = stores.get(key);
@@ -58,12 +71,15 @@ export function bakeStoreFor(root: string) {
 }
 
 /**
- * 这张素材效果卡片段用到的全部素材效果卡源码指纹(自己 + 上游整条链)。
+ * Source code fingerprints for all media effect cards used by this media effect card clip
+ * (itself + the entire upstream chain).
  *
- * 隔离缓存键里只带 `cardCodeHash(clip.cardId)` 是不够的:片段指向的是 `cardNodes` 里的
- * 素材效果卡节点,它的输入可以再接另一张素材效果卡。改了上游那张卡的源码而不改这张,键一个字节没变,
- * `inspect_card_dom` / `bake_card` 就吃到旧缓存 —— 而且不报错,只是画面不跟着改。
- * 按节点 id 去重、按 id 排序,同一张图算出来的值和遍历顺序无关。
+ * Including only `cardCodeHash(clip.cardId)` in the isolation cache key is insufficient: the clip
+ * points to a media effect card node in `cardNodes`, whose input can connect to another media effect
+ * card. Modifying the upstream card's source code without modifying this card leaves the key
+ * byte-for-byte identical, so `inspect_card_dom` / `bake_card` hits stale cache: without any error,
+ * the visual simply fails to update. Deduplicated and sorted by node id, the computed value for the
+ * same image is independent of traversal order.
  */
 function graphCardCode(project: any, nodeId?: string): string[] | undefined {
   if (!nodeId) return undefined;
@@ -82,12 +98,15 @@ function graphCardCode(project: any, nodeId?: string): string[] | undefined {
 }
 
 /**
- * 算出「这次预渲染对应磁盘上哪个文件」,以及渲它需要的那几样东西。**不碰文件系统。**
+ * Computes "which disk file this prerender corresponds to" and the prerequisites needed to render
+ * it. **Does not touch the file system.**
  *
- * 单独拆出来是因为除了预渲染本身,还有两个地方要问同一个问题:
- * 「这张卡渲过没有、那个文件多大」(bake-status)和「哪些文件是过期的、该删」(bake-evict)。
- * 这三方只要有一方把键算得不一样,就会出现「明明预渲染过却当成没渲」或者「把正在用的文件删了」——
- * 而且都不会报错,只会莫名其妙地慢下来或者闪一下。所以键只有这一处算得出来。
+ * Extracted separately because, besides prerendering itself, two other places ask the same question:
+ * "has this card been rendered, and how large is that file" (bake-status) and "which files are
+ * expired and should be deleted" (bake-evict). If any of the three computes the key differently,
+ * it leads to "treated as unrendered despite having been prerendered" or "deleted a file in use":
+ * neither throws an error, only slowing down mysteriously or flickering. Therefore, the key can
+ * only be computed in this single place.
  */
 export function bakeTarget(
   project: any,
@@ -102,69 +121,82 @@ export function bakeTarget(
   if (iso.clip.mediaId) throw new Error("This is a media clip (video / image) and is already a bitmap. Use its URL directly as the texture; no render is needed.");
 
   /*
-   * **把 frame 摘掉再渲。**
+   * **Strip frame before rendering.**
    *
-   * frame 是「这张卡摆在整个画幅的哪儿、怎么转」,是相对项目画幅(比如 1920×1080)写的。
-   * 而预渲染要换一个画布(正方形贴图 / 卡片自己的框),坐标对不上 —— 一张 x:960 的卡
-   * 放到 512×512 的画布上就整个跑到画外,渲出来是**一张全透明的空图,而且不报错**。
-   * (实测:带 frame 的卡渲出来 transparentRatio = 1、1096 字节,三种不同变换渲出来还一模一样,
-   * 因为它们都是同一张空图。)
+   * frame represents "where this card is placed across the aspect ratio and how it rotates",
+   * written relative to the project aspect ratio (e.g. 1920×1080). Prerendering switches to a
+   * different canvas (a square texture / the card's own box), so coordinates mismatch: a card with
+   * x:960 placed onto a 512×512 canvas falls completely outside the canvas, rendering as **a fully
+   * transparent empty image without error**. (Measured: a card with frame renders transparentRatio = 1,
+   * 1096 bytes; three different transforms render identically because they are all the same empty image.)
    *
-   * 摘掉之后卡片铺满画布、按画布尺寸重新排版 —— 卡片本来就是响应式的,这正是我们要的
-   * 「这张卡自己长什么样」。位置和三维变换由用它的那一方去做:
-   * scene-3d 贴到物体表面,3D 视图贴到代表这张卡的那块板子上。预渲染的时候再带一遍就是叠两次。
+   * Once stripped, the card fills the canvas and reflows to the canvas size: cards are inherently
+   * responsive, which is precisely what we want for "what this card looks like on its own". Position
+   * and 3D transforms are handled by the consumer: scene-3d pastes it onto object surfaces, and the
+   * 3D view pastes it onto the board representing this card. Keeping it during prerender would apply it twice.
    */
   /*
-   * **把这一段挪到固定的起跑线上再渲。**
+   * **Move this clip to a fixed starting line before rendering.**
    *
-   * 以前是照着它在时间轴上的原位渲的,两笔账都记在这上头:
+   * Previously, it was rendered in its original position on the timeline, incurring two costs:
    *
-   * 1. **延迟和它排得多靠后成正比。** 导出脚本从第 0 帧顺推(确定性要求),而实测**推一个
-   *    「画面上什么都没有」的空帧和推一个实帧一样贵**(约 16ms):一张卡摆在第 10 秒,
-   *    渲它第一帧要 9014ms,其中 4803ms 全花在推 0~299 这 300 个空帧上。
-   * 2. **挪一下位置,它渲好的十来个时刻全部作废。** 缓存键里带着 start/end 的绝对值,
-   *    而画面根本没变 —— 用户只是把卡拖了个位置,参数一个字没改,却要干等重渲一遍。
+   * 1. **Latency is proportional to how far back it is placed.** The export script advances from
+   *    frame 0 (for determinism), but measurements show **advancing an empty frame with "nothing on
+   *    screen" is as expensive as advancing an actual frame** (~16ms): for a card placed at second 10,
+   *    rendering its first frame took 9014ms, of which 4803ms was spent entirely advancing the 300 empty
+   *    frames from 0 to 299.
+   * 2. **Repositioning it invalidates all dozen or so rendered moments.** The cache key includes
+   *    absolute start/end values, yet the visuals have not changed at all: the user merely dragged the
+   *    card to a new position without touching any parameter, yet must wait for a full re-render.
    *
-   * 挪到起跑线上之后,同一张卡同一个**片内相对时刻**永远算出同一个键、渲同一趟,
-   * 两笔账一起消掉:推帧距离只剩 BAKE_LEAD + 片内偏移,和它排在哪儿无关。
+   * Once moved to the starting line, the same card at the same **intra-clip relative moment** always
+   * yields the same key and renders in the same pass, eliminating both costs: frame advance distance
+   * is only BAKE_LEAD + intra-clip offset, independent of where the clip is placed.
    *
-   * ## 凭什么敢挪:34 张卡逐字节验过
+   * ## Why we can safely relocate: verified byte-for-byte across 34 cards
    *
-   * 挪位置要成立,前提是卡片画出来和绝对位置无关。逐卡对过账(同一片内时刻,一份摆在
-   * 0.5 秒处、一份摆在 12 秒处,比 PNG 的 sha1):**34/34 逐字节相同**。
+   * For repositioning to work, the prerequisite is that card rendering is independent of absolute
+   * position. Reconciled card by card (same intra-clip moment, one placed at 0.5s, one at 12s,
+   * comparing PNG sha1): **34/34 are byte-for-byte identical**.
    *
-   * 验的过程里咬出两件事,都在这一版里处理了:
+   * The verification process uncovered two issues, both resolved in this version:
    *
-   * - **mu-word-rotate 原来真的会随位置变**:摆在 0/0.5/1 秒处和摆在 2/3/4/6/12 秒处
-   *   渲出来是两张不同的图,差 22599 个像素、最大通道差 250(板子上显示的是上一个词还是
-   *   下一个词)。根因在卡片那边(轮播用 `now - lastTick` 累加、命中后把相位挪到当前帧),
-   *   已经改成 `floor(elapsed / duration)`,见 vendor/word-rotate.tsx。
-   * - **第 0 帧是特殊的,所以起跑线不能是 0。** 预热(warmUp)在 t=0 上走四帧再重挂载卡片,
-   *   于是「片段正好压着第 0 帧」的卡会多经历这一段:实测摆在 0 秒处 vs 摆在别处,
-   *   step-timeline 差 15164 个像素、mu-word-rotate 差一整个词。留半秒的起跑距离就绕开了
-   *   ——  实测 0.5 秒处和 12 秒处 34/34 逐字节相同。代价是每趟多推 15 帧(约 0.24 秒)。
+   * - **mu-word-rotate actually varied with position**: placed at 0/0.5/1s vs 2/3/4/6/12s rendered
+   *   two different images, differing by 22599 pixels with a maximum channel difference of 250
+   *   (showing the previous vs next word on the board). The root cause was in the card (the carousel
+   *   used `now - lastTick` accumulation and shifted phase to current frame upon hit); changed to
+   *   `floor(elapsed / duration)`, see vendor/word-rotate.tsx.
+   * - **Frame 0 is special, so the starting line cannot be 0.** Warm-up (warmUp) steps through four
+   *   frames at t=0 before remounting the card, so cards with "clips sitting right on frame 0" undergo
+   *   this extra phase: measured at 0s vs elsewhere, step-timeline differs by 15164 pixels, and
+   *   mu-word-rotate differs by a whole word. Leaving a half-second starting lead bypasses this:
+   *   measured at 0.5s and 12s, 34/34 are byte-for-byte identical. The cost is advancing 15 extra
+   *   frames per pass (~0.24s).
    */
   /*
-   * **片内位置一律用「第几帧」表示,不用「差多少秒」。**
+   * **Intra-clip positions are always expressed as "frame number", never as "second delta".**
    *
-   * 时刻的格子本来就是相对片段起点的(`bakeTime.ts` 的 `pickBakeT` 返回 `clip.start + 格子`),
-   * 所以直觉上 `t - clip.start` 就把绝对位置减掉了。但那是**浮点减法**:一段摆在 3 秒处时
-   * `3.25 - 3 = 0.25` 逐位精确,摆在 17.3 秒处时 `17.55 - 17.3 = 0.2500000000000018`。
-   * 键是拿这个数哈希出来的,于是"挪一下位置就全部作废"会以另一种形式活下来 ——
-   * 而且只在位置不是整数的时候发作,最难查。(同一类坑 bakeTime.ts 里记过一次:
-   * step=1/30 时累加和 floor 再乘差 2.8e-17,后果是"预渲染出来的图显示端一张都问不到"。)
+   * Time slots are originally relative to the clip start (`pickBakeT` in `bakeTime.ts` returns
+   * `clip.start + slot`), so intuitively `t - clip.start` would subtract out the absolute position.
+   * But that is **floating-point subtraction**: for a clip placed at 3s, `3.25 - 3 = 0.25` is bit-exact,
+   * whereas placed at 17.3s, `17.55 - 17.3 = 0.2500000000000018`. The key is hashed from this number,
+   * so "repositioning invalidates everything" would survive in another form: triggering only when the
+   * position is non-integer, making it hardest to debug. (A similar pitfall was noted in bakeTime.ts:
+   * with step=1/30, accumulation and floor-then-multiply differ by 2.8e-17, resulting in "the display
+   * side cannot retrieve any prerendered image".)
    *
-   * 换成整数帧号就没有这回事:同一个帧号必然算出同一个 double,而渲染那一侧
-   * (`Math.round(at * fps)`)本来就只认帧号,一点信息都没丢。
+   * Switching to integer frame numbers avoids this entirely: the same frame number always produces
+   * the same double, while the rendering side (`Math.round(at * fps)`) only recognizes frame numbers
+   * anyway, losing no information whatsoever.
    */
   const fps = project.fps || 30;
-  // 至少留一帧:零长度的段推不出任何一帧,渲出来是空图而且不报错
+  // Keep at least one frame: zero-length clips cannot advance any frame; renders an empty image without error
   const lenFrames = Math.max(1, Math.round(((iso.clip.end ?? 0) - (iso.clip.start ?? 0)) * fps));
   const len = lenFrames / fps;
   const { frame: _dropFrame, ...bare } = iso.clip;
   /*
-   * 键就是从这个 plainClip 算的,所以**这里挪了位置,键才真的和位置无关**。
-   * 只改 at、不改 clip 上的 start/end 是不够的 —— 那两个字段照样会进哈希。
+   * The key is computed from this plainClip, so **repositioning here makes the key truly position-agnostic**.
+   * Changing only at without changing start/end on clip is not enough: those two fields still enter the hash.
    */
   const plainClip = { ...bare, start: BAKE_LEAD, end: BAKE_LEAD + len };
   const box = {
@@ -173,71 +205,88 @@ export function bakeTarget(
   };
   const px = Math.min(2048, Math.max(256, Math.round(Number(size) || 1024)));
   /*
-   * 画幅两种:
-   *   square —— 正方形。贴到立体表面上用(bake_card 的默认):原始 16:9 会被拉变形。
-   *   box    —— 卡片自己那个框的尺寸。3D 视图用:那边的板子就是这个框,
-   *             一比一贴上去才不会拉伸,而且排版和舞台上完全一致。
+   * Two aspect ratios:
+   *   square: Square. Used for pasting onto 3D surfaces (bake_card default): original 16:9 gets distorted.
+   *   box:    The card's own bounding box size. Used by 3D view: the board there matches this box,
+   *           pasting 1:1 prevents stretching and keeps layout identical to the stage.
    */
   /*
-   * **两个尺寸,不能混为一谈。**
+   * **Two dimensions that must not be conflated.**
    *
-   *   renderBox —— 按什么尺寸**排版**,也就是输出多大。必须是这张卡在成片里真实的容器大小。
+   *   renderBox: What size to **layout** with, i.e., how large the output is. Must be the card's
+   *   actual container size in the final video.
    *
-   * 原来这两个是同一个值(直接按贴图尺寸去渲),后果是**卡片按别的宽度重新排了版**:
-   * 卡片用的是绝对 px,容器从 1920 变成 1024,字就相对变大、要换行、底块被撑满。
-   * 实测同一张 blur-text:在 1024×576 上渲,内容框占画布 100%×70.1%(换行);
-   * 在真实的 1920×1080 上渲是 66.5%×28.1%(一行)—— 后者才和 2D 预览一致。
-   * 也就是说 3D 板子上贴的根本不是 2D 那张画面,而且不报错。
+   * Previously these two shared the same value (rendered directly at texture dimensions), causing
+   * **the card to reflow under a different width**: cards use absolute px, so shrinking the container
+   * from 1920 to 1024 makes text relatively larger, forces line wraps, and fills background blocks.
+   * Measured with blur-text: rendered at 1024×576, the content box occupies 100%×70.1% of canvas
+   * (wrapped); rendered at the actual 1920×1080, it occupies 66.5%×28.1% (single line): only the
+   * latter matches the 2D preview. In other words, what was pasted onto the 3D board was not the 2D
+   * frame at all, without any error.
    *
-   * square 那一档不受影响:它**本来就是**要在正方形容器里排版(贴到立体表面上,
-   * 16:9 会被拉变形),所以它的 renderBox 就是那个正方形。
+   * The square tier is unaffected: it is **intended** to lay out in a square container (pasted onto 3D
+   * surfaces, 16:9 would be distorted), so its renderBox is simply that square.
    */
   const renderBox = fit === "box" ? { width: box.w, height: box.h } : { width: px, height: px };
-  // 没给时间就取这一段的中点 —— 起止两端常卡在进场 / 退场动画上,渲出来是个半透明中间态
+  // If no time is given, pick the midpoint of this clip: start and end often hit entrance / exit
+  // animations, rendering a translucent intermediate state.
   const relFrames = Number.isFinite(t)
     ? Math.min(lenFrames, Math.max(0, Math.round(((t as number) - (iso.clip.start ?? 0)) * fps)))
     : Math.round(lenFrames / 2);
-  /** 真正渲第几帧:起跑线 + 片内第几帧。**键和渲染都用它**,所以和绝对位置无关 */
+  /**
+   * The actual frame to render: starting line + intra-clip frame number. **Used by both key and
+   * rendering**, thus independent of absolute position.
+   */
   const at = BAKE_LEAD + relFrames / fps;
   /**
-   * 回给调用方的 t —— **必须是它问的那个绝对时刻**,不是上面那个挪过的。
+   * The t returned to the caller: **must be the absolute moment requested**, not the relocated one above.
    *
-   * 3D 视图和预渲染都拿 `clipId + t` 当贴图的账本键(momentId),回一个挪过的时刻就会
-   * 对不上号:`batch.find(x => x.t === b.t)` 全部落空,于是「明明渲出来了却当成没渲」,
-   * 一直重渲同一张,而且不报错。
+   * Both 3D view and prerender use `clipId + t` as the texture ledger key (momentId); returning a
+   * relocated moment causes a mismatch: `batch.find(x => x.t === b.t)` misses every time, resulting
+   * in "treated as unrendered despite having been rendered", continuously re-rendering the same image
+   * without error.
    */
   const askedT = Number.isFinite(t) ? (t as number) : (iso.clip.start + iso.clip.end) / 2;
   const rgb = typeof bg === "string" ? /^#?([0-9a-f]{6})$/i.exec(bg.trim()) : null;
 
   /*
-   * code:这张卡此刻代码的哈希(定义文件 + 依赖闭包的生效内容,见 card-overrides.mjs)。
-   * 没有它的时候改了卡片源码,预渲染的旧图照样命中,3D 视图里贴的一直是改之前的样子。
+   * code: Hash of this card's code at this moment (definition file + active contents of dependency
+   * closure, see card-overrides.mjs). Without it, modifying card source code still hits the old
+   * prerendered image, and the 3D view continues pasting the pre-modification appearance.
    */
   /*
-   * store:这张图是哪一版出法产的。2 = 当场渲出位图(`card-bitmap.ts`,2026-10-13 起):不经帧库、不存这张卡的 HTML。
-   * 没有这个字段的旧键(经帧库的 `see_frames` 出的,有的是拿存下来的 HTML 重放栅格化的)从此不再命中,
-   * 新旧两种出法的图不混用;旧键的索引条目按「这个项目用不到的旧版本」被盘点淘汰,字节留在素材服务里按容量上限淘汰。
+   * store: Which generation method version produced this image. 2 = bitmap rendered on the spot
+   * (`card-bitmap.ts`, as of 2026-10-13): bypasses frame store, does not store this card's HTML.
+   * Legacy keys lacking this field (produced via frame store `see_frames`, some replayed/rasterized
+   * from saved HTML) will no longer hit; images from the new and old generation methods are not mixed.
+   * Index entries for legacy keys are inventoried and evicted as "legacy versions unused by this project";
+   * bytes remain in the asset service and are evicted by capacity limits.
    */
   const key = createHash("sha1")
     .update(JSON.stringify({ clip: plainClip, graph: iso.clip.nodeId ? { nodes: project.cardNodes, media: project.media, tracks: project.tracks, style: project.style } : undefined, theme: project.themeId, at, renderBox, fit, bg: rgb ? rgb[1].toLowerCase() : null, code: cardCodeHash(iso.clip.cardId), graphCode: graphCardCode(project, iso.clip.nodeId), store: BAKE_STORE_VERSION }))
     .digest("hex").slice(0, 12);
   /*
-   * 老格式的文件名(以前落在素材目录里的 `bake-<clipId>-<键>.png`)。现在字节在素材服务的 `px` 里、地址按内容哈希
-   * (`/api/asset/px/<sha256>`,渲出来才知道);这个名字只留给读时迁移:老项目渲过的,经素材服务的老读路由取回来推进 `px`,
-   * 不用重渲(`bake-store.mjs` 的 `migrateLegacy`)。
+   * Legacy filename format (previously located in the asset catalog as `bake-<clipId>-<key>.png`).
+   * Bytes are now stored in `px` of the asset service, addressed by content hash
+   * (`/api/asset/px/<sha256>`, known only after rendering); this name is retained solely for
+   * read-time migration: previously rendered assets in legacy projects are fetched via the legacy
+   * read route of the asset service and pushed into `px` without re-rendering (`migrateLegacy` in
+   * `bake-store.mjs`).
    */
   const name = `bake-${clipId.replace(/[^\w.-]/g, "_")}-${key}.png`;
   /**
-   * 渲这一趟用的项目。**只在这里拼一次**:渲单张和渲一批以前各拼一份,
-   * 两处都要记得改 duration、改 tracks、按 renderBox 排版 —— 漏一处就是
-   * 「单张渲的和批量渲的不是同一张图」,而且不报错。
+   * Project used for rendering this pass. **Assembled only once here**: previously assembled
+   * separately for single renders and batch renders, requiring both places to update duration, update
+   * tracks, and lay out by renderBox: missing either one causes "single-render and batch-render are
+   * not the same image", without any error.
    *
-   * duration 必须跟着挪过的位置重算(原来那个是整条片子的长度,而这里只剩一段),
-   * 多给一帧的余量:renderFrames 会把帧号夹进 duration*fps-1,正好卡在末尾时会少一帧。
+   * duration must be recalculated according to the relocated position (the original is the full video
+   * length, whereas here only one clip remains), with one extra frame of margin: renderFrames clamps
+   * frame numbers to duration*fps-1, which would miss one frame right at the end.
    */
   const target = {
     ...iso.project,
-    // **按真实容器尺寸排版**,不是按贴图尺寸(见上面那段说明)
+    // **Lay out by actual container size**, not by texture size (see explanation above)
     width: renderBox.width,
     height: renderBox.height,
     duration: BAKE_LEAD + len + 1 / fps,
@@ -248,13 +297,17 @@ export function bakeTarget(
 
 
 /**
- * 把一张卡预渲染成图片,**按输入做缓存**。单张 bake_card 和 3D 视图的批量都走这里。
+ * Prerenders a card into an image, **cached by input**. Both single bake_card and 3D view batching
+ * go through here.
  *
- * 缓存键是「输入」的哈希 —— 卡片内容 + 时刻 + 尺寸 + 底色 + 主题。所以同一张卡同样的参数
- * 只会真渲一次(4.7~6.5 秒),之后命中是查一次索引、问一次素材服务「这一块收全没有」,几乎零成本。
- * 这正是「一般来说用户都是预渲染好的、不用代理」能成立的前提:代理只覆盖第一次那几秒。
+ * The cache key is the hash of "input": card content + moment + dimensions + background color + theme.
+ * Therefore, the same card with the same parameters is actually rendered only once (4.7~6.5 seconds);
+ * subsequent hits query the index once and ask the asset service "is this chunk fully received",
+ * at virtually zero cost. This is precisely the premise allowing "generally users have everything
+ * prerendered and do not need proxies" to hold: proxies only cover those initial few seconds.
  *
- * 键里**不能**用输出的哈希:那要先渲出来才知道叫什么,等于永远不命中。
+ * Output hashes **cannot** be used in the key: that would require rendering first to know the name,
+ * meaning it would never hit.
  */
 export async function bakeOne(
   root: string,
@@ -265,17 +318,20 @@ export async function bakeOne(
   size: unknown,
   bg: unknown,
   fit: "square" | "box" = "square",
-  /** 1 = 用户正等着看的,插队;0 = 空闲预渲染,排队尾 */
+  /** 1 = user is waiting to view, jump queue; 0 = idle prerender, enqueue at tail */
   priority = 0,
   /**
-   * 已经渲好的那一帧(已经按 bg 压过底色、数过透明像素)。给 bakeClip 用:它一趟渲出同一张卡的好几个时刻,
-   * 然后把每一张交回这里走**同一套**缓存键、原子落盘和返回值 ——
-   * 两条路各写一套的话,迟早会出现「单张渲的和批量渲的不是同一张图」,而且不报错。
+   * The already rendered frame (already background-flattened with bg, transparent pixels counted).
+   * Used by bakeClip: it renders multiple moments of the same card in one pass, then hands each back
+   * here to follow the **exact same** cache key, atomic disk write, and return values:
+   * having separate implementations for both paths would inevitably cause "single-render and
+   * batch-render are not the same image", without any error.
    */
   pre?: FrameResult,
   /**
-   * signal:调用方断开就取消;runner:谁来跑(不给是渲染池,界面的热备渲染器会传自己的);
-   * lane:FramePipeline 那条路排哪条队(见 render.ts 的 `RenderOpts.lane`),缺省 Agent 专用实例(bake_card)
+   * signal: cancels if caller disconnects; runner: execution target (defaults to render pool, UI hot
+   * standby renderer passes its own); lane: which queue the FramePipeline route joins (see
+   * `RenderOpts.lane` in render.ts), defaults to Agent dedicated instance (bake_card).
    */
   o: { signal?: AbortSignal; runner?: Runner; lane?: RenderOpts["lane"] } = {},
 ): Promise<any> {
@@ -288,27 +344,38 @@ export async function bakeOne(
   const note = "This is a **PNG snapshot**: the card's animation is frozen at frame t. Changing the card parameters later will not update the texture; render it again.";
 
   /*
-   * 缓存命中:同样的输入渲过了(索引里有、素材服务上这一块收全了),直接给 URL。
-   * 素材服务不可达时这里抛 BakeStoreError(写明地址与原因),调用方原样回给 Agent / 页面。
+   * Cache hit: identical inputs were rendered previously (present in index, this chunk fully
+   * received by asset service), returns URL directly. When asset service is unreachable, throws
+   * BakeStoreError here (specifying address and reason), which the caller passes back as-is to
+   * Agent / page.
    */
   const hit = await store.lookup(key);
   if (hit) return { clipId, url: hit.url, t: askedT, width: renderBox.width, height: renderBox.height, bytes: hit.bytes, cached: true, hint, note };
 
   /*
-   * **同一个键正在渲,就等它,别再渲一遍。**
+   * **If the same key is currently rendering, wait for it instead of rendering again.**
    *
-   * 渲染改成并行池之后才需要这个:以前是串行的,同一个键的第二个请求必然排在第一个之后,
-   * 那时已经入库 → 走上面的缓存命中。现在它们可以同时在飞,于是都查不到、都起一个 Chrome。
+   * Needed only after switching rendering to a parallel pool: previously it was serial, so a second
+   * request for the same key was guaranteed to queue after the first, by which point it was already
+   * stored → hitting the cache above. Now they can be in-flight concurrently, finding no cache and
+   * both launching Chrome.
    *
-   * 实测(改走素材服务之前):同时发 4 个完全一样的请求 → 真渲了 4 次,白烧 3 个 Chrome(每个约 4 秒)。
-   * 入库本身不怕重复:素材服务按内容寻址,同一张图的第二次写入只是一次对账;收尾校验过才对外可取,读不到半张。
+   * Measured (before routing through asset service): sending 4 identical requests concurrently →
+   * rendered 4 times, needlessly burning 3 Chrome instances (~4s each). Storage itself is idempotent:
+   * the asset service is content-addressed, so a second write of the same image is merely a
+   * reconciliation; finalized and validated before becoming available externally, preventing readers
+   * from getting an incomplete image.
    */
   /*
-   * 搭车等同键的那一趟,有两个例外:
-   *   - **自己更急就不搭**:Agent 的 bake_card(优先级 1)撞上一趟排在队尾的预渲染(优先级 0)时,
-   *     跟着等就是排在所有预渲染后面、直到工具超时 —— 优先级倒挂。自己渲一趟,两份写进素材服务是同一个内容哈希,不冲突。
-   *   - **那一趟被取消了**(是它的请求方断开,不是这张图渲不出来):再看一眼,别的等待者可能已经接着渲了,
-   *     有就跟那一趟;没有才自己来。见过的就不再跟,免得在同一个已经失败的 promise 上打转。
+   * Coalescing with the in-flight pass for the same key has two exceptions:
+   *   - **Skip piggybacking if more urgent**: when Agent bake_card (priority 1) collides with a
+   *     prerender pass queued at the tail (priority 0), waiting means queuing behind all prerenders
+   *     until the tool times out: a priority inversion. Rendering on its own writes the exact same
+   *     content hash to the asset service, without conflict.
+   *   - **That pass was cancelled** (its requester disconnected, not that the image failed to render):
+   *     check again, as another waiter might have picked up rendering; join that pass if available,
+   *     otherwise render on its own. Never re-join an already observed pass, avoiding looping on the
+   *     same failed promise.
    */
   const seen = new Set<Promise<any>>();
   for (;;) {
@@ -332,19 +399,23 @@ export async function bakeOne(
 
   async function bakeAndWrite() {
   /*
-   * 老项目渲过的(以前落在素材目录里的 `bake-<clipId>-<键>.png`):经素材服务的老读路由取回来推进 `px`,不用重渲。
-   * 批量那条路(pre 已给)在 bakeClip 里先迁过了。
+   * Rendered in legacy projects (previously saved in asset catalog as `bake-<clipId>-<key>.png`):
+   * retrieved via the legacy read route of the asset service and pushed into `px`, avoiding re-renders.
+   * The batch route (pre already provided) was migrated earlier in bakeClip.
    */
   if (!pre) {
     const moved = await store.migrateLegacy(key, name, { width: renderBox.width, height: renderBox.height, clipId });
     if (moved) return { clipId, url: moved.url, t: askedT, width: renderBox.width, height: renderBox.height, bytes: moved.bytes, cached: true, hint, note };
   }
   /*
-   * 底色决定贴上去是什么观感,而这个选择只该在**预渲染的时候**做一次:
-   *   不传 bg → 透明底,物体在卡片没画的地方也透空(挖空观感,适合标志 / 招牌);
-   *   传了 bg → 压平成不透明,实心物体表面印着这张卡。
-   * 压底色和数透明像素都在渲染 worker 里做(post.bg / post.stats,见 server/png-post.mjs),
-   * 这个进程只收字节、经素材服务入库。
+   * Background color determines the look when applied, and this choice should only be made once
+   * **during prerendering**:
+   *   omit bg → transparent background, objects show through unpainted card areas (cutout look,
+   *     suitable for logos / signage);
+   *   provide bg → flattened to opaque, card is printed on solid object surface.
+   * Flattening background and counting transparent pixels are both handled in the render worker
+   * (post.bg / post.stats, see server/png-post.mjs); this process only receives bytes and stores them
+   * via the asset service.
    */
   const post = { bg: rgb ? rgb[1].toLowerCase() : null, stats: true };
   const r = pre ?? (o.runner
@@ -352,8 +423,9 @@ export async function bakeOne(
     : await enqueue(() => renderOneFrame(root, origin, target, at, [], priority, { signal: o.signal, post, bitmapOnly: true, lane: o.lane }), priority, 0, o.signal));
 
   /*
-   * 经素材服务的接口写进 `px`(分片、收尾时按 sha256 校验,校验过才对外可取,所以读的人拿不到半张),
-   * 再记进「输入哈希 → 内容哈希」的索引。地址是 `/api/asset/px/<内容哈希>`。
+   * Written into `px` via asset service APIs (chunked, validated against sha256 during finalization,
+   * made available externally only after validation, so readers never receive an incomplete image),
+   * then recorded into the "input hash → content hash" index. The URL is `/api/asset/px/<contentHash>`.
    */
   const stored = await store.put(key, r.buf, { width: r.width ?? renderBox.width, height: r.height ?? renderBox.height, clipId, name });
   return {
@@ -365,14 +437,18 @@ export async function bakeOne(
 }
 
 /**
- * 预渲染**同一张卡的若干个时刻**。没渲过的合成一趟渲完,渲过的直接命中缓存。
+ * Prerenders **several moments for the same card**. Unrendered ones are combined into a single pass,
+ * while already-rendered ones directly hit cache.
  *
- * 为什么按卡分组而不是把所有请求平铺开:导出脚本从第 0 帧顺推(确定性要求),所以
- * 「渲第 F 帧」这件事已经把 0..F 全推了一遍 —— 同一张卡里**所有 ≤F 的时刻都是顺路白捡的**,
- * 多截一张 78ms,而单独开一趟要 4400ms。
+ * Why group by card instead of flattening all requests: the export script advances from frame 0
+ * (for determinism), so "rendering frame F" has already advanced through all of 0..F: for the same
+ * card, **all moments ≤F come along for free**, taking only 78ms for an extra snapshot versus
+ * 4400ms for a dedicated pass.
  *
- * **这不牺牲「先渲播放头附近」**:批次的先后仍然由调用方按离播放头的距离排,这里只是把
- * 同一张卡的其余时刻捎上。最坏情况是那个最近的时刻在一趟里排在后面几张,晚几十毫秒。
+ * **This does not compromise "render near playhead first"**: batch order is still prioritized by
+ * caller based on distance to playhead; this simply hitches the remaining moments for the same card
+ * along. Worst case, the nearest moment is placed a few images later in the pass, delayed by tens
+ * of milliseconds.
  */
 export async function bakeClip(
   root: string,
@@ -392,8 +468,10 @@ export async function bakeClip(
   }
 
   /*
-   * 哪几个时刻还没入库。已经有的不进这一趟 —— 它们在 bakeOne 里查一次索引就返回了;
-   * 老项目渲过的(素材目录里的旧文件)在这里先经素材服务迁进 `px`,也不进这一趟。
+   * Which moments are not yet stored. Already existing ones do not enter this pass: they return
+   * immediately after querying the index in bakeOne; rendered assets in legacy projects (old files
+   * in the asset catalog) are migrated into `px` via the asset service here first, and do not enter
+   * this pass either.
    */
   const store = bakeStoreFor(root);
   const missing: { t: number; at: number }[] = [];
@@ -408,19 +486,22 @@ export async function bakeClip(
   }
 
   /*
-   * 排版尺寸对同一张卡是固定的(只看 clip 的框),所以一趟里所有时刻共用同一个 target 项目。
-   * 时刻不同的只是「渲第几帧」,由 renderFrames 的 target-frames 决定。
+   * Layout dimensions are fixed for the same card (depending only on the clip box), so all moments
+   * in a pass share the same target project. Moments differ only in "which frame to render",
+   * determined by target-frames in renderFrames.
    */
   const { target, rgb } = bakeTarget(project, clipId, missing[0].t, size, bg, fit);
   const fps = target.fps || 30;
-  // 底色和透明统计在渲染 worker 里一并做掉(和单张那条路同一套 post),交回 bakeOne 的已经是成品
+  // Background and transparency stats are handled together in the render worker (same post as the
+  // single-render path); what is returned to bakeOne is already finished.
   const post = { bg: rgb ? rgb[1].toLowerCase() : null, stats: true };
   const atList = missing.map((m) => m.at);
   const shots = o.runner
     ? await renderFrames(root, origin, target, atList, [], priority, { signal: o.signal, runner: o.runner, post })
     : await enqueue(() => renderFrames(root, origin, target, atList, [], priority, { signal: o.signal, post, bitmapOnly: true, lane: o.lane }), priority, 0, o.signal);
 
-  // 渲好的按帧号交回 bakeOne,缓存键、入库、返回值全走那一套
+  // Rendered results are handed back to bakeOne by frame number; cache key, storage, and return values
+  // all reuse that pipeline.
   const byT = new Map<number, FrameResult>();
   for (const m of missing) {
     const f = Math.max(0, Math.round(m.at * fps));

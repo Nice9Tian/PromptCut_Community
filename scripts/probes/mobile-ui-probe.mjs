@@ -1,23 +1,30 @@
 /**
- * 手机版界面的验收探针(任务书 `docs/plan/mobile-online-task.md` 的 M1 真页面一半与 M2)。
- * 全程在本机:本机托管组合 + 仿 nginx 的代理(`lib/mobile-env.mjs`),在线构建当页面,绝不连真正的托管端。
+ * Acceptance check probe for mobile app UI (the real-page half of M1 and M2 in task brief
+ * `docs/plan/mobile-online-task.md`).
+ * Entirely on this machine: local hosted stack + nginx-like proxy (`lib/mobile-env.mjs`), uses the
+ * online build as the page, never connecting to the real hosted side.
  *
  *   npx vite build --mode online
- *   node scripts/probes/mobile-ui-probe.mjs [--dist dist-online] [--out <截图目录>] [--base-port 5820] [--base2-port 5825] [--doc-port 5828] [--asset-port 5829]
- *   生产上的检查(不进项目、不改数据)见 闭源一侧的 `mobile-prod-check.mjs`。
+ *   node scripts/probes/mobile-ui-probe.mjs [--dist dist-online] [--out <screenshot-dir>] [--base-port 5820] [--base2-port 5825] [--doc-port 5828] [--asset-port 5829]
+ *   For production checks (no entering projects, no modifying data), see closed-source side's
+ *   `mobile-prod-check.mjs`.
  *
- * M1:安卓 Chrome 仿真(UA + userAgentData.mobile=true)进手机版;桌面仿真进桌面界面;`?layout=desktop|mobile` 能强制。
- * M2(375×812、触屏,逐条对演示稿第四～十三轮 README 里可量的条目):
- *   N 底部导航栏三项 113×46、图标 22×22、Agent 未选中是渐变圆、选中外圈描边;
- *   S 子导航栏两页同高同位、选中时第一个是「引用」;
- *   C 冲突横条在顶栏正下方、处理完收起(两名成员 + 掐断甲的连接造出真实的待合并);
- *   T 缩略卡点选、长按换序、点 ◇ 原地选中(不切分页);
- *   Z 完整时间轴 ＋ / − 以播放头为中心、适应宽度、双指捏合(CDP 两个触点)以中点为中心且不误选;
- *   B 返回层级与浏览器后退;
- *   R 滚动条 offsetWidth - clientWidth = 5(竖向)、offsetHeight - clientHeight = 5(横向);
- *   W 375 宽无横向溢出,控制台无报错;
- *   截图:关键页面与演示稿同尺寸并排(`side-*.png`)。
- * 结果最后一行是一行 JSON(`ok`、`fails`、各项数字)。
+ * M1: Android Chrome simulation (UA + userAgentData.mobile=true) enters mobile app; desktop
+ * simulation enters desktop UI; `?layout=desktop|mobile` can force it.
+ * M2 (375×812, touch screen, checking item by item against measurable items in demo round 4-13 README):
+ *   N bottom navigation bar: three items 113×46, icons 22×22, Agent unselected is gradient circle,
+ *     selected has outer stroke;
+ *   S sub-navigation bar: two tabs same height and position, when selected the first is "Quote";
+ *   C conflict bar: directly below top bar, collapses after handling (two members + cut off A's
+ *     connection to produce real pending merge items);
+ *   T thumbnail cards: click to select, long press to reorder, click ◇ to select in place (without switching tabs);
+ *   Z full timeline: + / - centered on playhead, fit to width, two-finger pinch (two CDP contact
+ *     points) centered on midpoint without accidental selection;
+ *   B back hierarchy and browser back;
+ *   R scrollbars: offsetWidth - clientWidth = 5 (vertical), offsetHeight - clientHeight = 5 (horizontal);
+ *   W 375 width has no horizontal overflow, console has no errors;
+ *   Screenshots: key pages side-by-side with demo at the same size (`side-*.png`).
+ * The last line of the result is a JSON line (`ok`, `fails`, various numbers).
  */
 import puppeteer from 'puppeteer';
 import fs from 'node:fs';
@@ -57,7 +64,7 @@ const center = async (page, sel) => { const r = await rect(page, sel); return r 
 const tap = async (page, sel) => { const c = await center(page, sel); if (!c) throw new Error(`Cannot click ${sel}`); await page.touchscreen.tap(c.x, c.y); await sleep(250); };
 const text = (page, sel) => page.evaluate((s) => document.querySelector(s)?.textContent?.trim() ?? null, sel);
 const store = (page, src, ...a) => page.evaluate((s, a2) => new Function('S', 'args', s)(window.__pcStore, a2), src, a);
-/** CDP 触屏:一组触点按下、逐步移动、抬起(生成 pointerType=touch 的 Pointer Events) */
+/** CDP touch screen: a group of contact points pressed, moved step by step, lifted (generates Pointer Events with pointerType=touch) */
 async function touch(page, steps, { holdMs = 0, stepMs = 16 } = {}) {
   const send = (type, pts) => page.cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map((p, i) => ({ x: p.x, y: p.y, id: i + 1 })) });
   await send('touchStart', steps[0]);
@@ -68,7 +75,7 @@ async function touch(page, steps, { holdMs = 0, stepMs = 16 } = {}) {
 }
 const lerp = (a, b, n) => Array.from({ length: n + 1 }, (_, i) => [{ x: a.x + (b.x - a.x) * i / n, y: a.y + (b.y - a.y) * i / n }]);
 
-/** 两张同高的图左右拼起来(左:实现,右:演示稿) */
+/** Stitch two images of the same height side by side (left: implementation, right: demo) */
 function sideBySide(left, right, file) {
   const a = PNG.sync.read(fs.readFileSync(left)), b = PNG.sync.read(fs.readFileSync(right));
   const h = Math.max(a.height, b.height), w = a.width + 16 + b.width;
@@ -85,8 +92,8 @@ const env = await startMobileEnv({
 });
 const seeded = await env.seed(emptyProject('Summer seaside Vlog'));
 check(!/error|reject/i.test(`${seeded.opened}${seeded.seeded}`), 'Written into the initial project on the creator\'s behalf', seeded);
-// 不加 --hide-scrollbars:要量滚动条宽度
-// 去掉 Puppeteer 缺省加的 --hide-scrollbars:要量滚动条宽度(加着它滚动条一律 0 宽)
+// Do not add --hide-scrollbars: need to measure scrollbar width
+// Remove --hide-scrollbars added by default by Puppeteer: need to measure scrollbar width (with it, scrollbars always have 0 width)
 const browser = await puppeteer.launch({ headless: true, ignoreDefaultArgs: ['--hide-scrollbars'], protocolTimeout: 600_000, args: [...PROBE_CHROME_ARGS, '--no-first-run', '--autoplay-policy=no-user-gesture-required'] });
 let phone = null;
 try {
@@ -124,7 +131,7 @@ try {
   };
   await noOverflow('empty');
 
-  /* ---------------------------------------------------------------- 内容:经素材库导入三张图、点一下接到主要内容末尾 */
+  /* ---------------------------------------------------------------- Content: import three images via media library, click once to append to the end of main content */
   const imgs = [];
   for (const [i, rgb] of [[1, [200, 60, 50]], [2, [40, 160, 90]], [3, [50, 90, 200]]]) imgs.push(await solidPng(path.join(OUT, `img-${i}.png`), rgb));
   await tap(A, '[data-pcm="sub-image"]');
@@ -147,7 +154,7 @@ try {
   await shot(A, 'm2-preview');
 
   phase('N');
-  /* ---------------------------------------------------------------- N 底部导航栏 */
+  /* ---------------------------------------------------------------- N bottom navigation bar */
   {
     const items = {};
     for (const k of ['preview', 'timeline', 'agent']) items[k] = await rect(A, `[data-pcm="pg-${k}"]`);
@@ -178,7 +185,7 @@ try {
   }
 
   phase('T');
-  /* ---------------------------------------------------------------- T 缩略卡点选、长按换序 */
+  /* ---------------------------------------------------------------- T thumbnail card click selection, long press to reorder */
   {
     const blocks = async () => A.$$eval('[data-pcm="mblock"]', (bs) => bs.map((b) => ({ id: b.dataset.id, sel: b.classList.contains('sel') })));
     await tap(A, `[data-pcm="mblock"][data-id="${ids0[0]}"]`);
@@ -191,7 +198,7 @@ try {
     check(first === 'Quote', 'S after selecting in the thumbnail preview, the first subnav item is "Quote"', first);
     await tap(A, '.mainhead');
     check(!(await blocks()).some((b) => b.sel), 'T tapping outside the mini timeline = deselect');
-    // 长按换序:当前帧放到第二段中间(三张卡都在屏幕内),先选中第三张,再按住 450 ms 拖到第一张前面
+    // Long press to reorder: place current frame in middle of second clip (all three cards on screen), select third card first, then hold 450 ms and drag before first card
     await store(A, 'const c = S.getState().project.tracks.flatMap((t) => t.clips).find((x) => x.id === args[0]); S.actions.seek((c.start + c.end) / 2); return true;', ids0[1]);
     await sleep(400);
     out.T.visible = await A.$$eval('[data-pcm="mblock"]', (bs) => bs.map((b) => Math.round(b.getBoundingClientRect().x)));
@@ -206,38 +213,45 @@ try {
     const ids1 = await until('reorder takes effect', async () => { const ids = await mainIds(); return ids[0] === ids0[2] ? ids : null; }, 10_000);
     out.T.reorder = { before: ids0, after: ids1 };
     check(JSON.stringify(ids1) === JSON.stringify([ids0[2], ids0[0], ids0[1]]), 'T select first, then long-press drag = reorder', out.T.reorder);
-    // 只按住拖、没先选中:是滚动,不换序
+    // Only hold and drag without selecting first: scrolls, does not reorder
     await tap(A, '.mainhead');
     const ids1b = await mainIds();
     const ra = await rect(A, `[data-pcm="mblock"][data-id="${ids1b[1]}"]`);
     /*
-     * 这一下要同时判两件事,原来只判了后一件:
-     *   ① 手指划过去,缩略时间轴**真的滚动了**;
-     *   ② 没先选中时按住拖只是滚动,不换序。
-     * 只判 ② 的话,一条「手指划了什么都不动」的时间轴照样能过 —— 用户 2026-10-24 报的
-     * 「手机版传统式缩略时间轴用触屏没法滑动查看」就是从这个缝里漏过去的。
-     * `.strip-scroll` 上写着 `touch-action: none`,浏览器原生滑动是关掉的,全靠
-     * `ThumbStrip` 的 onPointerDown 手动改 scrollLeft,所以这条路必须有人盯。
+     * This step needs to check two things simultaneously; previously only the latter was checked:
+     *   (1) Finger swipes across, mini timeline **actually scrolled**;
+     *   (2) Holding and dragging without selecting first only scrolls, does not reorder.
+     * If only (2) is checked, a timeline where "nothing moves when swiped by finger" would still pass:
+     * "cannot swipe to view mobile app Classic mode mini timeline using touch screen" reported by user
+     * on 2026-10-24 slipped right through this crack.
+     * `.strip-scroll` has `touch-action: none`, browser native scrolling is turned off, relying entirely
+     * on `ThumbStrip`'s onPointerDown to manually modify scrollLeft, so this path must be monitored.
      */
     const slBefore = await A.$eval('.strip-scroll', (el) => el.scrollLeft);
     await touch(A, lerp({ x: ra.x + ra.w / 2, y: ra.y + ra.h / 2 }, { x: ra.x - 60, y: ra.y + ra.h / 2 }, 8), { holdMs: 450 });
     const slAfter = await A.$eval('.strip-scroll', (el) => el.scrollLeft);
     /*
-     * 本来还想判「松手之后还带惯性继续滑」—— 那正是这次改动的要害(原生横滑有惯性,
-     * 手动推 scrollLeft 那条老路没有)。实测判不了:CDP 的 `Input.dispatchTouchEvent` 是合成触点,
-     * 不触发合成器的抛掷动画,改之后量出来 rest 仍然等于 after。所以这里只判「真的滚动了」,
-     * 惯性那一条**在这套无头环境里证不了**,要真机才算数。
+     * Originally also wanted to check "continues sliding with inertia after release", which was the
+     * crux of this change (native horizontal scrolling has inertia, while the old path of manually
+     * pushing scrollLeft does not). Actual testing shows it cannot be checked: CDP's
+     * `Input.dispatchTouchEvent` uses synthetic touch points and does not trigger the compositor's
+     * fling animation; after the change, the measured rest is still equal to after. So here it only
+     * checks "actually scrolled"; the inertia part **cannot be proven in this headless environment**,
+     * requiring a real device to count.
      */
     out.T.touchScroll = { before: Math.round(slBefore), after: Math.round(slAfter) };
     check(slAfter - slBefore > 20, 'T swiping left, the mini timeline scrolls along', out.T.touchScroll);
     check(JSON.stringify(await mainIds()) === JSON.stringify(ids1b), 'T with nothing selected, press-and-drag only scrolls and does not reorder');
     /*
-     * 只剩**一段**时也要能从头滑到尾（用户 2026-10-24 在 iPhone 上报：一段 6 秒的项目，
-     * 手指划缩略条白线一动不动）。原来这支探针一直用三段的项目，这种情形从没测过。
-     * 两件事一起判：划得动，而且**松手之后不会被弹回去** —— 同步「滚动位置 ← 当前时间」
-     * 那个 effect 每次渲染都跑，惯性那一段 dragging 已经是 false，不挡住它就会把人划的距离吃掉。
+     * Must also be able to swipe from start to end when only **one clip** remains (reported by user
+     * on 2026-10-24 on iPhone: in a 6-second project with one clip, swiping the mini bar white line
+     * with a finger did not move at all). Previously this probe always used a project with three
+     * clips; this scenario was never tested.
+     * Checking two things together: can swipe, and **will not bounce back after release**: the effect
+     * syncing "scroll position ← current time" runs on every render; during inertia dragging is already
+     * false, and without blocking it, the user's swiped distance will be swallowed.
      */
-    // 用正经的 removeClip 删掉其余两段（不原地改 store 里的项目对象，那是仓库的硬约束）
+    // Delete the remaining two clips using proper removeClip (do not mutate project object in store in place, which is a hard constraint of the repo)
     for (const id of ids1b.slice(1)) await store(A, 'S.actions.removeClip(args[0]); return true;', id).catch(() => null);
     await sleep(600);
     const oneIds = await mainIds();
@@ -247,7 +261,7 @@ try {
       out.T.oneClip.geo = geo;
       check(geo.scroll - geo.client > 20, 'T with only one clip left, the thumbnail strip still has room to scroll (the left and right placeholders must be large enough)', geo);
       const r1 = await rect(A, `[data-pcm="mblock"][data-id="${oneIds[0]}"]`);
-      // 先把滚动位置摆到中间，两个方向才都有余量可走（在端点上往外划本来就不该动）
+      // First set scroll position to the center so both directions have margin to move (swiping outward at endpoints is not supposed to move)
       await A.$eval('.strip-scroll', (el) => { el.scrollLeft = (el.scrollWidth - el.clientWidth) / 2; });
       await sleep(500);
       const mid = await A.$eval('.strip-scroll', (el) => el.scrollLeft);
@@ -272,7 +286,7 @@ try {
     } else {
       check(false, 'T could not trim the project down to one clip, so this group was not tested', out.T.oneClip);
     }
-    // 把删掉的两段撤销回来：后面还要用两段之间的「＋」加转场
+    // Undo the two deleted clips back: the "+" between the two clips is needed later to add a transition
     for (let i = 0; i < 6 && (await mainIds()).length < ids1b.length; i++) {
       await store(A, 'S.actions.undo(); return true;').catch(() => null);
       await sleep(250);
@@ -281,7 +295,7 @@ try {
     check(out.T.oneClip.restored === ids1b.length, 'T after undo all three clips are back (needed by the following steps)', out.T.oneClip.restored);
     await A.$eval('.strip-scroll', (el) => { el.scrollLeft = 0; });
     await sleep(300);
-    // 加转场:点两段之间的 ＋ → 卡片库转场分类 → 交叉溶解
+    // Add transition: click + between two clips -> card library transition category -> crossfade
     await A.evaluate(() => { const sc = document.querySelector('.strip-scroll'); sc.scrollLeft = 0; });
     await sleep(200);
     await tap(A, '[data-pcm="mark-add"]');
@@ -301,7 +315,7 @@ try {
   }
 
   phase('S');
-  /* ---------------------------------------------------------------- S 子导航栏两页同高同位 + Z 完整时间轴 */
+  /* ---------------------------------------------------------------- S sub-navigation bar two tabs same height and position + Z full timeline */
   {
     const sPrev = await rect(A, '[data-pcm="subnav-preview"]');
     await tap(A, '[data-pcm="pg-timeline"]');
@@ -331,7 +345,7 @@ try {
     const px2 = await px(), ph2 = await rect(A, '[data-pcm="playhead"]');
     out.Z.zoomOut = { px2, ph2: ph2.x };
     check(near(px2, fitPx, 0.01) && near(ph2.x, ph0.x, 1.5), 'Z − zooms back out centered on the playhead', out.Z.zoomOut);
-    // 双指捏合:两个触点落在一段片段上张开,比例跟着距离变、以两指中点为中心,不选中、不动播放头
+    // Two-finger pinch: two contact points land on a clip and spread apart, scale changes with distance, centered on midpoint between two fingers, without selecting or moving playhead
     await store(A, 'S.actions.select([]); return true;');
     const tBefore = await store(A, 'return S.getState().t;');
     const lane = await rect(A, '.lane .clip');
@@ -350,14 +364,14 @@ try {
     check(near(tAtMid0, tAtMid1, 0.05), 'Z two-finger pinch is centered on the midpoint of the two fingers', out.Z.pinch);
     check(selP.length === 0 && near(tBefore, tAfter, 1e-6), 'Z pinching does not select a clip or move the playhead', out.Z.pinch);
     await shot(A, 'm2-timeline-pinched');
-    // 横向滚动条:放大到头
+    // Horizontal scrollbar: zoom in all the way
     for (let i = 0; i < 20 && !(await A.$eval('[data-pcm="zoom-in"]', (b) => b.disabled)); i++) await tap(A, '[data-pcm="zoom-in"]');
     out.R.horizontal = await A.$eval('[data-pcm="tl-scroll"]', (e) => ({ px: Number(document.querySelector('.tl-inner').dataset.px), diff: e.offsetHeight - e.clientHeight }));
     check(out.R.horizontal.px === 120, 'Z after the timeline zooms to the limit of 120, "+" is disabled', out.R.horizontal);
     await tap(A, '[data-pcm="zoom-fit"]');
     await sleep(300);
     check(near(await px(), fitPx, 0.01), 'Z "Fit width" goes back to fitting the whole span into the visible width');
-    // 时间轴里选中片段:第一个是「引用」
+    // Select clip in timeline: the first is "Quote"
     const clipR = await rect(A, '.lane .clip');
     await A.touchscreen.tap(clipR.x + Math.min(clipR.w, 40) / 2, clipR.y + clipR.h / 2);
     await sleep(300);
@@ -369,7 +383,7 @@ try {
   }
 
   phase('B');
-  /* ---------------------------------------------------------------- B 返回层级与浏览器后退 */
+  /* ---------------------------------------------------------------- B back hierarchy and browser back */
   {
     await A.goBack();
     const p1 = await until('Back: timeline → thumbnail preview', async () => ((await page()) === 'preview' ? 'preview' : null), 5000);
@@ -385,7 +399,7 @@ try {
   }
 
   phase('R');
-  /* ---------------------------------------------------------------- R 竖向滚动条 + 面板 */
+  /* ---------------------------------------------------------------- R vertical scrollbar + panel */
   {
     await tap(A, '[data-pcm="sub-card"]');
     await A.waitForSelector('[data-pcm="sheet-cards"] .sheet-body', { visible: true });
@@ -393,7 +407,7 @@ try {
     out.R.phoneOverlay = await A.$eval('[data-pcm="sheet-cards"] .sheet-body', (e) => ({ diff: e.offsetWidth - e.clientWidth, scrollable: e.scrollHeight > e.clientHeight }));
     await noOverflow('cards-sheet');
     await shot(A, 'm2-cards');
-    // 三档拖动:按住横杠往上拖 = 展开,往下拖过一定距离 = 关闭
+    // Three-tier dragging: hold bar and drag up = expand, drag down past a certain distance = close
     const g = await center(A, '[data-pcm="sheet-cards"] [data-pcm="grip"]');
     const h0 = (await rect(A, '[data-pcm="sheet-cards"]')).h;
     await touch(A, lerp(g, { x: g.x, y: g.y - 150 }, 10));
@@ -415,8 +429,8 @@ try {
     }
   }
 
-  /* ---------------------------------------------------------------- R 滚动条宽度:手机仿真下 Chrome 用悬浮滚动条(不占宽度),
-     所以照演示稿第十一轮的量法,在 --headless=new 的桌面 Chromium 里开 375×812、?layout=mobile 量 */
+  /* ---------------------------------------------------------------- R scrollbar width: Chrome uses overlay scrollbars under mobile simulation (takes no width),
+     so following measurement in demo round 11, measure in desktop Chromium with --headless=new at 375×812, ?layout=mobile */
   {
     const P = await env.newPage(browser, 'none');
     await P.setViewport({ width: 375, height: 812 });
@@ -438,7 +452,7 @@ try {
   }
 
   phase('C');
-  /* ---------------------------------------------------------------- C 冲突横条(两名成员,只断甲) */
+  /* ---------------------------------------------------------------- C conflict bar (two members, disconnect A only) */
   {
     const B = await env.newPage(browser, 'phone');
     await env.enter(B, { via: 2, username: 'yi' });
@@ -447,7 +461,7 @@ try {
     env.proxy.cutWs();
     await sleep(1000);
     await store(A, 'S.actions.updateClip(args[0], { opacity: 0.5 }); return true;', ids[1]);
-    // 等甲真的判成离线(会话接续期间不算):常驻提示「当前离线，有未提交的修改」出现
+    // Wait until A is actually classified as offline (session resumption period does not count): resident notice "Currently offline, with uncommitted changes" appears
     const unsent = await until('A is judged offline with unsubmitted changes', () => A.$('[data-pc="offline-unsent"]'), 150_000, 500);
     out.C.offlineUnsent = !!unsent;
     await store(B, 'S.actions.updateClip(args[0], { opacity: 0.8 }); return true;', ids[1]);
@@ -461,11 +475,13 @@ try {
       check(near(cf.y, top.y + top.h + 2, 1.5) && near(cf.h, 36, 0.5) && /\d+ changes pending merge/.test(out.C.bar.text), 'C the conflict bar is directly below the top bar', out.C.bar);
       await shot(A, 'm2-conflict');
       if (!(await A.$('[data-pcm="sheet-conflict"]'))) await tap(A, '[data-pcm="cfbar-open"]');
-      // 进项目时的气泡可能盖住「处理」:点不着就直接点元素
+      // Bubble when entering project might cover "Resolve": click element directly if unable to click
       if (!(await A.$('[data-pcm="sheet-conflict"]'))) await A.evaluate(() => document.querySelector('[data-pcm="cfbar-open"]')?.click());
       await A.waitForSelector('[data-pcm="sheet-conflict"]', { visible: true });
       await shot(A, 'm2-conflict-sheet');
-      // 2026-10-22 起面板是逐项勾选(同桌面「冲突合并」):「删除选中」没勾时是灰的,先勾上一级再删(原来是整份「删除全部」,点了就清)
+      // Starting 2026-10-22 panel uses item-by-item checkboxes (same as desktop "Conflict merge"):
+      // "Delete selected" is grayed out when nothing is checked, check parent level first before deleting
+      // (previously it was "Delete all" for the whole thing, clicking cleared it immediately)
       out.C.dropBeforeSelect = await A.evaluate(() => document.querySelector('[data-pcm="cf-drop"]')?.disabled ?? null);
       check(out.C.dropBeforeSelect === true, 'C with nothing checked, "Delete selected" is grayed out', out.C.dropBeforeSelect);
       await A.evaluate(() => { for (const i of document.querySelectorAll('[data-pcm="cf-thing"] .cf-head input')) if (!i.checked) i.click(); });
@@ -484,7 +500,7 @@ try {
   }
 
   phase('home');
-  /* ---------------------------------------------------------------- B 主页 → 项目列表(最后做:离开项目) */
+  /* ---------------------------------------------------------------- B home page -> project list (done last: leave project) */
   {
     await tap(A, '[data-pcm="top-home"]');
     const home = await until('home goes back to the project list', () => A.$('[data-pcm="home"]'), 10_000);
@@ -494,10 +510,13 @@ try {
     await shot(A, 'm2-home');
   }
 
-  /* ---------------------------------------------------------------- W 控制台 */
+  /* ---------------------------------------------------------------- W console */
   out.W.pageErrors = A.errors;
-  // 本机测试环境没有网站账号服务(项目是凭口令的共享项目):回开始页时查登录的 /api/account/me 回 404,生产上有这个接口,单独列出不算页面报错
-  // 社区版的在线构建没有接口守卫(闭源),上传队列的目标查询会真发出去,也回 404
+  // Local test environment has no website account service (projects are passphrase-based shared
+  // projects): returning to start page queries /api/account/me for login and returns 404; production
+  // has this endpoint, listed separately and not counted as page error
+  // Community edition online build has no API guards (closed source), upload queue destination query
+  // is actually sent out and also returns 404
   const accountMissing = (e) => /\/api\/(?:account|media\/upload-queue)\//.test(e);
   out.W.badResponses = A.badResponses;
   out.W.accountApiMissingInLocalEnv = A.badResponses.filter(accountMissing);
@@ -507,7 +526,7 @@ try {
   check(A.errors.length === 0, 'W no uncaught errors on the page', A.errors);
   check(A.consoleErrors.length === 0, 'W no errors in the console', A.consoleErrors);
 
-  /* ---------------------------------------------------------------- 演示稿同尺寸截图,并排(演示稿在 prototypes/,社区版没有) */
+  /* ---------------------------------------------------------------- Same-size demo screenshots, side by side (demos in prototypes/, community edition does not have them) */
   if (fs.existsSync(DEMO)) {
     const D = await env.newPage(browser, 'phone');
     await D.goto(pathToFileURL(DEMO).href, { waitUntil: 'load' });

@@ -129,9 +129,13 @@ export function setSelectionLink(link: SelectionLink | null, projectId: string |
 }
 
 /**
- * 连接换了一条(断线重连、账号项目到期前换会话):文档服务按连接记选区,新连接上只有一条合成的空选区,旧连接一关原来那条就没了。
- * 在新连接上把当前选区原样再发一次(同一个页面号、版本号加一)。不发的话别的成员和云端 Agent 看到这个页面没有选中,
- * 带选区快照给云端 Agent 发消息也会被拒(服务端要求恰好有一条这个页面号的非合成选区)。
+ * The connection changed (reconnect after a drop, session swapped before an account project expires):
+ * the document service records selections per connection, a new connection only has one synthetic empty
+ * selection, and once the old connection closes the original one is gone.
+ * Re-sends the current selection unchanged on the new connection (same page ID, version plus one).
+ * If it is not sent, other members and the Cloud Agent see this page as having nothing selected, and
+ * sending a message with a selection snapshot to the Cloud Agent is also rejected (the server requires
+ * exactly one non-synthetic selection with this page ID).
  */
 export function republishSelection(): void {
   publish(true);

@@ -1,8 +1,11 @@
 /**
- * C6.5 操作格式与差异算法（设计稿 `docs/plan/c65-design.md` 第 2 节；验收 V1、V8 的差异计算部分）。
- * 跑：node --test server/test/c65-ops.test.mjs
+ * C6.5 operation formats and diff algorithm (design doc `docs/plan/c65-design.md` Section 2; diff
+ * calculation part of acceptance check V1 and V8).
+ * Run: node --test server/test/c65-ops.test.mjs
  *
- * 只照设计稿写，不看实现。被测模块由 `c65-kit.mjs` 动态载入（假设 A1、A2），缺失时每条用例各自失败。
+ * Written only against the design doc without looking at the implementation. The module under test
+ * is dynamically loaded by `c65-kit.mjs` (assumptions A1, A2); each test case fails individually
+ * when missing.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,15 +24,15 @@ const doc0 = () => ({
 });
 const ids = (arr) => arr.map((x) => x.id);
 
-// ------------------------------------------------------------------ 四种操作
+// ------------------------------------------------------------------ Four operations
 
 test('C65-V1-01 set: set a value addressed by @id; missing parent objects on the path are created together', async () => {
   const { applyClone } = await loadJsonOps();
   const out = applyClone(doc0(), [
     { op: 'set', path: '/tracks/@t1/clips/@c3/frame/x', value: 120 },
-    { op: 'set', path: '/tracks/@t1/clips/@c2/frame/x', value: 7 }, // c2 没有 frame：连同 frame 一起建
+    { op: 'set', path: '/tracks/@t1/clips/@c2/frame/x', value: 7 }, // c2 has no frame: create together with frame
     { op: 'set', path: '/tracks/@t2/name', value: 'New name' },
-    { op: 'set', path: '/meta2/deep/k', value: [1, 2] }, // 顶层缺两级
+    { op: 'set', path: '/meta2/deep/k', value: [1, 2] }, // Missing two levels at the top level
   ]);
   const t1 = out.tracks.find((t) => t.id === 't1');
   assert.equal(t1.clips.find((c) => c.id === 'c3').frame.x, 120);
@@ -107,7 +110,7 @@ test('C65-V1-06 whole-batch atomicity: if one fails midway, the whole batch has 
     { op: 'set', path: '/tracks/@t1/clips/@c1/v', value: 100 },
     { op: 'remove', path: '/tracks/@t1/clips/@c2' },
     { op: 'insert', path: '/tracks/@t1/clips', index: 0, value: { id: 'cz' } },
-    { op: 'remove', path: '/tracks/@nope/clips/@c1' }, // 父级不存在
+    { op: 'remove', path: '/tracks/@nope/clips/@c1' }, // Parent does not exist
     { op: 'set', path: '/name', value: 'should not take effect' },
   ]);
   assert.equal(r.ok, false, 'the whole batch should be rejected');
@@ -168,7 +171,7 @@ test('C65-V1-10 the path is a JSON pointer: / and ~ in keys are escaped as ~1 an
 
 // ------------------------------------------------------------------ diffProject
 
-/** 固定种子；设计稿 V1 要求 1000 个随机项目 */
+/** Fixed seed; design doc V1 requires 1000 random projects */
 const SEED = 0xc65;
 const N_PROPERTY = 1000;
 
@@ -179,7 +182,8 @@ test(`C65-V1-20 diffProject property test: ${N_PROPERTY} random projects, ops tu
   let prev = makeProject(r);
   let nonEmpty = 0;
   for (let i = 0; i < N_PROPERTY; i++) {
-    // 一半从新项目起，一半在上一个 next 上接着改（链式，覆盖「连续编辑」）
+    // Half start from a new project, half continue editing on the previous next (chained, covering
+    // "continuous editing")
     if (i % 2 === 0) prev = makeProject(r);
     const next = mutateProject(r, prev);
     const prevCopy = structuredClone(prev);
@@ -224,7 +228,8 @@ test('C65-V1-22 diffProject addresses arrays with ids by @id, not by index; it u
       const segs = splitPath(o.path);
       for (let k = 0; k + 1 < segs.length; k++) {
         if (ID_ARRAYS.has(segs[k]) && /^\d+$/.test(segs[k + 1])) {
-          // 例外：数组被换成了没有 id 的值时整体 set，不会出现 /clips/3 这种路径
+          // Exception: when an array is replaced with values without id, set as a whole; paths like
+          // /clips/3 will not appear
           assert.fail(`arrays with ids are not addressed by index: ${o.path}`);
         }
       }
@@ -245,7 +250,7 @@ test('C65-V1-23 moving a clip within a track → only move, not delete then inse
     assert.equal(o.op, 'move', `repositioning uses only move: ${JSON.stringify(o)}`);
     assert.match(o.path, /^\/tracks\/@t1\/clips\/@c\d$/);
   }
-  // 设计稿没要求最少条数；一条就够时，报告里记一笔而不是判失败
+  // Design doc does not require a minimum count; when one is enough, note in report rather than fail
   if (ops.length !== 1) console.log(`[C65-V1-23] moving one clip produced ${ops.length} move ops`);
 });
 
@@ -259,12 +264,15 @@ test('C65-V1-24 changing one number of one clip → a single set addressed by @i
   assert.deepEqual(inverse, [{ op: 'set', path: '/tracks/@t1/clips/@c3/frame/x', value: 30 }]);
 });
 
-// ------------------------------------------------------------------ V8 差异计算
+// ------------------------------------------------------------------ V8 diff calculation
 
 /**
- * 分批量中位数：每批 runs 次，最多 8 批、批间隔 100 ms（摊开在约 1 s 里），任一批中位数 ≤ limitMs 即停。
- * 机器忙（几份 npm test 并行）时某一批可能整体被拖慢；判据（某批中位数 ≤ 5 ms）不变，第一批就是原来那一批，
- * 代码真退化时每一批都超，照样拦得住。做法同 src/kernel/diffProject.test.mjs 的 timeIt。
+ * Batched medians: runs times per batch, at most 8 batches, 100 ms batch interval (spread over
+ * about 1 s); stops as soon as any batch median is ≤ limitMs.
+ * When the machine is busy (several npm test runs in parallel), a batch may be slowed down as a
+ * whole; the criterion (any batch median ≤ 5 ms) remains unchanged, the first batch is the
+ * original batch, and if code truly regresses, every batch exceeds it and is still caught.
+ * Same approach as timeIt in src/kernel/diffProject.test.mjs.
  */
 async function bestBatchMedian(fn, runs, limitMs) {
   const batches = [];
@@ -288,13 +296,15 @@ test('C65-V8-01 diff computation for a single commit ≤ 5 ms (a project of 1000
   const prev = makeProject(r, { tracks: 10, clipsPerTrack: 100 });
   const total = prev.tracks.reduce((n, t) => n + t.clips.length, 0);
   assert.equal(total, 1000);
-  // 编辑器里 setProject 的 next 与 prev 共享没改的部分（结构共享）；这里照样造
+  // In the editor, setProject's next and prev share untouched parts (structural sharing);
+  // constructed the same way here
   const next = { ...prev, tracks: prev.tracks.map((t, i) => (i === 5 ? { ...t, clips: t.clips.map((c, j) => (j === 50 ? { ...c, start: c.start + 1 } : c)) } : t)) };
-  for (let i = 0; i < 20; i++) diffProject(prev, next); // 预热
+  for (let i = 0; i < 20; i++) diffProject(prev, next); // Warm-up
   const a = await bestBatchMedian(() => diffProject(prev, next), 50, 5);
   assert.ok(a.best.median <= 5, `measured ${a.n} batches, the best batch's median ${a.best.median.toFixed(2)} ms should be ≤ 5 ms (all of that batch: ${a.best.all.map((x) => x.toFixed(2)).join(', ')})`);
 
-  // 没有结构共享（整份深拷贝后改一处）也要在上限内：页面的某些 action 会整份重建
+  // Must stay within limit even without structural sharing (deep clone whole object then edit one
+  // place): certain page actions rebuild the whole document
   const deep = structuredClone(prev);
   deep.tracks[5].clips[50] = makeClip(r, deep.tracks[5].clips[50].id);
   const b = await bestBatchMedian(() => diffProject(prev, deep), 20, 5);

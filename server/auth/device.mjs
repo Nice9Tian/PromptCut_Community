@@ -1,13 +1,19 @@
 /**
- * 本机设备信息（计划 `docs/plan/Master-Execution-Plan.md` 第 12.2 节「设备名」、契约 `auth-contract.md` 第 5 节「本机声明」）。
+ * Local device information (plan `docs/plan/Master-Execution-Plan.md` section 12.2 "Device name",
+ * contract `auth-contract.md` section 5 "Local claim").
  *
- * - `deviceId`：主机名、平台、架构与第一块非内部网卡的 MAC 拼起来取 sha256，前 22 个 base64url 字符前面加 `pc-`
- *   （满足 16～64 个 `[A-Za-z0-9_-]`），只用于首次创建稳定设备记录；
- * - `deviceName`：主机名加上面那串哈希的前 4 个字符，例如 `DESKTOP-ABC-x7Qe`；
- * - 环境变量 `PROMPTCUT_DEVICE_ID` / `PROMPTCUT_DEVICE_NAME` 可以覆盖（同一台机器上起两个实例做测试时用）。
+ * - `deviceId`: Hostname, platform, architecture, and MAC of the first non-internal network
+ *   interface are concatenated and SHA-256 hashed; `pc-` is prepended to the first 22 base64url
+ *   characters (satisfying 16-64 `[A-Za-z0-9_-]` characters), used only when first creating a
+ *   stable device record;
+ * - `deviceName`: Hostname plus the first 4 characters of the hash above, e.g. `DESKTOP-ABC-x7Qe`;
+ * - Environment variables `PROMPTCUT_DEVICE_ID` / `PROMPTCUT_DEVICE_NAME` can override (used when
+ *   starting two instances on the same machine for testing).
  *
- * 桌面数据目录存在时，首次原子写入 device.json，以后读取它，网卡顺序或运行副本变化不会改变身份。
- * 没有稳定数据目录的开发服务保持旧算法；显式测试设备 ID 不写此记录。损坏记录保留并报错。
+ * When the desktop data directory exists, atomically writes device.json on first run and reads it
+ * thereafter; changes in network interface order or running replicas will not change the identity.
+ * Development servers without a stable data directory keep the old algorithm; explicit test device
+ * IDs do not write this record. Corrupted records are retained and an error is reported.
  */
 import os from 'node:os';
 import fs from 'node:fs';

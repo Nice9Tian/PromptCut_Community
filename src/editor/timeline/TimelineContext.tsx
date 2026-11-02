@@ -17,10 +17,10 @@ interface TimelineContextState {
   setDraggingClipId: (id: string | null) => void;
   draggingTrackId: string | null;
   setDraggingTrackId: (id: string | null) => void;
-  /** 左栏拖进来时的落点预演(没在拖 = null);轨道行和新建轨落区共用同一份 */
+  /** Drop preview while dragging in from the left rail (not dragging = null); shared by track rows and the new-track drop zone */
   dropPlan: DropPlan | null;
   setDropPlan: React.Dispatch<React.SetStateAction<DropPlan | null>>;
-  /** 正在拖行头换序(没在换 = null);行头和轨道行按它一起平移 */
+  /** Dragging a row header to reorder (not reordering = null); the row header and track row move together by it */
   reorder: ReorderState | null;
   setReorder: React.Dispatch<React.SetStateAction<ReorderState | null>>;
   
@@ -32,11 +32,12 @@ interface TimelineContextState {
   setRowSize: (val: RowSize) => void;
   trackH: number;
   /**
-   * 右键一段时多给一项「引用到输入框」。氛围式的详细编辑挂的就是这条时间轴
-   * (`src/start/DetailEdit.tsx`),在那儿右键一张卡要能把它引用给 Agent;编辑界面没有这个输入框,不传。
+   * Adds an extra "Quote into input box" item when right-clicking a segment. The detail editing of Vibe mode
+   * mounts this very timeline (`src/start/DetailEdit.tsx`), and right-clicking a card there must be able to
+   * quote it to the Agent; the editor has no such input box, so it does not pass this.
    */
   quoteClip?: (clip: TrackClip, label: string) => void;
-  /** 引用挂在片段上的某一张叠加卡。和 quoteClip 一样只有氛围式的详细编辑传(见 index.tsx) */
+  /** Quote one overlay card attached to a clip. Like quoteClip, only the detail editing of Vibe mode passes it (see index.tsx) */
   quoteOverlay?: (clip: TrackClip, item: OverlayItem) => void;
 }
 
@@ -102,18 +103,18 @@ export function TimelineProvider({ children, quoteClip, quoteOverlay }: {
   
   const trackH = ROW_SIZE_H[rowSize];
 
-  // 拖动一结束(松手、按 Esc、拖出窗口)就把落点预演清掉,免得预览留在屏幕上
+  // As soon as a drag ends (release, Esc, dragging out of the window), clear the drop preview so the preview doesn't stay on screen
   const dragPayload = useDragPayload();
   useEffect(() => {
     if (!dragPayload) setDropPlan(null);
   }, [dragPayload]);
 
-  // 拖着卡片 / 素材贴近左右边缘时自动横向滚动(HTML5 拖放自己不会滚,不然只能落在当前视野里)
+  // When dragging a card / media near the left or right edge, scroll horizontally automatically (HTML5 drag and drop doesn't scroll by itself, otherwise it could only drop within the current view)
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || !dragPayload) return;
-    const EDGE = 60; // 触发自动滚动的边缘宽度(px)
-    const MAX = 18; // 每帧最多滚多少 px
+    const EDGE = 60; // Edge width (px) that triggers auto-scroll
+    const MAX = 18; // Maximum px to scroll per frame
     let vx = 0;
     let raf = 0;
     const step = () => {
@@ -122,7 +123,7 @@ export function TimelineProvider({ children, quoteClip, quoteOverlay }: {
     };
     const onOver = (e: DragEvent) => {
       const r = el.getBoundingClientRect();
-      const inner = r.left + headerWRef.current; // 行头列不算轨道区
+      const inner = r.left + headerWRef.current; // The row header column is not part of the track area
       if (e.clientX < inner + EDGE) {
         vx = -Math.min(MAX, Math.ceil(((inner + EDGE - e.clientX) / EDGE) * MAX));
       } else if (e.clientX > r.right - EDGE) {

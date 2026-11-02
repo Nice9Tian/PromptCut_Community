@@ -1,7 +1,9 @@
 /**
- * 舞台源跨文档通道守卫(`scopeGuard.ts`)与舞台文档自己的跨文档状态(`harden.ts` 的 `isolateWindowState`)。
- * 用仿浏览器的全局对象核逻辑;真实无头 Chrome 里的行为由 `scopeGuard.browser-check.mjs` 核(不进 npm test)。
- * 跑:node --test src/online/isolation/scopeGuard.test.mjs
+ * Stage-origin cross-document channel guard (`scopeGuard.ts`) and stage document's own
+ * cross-document state (`isolateWindowState` in `harden.ts`).
+ * Verifies logic with browser-like global object; behavior in real headless Chrome verified by
+ * `scopeGuard.browser-check.mjs` (not in npm test).
+ * Run: node --test src/online/isolation/scopeGuard.test.mjs
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -12,7 +14,10 @@ import { denyPersistentStorage, isolateWindowState } from "./harden.ts";
 
 const PREFIX = "pc-0123456789abcdef0123456789abcdef:";
 
-/** 仿浏览器的全局对象:Blob / URL / Worker / 存储 / 通道 / 锁,都可配置可写(和浏览器一样) */
+/**
+ * Browser-like global object: Blob / URL / Worker / storage / channel / lock, all configurable
+ * and writable (same as browser)
+ */
 function fakeScope() {
   const scope = {};
   const registry = new Map();
@@ -45,7 +50,8 @@ function fakeScope() {
     request(...args) { lockCalls.push(args[0]); const cb = args[args.length - 1]; return Promise.resolve(cb(new Lock(args[0]))); }
     async query() { return { held: [{ name: `${PREFIX}mine`, mode: "exclusive", clientId: "c1" }, { name: "pc-other:theirs", mode: "exclusive", clientId: "c2" }, { name: "raw", mode: "shared", clientId: "c3" }], pending: [{ name: `${PREFIX}waiting`, mode: "exclusive", clientId: "c1" }] }; }
   }
-  // 接口对象和浏览器里一样不可枚举(守卫据「可枚举」认出被顶层函数声明换过的接口对象)
+  // Interface objects are non-enumerable as in browsers (guard recognizes interface objects replaced
+  // by top-level function declarations via "enumerable")
   const ifaces = {
     Blob, URL, Worker, IDBFactory, IDBDatabase, CacheStorage, Cache, StorageManager, StorageBucketManager, FileSystemHandle, FileSystemDirectoryHandle,
     FileSystemFileHandle, ServiceWorkerContainer, BroadcastChannel, SharedWorker, CookieStore, Lock, LockManager,
@@ -64,10 +70,11 @@ const install = (scope) => installScopeGuard(scope, { lockPrefix: PREFIX });
 test("OCS-H-11 The guard is self-contained: the source can be taken out and still installs in an environment with only standard built-in objects", () => {
   const src = guardStageScope.toString();
   const { scope } = fakeScope();
-  // 只给标准内置对象(vm 新环境)和仿全局对象:函数体引用了外面的名字就会 ReferenceError
+  // Only standard built-ins (new vm context) and mock global provided: referencing outer names in
+  // function body causes ReferenceError
   const ctx = vm.createContext({ fakeSelf: scope });
   const r = vm.runInContext(`(${src})(fakeSelf, ${JSON.stringify({ lockPrefix: PREFIX })})`, ctx);
-  assert.equal(r.errors.length, 0, [...r.errors].join("; ")); // 别的环境里的数组:不用 deepEqual(原型不同)
+  assert.equal(r.errors.length, 0, [...r.errors].join("; ")); // Array from another environment: do not use deepEqual (different prototype)
   for (const k of ["Worker", "indexedDB", "BroadcastChannel", "SharedWorker", "LockManager.request", "CookieStore.set", "IDBFactory.open"]) assert.ok(r.denied.includes(k), k);
   assert.equal(scope.indexedDB, undefined);
   assert.throws(() => new scope.Worker("blob:fake/1"), /PromptCut stage: cannot start a background thread/);
@@ -82,7 +89,7 @@ test("OCS-H-12 Background threads: any background thread started by a card is re
   const card = new scope.Blob(["postMessage(1)"]);
   const url = scope.URL.createObjectURL(card);
 
-  // 卡片从任何地址、任何模块类型起 Worker 一律抛错
+  // Cards spawning Worker from any URL or module type always throw
   for (const [u, opts] of [
     [url, undefined],
     [url, { name: "n", type: "classic" }],
@@ -97,7 +104,8 @@ test("OCS-H-12 Background threads: any background thread started by a card is re
   }
   assert.throws(() => scope.Worker(url), /PromptCut stage: cannot start a background thread/);
 
-  // 绕路:原构造函数拿不回来、换不掉;经 prototype.constructor、子类、Reflect.construct 同样拒绝
+  // Bypass: original constructor cannot be retrieved or replaced; prototype.constructor,
+  // subclasses, Reflect.construct likewise rejected
   assert.equal(scope.Worker.prototype.constructor, scope.Worker);
   assert.throws(() => new scope.Worker.prototype.constructor(url), /PromptCut stage: cannot start a background thread/);
   assert.throws(() => Reflect.construct(scope.Worker, [url]), /PromptCut stage: cannot start a background thread/);
@@ -108,7 +116,7 @@ test("OCS-H-12 Background threads: any background thread started by a card is re
   assert.throws(() => new Sub(url), /PromptCut stage: cannot start a background thread/);
   assert.equal(spawned.length, 0, "none of the card's attempts started a thread");
 
-  // 舞台运行时自己的 GL / 声音线程经模块闭包里的原生构造函数起
+  // Stage runtime's own GL / sound threads spawn via native constructor in module closure
   const gl = spawnRuntimeWorker("importScripts('/glWorker.js');", undefined, scope);
   assert.ok(gl instanceof OrigWorker && gl instanceof scope.Worker);
   assert.equal(spawned.length, 1);
@@ -118,7 +126,8 @@ test("OCS-H-12 Background threads: any background thread started by a card is re
   assert.equal(spawned.length, 2);
   assert.deepEqual(spawned[1].opts, { type: "module", name: "pc-card-sound" });
 
-  // 接线核对:GL 与声音线程经 spawnRuntimeWorker 起,声音线程入口同时装 denyPersistentStorage 与 installScopeGuard(并且按 strict 装:关键项没装上整段线程不执行)
+  // Wiring check: GL and sound thread spawn via spawnRuntimeWorker; sound thread entry installs both
+  // denyPersistentStorage and installScopeGuard (strictly: thread halts if critical items fail)
   const glSpawnSrc = fs.readFileSync(new URL("../../render/gl/spawnWorker.ts", import.meta.url), "utf8");
   const sndSpawnSrc = fs.readFileSync(new URL("../cardRuntime/soundSpawn.ts", import.meta.url), "utf8");
   const sndWorkerSrc = fs.readFileSync(new URL("../cardRuntime/soundWorker.ts", import.meta.url), "utf8");
@@ -133,7 +142,9 @@ test("OCS-H-12 Background threads: any background thread started by a card is re
 });
 
 /**
- * 在仿全局环境里模拟「守卫安装前顶层声明或属性篡改」,核对守卫的内置对象提取与平台接口完整性检查。
+ * In a mock global environment, simulates "top-level declaration or property tampering before guard
+ * installation", verifying the guard's built-in object extraction and platform interface integrity
+ * checks.
  */
 function runGuardWithPreDecl(cardDecl = "", declare = []) {
   const t = fakeScope();
@@ -148,7 +159,7 @@ function runGuardWithPreDecl(cardDecl = "", declare = []) {
 }
 
 test("OCS-H-17 Guard integrity check: top-level declarations shadowing self, JSON or platform interfaces cannot bypass the guard; if the check fails, the whole script does not run", () => {
-  // 对照:不遮,守卫装上、后续代码照常跑,Worker 被拒绝
+  // Control: no shadowing, guard installed, subsequent code runs normally, Worker is rejected
   const ok = runGuardWithPreDecl("var probe = typeof indexedDB;");
   assert.equal(ok.error, null, String(ok.error));
   assert.equal(ok.ran, true);
@@ -156,7 +167,7 @@ test("OCS-H-17 Guard integrity check: top-level declarations shadowing self, JSO
   assert.equal(ok.scope.BroadcastChannel, undefined);
   assert.throws(() => new ok.scope.Worker("blob:fake/1"), /PromptCut stage: cannot start a background thread/);
 
-  // ① 遮住 self:守卫不读 self,照样装在真全局上
+  // ① Shadow self: the guard does not read self, still installs on the real global
   const s = runGuardWithPreDecl("function self() {}\nvar probe = typeof indexedDB;");
   assert.equal(s.error, null, String(s.error));
   assert.equal(s.ran, true);
@@ -164,7 +175,8 @@ test("OCS-H-17 Guard integrity check: top-level declarations shadowing self, JSO
   assert.equal(s.scope.caches, undefined);
   assert.equal(s.scope.BroadcastChannel, undefined);
 
-  // ② 遮住 JSON / Reflect / 平台接口:核对不过,strict 下整段抛错不执行
+  // ② Shadow JSON / Reflect / platform interfaces: verification fails; under strict, the whole
+  // block throws and does not execute
   const j = runGuardWithPreDecl("function JSON() {}\nvar probe = 1;");
   assert.ok(j.error, "shadowing JSON: the whole script throws");
   assert.match(String(j.error && j.error.message), /PromptCut stage:\s*integrity:.*JSON/);
@@ -174,13 +186,14 @@ test("OCS-H-17 Guard integrity check: top-level declarations shadowing self, JSO
     assert.ok(r.error && /integrity/.test(r.error.message), `shadowing ${name}: whole script does not run (${r.error && r.error.message})`);
     assert.equal(r.ran, false, name);
   }
-  // 顶层 let/const/class 同名:守卫一读就是暂时死区的 ReferenceError,同样整段不执行
+  // Same name in top-level let/const/class: guard access hits temporal dead zone ReferenceError, skipping whole block
   for (const decl of ["let Reflect = {};", "const JSON = {};"]) {
     const r = runGuardWithPreDecl(decl + "\n");
     assert.ok(r.error instanceof ReferenceError || r.error?.name === "ReferenceError", decl);
     assert.equal(r.ran, false, decl);
   }
-  // 守卫不按名字读 Object(从字面量取):顶层 `class Object {}` 或遮住标准内置构造函数不影响守卫
+  // Guard does not read Object by name (obtained from literal): top-level `class Object {}` or
+  // shadowing standard built-in constructors does not affect the guard
   const cls = runGuardWithPreDecl("class Object {}\n");
   assert.equal(cls.error, null, String(cls.error));
   assert.equal(cls.ran, true);
@@ -190,7 +203,7 @@ test("OCS-H-17 Guard integrity check: top-level declarations shadowing self, JSO
   assert.equal(lit.scope.indexedDB, undefined);
   assert.equal(lit.scope.BroadcastChannel, undefined);
 
-  // 关键项清单:守卫里自带的一份与导出的一份一致
+  // Key items manifest: the copy built into the guard matches the exported copy
   const src = guardStageScope.toString();
   const m = /const CRITICAL = (\[[^\]]*\])/.exec(src);
   assert.ok(m, "the guard contains a manifest of critical items");
@@ -198,7 +211,7 @@ test("OCS-H-17 Guard integrity check: top-level declarations shadowing self, JSO
 });
 
 test("OCS-H-18 Locking Worker fails: not swallowed, the Worker is withdrawn; throws under strict; in the stage document the error is only recorded (the self-check decides not to run)", () => {
-  // 原型锁死:锁 Worker 那段的 defineProperty(prototype.constructor) 抛错
+  // Prototype locked: defineProperty(prototype.constructor) in the Worker-locking section throws
   const a = fakeScope();
   Object.freeze(a.scope.Worker.prototype);
   const r = install(a.scope);
@@ -207,7 +220,7 @@ test("OCS-H-18 Locking Worker fails: not swallowed, the Worker is withdrawn; thr
   const b = fakeScope();
   Object.freeze(b.scope.Worker.prototype);
   assert.throws(() => guardStageScope(b.scope, { lockPrefix: PREFIX, strict: true }), /critical items failed to install \(Worker:/);
-  // 舞台文档里(不 strict)核对不过:记一条 integrity,什么都不装
+  // Verification fails in stage document (non-strict): records an integrity entry and installs nothing
   const c = fakeScope();
   Object.defineProperty(c.scope, "Blob", { value: function Blob() {}, enumerable: true, configurable: false, writable: true });
   const rc = install(c.scope);
@@ -244,14 +257,14 @@ test("OCS-H-13 Persistent storage and same-origin channels: no global entry poin
   assert.equal(await scope.cookieStore.get("a"), null);
   assert.throws(() => Object.defineProperty(scope.IDBFactory.prototype, "open", { value: () => "x" }), TypeError);
 
-  // 再装一遍:不报错
+  // Install again: does not throw
   assert.deepEqual(install(scope).errors, []);
-  // 声音线程:先后调 denyPersistentStorage 与 installScopeGuard 都不报错
+  // Sound thread: calling denyPersistentStorage and installScopeGuard in sequence does not throw
   const d = denyPersistentStorage(scope);
   assert.deepEqual(d.errors, []);
   assert.ok(d.denied.includes("StorageManager.getDirectory"));
 
-  // 舞台文档里 harden.ts 第 6 节先锁了 cookieStore:认作已锁、不报错
+  // In stage document, harden.ts section 6 locked cookieStore first: treated as locked, does not throw
   const doc = fakeScope();
   Object.defineProperty(doc.scope.CookieStore.prototype, "set", { value: async () => { throw new TypeError("earlier lock"); }, writable: false, configurable: false });
   const r2 = install(doc.scope);
@@ -273,7 +286,7 @@ test("OCS-H-14 Lock names are prefixed per document: this document uses them as 
   assert.deepEqual(q, { held: [{ name: "mine", mode: "exclusive", clientId: "c1" }], pending: [{ name: "waiting", mode: "exclusive", clientId: "c1" }] });
 });
 
-/** 仿窗口:`name` 是原型上的访问器(真实值在闭包里),有 History、navigation、事件监听 */
+/** Mock window: `name` is a prototype accessor (value in closure); has History, navigation, event listeners */
 function fakeWindow({ name = "", hash = "" } = {}) {
   const real = { name, state: null, url: `/editor/stage.html?stage=1${hash}`, moves: 0 };
   const proto = {};

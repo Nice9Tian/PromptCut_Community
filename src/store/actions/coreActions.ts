@@ -4,18 +4,21 @@ import { normalizeCuts } from "../../kernel/cuts";
 import { state, history, future, set, getProjectSync, getProjectLoader } from "../core";
 
 export const coreActions = {
-  /* ---------- 文档 ---------- */
+  /* ---------- Document ---------- */
   loadProject(p: Project, filePath: string | null = null) {
     history.length = 0;
     future.length = 0;
-    // 所有加载路径的唯一入口,在这里把项目补成多剪辑形状:老文件没有 cuts 就补成默认三条。
-    // 顺带兜住身份:定制卡的归属认 project.id,哪条路进来的项目都得有一个(见 Project.id)
+    // Sole entry point for all load paths, where projects are normalized into multi-cut shape: old
+    // files without cuts are padded to the default three. Also secures identity: custom card ownership
+    // recognizes project.id, which projects from any entry path must have (see Project.id)
     const normalized = normalizeCuts(p.id ? p : { ...p, id: newProjectId() });
-    // 连着文档服务时,载入就是一次根替换(docsync 负责提交、清它自己的撤销栈)
+    // When connected to document service, loading is a root replacement (docsync handles commit and
+    // clears its own undo stack)
     const sync = getProjectSync();
     const loader = getProjectLoader();
     const project = loader ? loader(normalized) : sync ? sync.load(normalized) : normalized;
-    // lastCamera3dFov 跟着项目走,换项目要清掉,否则三维视角会串味
+    // lastCamera3dFov is tied to the project and must be cleared when switching projects, otherwise
+    // 3D perspective will bleed over
     set({ project, projectLoadToken: state.projectLoadToken + 1, filePath, dirty: false, t: 0, playing: false, selection: [], playToken: state.playToken + 1, durationManual: null, lastCamera3dFov: null });
   },
   newProject(name?: string) {

@@ -1,28 +1,34 @@
 import { installPinnedEntropy } from "./pinEntropy";
 
 /**
- * 导出模式的页面时钟量化。
+ * Page clock quantization in export mode.
  *
- * 导出脚本每帧推进一格虚拟时间,但 React 提交、rAF 回调落在这一格里的哪个位置,
- * 取决于页面加载时消耗了多少虚拟时间,两次导出不一样。凡是读 performance.now() 或
- * rAF 时间戳的动画(Motion 的帧循环、第三方 rAF 循环)就会跟着差出零点几帧。
+ * The export script advances virtual time by one step each frame, but where React commits and rAF
+ * callbacks land within this step depends on how much virtual time was consumed during page load,
+ * which differs across two exports. Any animation reading performance.now() or rAF timestamps
+ * (Motion frame loops, third-party rAF loops) will consequently drift by fractional frames.
  *
- * 这里把两者都钉到当前帧的导出毫秒 window.__pcExportMs:同一帧里不管回调何时跑,
- * 读到的时间都一样,于是逐帧确定。Web Animations / CSS 动画不走这条路,由
- * ExportView 的 __pcSyncAnims 每帧显式钉 currentTime。
+ * Here both are pinned to the current frame's export millisecond window.__pcExportMs: no matter
+ * when callbacks run within the same frame, the time read is identical, achieving frame-by-frame
+ * determinism. Web Animations / CSS animations do not follow this route; ExportView's
+ * __pcSyncAnims explicitly pins currentTime on every frame.
  *
- * ⚠ 页面上其实有**三个**时钟,第三个一直没写进文档,是一批确定性 bug 的来源:
- *   1. performance.now() —— 被这里钉到 __pcExportMs,每趟从 0 起。
- *   2. CDP 虚拟时间 —— 导出脚本每帧推一格。
- *   3. document.timeline.currentTime —— WAAPI 自己的时间线,**单调递增、从不归零**,
- *      而且 server/bakery/bake.mjs 的 shoot() 里那段不带预算的 policy:'advance' 会让它在页面
- *      静止的帧上一口气涨十几亿毫秒(实测一趟累计 26 亿 ≈ 33 天)。
- * Motion 建 WAAPI 动画时把 startTime 写成 time.now(),也就是 1 号时钟的读数(导出毫秒),
- * 而 WAAPI 按 3 号时钟解读它 —— 两个坐标系对不上,动画一出生就可能越过 endTime 直接
- * finished,__pcSyncAnims 又显式跳过 finished,卡片当场渲成终态。下面 patchAnimate() 就是
- * 断掉 3 号时钟对画面的影响。
+ * ⚠ There are actually **three** clocks on the page; the third was never documented and is the
+ * source of a batch of determinism bugs:
+ *   1. performance.now(): pinned here to __pcExportMs, starting from 0 on each pass.
+ *   2. CDP virtual time: advanced one step per frame by the export script.
+ *   3. document.timeline.currentTime: WAAPI's own timeline, **monotonically increasing and never
+ *      resetting to zero**, and the unbudgeted policy:'advance' in server/bakery/bake.mjs shoot()
+ *      causes it to surge by billions of milliseconds in one go on static frames (measured in one
+ *      pass to accumulate 2.6 billion ≈ 33 days).
+ * Motion sets startTime to time.now() when creating WAAPI animations, which is clock #1's reading
+ * (export milliseconds), while WAAPI interprets it using clock #3: the two coordinate systems do
+ * not align, so an animation may overshoot endTime and become finished upon creation;
+ * __pcSyncAnims then explicitly skips finished, immediately rendering the card in its final state.
+ * The patchAnimate() below cuts off the influence of clock #3 on the visuals.
  *
- * 只在导出视图里装;__pcExportMs 还没就位(时间轴加载前)时回落到真实时钟。
+ * Installed only in export view; falls back to the real clock when __pcExportMs is not yet in
+ * place (before timeline loading).
  */
 export function installExportClock(): void {
   const w = window as Window & { __pcExportClockInstalled?: boolean };
@@ -33,48 +39,57 @@ export function installExportClock(): void {
   performance.now = () => (typeof window.__pcExportMs === "number" ? window.__pcExportMs : realNow());
 
   const realRaf = window.requestAnimationFrame.bind(window);
-  // 原始 rAF 留一份给导出脚本:它每帧要等一次 rAF,走包过的那层会把 __pcRafCount 顶起来,
-  // 静态判定就永远为假。
+  // Keep a copy of original rAF for export script: it waits for rAF each frame, and going through
+  // the wrapped layer would bump __pcRafCount, making static determination permanently false.
   window.__pcRealRaf = realRaf;
   window.__pcRafCount = 0;
   window.requestAnimationFrame = (cb: FrameRequestCallback) => {
-    // 计数用于静态帧判定:见 clock.ts 里 __pcRafCount 的说明。
+    // Counter used for static frame determination: see explanation of __pcRafCount in clock.ts.
     window.__pcRafCount = (window.__pcRafCount ?? 0) + 1;
     return realRaf((ts) => cb(typeof window.__pcExportMs === "number" ? window.__pcExportMs : ts));
   };
   /*
-   * 关于截图窗口里 rAF 多跑几次的问题 —— 结论:**不用管**,别再往这里加东西。
-   * 截图那一小段虚拟时间是自由跑的,rAF 会按真实节奏多触发几次。曾担心 canvas 粒子这类循环
-   * 会因此多走步,试过两种堵法,都错了:
-   *   - CDP Emulation.setScriptExecutionDisabled:把 pending 的 rAF 回调整个丢掉,Motion 的帧循环
-   *     就此死掉,动画从第 5 帧起全冻住 —— 三趟冻得一模一样,逐字节比对看不出来,只有比同一趟里
-   *     第 10 帧和第 30 帧才发现。
-   *   - 在这层包装里把回调按住、截完再发:改变了回调落在哪个 vsync 上,word-rotate 换词那一帧
-   *     出现 1/5 的抖动;不按住是 0/5。
-   * 而实测不堵也是确定的:时间戳被钉住,同一帧里多出来的 tick 对读时间的循环(Motion、word-rotate)
-   * 算出同一个数,对按 delta 走的循环(tsParticles)delta 为 0 就是空转 —— particles 6 趟 0 差异。
+   * Regarding rAF running multiple times in screenshot window: conclusion: **ignore it**, do not add
+   * anything more here. That short stretch of virtual time during screenshots runs freely, and rAF
+   * triggers multiple times at real tempo. Previously there was concern that loops like canvas
+   * particles would take extra steps because of this; two blocking approaches were tried, both wrong:
+   *   - CDP Emulation.setScriptExecutionDisabled: dropping pending rAF callbacks entirely killed
+   *     Motion's frame loop, completely freezing animations from frame 5 onwards: three passes froze
+   *     identically and byte-by-byte comparisons revealed nothing; it was only caught by comparing
+   *     frame 10 and frame 30 within the same pass.
+   *   - Holding back callbacks in this wrapper and firing after capture: changed which vsync
+   *     callbacks landed on, causing 1/5 jitter on the word-rotate transition frame; without holding
+   *     it back it was 0/5.
+   * In practice, leaving it unblocked is also deterministic: timestamps are pinned, so extra ticks
+   * in the same frame compute the same number for time-reading loops (Motion, word-rotate), while for
+   * delta-driven loops (tsParticles), a delta of 0 is just an idle spin: particles had 0 differences
+   * across 6 passes.
    */
 
   /*
-   * DOM 变动计数 —— 静态帧判定的主力。
+   * DOM mutation counter: the primary driver for static frame determination.
    *
-   * 上面那个 rAF 计数抓不到 Motion 的 JS 动画:motion-dom 的 frameloop 在**模块求值时**就把
-   * 原始 requestAnimationFrame 存进了批处理器(frameloop/frame.mjs),而 ESM 的 import 求值
-   * 早于本函数被调用,替换永远够不着它。把安装时机提前倒是能罩住,但那会连带换掉 Motion 拿到的
-   * 时间戳来源 —— 为一个启发式去动确定性的根基,不划算。
+   * The rAF counter above cannot catch Motion's JS animations: motion-dom's frameloop stores original
+   * requestAnimationFrame into the batcher (frameloop/frame.mjs) during **module evaluation**, and
+   * ESM import evaluation happens before this function is called, so substitution never reaches it.
+   * Advancing installation timing could cover it, but that would also swap out the timestamp source
+   * Motion receives: tampering with the foundation of determinism for a heuristic is not worth it.
    *
-   * 换个抓法:JS 动画再怎么绕过 rAF,每帧总要把新值写回 style 或文本节点,这个躲不掉。
-   * 于是盯 DOM 变动。它同时还罩住了卡片重挂载那几帧(getAnimations() 那时还是空的,
-   * 因为 Motion 要到下一帧才建动画,而画面已经在变了)。
+   * Take another approach: however JS animations bypass rAF, they must write new values back to style
+   * or text nodes each frame; that cannot be avoided. So watch DOM mutations. This also covers the
+   * frames where cards remount (getAnimations() is still empty then because Motion waits until the
+   * next frame to build animations, while visuals are already changing).
    */
   patchAnimate();
 
   /*
-   * 随机数 / 墙上时钟 / crypto 钉死:搬到了 pinEntropy.ts。
-   * 正常情况下它已经由 render/stageClockEntry.ts 在所有 import 之前装好了(第三方库在模块加载时
-   * 就抓走 Math.random,晚装够不着);这里再调一次只是兜底,重复调用是空操作。
-   * 以前这里的 Math.random 在时间轴就位前回落到真随机 —— lottie 的表达式随机正是从那个口子漏进来的,
-   * 见 pinEntropy.ts 文件头。__pcResetRandom 由它提供,__pcRestartCards 照旧调它把种子拨回起点。
+   * Pinning random numbers / wall clock / crypto: moved to pinEntropy.ts.
+   * Normally it is already installed by render/stageClockEntry.ts before all imports (third-party
+   * libraries capture Math.random at module load time, so installing late cannot reach them); calling
+   * it here again is just a fallback, and duplicate calls are no-ops. Previously Math.random here fell
+   * back to true randomness before the timeline was ready: lottie expression randomness leaked in
+   * through exactly that hole, see the header comment of pinEntropy.ts. __pcResetRandom is provided
+   * by it, and __pcRestartCards calls it as usual to rewind the seed to the start.
    */
   installPinnedEntropy();
 
@@ -90,40 +105,54 @@ export function installExportClock(): void {
 }
 
 /**
- * 让 WAAPI 动画一出生就停在 0,时间此后由 __pcSyncAnims 独占。
+ * Pause WAAPI animations at 0 upon creation, leaving time exclusively driven by __pcSyncAnims
+ * thereafter.
  *
- * 为什么要这么做:Motion 建 WAAPI 动画时会把 startTime 写成 time.now()(= 被钉住的
- * performance.now,也就是导出毫秒,每趟从 0 起),而 WAAPI 按 document.timeline.currentTime
- * 解读 startTime —— 后者单调递增从不归零,渲一趟就能涨到十几亿(见文件头「三个时钟」)。
- * 于是「开渲那一刻 timeline 已经是多少」直接决定了新建的动画会不会一出生就 finished:
- *   - 复用同一个 document 连渲两次:第二趟 timeline 已到 164 亿,全部动画出生即 finished,
- *     __pcSyncAnims 又跳过 finished,卡片直接渲成终态 —— rank-bars 差 26 帧、growth-curve 差 65 帧。
- *   - 就算每趟都开全新的页面也不安全:开渲那一刻 timeline 是 590 还是 650ms 取决于这次加载
- *     花了多久,endTime 落在这个区间里的动画(rank-bars 第一行:delay 0 / dur 500)就随机
- *     出生即 finished。实测两个全新浏览器渲同一张 rank-bars 差 16 帧(第 0~11 帧整行入场没播),
- *     也就是说**现有的一次性导出路径本来就不是确定的**,只是掷硬币两次常常掷到同一面。
+ * Why this is done: when Motion creates WAAPI animations, it writes startTime as time.now()
+ * (= pinned performance.now, which is export milliseconds, starting from 0 each pass), while
+ * WAAPI interprets startTime using document.timeline.currentTime: the latter increases
+ * monotonically and never resets to zero, surging into billions in a single pass (see "three clocks"
+ * in the file header). Thus "what timeline has already reached the moment rendering begins" directly
+ * dictates whether newly created animations are born finished:
+ *   - Reusing the same document for two consecutive passes: on the second pass timeline has reached
+ *     16.4 billion, so all animations are born finished; __pcSyncAnims skips finished, rendering
+ *     cards straight into their final state: rank-bars differs by 26 frames, growth-curve by 65.
+ *   - Even opening a fresh page for each pass is unsafe: whether timeline is 590 or 650ms at render
+ *     start depends on how long that load took, so animations whose endTime falls in this window
+ *     (rank-bars first row: delay 0 / dur 500) randomly finish upon birth. Testing two fresh
+ *     browsers rendering the same rank-bars showed a 16-frame difference (frames 0-11 missed the
+ *     entire row entrance), meaning **the existing one-off export path was never deterministic in
+ *     the first place**, like flipping a coin twice and often landing on the same side.
  *
- * 修法:把动画一建出来就 pause 并钉到 0,并把这个实例的 startTime 这个 JS setter 吞掉
- * (Motion 自己在 NativeAnimationExtended 的注释里就写了「给 paused 的 WAAPI 动画设
- * startTime 会把它 unpause」)。此后动画时间完全来自 __pcSyncAnims 的锚点,和 timeline 无关。
- * 实测(90 帧 / 1920x1080 / 30fps / PNG 逐字节比):复用 bakery 连渲两次 rank-bars 26 → 0 帧;
- * 两个全新浏览器之间 rank-bars 16 → 0 帧;odometer / ring-metric / type-shift 本来就 0,没被带坏。
- * growth-curve 的 65 帧也没了,但它另有一类每帧固定 23 个像素的残差(玻璃板圆角的抗锯齿,
- * 新鲜 vs 新鲜同样发生,和这条修法无关),见 server/bakery/chrome.mjs 的文件头注释。
+ * Fix: pause animations as soon as created and pin to 0, swallowing the JS setter for startTime on
+ * this instance (Motion itself noted in NativeAnimationExtended comments: "setting startTime on a
+ * paused WAAPI animation will unpause it"). From then on animation time comes entirely from
+ * __pcSyncAnims anchors, independent of timeline. Tested (90 frames / 1920x1080 / 30fps / PNG byte-
+ * by-byte comparison): reusing bakery for two renders, rank-bars 26 → 0 frames; between two fresh
+ * browsers, rank-bars 16 → 0 frames; odometer / ring-metric / type-shift were originally 0 and not
+ * broken. The 65 frames in growth-curve also vanished, though it has another fixed 23-pixel residual
+ * per frame (antialiasing on glass plate rounded corners, occurring equally in fresh vs fresh,
+ * unrelated to this fix), see the header comment in server/bakery/chrome.mjs.
  *
- * ⚠ 这一改必须和 server/bakery/bake.mjs 里每帧的 settle()(排空 React 挂起的提交)配套:动画真的
- * 会播之后,「卡片挂载提交落在哪一帧」才开始影响画面,而那件事以前是在截图窗口里和截图抢跑的。
- * 只加这一层、不加 settle,demo 时间轴上 npm run verify 会在卡片切换处红 12 帧;两个都在则 90/90。
+ * ⚠ This change must be paired with settle() (draining React's pending commits) each frame in
+ * server/bakery/bake.mjs: once animations actually play, "which frame card mount commits land on"
+ * starts affecting visuals, something that previously raced against screenshots in the screenshot
+ * window. Adding only this layer without settle causes npm run verify to show red for 12 frames at
+ * card transitions on the demo timeline; with both present it is 90/90.
  *
- * ⚠ 约定:导出页里 animation.startTime 恒为 null,不要拿它做算术。a.finish() 走的是规范内部
- * 逻辑、不经过这个访问器,照常收束到 endTime。
- * ⚠ 导出产物会变(变对了):endTime 小于「开渲那一刻 timeline」的动画以前从来没播过入场,
- * 现在会正常淡入。任何逐像素基线快照都要重新生成。
+ * ⚠ Convention: animation.startTime is always null in export pages; do not perform arithmetic with
+ * it. a.finish() follows internal specification logic without passing through this accessor,
+ * converging to endTime as usual.
+ * ⚠ Export artifacts will change (correctly): animations with endTime less than "timeline when render
+ * starts" never played entrances before, and now fade in normally. Any pixel-by-pixel baseline
+ * snapshots must be regenerated.
  *
- * 渲染面(?stage=1,render/stageClock.ts)也装这一层,理由完全相同:那边 performance.now
- * 同样被接管成从 0 起的舞台时间,而 document.timeline 照样是真实时间。实测拖到 t=0.1s 时
- * 导出页 20 个动画全部 paused 在 100ms,预览页 20 个全部 finished(currentTime 1440)——
- * 入场动画在预览里一律直接跳终态,和导出对不上;装上之后预览与导出的差异回到抗锯齿水平。
+ * The render plane (?stage=1, render/stageClock.ts) also installs this layer for the exact same
+ * reason: performance.now there is likewise taken over as stage time starting from 0, while
+ * document.timeline remains real time. In testing, scrubbing to t=0.1s showed all 20 animations in
+ * export page paused at 100ms, while all 20 in preview page were finished (currentTime 1440):
+ * entrance animations in preview always jumped straight to final state, failing to match export;
+ * after installing this, differences between preview and export returned to antialiasing levels.
  */
 export function patchAnimate(): void {
   const w = window as Window & { __pcAnimatePatched?: boolean };
@@ -141,7 +170,8 @@ export function patchAnimate(): void {
       a.currentTime = 0;
       Object.defineProperty(a, "startTime", { get: () => null, set: () => {}, configurable: true });
     } catch {
-      // 异常实现放过:宁可这条动画不确定,也不能让导出页整个崩掉
+      // Let abnormal implementations pass: better for this animation to be nondeterministic than
+      // crashing the entire export page
     }
     return a;
   };

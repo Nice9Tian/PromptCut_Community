@@ -25,15 +25,16 @@ test("A code can still be computed when the machine identifier is unavailable, w
   const fingerprint = machineFingerprint();
   assert.equal(typeof fingerprint, "string");
   assert.ok(fingerprint.length > 0);
-  // 兜底串至少要带上主机名和平台,不能是空壳
+  // Fallback string must at least include hostname and platform; cannot be an empty shell
   if (fingerprint.startsWith("fallback:")) {
     assert.ok(fingerprint.includes(process.platform));
   }
 });
 
 /*
- * 脱敏后的码要进诊断报告,而完整的码就是配置分发的解密口令 —— 它整串出现在
- * 报告里,等于把钥匙一起发出去。所以这几条盯的是「只剩首组」这一件事。
+ * The masked code must enter the diagnostic report, while the full code is the decryption
+ * passphrase for config distribution: if it appears in the report in its entirety, it is
+ * equivalent to sending the key along with it. Thus these cases check that "only first group remains".
  */
 test("After redaction only PCM and the first group remain", () => {
   assert.equal(redactMachineCode("PCM-ABCDE-FGHJK-MNPQR-STVWX"), "PCM-ABCDE-…");

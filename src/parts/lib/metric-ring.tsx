@@ -4,9 +4,9 @@ import type { PartDef, PartProps } from "../../kernel/partTypes";
 import { easeExpoOut, accentOf } from "../../cards/native/hud";
 
 /**
- * 环形指标:一个 SVG 进度圆环和中心大数字。
- * 从 ring-metric 拆出,不含小字和玻璃板外壳。
- * 进场:圆环 strokeDashoffset 动画展开,数字从 0 滚动到目标值。
+ * Ring metric: an SVG progress ring and large center number.
+ * Extracted from ring-metric, without small text and glass board shell.
+ * Entrance: ring strokeDashoffset animates and unfolds, numbers scroll from 0 to target value.
  */
 interface Params {
   value: number;

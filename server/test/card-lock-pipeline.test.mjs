@@ -1,25 +1,35 @@
 /**
- * 卡片级指纹锁：本机预渲染进程这一侧（契约 `docs/plan/render-queue-contract.md` F.3 与 F.8，
- * 测试表 F.5 的 L1～L8、F.8 第 5 条的 L9、L10）。
- * 跑：node --experimental-test-module-mocks --test server/test/card-lock-pipeline.test.mjs
+ * Per-card fingerprint lock: local prerender process side (contract
+ * `docs/plan/render-queue-contract.md` F.3 and F.8, test table F.5 L1-L8, F.8 item 5 L9 and L10).
+ * Run: node --experimental-test-module-mocks --test server/test/card-lock-pipeline.test.mjs
  *
- * 只照契约 F.3、F.8 以及它引用的 E.2、E.3 写，不看实现。
+ * Written strictly against contracts F.3, F.8, and their referenced E.2, E.3, without inspecting
+ * the implementation.
  *
- * 约定：
- *   - `server/card-lock.mjs` 是 F.3 新建的模块，按需动态引入：它不存在时只有用到它的用例失败。
- *   - 不起 Chrome：`server/bakery/index.mjs` 整个换成假的（和 `agent-lane.test.mjs` 一样用 `mock.module`）。
- *     假的 `bakeFrames` 记下每次调用的 `out` / `targetFrames` / `snapshotFrames`，对 `targetFrames` 调
- *     `onFrame`、对 `snapshotFrames` 调 `onSnapshot`，这就是 L6～L10 的「假 bakery 计数」。`onSnapshot` 的产物
- *     由假 bakery 的 `itemsFor` 给：隔离单卡那一路（`out` 在 `<root>/controls/` 下）每张卡一项、帧号原样；
- *     整场景那一路按片段起点换成本地帧、只给这一帧上有的卡。
- *   - `FramePipeline` 构造时注入 `environment`（E.2），不探测；`dataRoot` 指向临时目录（成本记录读不到，
- *     预渲染集合按声明兜底，stateful 的卡都在集合里）；`interactive: false`（不产轨道流）。
- *   - card plan 用真的 `CardFrameCache.plan()`（entry 自带的那个）算，contentKey / snapshotKey 与生产一致；
- *     `fillCardControls` 那几条把 entry 上 `cardCache` 的 `hasComplete` / `put` / `finish` 换成桩（PNG 那一支不落盘）。
- *   - `publishLayer` 在实例上包一层记录（`this.publishLayer` 的每次调用），记下调用那一刻的 `snapshotKey`。
- *   - L9 走真的 `preload`：只把借预渲染间（`acquire`）、整片 MOV（`fillMov`）、视频（`prerender`）、存档（`save`）
- *     换成桩，其余（锚帧、fillCardControls、本地档、延后重判的计时器）跑真的；用例结束 `close()`。
- *   - 每条用例一个 `fs.mkdtemp` 临时目录，结束删掉。
+ * Conventions:
+ *   - `server/card-lock.mjs` is a new module in F.3, dynamically imported on demand: when it does
+ *     not exist, only test cases using it fail.
+ *   - Do not launch Chrome: replace `server/bakery/index.mjs` entirely with a mock (using
+ *     `mock.module` like `agent-lane.test.mjs`). The mock `bakeFrames` records `out` /
+ *     `targetFrames` / `snapshotFrames` for each call, invokes `onFrame` for `targetFrames`, and
+ *     invokes `onSnapshot` for `snapshotFrames`; this is the "mock bakery count" in L6-L10.
+ *     Artifacts for `onSnapshot` are provided by the mock bakery's `itemsFor`: the isolated
+ *     single-card path (`out` under `<root>/controls/`) gets one item per card with original frame
+ *     numbers; the whole-scene path converts to local frames based on clip start and provides only
+ *     cards present on that frame.
+ *   - `FramePipeline` injects `environment` (E.2) at construction, no probing; `dataRoot` points to
+ *     a temporary directory (cost records are unreadable, prerender sets fall back by declaration,
+ *     stateful cards are all in the set); `interactive: false` (does not produce track streams).
+ *   - card plan is computed with real `CardFrameCache.plan()` (the one provided on entry);
+ *     contentKey / snapshotKey match production; the `fillCardControls` cases stub `hasComplete` /
+ *     `put` / `finish` on the entry's `cardCache` (the PNG branch does not write to disk).
+ *   - `publishLayer` wraps the instance with recording (each call to `this.publishLayer`), logging
+ *     `snapshotKey` at the moment of the call.
+ *   - L9 runs real `preload`: only stub acquiring the prerender room (`acquire`), full-video MOV
+ *     (`fillMov`), video (`prerender`), and save (`save`); the rest (anchor frames,
+ *     fillCardControls, local tier, delayed re-evaluation timers) runs real; `close()` when the
+ *     test case ends.
+ *   - One `fs.mkdtemp` temporary directory per test case, deleted upon completion.
  */
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,10 +38,13 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-/* ------------------------------------------------------------------ 假的预渲染间 */
+/* ------------------------------------------------------------------ Mock prerender room */
 
 const bakeLog = [];
-/** 测试可以设一个钩子：每次 bakeFrames 开始时调用（L8 用它在别的卡渲染期间改盘面） */
+/**
+ * Tests can set a hook: called every time bakeFrames starts (L8 uses it to modify the board
+ * while other cards render)
+ */
 let onBake = null;
 
 mock.module(new URL('../bakery/index.mjs', import.meta.url).href, {
@@ -58,7 +71,7 @@ const { SnapshotStore } = await import('../snapshot-store.mjs');
 const { describeEnvironment } = await import('../render-node/fingerprint.mjs');
 const loadCardLock = () => import('../card-lock.mjs');
 
-/* ------------------------------------------------------------------ 常量 */
+/* ------------------------------------------------------------------ Constants */
 
 const sha256 = text => crypto.createHash('sha256').update(text, 'utf8').digest('hex');
 const rk = (contentKey, fp) => sha256(`${contentKey}\n${fp}`);
@@ -85,9 +98,11 @@ assert.notEqual(PAGE, PAGE2);
 const IDLE_MS = 30_000;
 
 /**
- * 卡：a、c 共享档，b 本地档，每张 0.5 秒 = 15 帧。a 从 0 秒（全局帧 0～14），c 从 2 秒（全局帧 60～74），
- * b 从 0 秒。`twin` 时另有 a2：与 a 同一个节点、同样的时长与相位，摆在 1 秒（全局帧 30～44）——
- * 同一张卡摆了两次，内容键（和共享快照键）与 a 相同（F.8 第 3 条）。graph 的写法同 env-fingerprint-keys.test.mjs。
+ * Cards: a and c are shared tier, b is local tier, 0.5 s = 15 frames each. a starts at 0 s
+ * (global frames 0-14), c starts at 2 s (global frames 60-74), b starts at 0 s. With `twin`, there
+ * is also a2: same node, same duration and phase as a, placed at 1 s (global frames 30-44):
+ * the same card is placed twice, so content key (and shared snapshot key) are identical to a
+ * (F.8 item 3). graph syntax matches env-fingerprint-keys.test.mjs.
  */
 const N = 15;
 const ALL = Array.from({ length: N }, (_, i) => i);
@@ -122,17 +137,22 @@ function graphOf({ twin = false } = {}) {
 
 const withTmp = async (prefix, fn) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  // 锁库的写盘是排在后面异步做的（F.3），用例结束时可能还在落；删目录时重试几次
+  // Writing the lock store to disk is queued asynchronously (F.3) and may still be flushing when
+  // the test case ends; retry several times when deleting directories
   try { return await fn(root); } finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 };
 
 /**
- * 一套本机预渲染进程的场景：
- *   `locks`    开始前盘上已有的锁：[{ clipId, fp, source = 'page', touchedAt = Date.now() }]
- *   `frames`   开始前盘上已有的共享档快照：[{ clipId, fp, frames: [本地帧…] }]（写在 resultKeyOf(contentKey, fp) 下）
- *   `twin`     见上
- *   `options`  另给 FramePipeline 构造的参数（L9 的 cardLockIdleMs）
- *   `record`   是否先建 entry、记下 card plan（L9 走 preload，自己算）
+ * A scenario for the local prerender process:
+ *   `locks`    Locks already on disk before start:
+ *              [{ clipId, fp, source = 'page', touchedAt = Date.now() }]
+ *   `frames`   Shared tier snapshots already on disk before start:
+ *              [{ clipId, fp, frames: [local frames...] }] (written under
+ *              resultKeyOf(contentKey, fp))
+ *   `twin`     See above
+ *   `options`  Additional arguments for FramePipeline constructor (cardLockIdleMs in L9)
+ *   `record`   Whether to create entry first and record card plan (L9 uses preload and computes
+ *              its own)
  */
 async function scene(root, { locks = [], frames = [], twin = false, options = {}, record = true } = {}) {
   const project = projectOf({ twin }), graph = graphOf({ twin });
@@ -195,7 +215,7 @@ async function scene(root, { locks = [], frames = [], twin = false, options = {}
   return s;
 }
 
-/** fillCardControls 用：PNG 那一支换成桩，记 put */
+/** For fillCardControls: stub the PNG branch and record put */
 function stubPng(entry, { complete = false } = {}) {
   const puts = [];
   entry.cardCache.hasComplete = async () => complete;
@@ -203,7 +223,10 @@ function stubPng(entry, { complete = false } = {}) {
   entry.cardCache.finish = async () => {};
   return puts;
 }
-/** 假的预渲染间：记 reset；`itemsFor` 给 onSnapshot 的产物；`evaluate` 回 browser plan（preload 用） */
+/**
+ * Mock prerender room: record reset; `itemsFor` provides onSnapshot artifacts; `evaluate` returns
+ * browser plan (for preload)
+ */
 function fakeBakery(s) {
   const controlsDir = path.join(s.root, 'controls') + path.sep;
   const clips = Object.keys(s.ck);
@@ -220,7 +243,7 @@ function fakeBakery(s) {
   bakery.reset = async () => { bakery.resets += 1; };
   return bakery;
 }
-/** 这一趟里给某张卡（按 PNG 缓存目录认）要过的 HTML 快照帧 */
+/** HTML snapshot frames requested for a card (identified by PNG cache directory) during this pass */
 const bakesOf = (s, clipId) => bakeLog.filter(r => r.out === path.join(s.root, 'controls', s.pngKey[clipId]));
 const snapshotFramesOf = (s, clipId) => bakesOf(s, clipId).flatMap(r => r.snapshotFrames).sort((x, y) => x - y);
 const uniq = list => [...new Set(list)].sort((x, y) => x - y);
@@ -241,7 +264,7 @@ test('L1 lock store: acquire obtains the lock, the same fingerprint refreshes, a
   assert.equal(CARD_LOCK_IDLE_MS, 30_000);
   let t = 1_000_000;
   const store = createCardLockStore({ dir: path.join(root, 'controls-lock'), now: () => t });
-  await store.load();   // 目录不存在不算错
+  await store.load();   // Missing directory is not an error
   const K1 = sha256('k1'), K2 = sha256('k2');
   assert.equal(store.get(K1), null);
 
@@ -341,23 +364,23 @@ test('L2 cardLockDecision: four branches own / reuse / defer / takeover, decided
   const { cardLockDecision, CARD_LOCK_IDLE_MS } = await loadCardLock();
   const now = 10_000_000;
   const lock = (fp, touchedAt = now) => ({ envFingerprint: fp, source: 'page', since: touchedAt - 1, touchedAt });
-  // 1. 没锁 / 自己的锁 → own（不管齐没齐、新不新鲜）
+  // 1. No lock / own lock → own (regardless of completeness or freshness)
   for (const complete of [false, true]) {
     assert.equal(cardLockDecision({ lock: null, ownFingerprint: OWN, complete, now }), 'own');
     assert.equal(cardLockDecision({ lock: undefined, ownFingerprint: OWN, complete, now }), 'own');
     assert.equal(cardLockDecision({ lock: lock(OWN), ownFingerprint: OWN, complete, now }), 'own');
     assert.equal(cardLockDecision({ lock: lock(OWN, now - 10 * IDLE_MS), ownFingerprint: OWN, complete, now }), 'own');
   }
-  // 2. 别人的锁、结果已齐 → reuse（新鲜、闲置都一样）
+  // 2. Another party's lock, results complete → reuse (same whether fresh or idle)
   assert.equal(cardLockDecision({ lock: lock(PAGE), ownFingerprint: OWN, complete: true, now }), 'reuse');
   assert.equal(cardLockDecision({ lock: lock(PAGE, now - 10 * IDLE_MS), ownFingerprint: OWN, complete: true, now }), 'reuse');
-  // 3. 别人的锁、不齐、还新鲜 → defer
+  // 3. Another party's lock, incomplete, still fresh → defer
   assert.equal(cardLockDecision({ lock: lock(PAGE), ownFingerprint: OWN, complete: false, now }), 'defer');
   assert.equal(cardLockDecision({ lock: lock(PAGE, now - CARD_LOCK_IDLE_MS + 1), ownFingerprint: OWN, complete: false, now }), 'defer', 'idleMs - 1 ago');
-  // 4. 边界：恰好 idleMs 前 → takeover（`now - touchedAt < idleMs` 才 defer）
+  // 4. Boundary: exactly idleMs ago → takeover (only defers when `now - touchedAt < idleMs`)
   assert.equal(cardLockDecision({ lock: lock(PAGE, now - CARD_LOCK_IDLE_MS), ownFingerprint: OWN, complete: false, now }), 'takeover', 'exactly idleMs');
   assert.equal(cardLockDecision({ lock: lock(PAGE, now - CARD_LOCK_IDLE_MS - 1), ownFingerprint: OWN, complete: false, now }), 'takeover');
-  // idleMs 可覆盖
+  // idleMs can be overridden
   assert.equal(cardLockDecision({ lock: lock(PAGE, now - 100), ownFingerprint: OWN, complete: false, now, idleMs: 100 }), 'takeover');
   assert.equal(cardLockDecision({ lock: lock(PAGE, now - 99), ownFingerprint: OWN, complete: false, now, idleMs: 100 }), 'defer');
   assert.equal(CARD_LOCK_IDLE_MS, IDLE_MS);
@@ -377,22 +400,22 @@ test('L3 applyCardLocks: lock with a different fingerprint → snapshotKey = res
   assert.deepEqual(a.cardLock, { envFingerprint: PAGE, source: 'page', foreign: true });
   assert.equal(a.key, a0.key, 'PNG key untouched');
   assert.equal(a.contentKey, a0.contentKey, 'content key untouched');
-  // 没锁的共享档卡：自己的键、cardLock null
+  // Unlocked shared tier card: own key, cardLock null
   assert.equal(c.snapshotKey, c0.snapshotKey);
   assert.equal(c.envFingerprint, OWN);
   assert.equal(c.cardLock, null);
-  // 本地档不参与
+  // Local tier does not participate
   assert.equal(b.tier, 'local');
   assert.equal(b.snapshotKey, b0.snapshotKey);
   assert.equal(b.envFingerprint, OWN);
 
-  // 重复调结果相同
+  // Repeated calls yield the same result
   const snapshot = structuredClone(s.entry.cardPlan);
   s.pipeline.applyCardLocks(s.entry.cardPlan);
   s.pipeline.applyCardLocks(s.entry.cardPlan);
   assert.deepEqual(s.entry.cardPlan, snapshot, 'calling it repeatedly with the same plan gives the same result');
 
-  // 诊断
+  // Diagnostics
   const diag = s.pipeline.diagnostics();
   assert.deepEqual(diag.cardLocks, s.lockStore().list(), 'diagnostics().cardLocks = store.list()');
   assert.equal(diag.cardLocks.find(l => l.contentKey === a.contentKey)?.envFingerprint, PAGE);
@@ -416,13 +439,13 @@ test('L3 applyCardLocks: once the lock is switched back to the fingerprint of th
     assert.deepEqual(x.cardLock, { envFingerprint: OWN, source: 'prerender', foreign: false });
   }
 
-  // 再被页面接手、又换回
+  // Taken over by page again, then switched back
   s.lockStore().takeover(s.ck['clip-a'], PAGE2, 'page');
   s.pipeline.applyCardLocks(s.entry.cardPlan);
   assert.equal(s.ctl('clip-a').snapshotKey, rk(s.ck['clip-a'], PAGE2));
   assert.equal(s.ctl('clip-a').envFingerprint, PAGE2);
 
-  // 锁没了（换一个空的锁库）：恢复自己的键
+  // Lock gone (switched to an empty lock store): restores own key
   await s.lockStore().flush();
   const { createCardLockStore } = await loadCardLock();
   s.pipeline.cardLockStore = createCardLockStore({ dir: path.join(root, 'empty-locks') });
@@ -455,7 +478,7 @@ test('L4 acceptMeasuredSnapshot: no fingerprint gives ENV_MISSING; the first fra
   const lock = s.lockStore().get(a.contentKey);
   assert.deepEqual([lock.envFingerprint, lock.source], [PAGE, 'page'], 'the page acquires the lock');
   assert.deepEqual(s.layers, [{ clipId: 'clip-a', snapshotKey: pageKey, tier: 'shared', ranges: [[0, 0]] }], 'one layer is emitted, keyed by the page key');
-  // plan 跟着换成锁定方的键
+  // plan also switches to the locking party's key
   assert.equal(s.ctl('clip-a').snapshotKey, pageKey);
   assert.equal(s.ctl('clip-a').cardLock?.foreign, true);
 
@@ -469,7 +492,7 @@ test('L4 acceptMeasuredSnapshot: no fingerprint gives ENV_MISSING; the first fra
   assert.equal(await s.store.readSnapshot({ tier: 'shared', key: s.keyOf('clip-a', PAGE2), localFrame: 2 }), null);
   assert.equal(s.lockStore().get(a.contentKey).envFingerprint, PAGE);
 
-  // 持久化：flush 后新的进程读得回页面的锁
+  // Persistence: after flush, a new process can read back the page's lock
   await s.lockStore().flush();
   const { createCardLockStore } = await loadCardLock();
   const reread = createCardLockStore({ dir: path.join(root, 'controls-lock') });
@@ -501,20 +524,21 @@ test('L4 acceptMeasuredSnapshot: when the prerender process acquires the lock fi
   assert.deepEqual(r, { ok: true, stored: false, reason: 'CARD_LOCKED', lockedBy: OWN });
   assert.equal((await s.index('clip-c', PAGE)).count, 0);
 
-  // 页面与预渲染进程同一种环境：同指纹得锁，键就是本机自己的键
+  // Page and prerender process share the same environment: same fingerprint acquires lock, key
+  // is this machine's own key
   const r2 = await s.pipeline.acceptMeasuredSnapshot(s.entry, c, { envFingerprint: OWN, localFrame: 3, html: '<p>same env</p>' });
   assert.deepEqual(r2, { ok: true, stored: true, indexed: true, count: 1, envFingerprint: OWN, key: s.own('clip-c') });
   assert.equal(s.ctl('clip-c').snapshotKey, s.own('clip-c'), 'key unchanged');
   assert.equal(s.ctl('clip-c').cardLock?.foreign, false);
   assert.equal(await s.store.readSnapshot({ tier: 'shared', key: s.own('clip-c'), localFrame: 3 }), '<p>same env</p>');
 
-  // 超限：什么都没写进 index
+  // Limit exceeded: nothing written to index
   const huge = `<p>${'x'.repeat(2 * 1024 * 1024)}</p>`;
   const r3 = await s.pipeline.acceptMeasuredSnapshot(s.entry, a, { envFingerprint: PAGE, localFrame: 0, html: huge });
   assert.deepEqual(r3, { ok: true, stored: true, indexed: false, reason: 'OVER_LIMIT', envFingerprint: PAGE, key: s.keyOf('clip-a', PAGE) });
   assert.equal((await s.index('clip-a', PAGE)).count, 0);
 
-  // 没有内容键的 control（F.8 第 4 条）：不写、不建锁
+  // Control without content key (F.8 item 4): do not write, do not create lock
   const bare = { ...s.ctl('clip-b') };
   delete bare.contentKey;
   const locksBefore = s.lockStore().list();
@@ -542,7 +566,7 @@ test('L5 after the page locks it: snapshotTargets does not include this card; mi
   assert.deepEqual(missing, ALL.map(n => n + 60), 'only the global frames missing for c; frames 2 to 14 of a do not count as missing');
   assert.deepEqual(s.layersOf('clip-a'), [{ clipId: 'clip-a', snapshotKey: s.keyOf('clip-a', PAGE), tier: 'shared', ranges: [[0, 1]] }],
     'emit the existing ranges of a, keyed by the page key');
-  // 锚帧那一趟（限定锚帧）同样不为它要帧
+  // The anchor frame pass (limited to anchor frames) likewise does not request frames for it
   const anchors = await s.pipeline.missingSnapshotFrames(s.entry, { tiers: ['shared'], restrictTo: [0, 3, 60] });
   assert.deepEqual(anchors, [60], 'the anchor frame pass does not request frames for the locked card');
 }));
@@ -570,7 +594,7 @@ test('L5 whole-scene path: when locking happens midway, snapshotTargets changes 
 
 test('L6 page results are already complete: fillCardControls does not render HTML (counted via a fake bakery), the layer it emits uses the page key; the PNG branch is unchanged; its own cards proceed as usual and also acquire the lock', async () => withTmp('pc-cl-l6-', async root => {
   const s = await scene(root, {
-    locks: [{ clipId: 'clip-a', fp: PAGE, touchedAt: Date.now() - 10 * IDLE_MS }],   // 闲置也一样：齐了就 reuse
+    locks: [{ clipId: 'clip-a', fp: PAGE, touchedAt: Date.now() - 10 * IDLE_MS }],   // Idle is the same: reuse once complete
     frames: [{ clipId: 'clip-a', fp: PAGE, frames: ALL }],
   });
   const puts = stubPng(s.entry, { complete: false });
@@ -591,7 +615,7 @@ test('L6 page results are already complete: fillCardControls does not render HTM
   assert.equal(s.lockStore().get(a.contentKey).envFingerprint, PAGE, 'the lock is unchanged');
   assert.equal(a.snapshotKey, s.keyOf('clip-a', PAGE));
 
-  // 自己的卡 c：照常渲、得锁、发自己的键
+  // Own card c: renders as usual, acquires lock, publishes own key
   assert.deepEqual(snapshotFramesOf(s, 'clip-c'), ALL);
   assert.deepEqual((await s.index('clip-c', OWN)).frames, FULL);
   const lc = s.lockStore().get(c.contentKey);
@@ -635,7 +659,8 @@ test('L7 page lock idle and incomplete: take over, the lock switches to the fing
   assert.equal(a.envFingerprint, OWN);
   assert.deepEqual(a.cardLock, { envFingerprint: OWN, source: 'prerender', foreign: false });
 
-  // 换键：自己键的第一条 layer 是现有区间（此前为空），在任何帧产出之前
+  // Key switch: first layer for own key is the existing interval (previously empty), before any
+  // frame is produced
   const ownLayers = s.layers.map((l, i) => ({ ...l, i })).filter(l => l.clipId === 'clip-a' && l.snapshotKey === own);
   assert.ok(ownLayers.length >= 2, `at least one key-switch layer plus the layer after production, actual ${JSON.stringify(ownLayers)}`);
   assert.deepEqual(ownLayers[0].ranges, [], 'first emit the existing ranges under its own key (empty)');
@@ -661,7 +686,8 @@ test('L7 at takeover, all clips with the same content key switch back to their o
   stubPng(s.entry, { complete: false });
   bakeLog.length = 0;
   s.layers.length = 0;
-  // 换键发层要在产出任何 HTML 帧之前，两个片段都发：记下第一次渲 HTML 那一刻已经发出的 layer
+  // Switching key and publishing layer must occur before producing any HTML frames, published for
+  // both clips: record layers already published at the moment HTML is first rendered
   const aDir = path.join(root, 'controls', s.pngKey['clip-a']);
   let atFirstHtml = null;
   onBake = async rec => { if (atFirstHtml === null && rec.out === aDir && rec.snapshotFrames.length) atFirstHtml = s.layers.slice(); };
@@ -680,7 +706,7 @@ test('L7 at takeover, all clips with the same content key switch back to their o
     assert.ok(ownLayers.length >= 1, `${id} emitted a layer under its own key: ${JSON.stringify(s.layers.filter(l => l.clipId.startsWith('clip-a')))}`);
     assert.deepEqual(ownLayers.at(-1).ranges, FULL, `the last layer of ${id} is the whole card`);
   }
-  // 两个片段共用一份快照：HTML 只产一遍
+  // Both clips share one snapshot: HTML is produced only once
   assert.deepEqual(uniq(snapshotFramesOf(s, 'clip-a')), ALL);
   assert.equal(snapshotFramesOf(s, 'clip-a').length, N, 'the same content key does not produce HTML twice');
 }));
@@ -705,7 +731,7 @@ test('L8 page lock still fresh and incomplete: deferred on this pass and judged 
   assert.equal(s.lockStore().get(a.contentKey).envFingerprint, PAGE, 'the lock is unchanged');
   assert.equal(a.snapshotKey, s.keyOf('clip-a', PAGE), 'the key is still the page key');
   for (const l of s.layersOf('clip-a')) assert.equal(l.snapshotKey, s.keyOf('clip-a', PAGE), 'the layers of a can only use the page key');
-  // 其余卡照做
+  // Remaining cards follow suit
   assert.deepEqual(snapshotFramesOf(s, 'clip-c'), ALL);
   await s.pipeline.close();
 }));
@@ -722,7 +748,7 @@ test('L8 judged again at the end: a deferred card is completed by the page while
   onBake = async rec => {
     if (rec.out !== cDir || cStartedAt >= 0) return;
     cStartedAt = s.layers.length;
-    // 页面在这期间把剩下的帧推完了
+    // During this time, the page finished pushing the remaining frames
     await s.store.commitSnapshots({ tier: 'shared', key: pageKey, clipId: 'clip-a', capabilities: s.caps['clip-a'],
       items: ALL.slice(2).map(localFrame => ({ localFrame, html: `<p>late ${localFrame}</p>` })) });
   };
@@ -743,9 +769,9 @@ test('L8 judged again at the end: a deferred card is completed by the page while
   await s.pipeline.close();
 }));
 
-/* ================================================================== L9（F.8 第 2 条） */
+/* ================================================================== L9 (F.8 item 2) */
 
-/** 走真的 preload（会话 's'）；借预渲染间、MOV、视频、存档换成桩 */
+/** Run real preload (session 's'); stub acquiring prerender room, MOV, video, and save */
 function stubPreload(s) {
   const bakery = fakeBakery(s);
   let acquires = 0;
@@ -756,7 +782,8 @@ function stubPreload(s) {
   return { bakery, acquires: () => acquires };
 }
 async function preloadOnce(s) {
-  // 先把 entry 建出来、PNG 那一支换成桩（当作已齐，只看 HTML 快照）；preload 拿到的是同一个 entry（同一个 entry.key）
+  // First build the entry and stub the PNG branch (treated as complete, only check HTML snapshots);
+  // preload gets the same entry (same entry.key)
   const entry = await s.pipeline.entry(s.project);
   stubPng(entry, { complete: true });
   s.entry = entry;
@@ -767,7 +794,8 @@ async function preloadOnce(s) {
 
 test('L9 cardLockIdleMs given a small value: a deferred card is re-judged by a timer once the lock goes idle and is taken over (deferred again while still fresh), without waiting for the next preload', { timeout: 30_000 }, async () => withTmp('pc-cl-l9-', async root => {
   const idle = 300;
-  // 锁的 touchedAt 放在 1.2 秒之后：第一趟一定判成 defer，之后几次重判仍新鲜（再延后），约 1.5 秒后闲置、接手
+  // Put the lock's touchedAt 1.2s later: the first pass definitely decides defer, subsequent
+  // re-evaluations remain fresh (deferred again), then idle and take over after about 1.5s
   const s = await scene(root, {
     record: false, options: { cardLockIdleMs: idle },
     locks: [{ clipId: 'clip-a', fp: PAGE, touchedAt: Date.now() + 1_200 }],
@@ -800,7 +828,7 @@ test('L9 cardLockIdleMs given a small value: a deferred card is re-judged by a t
 test('L9 page results already complete before the re-judgment: switch to delivery (a full layer under the page key), no takeover, no HTML rendering', { timeout: 30_000 }, async () => withTmp('pc-cl-l9-reuse-', async root => {
   const s = await scene(root, {
     record: false, options: { cardLockIdleMs: 200 },
-    locks: [{ clipId: 'clip-a', fp: PAGE, touchedAt: Date.now() + 60_000 }],   // 一直新鲜
+    locks: [{ clipId: 'clip-a', fp: PAGE, touchedAt: Date.now() + 60_000 }],   // Stays fresh
     frames: [{ clipId: 'clip-a', fp: PAGE, frames: [0, 1] }],
   });
   stubPreload(s);
@@ -810,7 +838,8 @@ test('L9 page results already complete before the re-judgment: switch to deliver
     const ck = s.ck['clip-a'];
     const pageKey = s.keyOf('clip-a', PAGE);
     assert.deepEqual(snapshotFramesOf(s, 'clip-a'), [], 'first pass: a is deferred');
-    // 页面把剩下的帧推完了（经测量帧入库之外的路也一样：看的是锁定方键下的 index）
+    // The page finished pushing remaining frames (same applies outside measured frame storage:
+    // looks at index under the locker key)
     await s.store.commitSnapshots({ tier: 'shared', key: pageKey, clipId: 'clip-a', capabilities: s.caps['clip-a'],
       items: ALL.slice(2).map(localFrame => ({ localFrame, html: `<p>late ${localFrame}</p>` })) });
     await waitFor('the full page results are delivered after the re-judgment', () => s.layers.some(l => l.clipId === 'clip-a' && l.snapshotKey === pageKey && JSON.stringify(l.ranges) === JSON.stringify(FULL)));
@@ -824,7 +853,7 @@ test('L9 page results already complete before the re-judgment: switch to deliver
   }
 }));
 
-/* ================================================================== L10（F.8 第 1 条） */
+/* ================================================================== L10 (F.8 item 1) */
 
 test('L10 card already complete locally with no lock file: when the background pass reaches it, the lock goes to this machine (not rendered), after which page measurement frames are answered with CARD_LOCKED', async () => withTmp('pc-cl-l10-', async root => {
   const s = await scene(root, { frames: [{ clipId: 'clip-a', fp: OWN, frames: ALL }] });

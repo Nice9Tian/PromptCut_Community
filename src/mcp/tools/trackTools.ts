@@ -1,11 +1,14 @@
 /**
- * Agent 的序列工具:list_tracks / remove_track / update_track / move_track。
+ * Agent track tools: list_tracks / remove_track / update_track / move_track.
  *
- * 来自一份真实对话导出(对话诊断-20260911-150542):用户说「整理一下轨道」「把空的轨道都删掉」,
- * Agent 手上只有 add_track —— 能建不能删、不能改名、不能调上下顺序,只好把 9 条空序列和
- * 「序列 2 / 序列 6 改名配乐」都甩回给用户手点。想先看一眼有哪些序列,get_project 又有 16 万字符。
+ * From a real chat export (chat-diagnostics-20260911-150542): the user said "clean up the tracks"
+ * and "delete all empty tracks", but the Agent only had add_track: it could create but not delete,
+ * rename, or adjust vertical order, and had to dump 9 empty tracks and "rename Track 2 / Track 6 to
+ * soundtrack" back onto the user to click manually. To first check which tracks exist, get_project
+ * has 160,000 characters.
  *
- * 校验和门槛都在这里,store 只管改文档;抽成工厂是为了能在 node 里直接测(trackTools.test.mjs)。
+ * Validation and gates are all here, while the store only modifies the document; extracted into a
+ * factory so it can be tested directly in Node (trackTools.test.mjs).
  */
 
 import type { Project, Track } from "../../kernel/project";
@@ -25,7 +28,7 @@ export interface TrackStore {
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const NAME_MAX = 40;
 
-/** 一条序列的一览:够决定删不删、叫什么、放哪一层,不带 clip 明细 */
+/** Overview of a track: enough to decide whether to delete, what to name it, and which layer to place it on, without clip details */
 export function describeTrack(t: Track, index: number) {
   const cards = t.clips.filter((c) => c.cardId).length;
   const span = t.clips.length ? [round2(Math.min(...t.clips.map((c) => c.start))), round2(Math.max(...t.clips.map((c) => c.end)))] : null;
@@ -83,8 +86,9 @@ export function createTrackTools(store: TrackStore) {
     },
 
     /**
-     * 删序列,可一次删几条(一步撤销)。门槛和 remove_cut 一个道理:
-     * 空的直接删;有内容的要 force + reason,理由回显给用户;锁定的不删;最后一条不删。
+     * Delete tracks; multiple tracks can be deleted at once (one-step undo). The gate follows the same
+     * logic as remove_cut: empty tracks are deleted directly; tracks with content require force + reason,
+     * with the reason echoed to the user; locked tracks are not deleted; the last track is not deleted.
      */
     removeTrack(args: { trackId?: unknown; trackIds?: unknown; force?: unknown; reason?: unknown }) {
       const p = project();
@@ -126,7 +130,7 @@ export function createTrackTools(store: TrackStore) {
       };
     },
 
-    /** 改名 / 隐藏 / 静音 / 锁定,给哪个改哪个 */
+    /** Rename / hide / mute / lock: modify whichever is provided */
     updateTrack(args: { trackId?: unknown; name?: unknown; hidden?: unknown; muted?: unknown; locked?: unknown }) {
       const t = findTrack(project(), args?.trackId);
       const patch: Partial<Pick<Track, "name" | "hidden" | "locked" | "muted">> = {};
@@ -151,7 +155,7 @@ export function createTrackTools(store: TrackStore) {
       return { ok: true, track: describeTrack(p.tracks[i], i), ...(notes.length ? { note: notes.join(";") } : null) };
     },
 
-    /** 调上下顺序:index 0 = 最上面、画在最上层 */
+    /** Adjust vertical order: index 0 = topmost, drawn on the highest layer */
     moveTrack(args: { trackId?: unknown; index?: unknown }) {
       const p = project();
       const t = findTrack(p, args?.trackId);

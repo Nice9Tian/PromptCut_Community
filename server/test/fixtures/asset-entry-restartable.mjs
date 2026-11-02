@@ -1,9 +1,13 @@
-/** 只给测试用的素材服务入口：和生产入口 server/hosted/asset-main.mjs 读同一组环境变量、起同一个运行时
- * （从当前目录下那份按部署清单拼出来的文件里载入），多一样：父进程经进程间通道说 close 时正常收口再退出。
+/** Test-only asset service entry point: reads the same environment variables and starts the same
+ * runtime as the production entry point server/hosted/asset-main.mjs (loaded from the file in the
+ * current directory assembled per deployment manifest), with one addition: shuts down gracefully
+ * before exiting when the parent process sends close over the IPC channel.
  *
- * 为什么要它：素材服务没正常收口就被结束的话，下次启动要 root 给的「旧实例确实关干净了」的证明才肯起
- * （server/hosted/asset-lifecycle.mjs）。这台机器是 Windows，结束子进程只有硬杀一种，给不出那份证明；
- * 所以测「素材服务停了一阵再起来」时，用这个入口让它正常停。不含运行素材那一组配置。
+ * Why it is needed: if the asset service is terminated without a graceful shutdown, next startup
+ * requires proof from root that "the old instance was cleanly shut down" before starting up
+ * (server/hosted/asset-lifecycle.mjs). On Windows, killing child processes only offers hard-kill,
+ * which cannot produce that proof; so when testing "asset service stops for a while and restarts",
+ * this entry point lets it stop gracefully. Excludes the asset-running configuration set.
  */
 import fs from 'node:fs';
 import path from 'node:path';

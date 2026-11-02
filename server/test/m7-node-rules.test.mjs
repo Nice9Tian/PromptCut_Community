@@ -1,9 +1,14 @@
 /**
- * M7 探针之后主会话裁定的两条节点规则(`docs/plan/m7-contract.md` 第 13 节「探针之后的更正」):
- *   - 节点侧过滤:纯浏览器不收画布卡(`input.canvasHeavy`,逐帧顺推与桌面不等价),规则 7;
- *   - 切分:画布卡、执行器标了帧超体积上限的卡,不给浏览器另出一份(照旧只出切分方自己那一份);Lottie 素材卡 2026-10-14 起放开,和普通独立卡一样出两份;
- *   - 仅供测试的「只切分」(契约 D15):`PROMPTCUT_TEST_PLAN_ONLY=1` 时 pc 节点只认领 plan、不认领细任务(规则 8)。
- * 跑:node --test server/test/m7-node-rules.test.mjs
+ * Two node rules ruled by lead session after M7 probe (`docs/plan/m7-contract.md` Section 13
+ * "Corrections after probe"):
+ *   - Node-side filtering: pure browser does not accept canvas cards (`input.canvasHeavy`,
+ *     sequential frame-by-frame push is not equivalent to desktop), Rule 7;
+ *   - Split: canvas cards and cards marked by executor as exceeding frame size limit do not emit a
+ *     separate copy for browser (only splitter's own copy as before); Lottie media cards relaxed
+ *     starting 2026-10-14, emitting two copies like regular standalone cards;
+ *   - Test-only "split-only" (Contract D15): when `PROMPTCUT_TEST_PLAN_ONLY=1`, pc node claims only
+ *     plan, not fine-grained tasks (Rule 8).
+ * Run: node --test server/test/m7-node-rules.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

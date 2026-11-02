@@ -4,14 +4,14 @@ export interface CutEnvelope {
   end: number;
   fadeIn?: number;
   fadeOut?: number;
-  /** 只给画面用;声音那份包络不带它(段的不透明度不是音量) */
+  /** For visuals only; audio envelope excludes it (segment opacity is not volume) */
   opacity?: number;
 }
-/** 展开出来的片段身上的记号:原片段 id、经过的剪辑段 id(外层在前) */
+/** Markers on expanded clips: original clip id, traversed cut segment ids (outer first) */
 export interface CutAudioOrigin {
   clipId: string;
   segments: string[];
-  /** 原片段住在哪条剪辑里(被引用的那条;卡片声音按它在那条剪辑里的原片段核身份) */
+  /** Which cut the original clip lives in (the referenced one; card audio checks identity per its original clip in that cut) */
   cutId: string;
 }
 export function envelopeAt(e: CutEnvelope, t: number, withOpacity?: boolean): number;

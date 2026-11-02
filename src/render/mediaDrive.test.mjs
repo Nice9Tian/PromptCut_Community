@@ -1,13 +1,18 @@
 /**
- * mediaDrive 的单测:元素重新加载(或元数据迟到)之后,被驱动的元素要自己回到最新的目标时刻,
- * 不能靠无关的重渲染再调一次 `driveMedia`(`docs/archive/agent-reports/AGENT-tier-reload-seek.md`)。
- * 跑:node --test src/render/mediaDrive.test.mjs
+ * Unit test for mediaDrive: after an element reloads (or metadata arrives late), the driven
+ * element must return to the latest target time on its own, and cannot rely on unrelated
+ * rerenders calling `driveMedia` again (`docs/archive/agent-reports/AGENT-tier-reload-seek.md`).
+ * Run: node --test src/render/mediaDrive.test.mjs
  *
- * 假元素照 HTMLMediaElement 的行为写了三条要紧的:
- *   1. `readyState` 为 0(HAVE_NOTHING)时设 `currentTime` 只记成「默认起播位置」;
- *   2. `load()` 把默认起播位置清回 0、当前位置清回 0 —— 这是**最坏情况**:探针用的 Chrome 152 实测 `load()` 之后
- *      默认起播位置还留着(`tier-switch-probe` T5c / T5e 的元素事件),驱动不能指望这一点;
- *   3. 元数据到了(HAVE_METADATA)按默认起播位置 seek 过去,再发 `loadedmetadata`。
+ * Mock elements implement three critical behaviors following HTMLMediaElement:
+ *   1. When `readyState` is 0 (HAVE_NOTHING), setting `currentTime` only records it as
+ *      "default playback start position";
+ *   2. `load()` resets default playback start position to 0 and current position to 0: this is
+ *      the **worst case**: actual tests on Chrome 152 used by the probe showed that the default
+ *      playback start position is retained after `load()` (`tier-switch-probe` T5c / T5e element
+ *      events), but the driver cannot rely on this;
+ *   3. When metadata arrives (HAVE_METADATA), seeks to default playback start position, then
+ *      fires `loadedmetadata`.
  */
 import "../testing/registerTs.mjs";
 import test from "node:test";
@@ -37,7 +42,7 @@ class FakeVideo {
     this.pos = v;
   }
   load() { this.readyState = 0; this.defaultStart = 0; this.pos = 0; }
-  /** 元数据到了:先按默认起播位置 seek,再发事件 */
+  /** Metadata arrived: seek to default playback start position first, then fire event */
   metadata() {
     this.readyState = 1;
     if (this.defaultStart > 0) { this.pos = this.defaultStart; this.seeks.push(this.defaultStart); }
@@ -53,7 +58,7 @@ test("Paused: after driving, the element is reloaded via load(); once metadata a
   const el = new FakeVideo();
   driveMedia(el, paused(2.5));
   assert.equal(el.defaultStart, 2.5, "At readyState 0 it is only recorded as the default start position");
-  el.load(); // 到齐后重载:把默认起播位置清回 0
+  el.load(); // Reload after fully arrived: reset default playback start position back to 0
   el.metadata();
   assert.equal(el.currentTime, 2.5, "After reload it returns to 2.5 s, not stuck at 0");
 });
@@ -62,7 +67,7 @@ test("Paused: the target changed again before metadata arrived, use the latest t
   const el = new FakeVideo();
   driveMedia(el, paused(2.5));
   el.load();
-  driveMedia(el, paused(3.1)); // 重载之后又来一次渲染:记成默认起播位置 3.1
+  driveMedia(el, paused(3.1)); // Another render after reload: recorded as default playback start position 3.1
   el.metadata();
   assert.equal(el.currentTime, 3.1);
   assert.deepEqual(el.seeks, [3.1], "After the browser seeks to the default start position, no extra seek is sent");
@@ -85,7 +90,7 @@ test("Playing: once metadata arrives after reload, align and start playback", ()
   try {
     driveMedia(el, { target: 1.2, playing: true, volume: 0, scrubbing: false });
     el.load();
-    now += 1000; // 元数据在慢链路上一秒后才到(过了纠偏 seek 的冷却)
+    now += 1000; // Metadata arrives one second later on a slow link (past correction seek cooldown)
     el.metadata();
     assert.equal(el.currentTime, 1.2);
     assert.equal(el.paused, false);
@@ -93,7 +98,8 @@ test("Playing: once metadata arrives after reload, align and start playback", ()
 });
 
 test("during playback: element already played to the end of the media, playhead still inside this segment, no replay from the start", () => {
-  // 浏览器对放完了的元素调 play() 是「回到 0 重播」;驱动不能在片段末尾触发它
+  // In browsers, calling play() on an element that finished playing means "rewind to 0 and replay";
+  // the driver must not trigger it at the end of a clip
   const el = new FakeVideo();
   el.readyState = 4;
   el.pos = 3.945;

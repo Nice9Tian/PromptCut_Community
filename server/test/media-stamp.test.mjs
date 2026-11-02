@@ -1,7 +1,7 @@
 /*
- * 帧管线的素材戳(`server/media-stamp.mjs`,原 `card-media-path.mjs` 的本地 stat 那一套):
- * 有哈希用哈希、没有就问素材服务的 HEAD,不读素材服务的存储目录。
- * 跑法:`node --test server/test/media-stamp.test.mjs`
+ * Asset stamp for frame pipeline (`server/media-stamp.mjs`, former local stat setup in `card-media-path.mjs`):
+ * use hash if available; if not, query HEAD of asset service, without reading asset service store directory.
+ * How to run: `node --test server/test/media-stamp.test.mjs`
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,7 +31,7 @@ test('An asset without a hash: HEAD the asset service, stamp = Content-Length:La
   const stamper = createMediaStamper({ mediaUrl: m => `http://asset.test${m.url}`, fetch: fakeFetch, now: () => t });
   const legacy = { url: '/@media/clip%20one.mp4' };
   assert.equal(await stamper.stamp(legacy), '1234:Wed, 23 Sep 2026 10:00:00 GMT');
-  // 同一条、同一个 TTL 窗口里并发和先后再问:不再发请求
+  // Same item, concurrent and sequential repeat queries within the same TTL window: no more requests sent
   await Promise.all([stamper.stamp(legacy), stamper.stamp(legacy)]);
   t += MEDIA_STAMP_TTL_MS - 1;
   await stamper.stamp(legacy);
@@ -50,7 +50,7 @@ test('Asset service unreachable / HEAD failed → missing; addresses that should
   assert.equal(await failing.stamp({ url: '/@media/gone.mp4' }), 'missing');
   const throwing = createMediaStamper({ mediaUrl: () => 'http://asset.test/x', fetch: async () => { throw new Error('ECONNREFUSED'); } });
   assert.equal(await throwing.stamp({ url: '/@media/gone.mp4' }), 'missing');
-  // blob: / data: / 外部地址:和以前一样不打戳
+  // blob: / data: / external URLs: do not stamp, as before
   for (const url of ['blob:http://x/1', 'data:video/mp4;base64,AA', 'https://cdn.example/a.mp4']) {
     assert.equal(await unreachable.stamp({ url }), undefined, url);
   }

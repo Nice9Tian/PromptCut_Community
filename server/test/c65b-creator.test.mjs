@@ -1,10 +1,13 @@
 /**
- * C6.5 第二批：创建者改自己的密码（`set-creator-password`）。用例 C65B-A-*。
- * 跑：node --test server/test/c65b-creator.test.mjs
+ * C6.5 batch 2: creator changes own password (`set-creator-password`). Test cases C65B-A-*.
+ * Run: node --test server/test/c65b-creator.test.mjs
  *
- * 依据：`docs/plan/c65-design.md` 第 9 节裁定（「创建者能不能改自己的密码：能……另加操作 set-creator-password（带创建者证明）」）；
- * `docs/plan/auth-contract.md` 第 7 节（证明的算法、不是创建者 / 不带证明一律 forbidden）。
- * 起服务、派生、证明沿用 `auth-kit.mjs`；新操作的字段是假设 B6（`c65b-kit.mjs`）。
+ * Basis: `docs/plan/c65-design.md` Section 9 ruling ("Can the creator change their own password:
+ * yes... additionally add operation set-creator-password (with creator proof)");
+ * `docs/plan/auth-contract.md` Section 7 (proof algorithm; non-creators / missing proof uniformly
+ * return forbidden).
+ * Starting service, derivation, and proof reuse `auth-kit.mjs`; fields for the new operation are
+ * assumption B6 (`c65b-kit.mjs`).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,12 +1,16 @@
 /**
- * `server/docservice/extensions.mjs` 的单测：云端加载表怎么找、找不到怎么办（接缝总纲
- * `docs/plan/community-boundary.md` 第一、二节）。
+ * Unit tests for `server/docservice/extensions.mjs`: how cloud loading table is found and what to
+ * do if missing (seams outline `docs/plan/community-boundary.md` sections 1 and 2).
  *
- * 为什么非测不可：这个模块的失败方式是**静默的** —— 路径指错就是「一个扩展都不挂」，没有异常、没有日志，
- * 而私有仓库里两边文件都齐，缺了也看不出来。子模块布局（公开仓库挂在私有仓库的 `community/` 下）正是
- * 会让相对路径指错的那种布局，所以 `PROMPTCUT_CLOUD_DIR` 这条路必须有测试钉住，不能只靠缺省那条跑通。
+ * Why it must be tested: this module's failure mode is **silent**: an incorrect path means "not
+ * mounting any extension", with no exception and no log, while both sides have all files in the
+ * private repository so missing ones cannot be spotted. The submodule layout (public repository
+ * mounted under `community/` of private repository) is precisely the layout that causes relative
+ * paths to point incorrectly, so the `PROMPTCUT_CLOUD_DIR` path must be pinned down by tests,
+ * rather than relying solely on the default path passing.
  *
- * 模块在求值阶段就把表读完了（顶层 await），所以每个用例都用带查询串的动态 import 拿一份新的。
+ * The module finishes reading the table during evaluation (top-level await), so each test case
+ * fetches a fresh copy using dynamic import with a query string.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,17 +20,18 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-// 社区版（公开仓库）里没有 cloud/：测闭源那一半的几条在那边跳过，和 agent-extensions 的 EXT1 同一个做法
+// Community edition (public repo) has no cloud/: tests for the closed-source half are skipped
+// there, matching the approach in agent-extensions EXT1
 const NO_CLOUD = fs.existsSync(path.join(HERE, '..', '..', 'cloud')) ? false : 'The current checkout has no cloud/ directory (community edition)';
 const ENTRY = path.join(HERE, '..', 'docservice', 'extensions.mjs');
 
-/** 载一份新的 `extensions.mjs`（绕开模块缓存，让顶层 await 重新跑一遍） */
+/** Load a fresh `extensions.mjs` (bypasses module cache to rerun top-level await) */
 async function loadFresh(tag) {
   const mod = await import(`${pathToFileURL(ENTRY).href}?case=${tag}`);
   return mod.docServiceExtensions;
 }
 
-/** 造一个临时云端目录，里面放一张表 */
+/** Create a temporary cloud directory with a table inside */
 function makeCloudDir(items) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-cloud-'));
   fs.mkdirSync(path.join(dir, 'docservice'), { recursive: true });

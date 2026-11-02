@@ -25,10 +25,12 @@ export class CardFrameCache {
    * served only when it was captured by the current capture code for this
    * card key, and an empty sample only after a second render confirmed it.
    *
-   * `envFingerprint`(M4,契约 E.3):写这些样本的 Chrome 的环境指纹,字符串或返回字符串的函数
-   * (`FramePipeline` 传函数:指纹要等第一个预渲染间开起来、探测过才定)。`plan()` 产出的
-   * 键(PNG 缓存键 `key`、共享快照键 `snapshotKey`)都乘上它 —— 不同环境渲出的像素有确定的
-   * 差异,不能互相替用(设计 2.1)。 */
+   * `envFingerprint` (M4, contract E.3): environment fingerprint of the Chrome that writes these
+   * samples, string or function returning a string (`FramePipeline` passes a function: fingerprint
+   * is determined only after the first prerender room starts up and is probed). Keys produced by
+   * `plan()` (PNG cache key `key`, shared snapshot key `snapshotKey`) are all multiplied by it:
+   * pixels rendered across different environments have definite differences and cannot be used
+   * interchangeably (design 2.1). */
   constructor({ root, project, capture = () => undefined, scale = () => 1, envFingerprint }) {
     this.root = root; this.project = project; this.fps = Number(project.fps) || 30;
     this.capture = capture; this.scale = scale;
@@ -47,9 +49,11 @@ export class CardFrameCache {
    * context cards are intentionally excluded: they must be rendered in their
    * complete Chrome context. */
   plan(value) {
-    // 指纹在开头解析一次,这一趟的所有键用同一个值。没有指纹就抛、不产任何键:不带指纹的键
-    // 等于把画面写到「哪种环境都认」的位置,正是 M4 要消灭的混用。现有调用点都包在 try 里,
-    // 抛出按「没有 plan」处理。
+    // The fingerprint is resolved once at the start; all keys in this pass use the same value. If
+    // there is no fingerprint, throw and produce no keys: a key without a fingerprint is equivalent
+    // to writing frames to a location "recognized by any environment", which is precisely the mix-up
+    // M4 aims to eliminate. Existing call sites are wrapped in try blocks; throws are handled as
+    // "no plan".
     const fp = typeof this.envFingerprint === 'function' ? this.envFingerprint() : this.envFingerprint;
     if (typeof fp !== 'string' || !fp) throw new Error('CardFrameCache.plan(): no environment fingerprint yet, not producing a prerender key');
     const graph = value?.graph || value;
@@ -57,12 +61,17 @@ export class CardFrameCache {
     const nodes = new Map(graph.nodes.map(node => [node.id, node]));
     const definitions = new Map((graph.definitions || []).map(definition => [definition.id, definition]));
     const identities = cardNodeIdentities(graph, { style: this.project.style || {}, environment: value?.environment || {}, sourceVersions: value?.sourceVersions || {} });
-    // 每个节点的上游在共享快照键里的那一栏(上游的身份不带片段的 id);没有上游的节点是 {}
+    // The entry for each node's upstream in the shared snapshot key (upstream identity does not include
+    // the clip id); nodes without upstream are {}
     const upstreamKeys = cardSnapshotInputKeys(graph, { style: this.project.style || {}, environment: value?.environment || {}, sourceVersions: value?.sourceVersions || {} });
     /*
-     * 未知卡片(预渲染间的注册表里查不到定义的卡片段,`__pcCardPlan` 的 `unknownClipIds`):舞台不画它们,不出控件 ——
-     * 不排预渲染、不进预渲染集合(否则按「没有定义」的缺省能力 stateful / 要预渲染判重)、层表里也没有它们那一层。
-     * 只跳过这些输出;图与节点身份照上面算,别的卡的键逐字不变(未知卡当别的卡的输入时也一样)。
+     * Unknown cards (card clips whose definitions cannot be found in the prerender room registry,
+     * `unknownClipIds` of `__pcCardPlan`): the stage does not render them and shows no controls:
+     * not scheduled for prerender, not included in the prerender set (otherwise classified as heavy
+     * under the "no definition" default capability stateful / requiring prerender), and have no layer
+     * in the layer table. Only these outputs are skipped; the graph and node identities are computed
+     * as above, and keys for other cards remain verbatim unchanged (even when an unknown card is input
+     * to another card).
      */
     const unknownClips = new Set(Array.isArray(value?.unknownClipIds) ? value.unknownClipIds : []);
     const controls = [];
@@ -75,18 +84,22 @@ export class CardFrameCache {
       // A Chrome implementation has to opt in.  We retain non-independent
       // records too, because required context/unknown cards need explicit
       // foreground missing state and a full-scene required producer.
-      // A3a / C2 备注(第 4 步再放行):转场卡(`sourceDependent`)的快照也是内容寻址
-      // 的、也该进共享档,但**这里**不能提前放行。`cacheable` 不只是「能不能存」,
-      // 它同时决定两件今天就生效的事:(1) `fillCardControls` 会把这张卡丢进
-      // `isolatedCardProject` 单独渲染;(2) `renderState` 会把渲出来的东西当成正确
-      // 结果发给前台。而隔离工程今天只平移目标片段、不带依赖链上的源片段(A3a 说
-      // 的 `graph` 参数和 `−phase − target.start` 位移量是第 4 步),转场卡在里面
-      // 会拿到空输入 —— 现在放行等于把空画面当成死素材存下来并发出去。
-      // 所以档位判定(`snapshotTier`)认 `sourceDependent`,`cacheable` 不认;
-      // 第 4 步接上隔离工程的依赖链之后,把这里改成
-      // `compositing === 'independent' || compositing === 'sourceDependent'`。
-      // 剪辑段里摊出来的卡(虚拟片段,`src/kernel/cutFlatten.mjs`):只产单卡轨道流(`soloStreamKind` 的 'flat'),不走这里的整帧 PNG 那一支 ——
-      // 那一支的隔离单卡工程按片段 id 在真实项目里找卡,虚拟片段不在那里
+      // A3a / C2 note (allow in step 4): snapshots of transition cards (`sourceDependent`) are also
+      // content-addressed and should enter the shared tier, but cannot be allowed prematurely **here**.
+      // `cacheable` is not just "can it be cached"; it simultaneously governs two things taking effect
+      // today: (1) `fillCardControls` tosses this card into `isolatedCardProject` to render separately;
+      // (2) `renderState` treats rendered output as the correct result and sends it to the foreground.
+      // Currently, isolated projects only translate the target clip without carrying source clips on the
+      // dependency chain (the `graph` parameter and `−phase − target.start` offset in A3a are step 4), so
+      // transition cards receive empty inputs inside: allowing them now is equivalent to saving and
+      // dispatching empty frames as dead assets. Therefore, tier selection (`snapshotTier`) recognizes
+      // `sourceDependent`, but `cacheable` does not; after step 4 hooks up the isolated project
+      // dependency chain, change this to:
+      // `compositing === 'independent' || compositing === 'sourceDependent'`.
+      // Cards flattened from cut segments (virtual clips, `src/kernel/cutFlatten.mjs`): only produce
+      // single-card track streams ('flat' for `soloStreamKind`) and do not take the full-frame PNG branch
+      // here: the isolated single-card project for that branch looks for cards in the real project by clip
+      // id, and virtual clips are not there
       const cacheable = compositing === 'independent' && !isFlatClipId(output.clipId);
       const start = Number(output.start ?? node?.start ?? 0), end = Number(output.end ?? node?.end ?? start);
       if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
@@ -102,16 +115,21 @@ export class CardFrameCache {
       // and motion change pixels even if the underlying node stays identical.
       const appearance = { frame: output.frame, opacity: output.opacity, fadeIn: output.fadeIn, fadeOut: output.fadeOut, motion: output.motion,
         width: this.project.width, height: this.project.height };
-      // M4:内容键(只认内容,`card-identity.mjs` 的算法不变)和结果键(内容键 × 环境指纹)分开留。
-      // 落盘、路由、就绪索引用结果键;轨道流的成员键和细任务切分用内容键 —— 同一个项目在两种
-      // 环境下内容键相同、结果键不同(契约 E.3～E.5)。
+      // M4: content keys (content-only, algorithm in `card-identity.mjs` unchanged) and result keys
+      // (content key × environment fingerprint) are kept separately. Disk persistence, routing, and ready
+      // index use result keys; track stream member keys and fine-grained task splitting use content keys:
+      // the same project has identical content keys but different result keys across two environments
+      // (contracts E.3-E.5).
       const cacheContentKey = cardCacheIdentity(nodeKey, sampling, end - start, JSON.stringify(appearance));
       const key = resultKeyOf(cacheContentKey, fp);
-      // A3a 的共享快照键:和 `key`(CardFrameCache 的 PNG 键,带位置画幅和 clipId)
-      // 是两回事 —— 这个剥掉片段身份、不含外观,同一张卡两个片段共用一份快照。
-      // 输出节点没有上游的(普通卡)`inputKeys` 是 {},键和原来逐字相同;有上游的(片段挂了强调、滤镜、声音效果时输出节点是
-      // 外面那一层,卡片在它的输入后面;素材效果卡的素材在它的输入后面)带上上游的身份 —— 不带的话外面相同、里面不同的两个
-      // 片段同键,互相取到对方的快照和流。
+      // A3a shared snapshot key: completely different from `key` (CardFrameCache's PNG key, which includes
+      // position, aspect ratio, and clipId): this strips clip identity and excludes appearance, so two
+      // clips using the same card share one snapshot. When the output node has no upstream (regular
+      // cards), `inputKeys` is {}, and the key is verbatim identical to before; when it has upstream
+      // (when a clip attaches emphasis, filters, or sound effects, the output node is the outer layer and
+      // the card is behind its input; for media effect cards, the media is behind its input), it includes
+      // upstream identity: otherwise two clips with identical outer layers but different inner contents
+      // would share the same key and retrieve each other's snapshots and streams.
       const inputKeys = upstreamKeys.get(output.nodeId) ?? {};
       const contentKey = cardSnapshotIdentity(node ?? {}, {
         definition, style: this.project.style || {}, environment: value?.environment || {},
@@ -122,9 +140,12 @@ export class CardFrameCache {
         fontFingerprint: value?.environment?.fontFingerprint || '', snapshotCode: snapshotCode(),
       });
       const snapshotKey = resultKeyOf(contentKey, fp);
-      // 单卡轨道流的成员键(`planStreams` 用):同一份内容身份,只是不带生成快照的代码指纹 ——
-      // 流的像素是截图或画布直取来的,和快照 HTML 怎么生成无关;带着它,改一次生成快照的代码所有单卡流都跟着作废
-      // (`docs/plan/prerender-products-contract.md` 第 9.3 节)。流自己的代码指纹在 `planStreams` 的 `codeVersion` 里
+      // Member key of single-card track streams (used by `planStreams`): same content identity, just
+      // without the code fingerprint for snapshot generation: stream pixels are captured from
+      // screenshots or directly from canvas, independent of how snapshot HTML is generated; including it
+      // would invalidate all single-card streams every time snapshot generation code changes
+      // (`docs/plan/prerender-products-contract.md` section 9.3). The stream's own code fingerprint is in
+      // `codeVersion` of `planStreams`.
       const streamMemberKey = cardSnapshotIdentity(node ?? {}, {
         definition, style: this.project.style || {}, environment: value?.environment || {},
         sourceVersions: value?.sourceVersions || {}, inputKeys,
@@ -134,14 +155,16 @@ export class CardFrameCache {
         fontFingerprint: value?.environment?.fontFingerprint || '', snapshotCode: '',
       });
       /*
-       * K1 / K2 的成本键(R5)。**必须在这里算** —— `cardCostKey` 要的是 graph 的**节点**
-       * 和它的源码版本,两样都只在这一层拿得到(`adoptCardPlan` 收到的只是 controls)。
-       * 口径逐字对齐页面侧的 `clipCostIndex`(`src/render/pipelinePlan.mjs`):
-       * 同一份输入两端算出同一个键,`planPipelines` 才会得出同一张表(K2 末条)。
+       * Cost key for K1 / K2 (R5). **Must be computed here**: `cardCostKey` requires the graph **node**
+       * and its source version, both available only at this layer (`adoptCardPlan` only receives
+       * controls). Criteria verbatim align with `clipCostIndex` on the page side
+       * (`src/render/pipelinePlan.mjs`): identical inputs compute the same key on both ends so that
+       * `planPipelines` derives the identical table (last item of K2).
        */
       const costKey = cardCostKey(node ?? {}, (value?.sourceVersions || {})[node?.cardId] ?? null,
         this.fps, Math.max(1, Math.round((end - start) * this.fps)));
-      // `costKey` 不乘指纹:成本记录另有设备口径(`device` 字段),键只认卡和源码版本
+      // `costKey` is not multiplied by fingerprint: cost records have separate device criteria (`device`
+      // field); the key recognizes only the card and source version
       controls.push({ key, snapshotKey, contentKey, streamMemberKey, cacheContentKey, envFingerprint: fp, costKey, frameMode: caps.frameMode, tier: snapshotTier(caps), capabilities: caps,
         clipId: output.clipId || node?.clipId, nodeId: output.nodeId, start, end, count, sampling, compositing, cacheable,
         needPrerendering: caps.need_prerendering === true || caps.needPrerendering === true || node?.need_prerendering === true || node?.needPrerendering === true, appearance });

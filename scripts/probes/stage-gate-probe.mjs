@@ -1,40 +1,66 @@
 /**
- * 舞台闸门、崩溃记录、护栏、档位气泡、查看口的真浏览器探针(`docs/plan/online-browser-task.md` 第三步;语义 `product/platforms.md`「在线浏览器」,
- * 做法 `mechanism/platforms.md`「三道闸门」)。无头 Chrome 打开在线构建的编辑页,**真的把页面进程杀掉**(CDP `Page.crash`)来模拟崩溃,
- * 再重新载入,看停在哪一级。
+ * Real-browser probe for stage gates, crash records, guards, tier bubbles, and the inspection port
+ * (step 3 of `docs/plan/online-browser-task.md`; semantics in `product/platforms.md` "Online browser",
+ * implementation in `mechanism/platforms.md` "Three gates"). Headless Chrome opens the online-built
+ * editor page and **actually kills the page process** (CDP `Page.crash`) to simulate crashes,
+ * then reloads to see which tier it stops at.
  *
  *   npx vite build --mode online
- *   node scripts/probes/stage-gate-probe.mjs [--dist dist-online] [--base-port 5870] [--out <目录>] [--only S1,S3]
+ *   node scripts/probes/stage-gate-probe.mjs [--dist dist-online] [--base-port 5870] [--out <dir>] [--only S1,S3]
  *
- * 端口:编辑器页 base、两个舞台 base+1 / +2、文档服务 base+3、素材服务 base+4(缺省 5870～5874)。本机隔离托管组合(`lib/mobile-env.mjs`),不连远端。
- * 页面里只读两个口:`window.__pcGates()`(查看口的数据)与 `[data-pc="tier-bubble"]`(气泡)。`?gateHold=<一步>`(只给验收)让舞台闸门记下那一步后停住,
- * 探针趁这时杀页面进程;`?gates=1` 打开只读查看口。
+ * Ports: editor page base, two stages base+1 / +2, document service base+3, asset service base+4
+ * (default 5870-5874). Local isolated hosted setup (`lib/mobile-env.mjs`), no remote connection.
+ * Only two ports are read in the page: `window.__pcGates()` (inspection port data) and
+ * `[data-pc="tier-bubble"]` (bubble). `?gateHold=<step>` (acceptance check only) pauses the stage
+ * gate after recording that step, while the probe kills the page process; `?gates=1` opens the
+ * read-only inspection port.
  *
- * 场景(每个场景一个新的浏览器上下文 = 全新的页面本地存储,除非写明接着上一个):
- *   S1  电脑全新打开:从低往高试,到第三级「顶配模式」;气泡文字照用户定的,几秒后自动消失;崩溃记录最后一步是「第 3 级运行中」
- *   S2  接着 S1 正常刷新(留了正常离开):不算崩;上次试成功,崩的次数为 0
- *   S3  试各一套渲染器时杀掉页面进程 → 重新载入停在第二级「标准模式」,崩 1 次、护栏 30 分钟;气泡「标准模式」
- *   S4  接着 S3:护栏内重新打开,停在第二级、不试
- *   S5  接着 S4:把护栏拨到过去(仿过了 30 分钟)→ 从头试,到第三级;再正常刷新 → 试成功一次,清零
- *   S6  试后台舞台时杀掉 → 停在第一级「精简模式」(一个舞台,没有后台舞台)
- *   S7  开可见舞台时(可见舞台就绪之前)杀掉 → 最低一档「低配模式」
- *   S8  切到后台(visibilitychange hidden)之后杀掉 → 不算崩
- *   S9  有护栏、崩过的记录,把记录里的软件版本改成旧的(仿升级)→ 清零,从头试
- *   S10 安卓手机(Chromium,报 4 GB)→ 不试,停在一个舞台,身份手机;报 8 GB → 试
- *   S11 电脑上只把后台舞台的进程杀掉(舞台崩了页面还在)→ 看守重载那一台、照旧第三级;反复崩 → 握手容错退回单舞台,只管当次:
- *       不留崩溃记录,重新载入照常试
- *   S12 iPad(桌面标识 + 多点触控):要试的先按电脑;试后台舞台时杀掉 → 重新载入停在第一级,身份改判手机
- *   S13 两个标签页:第一个还开着时开第二个,第二个不把第一个当成崩了
- *   S14 只读查看口:`?gates=1` 显示档位、舞台闸门、崩溃记录,不含凭证
- *   S15 最低一档(`?tier=low`):播放时卡被抑制、不即时渲染;停下后逐层追一帧画好(不设时限)
- *   S16 基准卡跑不动(舞台 CPU 降速 30 倍;再慢就超过气泡的等待上限,也容易测不出结论):进最低一档「低配模式」
- *   S17 测某张卡时杀掉页面进程 → 重新载入这张卡在测崩的卡里、不再测,直接当重卡
- *   S18 载入素材原尺寸时(留了记录的那段时间)杀掉 → 重新载入解码上限调低一级
- *   S19 解码上限:浏览器只说解得动 720p(仿弱设备)→ 上限 720p;查看口里看得到
- *   S20 两个舞台、项目里已有别的设备测好的成本记录:打开时按界限搜索只测几张划线(常驻探针先等着),之后常驻探针在后台补测、改按成本记录判;
- *       单舞台(`?tier=lite`)测完写进文档服务(所有在线浏览器测完都写)
+ * Scenes (each scene uses a fresh browser context = completely clean page local storage,
+ * unless noted as continuing from previous):
+ *   S1  Fresh open on PC: tests from low to high up to tier 3 "top-spec mode"; bubble text follows
+ *       user decision and disappears automatically after a few seconds; final step in crash
+ *       record is "Tier 3 running"
+ *   S2  Normal refresh following S1 (clean exit recorded): not counted as crash; previous test
+ *       succeeded, crash count is 0
+ *   S3  Kill page process while testing each renderer set -> reload stops at tier 2 "standard
+ *       mode", 1 crash, 30-minute guard; bubble shows "standard mode"
+ *   S4  Following S3: reopen within guard, stops at tier 2, does not test
+ *   S5  Following S4: move guard to the past (simulating 30 minutes elapsed) -> test from scratch
+ *       up to tier 3; normal refresh again -> successful test once, reset to zero
+ *   S6  Kill while testing background stage -> stops at tier 1 "lite mode" (one stage, no
+ *       background stage)
+ *   S7  Kill while opening visible stage (before visible stage ready) -> lowest tier "low-spec mode"
+ *   S8  Kill after switching to background (visibilitychange hidden) -> not counted as crash
+ *   S9  With guard and crash record, change software version in record to old (simulating
+ *       upgrade) -> reset to zero, test from scratch
+ *   S10 Android phone (Chromium, reports 4 GB) -> does not test, stops at one stage, mobile
+ *       identity; reports 8 GB -> tests
+ *   S11 On PC, kill only background stage process (stage crashed, page remains) -> supervisor
+ *       reloads that instance, remains at tier 3; repeated crashes -> handshake fault tolerance
+ *       falls back to single stage for current session only: no crash record left, reloads and
+ *       tests as normal
+ *   S12 iPad (desktop identity + multi-touch): initially tested as PC; kill while testing
+ *       background stage -> reload stops at tier 1, identity re-classified as mobile
+ *   S13 Two tabs: open second tab while first is still open; second does not treat first as crashed
+ *   S14 Read-only inspection port: `?gates=1` shows tier, stage gates, crash records, without credentials
+ *   S15 Lowest tier (`?tier=low`): cards suppressed during playback, no on-demand render; after
+ *       stopping, catches up frame-by-frame per layer (no time limit)
+ *   S16 Baseline card cannot run (stage CPU throttled 30x; any slower exceeds bubble wait limit
+ *       and risks inconclusive results): enters lowest tier "low-spec mode"
+ *   S17 Kill page process while testing a card -> on reload, this card is among crashed cards and
+ *       is not re-tested, treated directly as heavy card
+ *   S18 Kill while loading original-size asset (during recorded period) -> reload lowers decoding
+ *       ceiling by one level
+ *   S19 Decoding ceiling: browser only claims capable of decoding 720p (simulating weak
+ *       device) -> ceiling 720p; visible in inspection port
+ *   S20 Dual stage, project already has cost records tested by other devices: on open, runs bounds
+ *       search testing only a few demarcation cards (resident probe waits first); afterwards,
+ *       resident probe runs catch-up tests in background and switches to judging by cost records;
+ *       single stage (`?tier=lite`) writes to document service after testing (all online
+ *       browsers write after testing)
  *
- * 输出:过程写 stderr;stdout 最后一行一行 JSON `{ ok, fails, scenes }`;截图在 --out。
+ * Output: progress written to stderr; last line of stdout is JSON `{ ok, fails, scenes }`;
+ * screenshots in --out.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -78,7 +104,9 @@ const IPAD = {
 };
 
 const env = await startMobileEnv({ dist: DIST, basePort: BASE, docPort: BASE + 3, assetPort: BASE + 4, name: 'stage-gate-probe' });
-// 项目里放一张内置卡(金句药丸,0～4 秒)与两份视频素材的登记(1080p、4K;只有登记、没有字节:素材闸门留记录与解码上限只看登记)
+// Puts a built-in card (punchline pill, 0-4 s) and registrations for two video assets (1080p, 4K;
+// registration only, no bytes: asset gate recording and decoding ceiling only check registrations)
+// in the project
 const seedProject = emptyProject('stage-gate-probe');
 seedProject.tracks[0].clips.push({ id: 'pill-1', cardId: 'punch-pill', start: 0, end: 4, params: { text: '基准' } });
 const HH = (c) => c.repeat(64);
@@ -89,7 +117,7 @@ seedProject.media = [
 await env.seed(seedProject);
 const browser = await puppeteer.launch({ headless: true, protocolTimeout: 90_000, args: [...PROBE_CHROME_ARGS, '--no-first-run', '--autoplay-policy=no-user-gesture-required'] });
 
-/** 新的上下文与页面;`device` 是 mobile-env 的设备名或 'ipad';`memory` 覆盖 navigator.deviceMemory */
+/** New context and page; `device` is mobile-env device name or 'ipad'; `memory` overrides navigator.deviceMemory */
 async function newPage(device = 'desktop', { memory } = {}) {
   let page;
   if (device === 'ipad') {
@@ -100,14 +128,15 @@ async function newPage(device = 'desktop', { memory } = {}) {
   } else {
     page = await env.newPage(browser, device);
   }
-  // 气泡只显示几秒:从文档一开始就记下它出现过的文字(进项目、等闸门走完这段时间里它可能已经出过又撤了)
+  // Bubble displays for only a few seconds: record text it showed from document start (it may have
+  // appeared and dismissed while entering the project and waiting for gates to finish)
   await page.evaluateOnNewDocument(() => {
     if (window.top !== window) return;
     window.__sgBubbles = [];
     const seen = () => { const t = document.querySelector('[data-pc="tier-bubble"]')?.textContent; if (t && window.__sgBubbles.at(-1) !== t) window.__sgBubbles.push(t); };
     new MutationObserver(seen).observe(document, { childList: true, subtree: true, characterData: true });
   });
-  if (memory !== undefined) await page.evaluateOnNewDocument((m) => { try { Object.defineProperty(Navigator.prototype, 'deviceMemory', { get: () => m, configurable: true }); } catch { /* 改不了 */ } }, memory);
+  if (memory !== undefined) await page.evaluateOnNewDocument((m) => { try { Object.defineProperty(Navigator.prototype, 'deviceMemory', { get: () => m, configurable: true }); } catch { /* Cannot be changed */ } }, memory);
   return page;
 }
 const gates = (page) => page.evaluate(() => (typeof window.__pcGates === 'function' ? window.__pcGates() : null)).catch(() => null);
@@ -125,22 +154,23 @@ async function reload(page, query) {
   const url = `${env.origin}/editor?layout=desktop${query ? `&${query}` : ''}`;
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120_000 });
 }
-/** 真的把页面(顶层文档)的渲染进程杀掉;回之后用新的 CDP 会话 */
+/** Actually kills the render process of the page (top-level document); uses a new CDP session after returning */
 async function crashPage(page) {
   const crashed = new Promise((resolve) => { page.once('error', () => resolve(true)); setTimeout(() => resolve(false), 15_000); });
   const cdp = await page.createCDPSession();
-  // `Page.crash` 不回包(渲染进程当场没了):不等它,等页面的「Page crashed!」事件
+  // `Page.crash` returns no response (render process is gone immediately): do not wait for it,
+  // wait for page "Page crashed!" event
   void cdp.send('Page.crash').catch(() => {});
   const ok = await crashed;
   if (!ok) fails.push('No page crash event within 15 seconds after Page.crash');
   return ok;
 }
-/** 崩了之后用户点「重新加载」(同一个标签页) */
+/** After a crash, user clicks "Reload" (same tab) */
 async function reloadAfterCrash(page, query) {
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 120_000 }).catch(async () => { await reload(page, query); });
 }
 const tabStep = (g) => g?.step;
-/** CPU 降速:页面与两个舞台(跨源舞台是另外的渲染进程,各自要设) */
+/** CPU throttling: page and two stages (cross-origin stages are separate render processes, each set individually) */
 async function throttleAll(page, rate) {
   await page.cdp?.send('Emulation.setCPUThrottlingRate', { rate }).catch(() => {});
   for (const t of browser.targets()) {
@@ -164,7 +194,7 @@ async function holdAndCrash(scene, page, what) {
 }
 
 try {
-  /* ---------------------------------------------------------------- S1～S5:电脑 */
+  /* ---------------------------------------------------------------- S1-S5: PC */
   if (want('S1') || want('S2') || want('S3') || want('S4') || want('S5')) {
     const page = await newPage('desktop');
     await enter(page);
@@ -183,21 +213,22 @@ try {
     const iframes = await page.$$eval('iframe[data-pc^="stage-frame"]', (els) => els.map((e) => ({ pc: e.dataset.pc, src: e.getAttribute('src') })));
     check('S1', iframes.length === 2 && iframes.every((f) => /[?&]gl=shared/.test(f.src)), 'two stages; the URL is built from the starting route (shared) and does not change because level 3 is tried', iframes);
     scenes.S1.tier = g?.tier;
-    // 即时渲染闸门的基准卡、素材闸门的解码上限(第四步):测完了,结论进查看口
+    // Baseline card for on-demand render gate, decoding ceiling for asset gate (step 4): tests
+    // complete, conclusions enter inspection port
     const gb = await until(async () => { const x = await gates(page); return x?.tier?.benchmark !== 'pending' ? x : null; }, 60_000);
     check('S1', gb?.tier?.benchmark === 'ok' && typeof gb.benchmark?.stepMs === 'number', 'the baseline card was measured and runs', gb?.benchmark);
     check('S1', typeof gb?.media?.decode?.maxPixels === 'number', 'the decode limit was measured once on open', gb?.media?.decode);
     scenes.S1.benchmark = gb?.benchmark;
     scenes.S1.decode = gb?.media?.decode;
 
-    // S2 正常刷新
+    // S2 Normal refresh
     await reload(page);
     g = await waitDone(page);
     check('S2', g?.judged?.crashed === false, 'a normal refresh is not counted as a crash', g?.judged);
     check('S2', g?.log?.device?.stage?.crashes === 0, 'crash count 0', g?.log?.device?.stage);
     check('S2', g?.tier?.reached === 3, 'still reaches level 3');
 
-    // S3 试各一套时杀掉
+    // S3 Kill while testing each set
     await holdAndCrash('S3', page, 'try-separate');
     g = await waitDone(page);
     check('S3', g?.judged?.crashed === true && g.judged.step?.what === 'try-separate', 'judged as crashed, crashed while trying separate sets', g?.judged);
@@ -209,12 +240,12 @@ try {
     await shot(page, 'S3-standard');
     scenes.S3.sessionKept = g?.judged?.fromTab === g?.tab ? 'same-tab' : 'other-tab';
 
-    // S4 护栏内
+    // S4 Within guard
     await reload(page);
     g = await waitDone(page);
     check('S4', g?.decision?.reason === 'guard' && g.tier.target === 2, 'Within the guard: stops at level 2, no trial', g?.decision);
 
-    // S5 过了护栏:从头试;试成功再刷新清零
+    // S5 Guard expired: test from scratch; refresh after successful test to reset
     await page.evaluate(() => { const k = 'pc.online.crashLog'; const l = JSON.parse(localStorage.getItem(k)); l.device.stage.guardUntil = Date.now() - 1000; localStorage.setItem(k, JSON.stringify(l)); });
     await reload(page);
     g = await waitDone(page);
@@ -224,7 +255,7 @@ try {
     g = await waitDone(page);
     check('S5', g?.log?.device?.stage?.crashes === 0 && g.log.device.stage.guardUntil === null, 'one successful trial: reset to zero', g?.log?.device?.stage);
 
-    // S9 升级清零(先造一条崩过、有护栏的记录)
+    // S9 Upgrade reset (first create a record with crash and guard)
     if (want('S9') || !ONLY.length) {
       await page.evaluate(() => { const k = 'pc.online.crashLog'; const l = JSON.parse(localStorage.getItem(k)); l.device.stage = { reached: 1, lowest: false, crashes: 3, guardUntil: Date.now() + 3600_000, tried: false }; l.device.version = 'older-build'; localStorage.setItem(k, JSON.stringify(l)); });
       await reload(page);
@@ -234,7 +265,7 @@ try {
     await page.browserContext().close();
   }
 
-  /* ---------------------------------------------------------------- S6 试后台舞台时杀掉 */
+  /* ---------------------------------------------------------------- S6 Kill while testing background stage */
   if (want('S6')) {
     const page = await newPage('desktop');
     await enter(page);
@@ -250,7 +281,7 @@ try {
     await page.browserContext().close();
   }
 
-  /* ---------------------------------------------------------------- S7 开可见舞台时杀掉 */
+  /* ---------------------------------------------------------------- S7 Kill while opening visible stage */
   if (want('S7')) {
     const page = await newPage('desktop');
     await enter(page);
@@ -266,7 +297,7 @@ try {
     await page.browserContext().close();
   }
 
-  /* ---------------------------------------------------------------- S8 在后台被回收不算崩 */
+  /* ---------------------------------------------------------------- S8 Reclaimed in background not counted as crash */
   if (want('S8')) {
     const page = await newPage('desktop');
     await enter(page);
@@ -286,7 +317,7 @@ try {
     await page.browserContext().close();
   }
 
-  /* ---------------------------------------------------------------- S10 安卓 */
+  /* ---------------------------------------------------------------- S10 Android */
   if (want('S10')) {
     for (const [mem, expect] of [[4, 'fixed'], [8, 'trial']]) {
       const page = await newPage('phone', { memory: mem });
@@ -305,7 +336,7 @@ try {
     }
   }
 
-  /* ---------------------------------------------------------------- S11 电脑上只杀后台舞台的进程 */
+  /* ---------------------------------------------------------------- S11 On PC, kill only the background stage process */
   if (want('S11')) {
     const page = await newPage('desktop');
     await enter(page);
@@ -320,13 +351,15 @@ try {
       return true;
     };
     check('S11', !!stageBTarget(), 'the background stage is a separate render process (OOPIF target)');
-    // 第一次崩:看守整页重载那一台,握回来恢复双舞台(原有做法);页面与档位都不受影响、不留崩溃记录
+    // First crash: supervisor reloads that instance with full page, shakes hands back to restore
+    // dual stage (existing approach); page and tier unaffected, leaves no crash record
     await crashB();
     const watch1 = await until(() => page.evaluate(() => window.__pcStageWatch?.()).then((w) => (w && w.reloads >= 1 ? w : null)), 90_000, 500);
     check('S11', !!watch1, 'the stage crashed but the page is still there: the watcher reloads that stage', watch1);
     g = await until(async () => { const x = await gates(page); return x?.tier?.reached === 3 ? x : null; }, 60_000, 500);
     check('S11', g?.tier?.target === 3 && g.step?.kind === 'running' && g.step.level === 3, 'after reloading that stage it is still level 3, the crash record is untouched', g?.step);
-    // 反复崩(看守重载到上限):握手容错退回单舞台,只管当次
+    // Repeated crashes (supervisor reloads reach limit): handshake fault tolerance falls back to single
+    // stage, for current session only
     for (let i = 0; i < 4; i++) {
       const w = await page.evaluate(() => window.__pcStageWatch?.()).catch(() => null);
       if (w?.fellBack) break;
@@ -355,7 +388,7 @@ try {
     await page.browserContext().close();
   }
 
-  /* ---------------------------------------------------------------- S13 两个标签页 */
+  /* ---------------------------------------------------------------- S13 Two tabs */
   if (want('S13')) {
     const page = await newPage('desktop');
     await enter(page);
@@ -363,7 +396,8 @@ try {
     const second = await page.browserContext().newPage();
     await second.setViewport(DEVICES.desktop.viewport);
     await second.goto(`${env.origin}/editor?layout=desktop`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
-    // 新标签页没有会话恢复记录:停在开始页也照样开舞台闸门吗?闸门只在编辑页挂,这里直接读崩溃记录
+    // New tab has no session recovery record: does it still open stage gate when staying on start page?
+    // Gate is attached only on editor page, read crash record directly here
     await sleep(3000);
     const log = await second.evaluate(() => JSON.parse(localStorage.getItem('pc.online.crashLog') || 'null'));
     const last = log?.history?.at(-1);
@@ -371,7 +405,7 @@ try {
     await page.browserContext().close();
   }
 
-  /* ---------------------------------------------------------------- S14 查看口 */
+  /* ---------------------------------------------------------------- S14 Inspection port */
   if (want('S14')) {
     const page = await newPage('desktop');
     await enter(page);
@@ -384,7 +418,7 @@ try {
     await shot(page, 'S14-viewer');
     await page.browserContext().close();
   }
-  /* ---------------------------------------------------------------- S15 最低一档:播放不即时渲染,停下逐层画 */
+  /* ---------------------------------------------------------------- S15 Lowest tier: no on-demand render during playback, draw layer by layer when stopped */
   if (want('S15')) {
     const page = await newPage('desktop');
     await enter(page);
@@ -399,7 +433,8 @@ try {
     await page.evaluate(() => window.__pcStore.actions.pause());
     const settled = await until(() => page.evaluate(() => { const r = window.__pcPreviewDiag().lastSettle; return r && r.ok && r.drawn.some((x) => x.clipId === 'pill-1') ? r : null; }), 60_000, 200);
     check('S15', !!settled && settled.timeoutMs === null, 'after stopping, catch up one frame layer by layer until it is painted, no time limit', settled ?? await page.evaluate(() => window.__pcPreviewDiag().lastSettle));
-    // 画好的那一层看得见、里面有内容(不在 .pc-settling 下、没被抑制、不是空包裹)
+    // The rendered layer is visible and contains content (not under `.pc-settling`, not suppressed,
+    // not an empty wrapper)
     const look = await until(async () => {
       const f = page.frames().find((x) => /[?&]stage=1/.test(x.url()));
       const v = f ? await f.evaluate(() => {
@@ -419,12 +454,13 @@ try {
     await page.browserContext().close();
   }
 
-  /* ---------------------------------------------------------------- S16 基准卡跑不动 */
+  /* ---------------------------------------------------------------- S16 Baseline card cannot run */
   if (want('S16')) {
     const page = await newPage('desktop');
     await enter(page);
     await waitDone(page);
-    // 舞台闸门停在「各一套渲染器就绪」那一步,给两个舞台降速 30 倍,再放行:走完之后测基准卡
+    // Stage gate stops at "one set of each renderer ready" step, throttles both stages by 30x, then
+    // unblocks: tests baseline card after completion
     await reload(page, 'gateHold=separate-ready');
     await until(async () => { const x = await gates(page); return x?.step?.kind === 'stage' && x.step.what === 'separate-ready' ? x : null; }, 90_000, 100);
     await throttleAll(page, 30);
@@ -438,7 +474,7 @@ try {
     await page.browserContext().close();
   }
 
-  /* ---------------------------------------------------------------- S17 测某张卡时杀掉 */
+  /* ---------------------------------------------------------------- S17 Kill while testing a card */
   if (want('S17')) {
     const page = await newPage('desktop');
     await page.cdp.send('Emulation.setCPUThrottlingRate', { rate: 6 });
@@ -451,7 +487,7 @@ try {
       const t0 = Date.now();
       const ok = await crashPage(page);
       say('S17 kill page', { ok, ms: Date.now() - t0 });
-      // 崩了之后的新渲染进程不带降速(旧的 CDP 会话已经断了,不再发)
+      // The new render process after a crash has no throttling (old CDP session is disconnected, no longer sending)
       const t1 = Date.now();
       await reloadAfterCrash(page);
       say('S17 reload', { ms: Date.now() - t1, sinceMeasure: Date.now() - t0 });
@@ -469,7 +505,7 @@ try {
     await page.browserContext().close();
   }
 
-  /* ---------------------------------------------------------------- S18 载入原尺寸时杀掉 */
+  /* ---------------------------------------------------------------- S18 Kill when loading original size */
   if (want('S18')) {
     const page = await newPage('desktop');
     await enter(page);
@@ -485,7 +521,7 @@ try {
     await page.browserContext().close();
   }
 
-  /* ---------------------------------------------------------------- S19 仿弱设备的解码上限 */
+  /* ---------------------------------------------------------------- S19 Simulate decoding limit of weak devices */
   if (want('S19')) {
     const page = await newPage('desktop');
     await page.evaluateOnNewDocument(() => {
@@ -502,9 +538,10 @@ try {
     await page.browserContext().close();
   }
 
-  /* ---------------------------------------------------------------- S20 有记录时二分只测几张 */
+  /* ---------------------------------------------------------------- S20 Binary search only tests a few when records exist */
   if (want('S20')) {
-    // 先由一台单舞台的页面测一遍、写进文档服务(界限搜索没记录时逐张实测,测完都写)
+    // First tested by a single-stage page and written to document service (when bounds search has no records,
+    // test one by one; write all after testing)
     const a = await newPage('desktop');
     await enter(a);
     await reload(a, 'tier=lite');
@@ -513,7 +550,8 @@ try {
     check('S20', !!searched && searched.outcome.measured.some((m) => !m.cached), 'single stage: cards without a record are measured one by one', searched?.outcome);
     await sleep(3000);
     await a.browserContext().close();
-    // 再开一个新的上下文(另一台设备),两个舞台:读到了记录 → 界限搜索在后台舞台里只测几张;之后常驻探针在后台补测
+    // Then open a new context (another device) with two stages: records read → bounds search only tests
+    // a few in the background stage; resident probe then runs catch-up tests in the background
     const b = await newPage('desktop');
     await enter(b);
     await waitDone(b);

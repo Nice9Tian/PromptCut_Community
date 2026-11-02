@@ -1,15 +1,22 @@
 /**
- * 云端 Agent 的素材抽帧拼图提供者（`see_frames({ source: 'media', ... })`；拆包表 P1 素材拼图那一半）。
+ * Media frame extraction and collage provider for Cloud Agent (`see_frames({ source: 'media', ... })`;
+ * the media collage half of package breakdown table P1).
  *
- * 规矩：
- *   - 每次调用前用 `resources.authorize(context, 'read')`（或 `contextAccess.authorize(context, 'read')`）核验当前 `runGrant` 与 `fenceRevision`；
- *   - 通过 `project.getMedia(context, mediaId)` 与 `assets.openRead(context, mediaId)` 读取受权项目素材，绝不接受路径或跨项目 `mediaId`；
- *   - 遵循桌面版 `visionTools` 对 `source: 'media'` 的 schema 与拼图网格契约（默认 6 帧/镜头、最多 12，支持 `grid: 4` / `grid: 9`，图片直出，音频拒绝）；
- *   - 缺 `ffmpeg` 或起不来时返回 `{ ok: false, cloudUnavailable: true, error: ... }`；
- *   - 抽帧/拼图子进程经 `perception/runner.mjs` 的 `spawnTree` + `superviseChild` 登记到 `resources.register(context, { kind: 'child', ... })`，
- *     本轮取消（`abortForFence`）或 `close()` 时真实终止子进程树并清理临时文件。
+ * Rules:
+ *   - Before each call, verify current `runGrant` and `fenceRevision` using
+ *     `resources.authorize(context, 'read')` (or `contextAccess.authorize(context, 'read')`);
+ *   - Read authorized project media via `project.getMedia(context, mediaId)` and
+ *     `assets.openRead(context, mediaId)`; never accept paths or cross-project `mediaId`;
+ *   - Follow desktop app `visionTools` schema and collage grid contract for `source: 'media'`
+ *     (default 6 frames/shot, max 12, supports `grid: 4` / `grid: 9`, images output directly, audio rejected);
+ *   - When `ffmpeg` is missing or fails to start, return
+ *     `{ ok: false, cloudUnavailable: true, error: ... }`;
+ *   - Frame extraction/collage child processes are registered via `perception/runner.mjs`
+ *     `spawnTree` + `superviseChild` to `resources.register(context, { kind: 'child', ... })`;
+ *     on cancellation of this round (`abortForFence`) or `close()`, actually terminate the child
+ *     process tree and clean up temporary files.
  *
- * 纯 Node 模块，不直接 import `src/`。
+ * Pure Node module, does not directly import `src/`.
  */
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
@@ -127,12 +134,12 @@ function resolveBinaries({ ffmpeg, ffprobe, config }) {
  * @param {object} [d.contextAccess] F0 `createToolRunContextAccess`
  * @param {object} d.resources F0 `createRunResources`
  * @param {object} d.assets F0 `createProjectAssets`
- * @param {((context: object) => object | Promise<object>) | object} [d.workspace] 对话工作区（函数或实例；缺省用系统临时目录下的受控子目录）
+ * @param {((context: object) => object | Promise<object>) | object} [d.workspace] Chat workspace (function or instance; defaults to controlled subdirectory under system temp directory)
  * @param {object} d.project `{ getMedia(context, mediaId), getStage?(context) }`
- * @param {string | null} [d.ffmpeg] ffmpeg 可执行文件路径
- * @param {string | null} [d.ffprobe] ffprobe 可执行文件路径
- * @param {object | null} [d.config] 可选 `{ ffmpeg, ffprobe, ffmpegArgs?, ffprobeArgs? }`
- * @param {object | null} [d.kernel] 可选 `{ subjectForRange, suggestPosition, rectForSafeSide }`
+ * @param {string | null} [d.ffmpeg] Path to ffmpeg executable
+ * @param {string | null} [d.ffprobe] Path to ffprobe executable
+ * @param {object | null} [d.config] Optional `{ ffmpeg, ffprobe, ffmpegArgs?, ffprobeArgs? }`
+ * @param {object | null} [d.kernel] Optional `{ subjectForRange, suggestPosition, rectForSafeSide }`
  */
 export function createMediaFramesTools({
   contextAccess = null,
@@ -192,9 +199,11 @@ export function createMediaFramesTools({
   }
 
   /*
-   * `assets.openRead` 的报错翻成模型看得懂的话。图片和视频两条路都走这里,免得其中一条
-   * 把 `project-assets-read-failed` 这种代号原样丢给模型 —— 它看不出该不该重试,只会再试一遍。
-   * 通道整个不可用时明说「重试没用」,模型才会改走别的路。
+   * Translate `assets.openRead` errors into text that the model can understand. Both image and video
+   * paths go through here, preventing either path from passing raw codes like
+   * `project-assets-read-failed` to the model: the model cannot tell if it should retry and would
+   * just try again. When the channel is completely unavailable, state clearly that "retrying will
+   * not help", so the model switches to another path.
    */
   function mediaFetchError(error, wsDir = null) {
     const code = error?.code ?? error?.message;
@@ -402,7 +411,7 @@ export function createMediaFramesTools({
     const wsDir = ws && typeof ws.dir === 'function' ? ws.dir() : absDir;
 
     try {
-      // 1. 从受权 ProjectAssets 流式读取视频到对话工作区临时目录
+      // 1. Stream video from authorized ProjectAssets to chat workspace temp directory
       let read;
       try {
         read = await assets.openRead(context, mediaId);
@@ -446,7 +455,7 @@ export function createMediaFramesTools({
       }
       await read.closed?.catch?.(() => {});
 
-      // 2. 确定时长与镜头规划
+      // 2. Determine duration and shot plan
       let duration = Number(media.duration);
       if (!(duration > 0)) {
         duration = await probeDuration(context, ws, absMedia, absDir);
@@ -463,7 +472,8 @@ export function createMediaFramesTools({
         throw new MediaFramesToolError(error?.message || String(error), 'bad-args');
       }
 
-      // 3. 按镜头并发抽帧拼图（最多 maxConcurrency 个 ffmpeg 子进程，均经 superviseChild 登记到 resources）
+      // 3. Concurrently extract frames and build collages per shot (up to maxConcurrency ffmpeg child
+      // processes, all registered with resources via superviseChild)
       const results = new Array(plan.scenes.length);
       let cursor = 0;
       const workerCount = Math.min(limits.maxConcurrency, Math.max(1, plan.scenes.length));
@@ -513,7 +523,7 @@ export function createMediaFramesTools({
       };
       await Promise.all(Array.from({ length: workerCount }, () => runSheetWorker()));
 
-      // 4. 返回前重验当前授权与 fenceRevision
+      // 4. Re-verify current authorization and fenceRevision before returning
       await authorize(context, 'read');
 
       let stage = null;

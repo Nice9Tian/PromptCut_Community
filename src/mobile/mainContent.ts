@@ -1,17 +1,27 @@
 /**
- * 手机版缩略时间轴的「主要内容」(语义 `workflow/editing.md`「手机版界面」;术语 `glossary.md`「主要内容」;
- * 机制 `mechanism/platforms.md`「手机版缩略时间轴的主要内容」)。
+ * "Main content" of the mobile app thumbnail timeline (semantics `workflow/editing.md` "Mobile app
+ * interface"; term `glossary.md` "Main content"; mechanism `mechanism/platforms.md` "Main content of the
+ * mobile app thumbnail timeline").
  *
- * 取法分两步(2026-10-23 用户定:「需要一个算法来精简的匹配……先跑通(能显示出来东西,开始时间-结尾时间都有缩略图)」):
- * 1. **主轨**:当前剪辑的主轨(最底下那条放着视频 / 图片 / 剪辑段的序列)上的视频段、图片段、剪辑段,
- *    加上被它们交叉溶解过去的后一段(溶解会把后一段挪到别的序列上,`kernel/transitions.ts`)。
- * 2. **补空档**:从 0 到最后一段可见内容的结尾,第 1 步没盖住、长于 `GAP_MIN` 的空档,用其余没隐藏的序列上的
- *    可见段(声音段不算)按时间补上:每到一处空档,在盖住这一刻的段里挑时长最长的(一样长挑序列更靠下的),
- *    这一刻没有段盖住就跳到空档里最早开始的那段;补进来的段只取它落在空档里的那一截(剪掉和第 1 步重叠的部分),
- *    所以同一时刻只有一块、块的时间先后不交叉。一段很长的段(例如垫在底下的背景卡)可以在几处空档各补一截,
- *    这时同一个 id 会出现不止一次。只有卡片的项目第 1 步一块都没有,整条都靠第 2 步补。
+ * It is taken in two steps (user decision, 2026-10-23: "we need an algorithm for a simplified match... get it working first (something
+ * that can be displayed, with thumbnails for both start time and end time)"):
+ * 1. **Main track**: the video segments, image segments and cut segments on the main track of the
+ *    current cut (the lowest track holding videos / images / cut segments), plus the next segment
+ *    that they crossfade into (a crossfade moves the next segment onto another track,
+ *    `kernel/transitions.ts`).
+ * 2. **Fill gaps**: from 0 to the end of the last visible content, gaps not covered by step 1 and
+ *    longer than `GAP_MIN` are filled by time with the visible segments (audio segments do not count)
+ *    on the other tracks that are not hidden: at each gap, among the segments covering that moment, pick
+ *    the longest (on a tie pick the track that is lower), and if no segment covers that moment, jump
+ *    to the segment that starts earliest within the gap; a segment filled in only takes the part that
+ *    falls inside the gap (trimming off the part overlapping step 1), so there is only one block at
+ *    any moment and the blocks do not overlap in time order. A very long segment (for example a
+ *    background card laid underneath) can fill a piece in several gaps, in which case the same id
+ *    appears more than once. In a project with only cards, step 1 yields no block at all, and the
+ *    whole strip relies on step 2.
  *
- * 纯函数:只读 Project,不碰 store。补进来又被剪过的段是新对象(id 不变),不是项目里的那个。
+ * Pure function: only reads the Project, does not touch the store. A segment that was filled in and
+ * then trimmed is a new object (same id), not the one in the project.
  */
 import { isImageMedia, type MediaAsset, type Project, type Track, type TrackClip } from "../kernel/project.ts";
 import { transitionsOf, timingLock, type Transition } from "../kernel/transitions.ts";
@@ -30,13 +40,13 @@ export function clipKind(p: Project, clip: TrackClip): ClipKind {
   return "card";
 }
 
-/** 能当主要内容的段:视频段、图片段、剪辑段 */
+/** Segments that can be main content: video segments, image segments, cut segments */
 export function isMainKind(p: Project, clip: TrackClip): boolean {
   const k = clipKind(p, clip);
   return k === "video" || k === "image" || k === "cut";
 }
 
-/** 主轨:最底下(tracks 的最后一条)那条放着主要内容的序列;都没有就是最底下那条 */
+/** Main track: the lowest track (the last one in tracks) that holds main content; if none does, the lowest track */
 export function mainTrackOf(p: Project): Track | undefined {
   for (let i = p.tracks.length - 1; i >= 0; i--) {
     if (p.tracks[i].clips.some((c) => isMainKind(p, c))) return p.tracks[i];
@@ -44,18 +54,18 @@ export function mainTrackOf(p: Project): Track | undefined {
   return p.tracks[p.tracks.length - 1];
 }
 
-/** 空档短于这个就不补(秒);整条可见内容很短时按它的 5% 算,保证短项目也补得上。见文件头第 2 步 */
+/** Gaps shorter than this are not filled (seconds); when all visible content is very short, 5% of it is used, so short projects can still be filled. See step 2 in the file header */
 const GAP_MIN = 0.5;
 const GAP_FRAC = 0.05;
 const EPS = 1e-6;
 
-/** 第 1 步:主轨上的视频 / 图片 / 剪辑段,加被它们溶解过去的后一段 */
+/** Step 1: video / image / cut segments on the main track, plus the next segment they crossfade into */
 function mainTrackClips(p: Project): TrackClip[] {
   const track = mainTrackOf(p);
   if (!track) return [];
   const picked = new Map<string, TrackClip>();
   for (const c of track.clips) if (isMainKind(p, c)) picked.set(c.id, c);
-  // 被溶解过去的后一段(可能在别的序列上)也算
+  // The next segment crossfaded into (possibly on another track) counts too
   const all = new Map(p.tracks.flatMap((t) => t.clips.map((c) => [c.id, c] as const)));
   for (let grew = true; grew; ) {
     grew = false;
@@ -68,7 +78,7 @@ function mainTrackClips(p: Project): TrackClip[] {
   return [...picked.values()];
 }
 
-/** 补进来的段只留 [s, e) 这一截;视频段的入点跟着往后挪,缩略图取的仍是这一截开头那一帧 */
+/** A filled-in segment keeps only the [s, e) piece; the in point of a video segment moves later accordingly, and the thumbnail still takes the first frame of this piece */
 function trimTo(c: TrackClip, s: number, e: number): TrackClip {
   if (Math.abs(s - c.start) < EPS && Math.abs(e - c.end) < EPS) return c;
   const out: TrackClip = { ...c, start: s, end: e };
@@ -79,7 +89,7 @@ function trimTo(c: TrackClip, s: number, e: number): TrackClip {
 export function mainClipsOf(p: Project): TrackClip[] {
   const base = mainTrackClips(p);
   const taken = new Set(base.map((c) => c.id));
-  // 候选:没隐藏的序列上、还没取的可见段;记下序列位置(越大越靠下)
+  // Candidates: visible segments on tracks that are not hidden and not yet taken; record the track position (larger = lower)
   const cands: { c: TrackClip; lvl: number }[] = [];
   p.tracks.forEach((t, lvl) => {
     if (t.hidden) return;
@@ -87,7 +97,7 @@ export function mainClipsOf(p: Project): TrackClip[] {
   });
   const end = Math.max(0, ...base.map((c) => c.end), ...cands.map((x) => x.c.end));
   const gapMin = Math.min(GAP_MIN, end * GAP_FRAC);
-  // 第 1 步没盖住的空档
+  // Gaps not covered by step 1
   const covered = [...base].sort((a, b) => a.start - b.start);
   const gaps: [number, number][] = [];
   let x = 0;
@@ -118,7 +128,7 @@ export function mainClipsOf(p: Project): TrackClip[] {
 }
 
 /**
- * 两段主要内容之间的转场:先认两段之间的交叉溶解,再认前一段的淡出、后一段的淡入。没有就是 null(缩略时间轴上画「＋」)。
+ * Transition between two main-content segments: first recognize a crossfade between the two segments, then the fade-out of the previous one and the fade-in of the next one. If none, it is null (a "+" is drawn on the thumbnail timeline).
  */
 export function boundaryTransition(p: Project, a: TrackClip, b: TrackClip): Transition | null {
   const list = transitionsOf(p);
@@ -130,7 +140,7 @@ export function boundaryTransition(p: Project, a: TrackClip, b: TrackClip): Tran
   );
 }
 
-/** 片段在界面上叫什么:显示名 → 素材名 → 剪辑名 → 卡片 id */
+/** What a clip is called in the UI: display name → media name → cut name → card id */
 export function clipName(p: Project, clip: TrackClip, cardName?: (cardId: string) => string | undefined): string {
   if (clip.label) return clip.label;
   const m = mediaOf(p, clip);
@@ -140,13 +150,17 @@ export function clipName(p: Project, clip: TrackClip, cardName?: (cardId: string
 }
 
 export interface ReorderPlan {
-  /** 要挪的段和它的新起点(时长不变) */
+  /** The segment to move and its new start (duration unchanged) */
   moves: { id: string; start: number }[];
 }
 
 /**
- * 主要内容换顺序:按新顺序依次排,保留原来每个位置之间的空档(第 k 段的新起点 = 原来第 k 个位置的起点 + 前面几段时长之差)。
- * 只算,不改;放不下(和主轨上别的段撞了)或有转场锁着(相对时间是转场的一部分,`kernel/transitions.ts`)时回 `{ error }`。
+ * Reorder main content: lay out in the new order, keeping the gap between each of the original
+ * positions (new start of segment k = start of the original k-th position + the difference of the
+ * durations of the segments before it).
+ * Only computes, does not modify; returns `{ error }` when it does not fit (collides with other
+ * segments on the main track) or a transition locks it (the relative time is part of the transition,
+ * `kernel/transitions.ts`).
  */
 export function planReorder(p: Project, order: string[]): ReorderPlan | { error: string } {
   const main = mainClipsOf(p);
@@ -164,7 +178,7 @@ export function planReorder(p: Project, order: string[]): ReorderPlan | { error:
   if (!moves.length) return { moves };
   if (moves.some((m) => timingLock(p, m.id))) return { error: trText("Segments with transitions need the transition removed before reordering.") };
   const track = mainTrackOf(p)!;
-  // 补空档补进来的段(不在主轨上,或只取了一截)不参与换顺序:它们的位置是别的序列定的
+  // Clips added by gap filling (not on the main track, or only a slice of them taken) do not take part in reordering: their positions are decided by another track
   const real = new Map(track.clips.map((c) => [c.id, c] as const));
   if (moves.some(({ id }) => { const c = byId.get(id)!, r = real.get(id); return !r || Math.abs(r.start - c.start) > EPS || Math.abs(r.end - c.end) > EPS; }))
     return { error: trText("These segments are not all on the main track. Adjust positions in the timeline tab.") };
@@ -181,14 +195,15 @@ export function planReorder(p: Project, order: string[]): ReorderPlan | { error:
   return { moves };
 }
 
-/** 主要内容的总时长(各段时长之和,缩略时间轴标题行写它) */
+/** Total duration of the main content (sum of the clip durations; written in the thumbnail timeline's title row) */
 export function mainTotal(clips: TrackClip[]): number {
   return clips.reduce((s, c) => s + (c.end - c.start), 0);
 }
 
 /**
- * 缩略卡等宽:当前帧标记落在第 i 张卡内的比例 f,换成项目时间。落在两卡之间(转场标记处)取下一段开头。
- * `pos` 是标记在卡序列里的位置:整数部分是第几张卡,小数部分是卡内比例;超出末尾回最后一段的结尾。
+ * Thumbnail cards have equal widths: convert the ratio f of the current-frame marker inside card i to project time.
+ * Between two cards (at a transition marker) it takes the start of the next clip.
+ * `pos` is the marker's position in the card sequence: the integer part is the card index, the fractional part is the ratio inside the card; past the end it returns the end of the last clip.
  */
 export function timeAtCardPos(clips: TrackClip[], pos: number): number {
   if (!clips.length) return 0;
@@ -199,7 +214,7 @@ export function timeAtCardPos(clips: TrackClip[], pos: number): number {
   return c.start + (pos - i) * (c.end - c.start);
 }
 
-/** 反过来:项目时间 → 卡序列里的位置。落在两段之间的空档里算下一段开头,落在最后一段之后算末尾 */
+/** The reverse: project time → position in the card sequence. A time in the gap between two clips counts as the start of the next clip, and a time after the last clip counts as the end */
 export function cardPosAtTime(clips: TrackClip[], t: number): number {
   if (!clips.length) return 0;
   for (let i = 0; i < clips.length; i++) {

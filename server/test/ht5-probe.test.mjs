@@ -1,14 +1,21 @@
 /**
- * HT5：本机托管组合 + 同形 nginx 路由，`shared-project-probe` 的 member 在「自动」与「强制 ws」下全部通过
- * （契约 `docs/plan/http-transport-contract.md` 第 11 节 HT5；HT-a 只跑这两种，强制 http 归 HT-b）。
- * 跑：node --test server/test/ht5-probe.test.mjs
+ * HT5: Local hosted bundle + isomorphic nginx routing; `shared-project-probe` member passes
+ * completely under "auto" and "force ws" (contract `docs/plan/http-transport-contract.md`
+ * section 11 HT5; HT-a runs only these two, forced http belongs to HT-b).
+ * Run: node --test server/test/ht5-probe.test.mjs
  *
- * - 托管组合：`server/hosted/main.mjs` 子进程，只绑 127.0.0.1、端口 0，`PROMPTCUT_TRUST_LOOPBACK=0` 加集群令牌（同阿里云）；
- * - 同形路由：测试里起一个小反向代理，`/hosted/*` → 文档服务 `/*`、`/media/*` → 素材服务 `/*`（HTTP 与 WebSocket 升级都转），
- *   素材服务公网地址登记成 `<代理>/media/api/asset`，与阿里云的 nginx 同形；
- * - 协调口在本进程里起（`probe-coord.mjs` 的 `startCoordServer`，端口 0）；creator、member 各起一个探针子进程。
- * 强制 ws：member 带 `PROMPTCUT_TRANSPORT=ws` 与 `--transport ws`（假设 H14），输出里不许出现 `session.fallback`。
- * 客户端、服务端会话层与本机信任开关都到位才跑。只照契约写，没看实现。
+ * - Hosted bundle: `server/hosted/main.mjs` child process, binding only to 127.0.0.1, port 0, with
+ *   `PROMPTCUT_TRUST_LOOPBACK=0` plus cluster token (same as Alibaba Cloud);
+ * - Isomorphic routing: start a small reverse proxy in the test, `/hosted/*` → document service
+ *   `/*`, `/media/*` → asset service `/*` (forwarding both HTTP and WebSocket upgrades),
+ *   registering the asset service public address as `<proxy>/media/api/asset`, isomorphic to
+ *   Alibaba Cloud's nginx;
+ * - Coordination port is started in this process (`startCoordServer` in `probe-coord.mjs`, port 0);
+ *   creator and member each start a probe child process.
+ * Force ws: member with `PROMPTCUT_TRANSPORT=ws` and `--transport ws` (assumption H14);
+ * `session.fallback` must not appear in the output. Runs only when client and server session layers
+ * and the local trust switch are all in place. Written strictly to the contract without looking at
+ * the implementation.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,7 +33,7 @@ const SKIP = SKIP_BOTH || SKIP_TRUST;
 const MAIN = path.join(ROOT, 'cloud', 'server', 'hosted', 'main.mjs');
 const PROBE = path.join(ROOT, 'scripts', 'probes', 'shared-project-probe.mjs');
 
-/** 同形路由：前缀 → 目标端口（前缀去掉后转发）；HTTP 与升级都转 */
+/** Isomorphic routing: prefix → target port (forwarded after stripping prefix); forwards both HTTP and upgrades */
 async function prefixProxy() {
   const routes = new Map();
   const route = (url) => {
@@ -81,7 +88,7 @@ function cleanEnv(extra = {}) {
 
 function startMain(t, env) {
   const child = spawn(process.execPath, [MAIN], { env: cleanEnv(env), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-  t.after(() => { try { child.kill(); } catch { /* 已退 */ } });
+  t.after(() => { try { child.kill(); } catch { /* Already exited */ } });
   let out = '';
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`main.mjs did not start: ${out.slice(-1500)}`)), 20_000);
@@ -95,7 +102,7 @@ function startMain(t, env) {
           clearTimeout(timer);
           resolve({ doc: j.docservice.port, asset: j.asset.port });
           return;
-        } catch { /* 半行 */ }
+        } catch { /* Half line */ }
       }
     });
     child.once('exit', (code) => { clearTimeout(timer); reject(new Error(`main.mjs exited ${code}: ${out.slice(-1500)}`)); });

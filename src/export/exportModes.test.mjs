@@ -1,17 +1,30 @@
 /**
- * 在线浏览器导出分「快速导出」「完整导出」(语义 `docs/semantics/product/platforms.md`「在线浏览器」的「导出」)——页面这一侧的纯逻辑。
- * 跑:node --test src/export/exportModes.test.mjs
+ * Online browser export is split into "quick export" and "full export" (semantics
+ * `docs/semantics/product/platforms.md` "Export" under "Online browser"): pure logic on the page side.
+ * Run: node --test src/export/exportModes.test.mjs
  *
- *   XM-01 每张卡怎么出(`cardLayers.planCardLayers`):完整导出不看流,本页能运行的活渲、本页不执行的全请渲染节点;
- *         快速导出只认满密度的分段 —— 整段都有的卡导出页不挂组件,只有一部分有的照旧活渲、有流的帧贴流,
- *         本页不执行的卡有流的帧取流、其余请渲染节点
- *   XM-02 这一帧取哪一样(`layerChoiceAt`):流 → 位图 → 活渲;稀疏的分段不取
- *   XM-03 只为导出的清单计划(`exportFrames.exportPlanTask`):队列的入站校验收它,和平时那份清单计划不是一个任务
- *   XM-04 请渲染节点、等到齐(`requestExportFrames`):没人认领时报「没有节点」;索引到了取清单;全到齐才回;按帧取 PNG
- *   XM-05 节点说出不了、任务失败、渲的不是这一版:各自抛带说明的错误,不出半截
- *   XM-06 流的一帧上下两半合成(`streamFrames.composeHalves`):预乘色钳到不透明度以内再除回去;全透明的像素归零
- *   XM-07 流清单的读法(`readStreamManifest`):只收范围内、形状对的分段
- *   XM-08 贴进快照(`frameCompositor.pasteLayer`)的规矩由探针在真浏览器里核(这里没有 DOM)
+ *   XM-01 How each card is produced (`cardLayers.planCardLayers`): full export ignores streams;
+ *         cards executable on this page use live render, cards not executed on this page all request
+ *         render nodes; quick export only recognizes full-density segments: for cards with streams
+ *         across the entire segment, the export page does not mount components; for cards with
+ *         streams in only a portion, live render as usual and paste streams on frames that have
+ *         streams; for cards not executed on this page, fetch streams on frames with streams, and
+ *         request render nodes for the rest
+ *   XM-02 Which one to pick for this frame (`layerChoiceAt`): stream → bitmap → live render; sparse
+ *         segments are not picked
+ *   XM-03 Manifest plan only for export (`exportFrames.exportPlanTask`): queue inbound validation
+ *         accepts it; it is not the same task as the usual manifest plan
+ *   XM-04 Request render nodes and wait until all arrive (`requestExportFrames`): report "no nodes"
+ *         when claimed by nobody; fetch manifest once index arrives; return only when all have
+ *         arrived; fetch PNG frame by frame
+ *   XM-05 Node says it cannot produce, task failed, or rendered version is not this version: each
+ *         throws an explanatory error, producing nothing half-done
+ *   XM-06 Compositing top and bottom halves of a stream frame (`streamFrames.composeHalves`): clamp
+ *         premultiplied color within opacity and divide back; zero out fully transparent pixels
+ *   XM-07 How to read stream manifest (`readStreamManifest`): only accept segments within range and
+ *         with matching shape
+ *   XM-08 Rules for pasting into snapshots (`frameCompositor.pasteLayer`) are verified by probes in
+ *         a real browser (no DOM here)
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import { test } from "node:test";
@@ -26,19 +39,19 @@ const T = await import(srcUrl("export/text.ts"));
 const R = await import(srcUrl("kernel/registry.ts"));
 
 const FPS = 30;
-/** 满密度的分段表:分段号 → 样本数 */
+/** Full-density segment table: segment number → sample count */
 const dense = (...segs) => new Map(segs.map((n) => [n, 15]));
 const clip = (id, start, end, cardId = "card") => ({ id, start, end, cardId });
 
 test("XM-01 How each card is produced", () => {
-  // a:第 12～71 帧(60 帧,4 段);b、s 同长
+  // a: frames 12~71 (60 frames, 4 segments); b and s have the same length
   const clips = [clip("a", 0.4, 2.4), clip("b", 0.4, 2.4), clip("s", 0.4, 2.4), clip("light", 0, 3), { id: "video", start: 0, end: 3 }];
   assert.deepEqual(L.clipFrameWindow(clips[0], FPS, 90), { first: 12, last: 71 });
   const streams = [
     { clipId: "a", plane: "local", resultKey: "ka", originFrame: 12, dense: dense(0, 1, 2, 3) },
-    { clipId: "b", plane: "local", resultKey: "kb", originFrame: 12, dense: dense(0, 2) },          // 第 1、3 段只有稀疏版
+    { clipId: "b", plane: "local", resultKey: "kb", originFrame: 12, dense: dense(0, 2) },          // Segments 1 and 3 only have sparse versions
     { clipId: "s", plane: "local", resultKey: "ks", originFrame: 12, dense: dense(0, 1) },
-    { clipId: "s", plane: "local", resultKey: "ks-other", originFrame: 12, dense: dense(0) },        // 另一条满密度分段更少的:不选
+    { clipId: "s", plane: "local", resultKey: "ks-other", originFrame: 12, dense: dense(0) },        // Another one with fewer full-density segments: not selected
   ];
   const nonRunnable = new Set(["s"]);
   const full = L.planCardLayers({ clips, fps: FPS, total: 90, mode: "full", nonRunnable, streams });
@@ -53,11 +66,11 @@ test("XM-01 How each card is produced", () => {
   assert.deepEqual(fast.needFrames, ["s"], "A card this page does not execute that is not fully covered by a full-density stream: ask a render node");
   assert.equal(fast.streamFrames, 60 + 30 + 30);
   assert.equal(fast.nodeFrames, 30);
-  // 本页不执行的卡整段都有满密度流:不用请渲染节点
+  // Cards not executed on this page have full-density streams across the whole segment: no need to request render nodes
   const covered = L.planCardLayers({ clips: [clips[2]], fps: FPS, total: 90, mode: "fast", nonRunnable, streams: [{ ...streams[2], dense: dense(0, 1, 2, 3) }] });
   assert.deepEqual(covered.needFrames, []);
   assert.deepEqual(covered.wrapperOnly, ["s"]);
-  // 末段不满 15 帧:样本数之外的帧不算盖住
+  // Last segment has fewer than 15 frames: frames beyond sample count do not count as covered
   const short = { clipId: "a", plane: "local", resultKey: "ka", originFrame: 12, dense: new Map([[0, 15], [1, 5]]) };
   assert.equal(L.streamCovers(short, 31), true);
   assert.equal(L.streamCovers(short, 32), false);
@@ -98,7 +111,7 @@ test("XM-03 Export-only manifest plan: the queue accepts it, and it is not the s
 
 const RK = "a".repeat(64);
 const hashOf = (n) => n.toString(16).padStart(64, "0");
-/** 一台假的文档服务 + 素材服务:队列事件由测试手动推 */
+/** A mock document service + asset service: queue events are pushed manually by tests */
 function fakeService({ project }) {
   const listeners = new Set();
   const manifests = new Map();
@@ -142,7 +155,8 @@ test("XM-04 Ask render nodes, wait until everything arrives, fetch by frame", as
   let step = 0;
   svc.hooks.onSleep = async () => {
     step++;
-    // 第 1 轮:没人认领。第 2 轮:节点接了。第 3 轮:计划完成(索引到了),清单还没有。第 4 轮:第一份清单到。第 5 轮:第二份到
+    // Round 1: claimed by nobody. Round 2: node accepted. Round 3: plan completed (index arrived),
+    // manifest not yet. Round 4: first manifest arrives. Round 5: second arrives
     if (step === 1) svc.setState("claimed");
     if (step === 2) { svc.setState("done"); svc.emit({ type: "task.done", id: task.id, result: { ranges: null, derived: [], exportIndex: indexOf() } }); }
     if (step === 3) svc.manifests.set(`${RK}:0-7`, manifestOf(0, 7, 12, 143));
@@ -176,49 +190,49 @@ test("XM-05 Cannot be produced, failed, not this version: each stops and explain
     return F.requestExportFrames({ projectId: "p1", projectRev: 7, project: svc.project, clips: ["s"], deps: svc.deps, signal: new AbortController().signal });
   };
   const done = (svc, task, index) => svc.emit({ type: "task.done", id: task.id, result: { exportIndex: index } });
-  // 节点说这张卡出不了
+  // Node says this card cannot be produced
   await assert.rejects(run((svc, task, step) => { if (step === 1) done(svc, task, { v: 1, streams: [], unsupported: [{ clipId: "s", reason: "no-card" }] }); }),
     (e) => e.message === T.ONLINE_EXPORT_TEXT.nodeCannot(1, "no-card") && /does not have the code for this card/.test(e.message));
-  // 计划本身失败
+  // Plan itself failed
   await assert.rejects(run((svc, task, step) => { if (step === 1) svc.emit({ type: "task.failed", id: task.id, error: "bad-snapshot" }); }),
     (e) => e.message === T.ONLINE_EXPORT_TEXT.nodeFailed("bad-snapshot"));
-  // 某一段位图任务彻底失败
+  // A certain segment's bitmap task completely failed
   await assert.rejects(run((svc, task, step) => {
     if (step === 1) done(svc, task, indexOf());
     if (step === 2) svc.emit({ type: "task.failed", id: `stream:${RK}:0-7`, error: "export-frames-failed" });
   }), (e) => e.message === T.ONLINE_EXPORT_TEXT.nodeFailed("export-frames-failed"));
-  // 项目往前走了,这份内容被作废
+  // Project moved forward; this content was invalidated
   await assert.rejects(run((svc, task, step) => {
     if (step === 1) done(svc, task, indexOf());
     if (step === 2) svc.emit({ type: "task.failed", id: `stream:${RK}:8-8`, error: "superseded" });
   }), (e) => e.message === T.ONLINE_EXPORT_TEXT.projectChanged);
-  // 别的流任务失败(不是这次导出要的)不管
+  // Ignore failures of other stream tasks (not requested by this export)
   const ok = await run((svc, task, step) => {
     if (step === 1) { done(svc, task, indexOf({ streams: [{ ...indexOf().streams[0], lastFrame: 20, lastSegment: 0 }] })); svc.emit({ type: "task.failed", id: `stream:${"b".repeat(64)}:0-7`, error: "x" }); }
     if (step === 2) svc.manifests.set(`${RK}:0-0`, manifestOf(0, 0, 12, 20));
   });
   assert.equal(ok.coverage.get("s").frames.size, 9);
-  // 取消
+  // Cancel
   F.resetExportRetry();
   const svc = fakeService({ project: {} });
   const ac = new AbortController();
   svc.hooks.onSleep = async () => { ac.abort(); };
   await assert.rejects(F.requestExportFrames({ projectId: "p1", projectRev: 7, project: {}, clips: ["s"], deps: svc.deps, signal: ac.signal }), (e) => e.cancelled === true);
-  // 索引的形状不对的条目跳过
+  // Skip entries with incorrect index shapes
   assert.equal(F.parseExportIndex({ streams: [{ clipId: "s" }, indexOf().streams[0]], unsupported: [{ clipId: "x" }] }).streams.length, 1);
   assert.equal(F.parseExportIndex(null), null);
   assert.deepEqual(F.exportSpans({ lastSegment: 8, segmentsPerTask: 8 }), [[0, 7], [8, 8]]);
 });
 
 test("XM-06 A stream frame composed from its top and bottom halves", () => {
-  // 宽 2、色半区高 2;整帧高 = 2 × 2 + 16 = 20;不透明度从第 2 + 8 = 10 行起
+  // Width 2, color half-region height 2; full frame height = 2 × 2 + 16 = 20; opacity starts from row 2 + 8 = 10
   const w = 2, h = 2, total = 2 * h + 16;
   const raw = new Uint8ClampedArray(w * total * 4);
   const px = (x, y, r, g, b) => { const o = (y * w + x) * 4; raw[o] = r; raw[o + 1] = g; raw[o + 2] = b; raw[o + 3] = 255; };
-  px(0, 0, 100, 50, 0); px(0, 10, 200, 200, 200);    // 预乘 (100, 50, 0),不透明度 200 → straight (128, 64, 0)
-  px(1, 0, 255, 10, 10); px(1, 10, 40, 40, 40);      // 色比不透明度大(编码噪声):先钳到 40 → (255, 64, 64)
-  px(0, 1, 90, 90, 90); px(0, 11, 0, 0, 0);          // 全透明:归零
-  px(1, 1, 255, 255, 255); px(1, 11, 255, 255, 255); // 不透明的白
+  px(0, 0, 100, 50, 0); px(0, 10, 200, 200, 200);    // Premultiplied (100, 50, 0), opacity 200 → straight (128, 64, 0)
+  px(1, 0, 255, 10, 10); px(1, 10, 40, 40, 40);      // Color greater than opacity (encoding noise): clamp to 40 first → (255, 64, 64)
+  px(0, 1, 90, 90, 90); px(0, 11, 0, 0, 0);          // Fully transparent: zero out
+  px(1, 1, 255, 255, 255); px(1, 11, 255, 255, 255); // Opaque white
   const out = S.composeHalves(raw, w, total, h);
   assert.deepEqual([...out.subarray(0, 4)], [128, 64, 0, 200]);
   assert.deepEqual([...out.subarray(4, 8)], [255, 64, 64, 40]);
@@ -247,7 +261,7 @@ test("XM-07 How stream manifests are read", () => {
 test("XM-08 Online export runnable-card check and nonRunnableClips: ready synced cards render live, cards in an error state wait for a node", () => {
   R.resetRuntimeCardsForTest();
   R.registerCards([{ id: "builtin-card", name: "Builtin Card" }]);
-  // 模拟同步卡
+  // Simulate synced card
   R.setSyncedUserCards([
     { id: "synced-ready", name: "Ready Card" },
     { id: "synced-bad", name: "Bad Card" },
@@ -269,7 +283,7 @@ test("XM-08 Online export runnable-card check and nonRunnableClips: ready synced
         { id: "c2", cardId: "synced-ready", start: 1, end: 2 },
         { id: "c3", cardId: "synced-bad", start: 2, end: 3 },
         { id: "c4", cardId: "unknown-card", start: 0, end: 2 },
-        { id: "c5", start: 0, end: 3 }, // 素材片段（无 cardId）
+        { id: "c5", start: 0, end: 3 }, // Media clip (no cardId)
       ] },
     ],
   };

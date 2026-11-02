@@ -23,27 +23,33 @@ import { SceneHostContext } from "./CutSegmentScene";
 const NO_HASHES: readonly string[] = [];
 
 /**
- * 导出 / 预渲染取帧的素材时刻(`data-pc-media-time`,截图那一步 `frameMedia.ts` 按它 seek)。
- * 变速段按 `kernel/clipTime.mjs` 的统一换算;缺省 1 时保留这里原来的运算顺序 `(mediaOffset + t) − start` ——
- * 浮点加减不满足结合律,换成 `mediaOffset + (t − start)` 可能差最后一位,导出取帧要逐位不变。
+ * Asset time for export / prerender frame capture (`data-pc-media-time`; during screenshot step
+ * `frameMedia.ts` seeks by it). Speed-changed clips use the unified conversion from
+ * `kernel/clipTime.mjs`; when default is 1, keep the original operation order here
+ * `(mediaOffset + t) − start`: floating-point addition and subtraction are not associative,
+ * and changing to `mediaOffset + (t − start)` might differ in the last bit; export frame
+ * capture must be bit-for-bit identical.
  */
 function exportMediaTime(clip: TrackClip, t: number): number {
   return Math.max(0, clipSpeed(clip) === 1 ? (clip.mediaOffset ?? 0) + t - clip.start : mediaTimeAt(clip, t));
 }
 
 /**
- * 素材层上的像素映射。画面由 WebGL2 片元着色器算(render/pixelMapGl.ts):表达式在
- * kernel/pixelMap.mjs 里翻译成 GLSL,视频 / 图片帧当纹理,`to` 是另一段素材时用第二张纹理。
- * 这张 <canvas> 只有 bitmaprenderer 上下文 —— 着色器画完整块位图转移过来。
- * 原先的逐像素 CPU 循环(getImageData → mapRgba → putImageData)已整体删除、不留退路:
- * 实测 1080p 每帧 416～483 ms,超 30 fps 的每拍预算约二十倍。
+ * Pixel map on the asset layer. Visuals are computed by a WebGL2 fragment shader
+ * (render/pixelMapGl.ts): expressions are translated to GLSL in kernel/pixelMap.mjs, video / image
+ * frames serve as textures, and a second texture is used when `to` is another asset.
+ * This <canvas> only has a bitmaprenderer context: shader paints the full bitmap and transfers it
+ * over. The original per-pixel CPU loop (getImageData → mapRgba → putImageData) has been completely
+ * removed with no fallback: benchmarks showed 416-483 ms per frame at 1080p, exceeding the per-tick
+ * budget for 30 fps by about twenty times.
  */
 function PixelMappedMedia({ media, clip, t, project, style, def, live = false, playing = false, scrubbing = false, localHashes = NO_HASHES }: { media: any; clip: any; t: number; project: Project; style: React.CSSProperties; def: PixelMapDef; live?: boolean; playing?: boolean; scrubbing?: boolean; localHashes?: readonly string[] }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const source = useRef<HTMLVideoElement | HTMLImageElement>(null);
   const targetSource = useRef<HTMLVideoElement | HTMLImageElement>(null);
-  // stage=after_filters 时先把滤镜套在一张中转画布上,再当纹理上传(滤镜由合成器在 GPU 上做,
-  // 不读回像素)。stage=origin 直接上传素材元素,少一次重采样。
+  // When stage=after_filters, apply filters to an intermediate canvas first, then upload as texture
+  // (filters are applied on the GPU by the compositor without reading back pixels). stage=origin
+  // uploads the asset element directly, saving one resampling pass.
   const staged = useRef<HTMLCanvasElement | null>(null);
   const draw = useCallback(() => {
     const c = canvas.current; const s = source.current;
@@ -67,7 +73,7 @@ function PixelMappedMedia({ media, clip, t, project, style, def, live = false, p
       drawPixelMap(c, { def, source: src as TexImageSource, target: target as TexImageSource | null, width: w, height: h, t });
       c.removeAttribute("data-pc-pixel-error");
     } catch (err) {
-      // 画不出来就让这一层空着,别把整个场景树拖垮;属性留给验收脚本和排错看
+      // If rendering fails, leave this layer empty; avoid dragging down whole scene tree. Attributes kept for acceptance scripts and debugging
       c.setAttribute("data-pc-pixel-error", err instanceof Error ? err.message : String(err));
       console.error("[pixelMap]", err);
     }
@@ -79,9 +85,11 @@ function PixelMappedMedia({ media, clip, t, project, style, def, live = false, p
     return () => document.removeEventListener("pc:frame-media-ready", draw);
   }, [draw]);
   /*
-   * live(舞台)路:源素材是**真的在放的** `<video>` / `<img>`,不是导出页那种等截图时才装 src 的占位。
-   * 所以这里自己跟播放头对齐、每次渲染都重画一次;视频再补一次 rVFC —— 解出新的一帧时
-   * 画面要跟着换,而暂停时没有播放循环推着重渲。
+   * live (stage) path: Source assets are `<video>` / `<img>` that are **actually playing**, not
+   * placeholders like on the export page that only attach src when taking snapshots. So here we
+   * align with the playhead ourselves and repaint on every render; video adds an extra rVFC:
+   * when a new frame is decoded, the visual must update accordingly, whereas during pause there is
+   * no playback loop driving rerenders.
    */
   useLayoutEffect(() => {
     if (!live) return;
@@ -106,23 +114,29 @@ function PixelMappedMedia({ media, clip, t, project, style, def, live = false, p
       if (b instanceof HTMLVideoElement) releaseMedia(b);
     };
   }, [live]);
-  // 源素材藏起来(画面由下面那张 canvas 出)。visibility:hidden 的视频照样解码、照样回调 rVFC
-  // (实测 Chrome 152,同 VideoTrack 的隐藏槽位),`texImage2D` 也照样读得到它解出来的帧。
+  // Hide the source asset (visuals come from the canvas below). visibility:hidden videos still
+  // decode and still invoke rVFC callbacks (tested on Chrome 152, same as VideoTrack's hidden slot),
+  // and `texImage2D` can still read frames decoded from them.
   const hidden: React.CSSProperties = { ...style, visibility: "hidden", position: "absolute" };
   const targetMedia = def.to?.kind === "media" ? project.media.find((m) => m.id === (def.to as Extract<PixelMapDef["to"], { kind: "media" }>).mediaId) : null;
   const targetHidden: React.CSSProperties = { ...hidden, pointerEvents: "none" };
   /*
-   * 导出页(placeholder)刻意**不给 src**:推进 React 的过程中绝不能去 seek / 解码素材,
-   * 截图那一步才由 `__pcPrepareFrameMedia` 按 `data-pc-media-*` 把这一帧装回来。
-   * live(舞台)路正相反 —— 素材是真的在放的,所以这时候才挂 `src` 并 `preload="auto"`。
+   * The export page (placeholder) intentionally **does not provide src**: while advancing React,
+   * never seek / decode assets; only during screenshot step does `__pcPrepareFrameMedia` restore
+   * this frame according to `data-pc-media-*`. The live (stage) path is the exact opposite: assets
+   * are actually playing, so only now do we attach `src` and set `preload="auto"`.
    */
-  // live 的 src 经换档判据(`mediaTier.ts` 的 playbackUrl,T1a 审查 #5);`data-pc-media-src` 仍是 `media.url`(身份、素材原尺寸)
+  // live's src goes through tier switch criteria (playbackUrl in `mediaTier.ts`, T1a review #5);
+  // `data-pc-media-src` remains `media.url` (identity, original-size asset)
   //
-  // 拿到空串要回 `undefined`,不能把 "" 挂进 `src`。`playbackUrl` 的文件头写明「调用方拿到 "" 就不挂 src、不发请求」,
-  // 而 `<video src="">` 会被浏览器当成「再下载一遍当前页面」,React 也会报
-  // 「An empty string ("") was passed to the src attribute」。素材正在入库时(`pending`,还没有地址)就是这种情形:
-  // 本地导入的 pending 窗口只有毫秒级,看不出来;从网盘导入要拉几十秒到几分钟,这一段预览就是坏的。
-  // (2026-10-23 跑网盘连接器端到端时发现,用户报「添加的时候预览失败」。)
+  // When getting an empty string, return `undefined`; never attach "" to `src`. The file header of
+  // `playbackUrl` states that "callers receiving "" should not attach src or send requests", and
+  // `<video src="">` is treated by browsers as "downloading the current page again", and React will
+  // also warn "An empty string ("") was passed to the src attribute". This is the case when an asset
+  // is being stored (`pending`, no URL yet): locally imported pending windows last only milliseconds
+  // and go unnoticed; importing from a cloud drive pulls for tens of seconds to several minutes,
+  // during which preview is broken. (Found on 2026-10-23 while running cloud drive connector
+  // end-to-end; user reported "Preview failed when adding".)
   const srcOf = (m?: MediaAsset | null) => (live && m ? playbackUrl(m, localHashes) || undefined : undefined);
   const load = live ? "auto" : "none";
   return <>
@@ -138,21 +152,26 @@ function PixelMappedMedia({ media, clip, t, project, style, def, live = false, p
 }
 
 /**
- * K6 的每卡耗时:**靠渲染顺序给一个片段的子树掐表**。
+ * Per-card duration for K6: **clocking a clip's subtree using render order**.
  *
- * 不能用 React 的 `<Profiler>`:它的 `actualDuration` 读 `performance.now()`,而舞台把
- * `performance.now` 换成了虚拟时钟(`stageClock`)—— 一拍之内它是个常数,所以 `Profiler`
- * 报的每一张卡都是 0(实测)。量耗时一律用 `__pcRealNow`(接管前存下的真墙钟)。
+ * Cannot use React's `<Profiler>`: its `actualDuration` reads `performance.now()`, but the stage
+ * replaces `performance.now` with a virtual clock (`stageClock`): within a tick it is a constant,
+ * so `Profiler` reports 0 for every card (tested). To measure duration, always use `__pcRealNow`
+ * (the real wall clock saved before takeover).
  *
- * 做法:在这个片段的 `Stage` **前后各放一个只跑一次回调、不产生 DOM 的兄弟组件**。
- * React 的渲染是深度优先、兄弟从左到右,所以「前面那个的回调 → 整棵子树渲染 → 后面那个的回调」
- * 顺序是确定的(同步 `flushSync` 下没有中断)。两次 `__pcRealNow()` 之差就是这张卡这一拍的
- * 渲染耗时;子树因为 props 没变而跳过时自然就接近 0 —— 那本来就是它这一拍的真实成本。
+ * Approach: **place a sibling component before and after this clip's `Stage` that runs its
+ * callback only once and produces no DOM**. React rendering is depth-first and siblings go
+ * left-to-right, so the order "earlier callback → entire subtree render → later callback" is
+ * deterministic (no interruption under synchronous `flushSync`). The difference between two
+ * `__pcRealNow()` calls is this card's render duration for this tick; when the subtree is skipped
+ * because props have not changed, it naturally approaches 0: that was its true cost for this tick
+ * all along.
  *
- * **只量渲染阶段**,不含提交到 DOM 的那一段。见报告里的更正建议。
+ * **Only measures the render phase**, excluding commit to DOM. See correction suggestions in the
+ * report.
  */
 const realNow = (): number => (typeof window !== "undefined" && window.__pcRealNow ? window.__pcRealNow() : performance.now());
-/** 上一个 `CostMark` 记下的时刻。渲染是单线程顺序的,一个模块级变量就够 */
+/** Timestamp recorded by previous `CostMark`. Single-threaded sequential rendering; module variable suffices */
 let costMarkAt = 0;
 function CostMark({ at }: { at: (now: number) => void }) {
   at(realNow());
@@ -162,16 +181,18 @@ function CostMark({ at }: { at: (now: number) => void }) {
 /**
  * One browser stacking tree, ordered from the bottom track upwards.
  *
- * # 两个素材变体(E7)
+ * # Two asset variants (E7)
  *
- * `mediaMode: 'placeholder'`(缺省,导出页和 legacy 走这条):视频占位**刻意不给 src** ——
- * 推进 React 的过程中绝不能去 seek / 解码素材;截图那一步才由 `__pcPrepareFrameMedia`
- * 按 `data-pc-media-*` 把这一帧装回来。**这条路的 DOM 一个字都不许变**(导出有逐像素基线)。
+ * `mediaMode: 'placeholder'` (default; export page and legacy take this path): Video placeholders
+ * **intentionally do not have src**: while advancing React, never seek / decode assets; only during
+ * screenshot does `__pcPrepareFrameMedia` restore this frame according to `data-pc-media-*`.
+ * **Not a single character of DOM on this path may change** (export has a pixel-by-pixel baseline).
  *
- * `mediaMode: 'live'`(舞台页):素材层是真的在放的 —— 每条序列一个 `VideoTrack`
- * (双 `<video>` 轮换,见 `render/VideoTrack.tsx`),`cur` / `next` 由这里按 `mediaT` 算好;
- * 卡片活跃判据换成 `cardMountedAt`(含 LEAD,和 `Stage` 内部同一个口径);
- * `Stage` 的六个可选 prop(快照 / 抑制 / 流平面 / 重挂载代数 / 追帧 / 等待)原样透传。
+ * `mediaMode: 'live'` (stage page): Asset layer is actually playing: one `VideoTrack` per track
+ * (alternating dual `<video>`, see `render/VideoTrack.tsx`), with `cur` / `next` computed here by
+ * `mediaT`; card active criterion switches to `cardMountedAt` (including LEAD, matching the
+ * criterion inside `Stage`); six optional props of `Stage` (snapshot / suppression / stream plane /
+ * remount generation / frame catch-up / wait) are passed through as is.
  */
 export function FrameScene({
   project, sourceProject = project, t, directT = t, playToken, graph,
@@ -180,38 +201,43 @@ export function FrameScene({
 }: {
   project: Project; sourceProject?: Project; t: number; directT?: number; playToken: number; graph?: Timeline["graph"];
   /**
-   * 剪辑段里的嵌套场景(`CutSegmentScene`):序列层不挂 `data-pc-track`、片段层挂 `data-pc-nested-clip`
-   * (预渲染按轨道前缀拆层、命中测试、钉动画只认舞台顶层)。顶层一律 false,DOM 一个字不变。
+   * Nested scene in a cut segment (`CutSegmentScene`): track layer does not attach `data-pc-track`,
+   * clip layer attaches `data-pc-nested-clip` (prerender layer splitting by track prefix, hit
+   * testing, and pin animation only recognize the stage top level). Top level is always false,
+   * not a single character of DOM changes.
    */
   nested?: boolean;
-  /** 剪辑段里的嵌套场景:片段在计划一侧的 id 前缀(`Stage` 的 `flatPrefix`;`kernel/cutFlatten.mjs`)。顶层不传 */
+  /** Nested scene in cut segment: clip id prefix on plan side (`Stage`'s `flatPrefix`; `kernel/cutFlatten.mjs`). Not passed at top level */
   flatPrefix?: string;
-  /** 素材层怎么画:导出页 / legacy 的占位,还是舞台里真的在放的那套(E7 第 1 条) */
+  /** How to paint asset layer: placeholder for export page / legacy, or what is actually playing on stage (E7 item 1) */
   mediaMode?: "placeholder" | "live";
-  /** 素材层跟的时刻(秒)。平时等于 `t`;K5 第二路的补跑里父页会单独给 `back` 下发目标拍 */
+  /** Time tracked by asset layer (seconds). Normally equals `t`; in K5 pass 2 catch-up runs, parent page sends target tick to `back` separately */
   mediaT?: number;
   scrubbing?: boolean;
   playing?: boolean;
   proxy?: ProxyRender;
   /**
-   * A1 的 `localHashes`:当前连接的素材服务报 `complete` 的哈希。**只有 live 路消费**(`VideoTrack` 与
-   * 像素映射素材的 src 经 `mediaTier.ts` 的 playbackUrl 换档,T1a 审查 #5);placeholder 路(导出页 / legacy)
-   * 一律 `media.url`,传了也不改一个像素。集合为空 = 一律素材原尺寸,和没接换档之前一样。
+   * A1's `localHashes`: Hashes reported as `complete` by currently connected asset service.
+   * **Consumed only by the live path** (src for `VideoTrack` and pixel map assets undergoes tier
+   * switch via playbackUrl in `mediaTier.ts`, T1a review #5); placeholder path (export page / legacy)
+   * always uses `media.url`, not changing a single pixel even if passed. Empty set = always
+   * original-size asset, same as before tier switch was connected.
    */
   localHashes?: readonly string[];
-  /** live:后台舞台的素材层画出一帧了(K5 第 (4) 步的 `mediaReady`) */
+  /** live: Asset layer on the background stage has rendered a frame (`mediaReady` in K5 step (4)) */
   onMediaFrame?: (mediaTime: number) => void;
   /**
-   * K6:这一拍这张卡花了多少毫秒。**只有 live 路有**,`<Profiler>` 报的
-   * `actualDuration`(这个片段的子树这一次提交渲染花的时间)。
+   * K6: How many milliseconds this card took this tick. **Present only on the live path**, reported
+   * by `<Profiler>` as `actualDuration` (time spent rendering this clip's subtree during this commit).
    *
-   * 为什么用 `Profiler` 而不是自己掐表:一拍是一次 `flushSync`,整棵树一起提交,
-   * 外面掐表只量得到总数;而 K6 要的是「本窗口实测累计耗时最大的那张轻卡」。
-   * live 路每个片段本来就是一个独立的单片段 `Stage`,套一层 `Profiler` 不产生任何 DOM。
+   * Why use `Profiler` instead of manual timing: A tick is a single `flushSync` where the whole tree
+   * commits together, so timing from outside only measures total; whereas K6 needs "the light card
+   * with the highest measured cumulative duration in this window". On the live path, each clip is
+   * already an independent single-clip `Stage`, and wrapping with `Profiler` produces no DOM.
    *
-   * **限制**:它量的是 React 渲染 / 提交,不含卡片自己 rAF 回调里的时间
-   * (那些跑在 `clock.tick` 里,回调和片段之间没有可靠的归属关系)。
-   * 见报告里的更正建议。
+   * **Limitation**: It measures React render / commit, not time spent in the card's own rAF callbacks
+   * (those run in `clock.tick`, with no reliable ownership mapping between callbacks and clips).
+   * See correction suggestions in the report.
    */
   onCardCost?: (clipId: string, ms: number) => void;
 } & StagePlaneProps) {
@@ -225,9 +251,13 @@ export function FrameScene({
   const replaced = (id: string) => !!cached(id) || missing.has(id);
   const tracks = [...project.tracks].reverse().filter((tr) => !tr.hidden);
   /*
-   * 卡片按自身时间口径判定活跃:直接求值卡走 directT,时序卡走 t。
-   * 开窗取帧(see_frames / 局部导出)下 t 还在片段起点之前时,时序卡不能因 directT 越过起点而提前挂载(否则早一帧)。
-   * live 下用 cardMountedAt(含 50ms 提前量),placeholder(导出)下用 [start, end) 区间。
+   * Cards determine activity by their own time criteria: direct-evaluation cards use directT,
+   * sequential cards use t.
+   * Under windowed frame capture (see_frames / partial export), when t is still before clip start
+   * point, sequential cards must not mount early because directT passed start point (otherwise one
+   * frame too early).
+   * Under live, use cardMountedAt (including 50ms lead); under placeholder (export), use [start, end)
+   * interval.
    */
   const clipTime = (clip: TrackClip) =>
     clipFrameMode(clip, getCard(clip.cardId)) === "direct" ? directT : t;
@@ -238,36 +268,39 @@ export function FrameScene({
         return ct >= clip.start && ct < clip.end;
       };
   /*
-   * 素材效果卡接管的素材段、带像素映射的素材段都不进 `VideoTrack`:前者由 `Stage` 里的素材效果卡画,
-   * 后者由 `PixelMappedMedia` 画 —— 不滤掉的话同一段素材会被画两遍。
-   * **过滤必须下推进 `nextVideoLayerAfter`**(它每条序列只回一段,事后滤等于这条序列没有 `next`)。
+   * Media clips taken over by media effect cards and media clips with pixel maps do not enter
+   * `VideoTrack`: the former are painted by the media effect card in `Stage`, and the latter are
+   * painted by `PixelMappedMedia`: if not filtered out, the same media clip would be painted twice.
+   * **Filtering must be pushed down into `nextVideoLayerAfter`** (it returns only one clip per
+   * track; filtering after the fact is equivalent to that track having no `next`).
    */
-  // 停用的像素映射按没挂算(`pixelMapOfClip`),这一段退回普通素材层,不走 PixelMappedMedia
+  // Disabled pixel maps count as unattached (`pixelMapOfClip`); this clip falls back to normal asset layer without PixelMappedMedia
   const takenByOther = (clip: TrackClip) =>
     graphVisualNode(graph, clip.nodeId) || !!pixelMapOfClip(project, clip);
   const nexts = live ? nextVideoLayerAfter(project, mediaT, takenByOther) : [];
   /*
-   * E7 第 7 条:`legacyTimeline` 按 `(project, tr, clip)` 引用 memo。
-   * 不 memo 的话每帧给每个片段新建一个 `timeline` 对象,`Stage` 的 `useMemo`、
-   * `GraphCard` 的输入解算全部按新引用重算 —— 播放时这是每拍都要付的。
-   * WeakMap 以 clip 对象为键:store 是不可变更新,没动过的 clip 引用不变。
+   * E7 item 7: `legacyTimeline` is memoized by `(project, tr, clip)` references. Without memoization,
+   * a new `timeline` object is created for each clip on every frame, so `Stage`'s `useMemo` and
+   * `GraphCard`'s input resolution all recompute on the new reference: during playback, this cost
+   * is paid on every tick. WeakMap uses the clip object as key: store updates are immutable, so
+   * untouched clip references stay unchanged.
    */
   const timelineCache = useRef(new WeakMap<object, { project: Project; tr: unknown; graph: unknown; timeline: Timeline }>());
   const legacyTimeline = (tr: Project["tracks"][number], clip: Project["tracks"][number]["clips"][number]): Timeline => {
     const hit = timelineCache.current.get(clip);
     if (hit && hit.project === project && hit.tr === tr && hit.graph === graph) return hit.timeline;
-    // 图**不能**从裁剪版算(只留一条轨道一个片段,跨片段输入解不出)—— 由宿主算好、原样带进来。
+    // Graphs **cannot** be computed from cropped version (only 1 track and 1 clip kept, cross-clip inputs cannot resolve): host computes and brings in as is.
     const timeline = { ...flattenOverlay({ ...project, tracks: [{ ...tr, clips: [clip] }] }), graph } as Timeline;
     timelineCache.current.set(clip, { project, tr, graph, timeline });
     return timeline;
   };
   const stageSize = { width: project.width, height: project.height };
   const clipAttr = nested ? "data-pc-nested-clip" : "data-pc-clip";
-  // 嵌套的剪辑段场景照同一种素材变体渲(CutSegmentScene)
+  // Nested cut segment scenes are rendered with the same asset variant (CutSegmentScene)
   const host = { live, mediaT, playing, scrubbing, localHashes: hashes };
   return <SceneHostContext.Provider value={host}>{tracks.map((tr, index) => {
     const curOf = (trackId: string) => layers.find((l) => l.trackId === trackId && !takenByOther(l.clip) && !replaced(l.clip.id)) ?? null;
-    // 这条序列上有没有画面段(视频 / 图片)。没有就不挂 VideoTrack,免得多两个空 <video>
+    // Whether visual clips (video / image) exist on this track. If none, do not mount VideoTrack to avoid two extra empty <video>
     const hasVisual = tr.clips.some((c) => {
       if (!c.mediaId || takenByOther(c)) return false;
       const m = project.media.find((x) => x.id === c.mediaId);
@@ -282,7 +315,7 @@ export function FrameScene({
           t={mediaT}
           playing={playing}
           scrubbing={scrubbing}
-          // 舞台恒 muted:音频留在编辑器主文档(MediaLayers 的 audioOnly)
+          // Stage is always muted: audio stays in the editor main document (MediaLayers's audioOnly)
           muted
           stage={stageSize}
           filters={project.filters}
@@ -304,7 +337,7 @@ export function FrameScene({
         const ops = project.filters?.length ? clipFilterOpsAt(project, clip, t) : null;
         const filter = [ops ? cssFilter(ops) : "", emphasisFilter(clip.emphasis) || ""].filter(Boolean).join(" ");
         const style = { display: "block", width: "100%", height: "100%", objectFit: "cover" as const, opacity, filter: filter || undefined };
-        // data-pc-media:生成快照时 controls 的选择器靠它把素材层排除掉(见 render/createSnapshot.ts)
+        // data-pc-media: Selector for controls relies on it to exclude the asset layer when generating snapshots (see render/createSnapshot.ts)
         return <div key={clip.id} {...{ [clipAttr]: clip.id }} data-pc-media="" data-pc-local-frame={Math.round((t - clip.start) * project.fps)} style={{ position: "absolute", overflow: "hidden", ...frameCss(clip.frame, project) }}>
           {pixelMapOfClip(project, clip) ? (() => {
             const def = pixelMapOfClip(project, clip)!;
@@ -316,7 +349,7 @@ export function FrameScene({
         </div>;
       })}
       {tr.clips.map((clip, clipIndex) => {
-        // 剪辑段:活跃判据看 flattenOverlay 交出的那份(起点含预卷、推帧口径取被引用剪辑的),不看序列上的原段
+        // Cut segment: Active criterion looks at copy handed over by flattenOverlay (start includes preroll, frame-push criteria from referenced cut), not original segment on track
         if (clip.cutId) {
           const seg = legacyTimeline(tr, clip).clips[0];
           if (!seg || !active(seg as TrackClip)) return null;
@@ -348,8 +381,9 @@ export function FrameScene({
         // Media has already been painted below this block. A one-clip Stage
         // keeps each legacy card at its original track position while retaining
         // Stage's direct-child perspective and glass/backdrop context.
-        // E7 第 3～5 条:`proxy` 和六个平面 prop 原样透传给每个内部单片段 `Stage`。
-        // `placeholder` 路一个都不传(宿主本来就不给),DOM 一个字不变。
+        // E7 items 3-5: `proxy` and six plane props are passed through as is to each internal single-clip
+        // `Stage`. The `placeholder` path passes none of them (the host never provided them), and not a
+        // single character of DOM changes.
         if (!timeline.clips.length) return null;
         const stage = (
           <Stage timeline={timeline} t={t} directT={directT} playToken={playToken} nested={nested} flatPrefix={flatPrefix}
@@ -357,10 +391,11 @@ export function FrameScene({
             remountGen={remountGen} settling={settling} awaiting={awaiting} />
         );
         /*
-         * K6 的每卡耗时。**加不加这两个兄弟由 `live` 决定、不由 `onCardCost` 在不在决定** ——
-         * 中途多一个 / 少一个兄弟会让 React 按位置重新对账、把卡片重挂载,锚点就丢了。
-         * `placeholder`(导出 / legacy)永远不加,DOM 和渲染路径一个字不变
-         * (`CostMark` 本身回 `null`,live 路的 DOM 也一个节点都不多)。
+         * Per-card duration for K6. **Whether to add these two siblings is determined by `live`, not by
+         * whether `onCardCost` is present**: adding or removing a sibling midway causes React to reconcile
+         * by position and remount the card, losing anchor points. `placeholder` (export / legacy) never
+         * adds them, leaving DOM and render path completely unchanged (`CostMark` itself returns `null`,
+         * so the live path DOM has not a single extra node either).
          */
         return (
           <div key={clip.id} {...(nested ? null : { "data-pc-native-layer": clip.id })} style={layerStyle}>

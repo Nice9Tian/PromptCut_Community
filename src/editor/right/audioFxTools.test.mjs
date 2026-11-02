@@ -1,5 +1,6 @@
-// 音频效果库工具(list/create/update/remove/apply_audio_fx)和 store 的连带清理。
-// 跑法:node --test src/editor/right/audioFxTools.test.mjs
+// Audio effects library tools (list/create/update/remove/apply_audio_fx) and cascading cleanup
+// for store.
+// Run: node --test src/editor/right/audioFxTools.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "vite";
@@ -31,7 +32,7 @@ test("Audio effects library: create, attach, edit, delete; gate, undo, cross-cut
     const kinds = at.listAudioFx();
     assert.ok(kinds.kinds.gain && kinds.presets.length > 0 && kinds.expressions);
 
-    // 建 + 顺手挂;片段不合规时什么都不建
+    // Create + attach together; create nothing if clip is invalid
     assert.throws(() => at.createAudioFx({ name: "x", ops: [{ kind: "gain", db: -6 }], clipId: "k1" }), /card clips have no sound/);
     assert.throws(() => at.createAudioFx({ name: "x", ops: [{ kind: "gain", db: -6 }], clipId: "i1" }), /image with no sound/);
     assert.throws(() => at.createAudioFx({ name: "x", ops: [{ kind: "gain", db: -6 }], clipId: "c3" }), /is locked/);
@@ -43,16 +44,16 @@ test("Audio effects library: create, attach, edit, delete; gate, undo, cross-cut
     const fid = made.fxId;
     assert.match(fid, /^afx-/);
     assert.equal(made.effect.animated, false);
-    assert.deepEqual(getState().project.tracks[0].clips[0].audioFx, { id: fid, params: { amount: 0 } }); // 夹到 max
+    assert.deepEqual(getState().project.tracks[0].clips[0].audioFx, { id: fid, params: { amount: 0 } }); // Clamp to max
     assert.equal(timelineDigest(getState().project).tracks[0].clips[0].audioFxId, fid);
-    // 建 + 挂是一步撤销
+    // Create + attach is a single undo step
     actions.undo();
     assert.equal(getState().project.audioFx?.length ?? 0, 0);
     assert.equal(getState().project.tracks[0].clips[0].audioFx, undefined);
     actions.redo();
     assert.equal(getState().project.tracks[0].clips[0].audioFx.id, fid);
 
-    // 挂到声音段(序列静音要提醒)、换参数、摘掉
+    // Attach to audio clip (warn on track mute), change parameters, detach
     assert.match(at.applyAudioFx({ clipId: "s1", fxId: fid }).warning, /is currently muted/);
     assert.equal(at.applyAudioFx({ clipId: "c2", fxId: fid }).fxId, fid);
     assert.throws(() => at.applyAudioFx({ clipId: "c2", fxId: fid, params: { nope: 1 } }), /no parameter nope/);
@@ -63,20 +64,20 @@ test("Audio effects library: create, attach, edit, delete; gate, undo, cross-cut
     actions.undo();
     assert.equal(getState().project.tracks[0].clips[1].audioFx.id, fid);
 
-    // 音画分离:分出来的声音段带着效果,原视频段不再带
+    // Separate audio: split audio clip keeps effects, original video clip no longer has them
     const sep = actions.separateAudio("c1");
     assert.equal(sep.ok, true);
     const q1 = getState().project;
     const sepClip = q1.tracks.flatMap((t) => t.clips).find((c) => c.id === sep.audioClipId);
     assert.equal(sepClip.audioFx.id, fid);
 
-    // 改:挂着的都跟着变;删掉了声明的参数要提醒
+    // Update: attached ones update accordingly; warn if declared parameters are removed
     const upd = at.updateAudioFx({ fxId: fid, params: {}, ops: [{ kind: "lowpass", freq: "lerp(400, 8000, p)" }] });
     assert.match(upd.note, /have all changed with it/);
     assert.match(upd.warning, /c1/);
     assert.throws(() => at.updateAudioFx({ fxId: fid, ops: [{ kind: "gain", db: 99 }] }), /-60~24/);
 
-    // 删:挂着要 force + reason;停放剪辑里挂着的也要摘
+    // Delete: requires force + reason if attached; attached ones in parked cuts must also be detached
     const other = actions.addCut("Cut backup", { switchTo: false });
     const q = getState().project;
     actions.loadProject({

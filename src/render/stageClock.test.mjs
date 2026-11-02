@@ -1,19 +1,26 @@
 /**
- * 舞台时钟推帧的单测。跑:npm test -- src/render/stageClock.test.mjs
+ * Unit tests for stage clock frame advancement. Run: npm test -- src/render/stageClock.test.mjs
  *
- * 钉死「每一步的时刻用帧号直接算,不逐帧累加」(渲染重构「推帧一致性」,根因见 `docs/reports/AGENT-rr-a1-verify.md`「原因二」):
- *   - 从头推到第 N 帧,每一步的时刻和调用方直接算的 `帧号 / fps * 1000` 逐位相同(30 帧/秒的第 60 帧是 2000,不是 1999.9999999999982);
- *   - 一帧一帧接着推,每帧正好跑一拍(累加时 600 帧里有一百多帧要补一拍);
- *   - 起点、终点不在帧格上时,第一步走到下一个帧格,最后一步走到终点本身;
- *   - 同步的 `advanceTo` 和让出的 `advanceToAsync` 走的是同一串时刻。
+ * Lock down "compute the time of each step directly from frame number without frame-by-frame
+ * accumulation" (render refactor "Frame-push consistency", root cause in
+ * `docs/reports/AGENT-rr-a1-verify.md` "Reason 2"):
+ *   - Advance from start to frame N, the timestamp at each step is bit-for-bit identical to
+ *     caller-calculated `frame / fps * 1000` (frame 60 at 30 fps is 2000, not 1999.9999999999982);
+ *   - Advance frame-by-frame continuously, running exactly one tick per frame (with accumulation,
+ *     over 100 frames out of 600 required an extra catch-up tick);
+ *   - When start and end points are not on the frame grid, the first step reaches the next frame
+ *     grid line, and the last step reaches the endpoint itself;
+ *   - Synchronous `advanceTo` and yielding `advanceToAsync` traverse the exact same sequence
+ *     of timestamps.
  *
- * 没有浏览器:`window`、`performance`、`Element` 用最小假件,只装时钟要碰的那几样。
+ * No browser: `window`, `performance`, and `Element` use minimal mocks, installing only the
+ * essentials touched by the clock.
  */
 import "../testing/registerTs.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-// 时钟安装时要接管的东西:都给假的,真的那份留给测试框架自己用
+// Things taken over during clock installation: mock everything and leave real ones for the test framework itself
 const realSetTimeout = globalThis.setTimeout;
 globalThis.window = {
   requestAnimationFrame: () => 0,
@@ -29,9 +36,9 @@ globalThis.Element = class Element { animate() { return { pause() {}, currentTim
 const { installStageClock, frameGrid } = await import("./stageClock.ts");
 const clock = installStageClock();
 
-/** 调用方算一帧时刻的式子(`bakeFrame`、节拍循环、导出页都是它) */
+/** Caller formula for computing frame time (used by `bakeFrame`, tick loop, and export page) */
 const frameMs = (n, fps) => (n / fps) * 1000;
-/** 把时钟拨回 0(倒退是跳转),并清掉这一下带出来的那一拍 */
+/** Reset clock to 0 (rewinding is a jump) and clear the tick emitted by this reset */
 const rewind = () => { clock.advanceTo(0); };
 
 test("accumulation does drift (this test checks the premise): adding 1000/30 frame by frame, frame 60 is not 2000", () => {
@@ -77,7 +84,7 @@ test("start off the frame grid: first step goes to the next grid point; end off 
   const got = [];
   clock.advanceTo(100, { step, onFrame: (ms) => got.push(ms) });
   assert.deepEqual(got, [frameMs(1, 30), frameMs(2, 30), 100]);
-  // 终点差一点到下一个帧格:不为它多走一格
+  // Endpoint just short of the next frame grid line: do not step an extra grid line for it
   const more = [];
   clock.advanceTo(140, { step, onFrame: (ms) => more.push(ms) });
   assert.deepEqual(more, [frameMs(4, 30), 140]);
@@ -102,7 +109,7 @@ test("after the catch-up limit trims the start, the remaining steps still land o
   rewind();
   const got = [];
   clock.advanceTo(10_000, { step: 1000 / 30, maxCatchUp: 6000, onFrame: (ms) => got.push(ms) });
-  // 起点被拨到 4000(正好是第 120 帧),之后是第 121～300 帧
+  // Start set to 4000 (exactly frame 120), followed by frames 121-300
   assert.equal(got.length, 180);
   assert.equal(got[0], frameMs(121, 30));
   assert.equal(got.at(-1), 10_000);
@@ -161,6 +168,6 @@ test("advanceToAsync: the Promise returned by the wrap-up must be awaited; abort
     afterFrame: () => new Promise((resolve) => realSetTimeout(() => { settled++; resolve(); }, 1)),
   });
   assert.equal(clock.now(), frameMs(4, fps));
-  // 每一帧开始时,前面各帧的收尾都已经做完
+  // At the start of each frame, finalization for all preceding frames is already complete
   assert.deepEqual(seenAtNextFrame, [0, 1, 2, 3]);
 });

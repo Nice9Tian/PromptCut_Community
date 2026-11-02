@@ -88,12 +88,12 @@ async function main() {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-te-'));
     const tool = createTextEditorTool(cwd);
     
-    // 1. create 新文件 → 再 view 能看到带行号的内容
+    // 1. create new file → view shows content with line numbers
     await tool.execute({ command: 'create', path: 'test.txt', file_text: 'hello\nworld' });
     const view = await tool.execute({ command: 'view', path: 'test.txt' });
     if (!view.includes('     1\thello')) throw new Error('view output incorrect');
     
-    // 2. create 同名文件 → 抛错(文件已存在)
+    // 2. create file with same name → throw error (file already exists)
     try {
       await tool.execute({ command: 'create', path: 'test.txt', file_text: 'fail' });
       throw new Error('should fail on existing file');
@@ -101,7 +101,7 @@ async function main() {
       if (!e.message.includes('File already exists')) throw e;
     }
     
-    // 3. str_replace 唯一命中 → 内容变了; 命中 0 次 / 多次抛错
+    // 3. str_replace unique match → content changed; 0 matches / multiple matches throw error
     await tool.execute({ command: 'str_replace', path: 'test.txt', old_str: 'hello', new_str: 'hi' });
     const view2 = await tool.execute({ command: 'view', path: 'test.txt' });
     if (!view2.includes('hi')) throw new Error('str_replace failed');
@@ -112,12 +112,12 @@ async function main() {
       if (!e.message.includes('No content to replace was found')) throw e;
     }
     
-    // 4. insert 在第 1 行后插入 → 行数加一且位置正确
+    // 4. insert after line 1 → line count increases by one and position is correct
     await tool.execute({ command: 'insert', path: 'test.txt', insert_line: 1, new_str: 'inserted' });
     const view3 = await tool.execute({ command: 'view', path: 'test.txt' });
     if (!view3.includes('     2\tinserted')) throw new Error('insert failed');
     
-    // 5. undo_edit → 恢复到 insert 之前的内容
+    // 5. undo_edit → restore content before insert
     await tool.execute({ command: 'undo_edit', path: 'test.txt' });
     const view4 = await tool.execute({ command: 'view', path: 'test.txt' });
     if (view4.includes('inserted')) throw new Error('undo_edit failed to revert insert');
@@ -136,7 +136,7 @@ async function main() {
       if (!e.message.includes('No edit to undo')) throw e;
     }
     
-    // 6. 越界路径全部被拒
+    // 6. Out-of-bounds paths are all rejected
     const evilPaths = ['..\\..\\evil.txt', 'C:\\Windows\\System32\\drivers\\etc\\hosts', '../evil.txt'];
     for (const ep of evilPaths) {
       try {
@@ -147,7 +147,7 @@ async function main() {
       }
     }
     
-    // 7. view 一个目录
+    // 7. view a directory
     await tool.execute({ command: 'create', path: 'dirtest.txt', file_text: 'hello' });
     await tool.execute({ command: 'create', path: 'sub/deep.txt', file_text: 'deep' });
     const dirView = await tool.execute({ command: 'view', path: '.' });

@@ -3,14 +3,14 @@ import { sideOf, type ItemId, type Side } from "./railLayout";
 import { getRailLayout, subscribeRailLayout } from "./railStore";
 
 /**
- * 「我这一页是 rail 上的哪一项」。DockPages 给每一页包一层;页面里的组件(分区头部、助手顶栏、剧本页顶栏)
- * 靠它读「我现在在哪一侧」,决定收起钮放哪个角、收哪一侧。
+ * "Which item on the rail is this page." DockPages wraps each page with it; components inside a page (section header, assistant top bar, script page top bar)
+ * use it to read "which side am I on now", to decide which corner the collapse button goes in and which side it collapses.
  */
 export const DockPageContext = createContext<ItemId | null>(null);
 
 /**
- * 当前页所在的一侧。不在任何页里(或者这一项暂时不在布局里)时用 fallback。
- * 只在侧变了的时候重渲:useSyncExternalStore 取的是字符串快照。
+ * The side the current page is on. Uses fallback when not inside any page (or this item is temporarily not in the layout).
+ * Re-renders only when the side changes: useSyncExternalStore takes a string snapshot.
  */
 export function useDockSide(fallback: Side): Side {
   const id = useContext(DockPageContext);

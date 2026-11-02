@@ -1,15 +1,26 @@
 /**
- * 桌面应用自动成为共享项目的渲染节点 —— 编辑器进程一侧的中转(预渲染进程一侧见 `auto-render-node.mjs`)。
+ * The desktop app automatically becomes a render node for shared projects: relay on the editor
+ * process side (for the prerender process side, see `auto-render-node.mjs`).
  *
- * 预渲染进程不在页面的 HMR 通道上,也没有项目凭证。编辑器进程替它做两件事:
- *   1. **记住并转交共享配置**:页面进入共享项目时 `POST /api/render-node/bind { url, projectId, assetBase?, contentId?, ticket? }`,
- *      编辑器进程记下(票据不记)并转给预渲染进程(`POST <预渲染>/api/frames/render-node`);预渲染进程崩溃重启后照记下的再转一次
- *      (不带票据,它建会话时自己来要)。页面离开项目或取消协作时 `POST /api/render-node/unbind { projectId }`,转过去撤掉。
- *   2. **票据往返**:预渲染进程每次建新会话要一张新的 render 连接票据:`POST /api/render-node/ticket-request { projectId }`
- *      (只认不带 Origin 的本机请求),编辑器进程经 HMR 发 `pc:render-node { type: 'ticket', reqId, projectId }`,
- *      页面在自己的共享项目连接上签好 `POST /api/render-node/ticket { reqId, ticket | error }` 交回,编辑器进程再回给预渲染进程。
- *      没有页面连着 HMR 时立即回「没有页面」,不空等;页面 10 秒内没交回也回失败。照卡片源码同步的做法(`vite-plugin-cards.ts`)。
- * 票据不进日志、不进诊断。
+ * The prerender process is not on the page's HMR channel and has no project credentials.
+ * The editor process does two things for it:
+ *   1. **Remember and forward shared configuration**: When the page enters a shared project:
+ *      `POST /api/render-node/bind { url, projectId, assetBase?, contentId?, ticket? }`,
+ *      the editor process records it (tickets are not recorded) and forwards it to the
+ *      prerender process (`POST <prerender>/api/frames/render-node`); after the prerender
+ *      process crashes and restarts, it forwards what was recorded again (without tickets;
+ *      it requests them itself when creating a session). When the page leaves the project or
+ *      cancels collaboration: `POST /api/render-node/unbind { projectId }`, forwarded to tear down.
+ *   2. **Ticket round-trip**: Each time the prerender process creates a new session, it requests
+ *      a new render connection ticket: `POST /api/render-node/ticket-request { projectId }`
+ *      (only local requests without Origin are accepted); the editor process sends
+ *      `pc:render-node { type: 'ticket', reqId, projectId }` via HMR, the page signs and
+ *      returns `POST /api/render-node/ticket { reqId, ticket | error }` over its shared project
+ *      connection, and the editor process returns it to the prerender process. When no page is
+ *      connected to HMR, it immediately returns "no page" without waiting; if the page does not
+ *      return within 10 seconds, it also returns failure. Following the card source sync
+ *      approach (`vite-plugin-cards.ts`).
+ * Tickets do not enter logs or diagnostics.
  */
 
 export const TICKET_WAIT_MS = 10_000;
@@ -17,8 +28,8 @@ const REQ_ID_MAX = 64;
 
 /**
  * @param {object} deps
- * @param {(data: object) => void} deps.send  经 HMR 发给页面(`pc:render-node` 的 data)
- * @param {() => boolean} [deps.hasPage]  此刻有没有页面连着 HMR;没给当作有
+ * @param {(data: object) => void} deps.send  Sent to page via HMR (`pc:render-node` data)
+ * @param {() => boolean} [deps.hasPage]  Whether a page is connected to HMR right now; assumed true if omitted
  * @param {number} [deps.timeoutMs]
  * @param {Function} [deps.setTimer]
  * @param {Function} [deps.clearTimer]
@@ -53,7 +64,7 @@ export function createTicketRelay({ send, hasPage = () => true, timeoutMs = TICK
     });
   }
 
-  /** 页面交回:回 true = 有人在等这张 */
+  /** Page submitted back: returns true = someone is waiting for this ticket */
   function answer(input) {
     const reqId = typeof input?.reqId === 'string' && input.reqId.length <= REQ_ID_MAX ? input.reqId : null;
     const w = reqId ? waiting.get(reqId) : undefined;
@@ -75,7 +86,8 @@ export function createTicketRelay({ send, hasPage = () => true, timeoutMs = TICK
 }
 
 /**
- * 编辑器进程记着的共享配置(票据不记)。`bind` 回规整后的配置;`unbind` 给了 projectId 时只撤同一个项目的。
+ * Shared configuration remembered by editor process (tickets not stored). `bind` returns normalized
+ * configuration; `unbind` only removes the same project when projectId is provided.
  */
 export function createBindingMemory() {
   let binding = null;

@@ -1,14 +1,15 @@
 /*
- * 依赖方向的守门测试。
+ * Gatekeeper test for dependency directions.
  *
- * 渲染引擎从 `scripts/export-frames.mjs` 搬进 `server/bakery/` 之前,`server/` 与 `scripts/`
- * 互相 import(`server/frame-pipeline.mjs` → `scripts/export-frames.mjs` → `server/export-compose.mjs`),
- * 而且 `export-frames.mjs` ↔ `export-unified.mjs` 之间还有一个运行时环。两条都修好了,这里把它钉住:
+ * Before rendering engine was moved from `scripts/export-frames.mjs` into `server/bakery/`, `server/`
+ * and `scripts/` imported each other (`server/frame-pipeline.mjs` → `scripts/export-frames.mjs` →
+ * `server/export-compose.mjs`), and there was also a runtime cycle between `export-frames.mjs` ↔
+ * `export-unified.mjs`. Both have been fixed; pin them down here:
  *
- *   1. `server/**` 不再 import `scripts/**`(`scripts/` → `server/` 单向允许);
- *   2. `server/bakery/**` 内部的 import 图无环。
+ *   1. `server/**` no longer imports `scripts/**` (`scripts/` → `server/` one-way allowed);
+ *   2. Internal import graph of `server/bakery/**` is acyclic.
  *
- * 跑法:`node --test server/test/bakery-deps.test.mjs`
+ * Run: `node --test server/test/bakery-deps.test.mjs`
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -21,35 +22,60 @@ const SERVER = path.join(ROOT, 'server');
 const BAKERY = path.join(SERVER, 'bakery');
 
 /**
- * 例外只有测 scripts/ 自己的测试,不是生产代码对 scripts/ 的依赖:
+ * The only exceptions are tests that test scripts/ themselves, not production code depending on
+ * scripts/:
  *
- *   - `bake-protocol.test.mjs` 测 `scripts/verify-bake-protocol.mjs` 这个命令行校验脚本;
- *   - `dev-server-junction.test.mjs` 测 `scripts/lib/dev-server.mjs` 的 media junction 只拆链接
- *     (拆错了删的是用户素材,所以要常驻基线);
- *   - `probe-coord-mail.test.mjs` 测 `scripts/probes/probe-coord.mjs` 里两个 Agent 之间的 HTTP 信箱(鉴权与长轮询);
- *   - `m8-kit.test.mjs` 测 `scripts/probes/m8/` 里 M8 探针公共件的判据、KV 约定与代理控制命令(M8 的验收判据靠它们,要常驻基线)。
- *   - `m7-judge.test.mjs` 测 `scripts/probes/m7-judge.mjs` 里 M7 验收探针 D1-D2-D12 的判据（按出键分组、中途接手只作说明）。
- *   - `m8-scale.test.mjs` 测 `cloud/scripts/probes/m8-scale-probe.mjs` 的任务表、节点账本与 K1 / K2 / I1 / I2 判据(M8 规模复测的判据靠它们)。
- *   - `m8-no-lan.test.mjs` 测 `scripts/probes/m8/no-lan.mjs` 的 netstat 解析与计数(M8「异地接入」的「全程没有局域网连接」靠它判)。
- *   - `no-user-dirs.test.mjs` 测 `scripts/lib/user-dirs.mjs` 与 `dev-server.mjs` 的素材镜像,并扫描探针都先摘掉外部的
- *     `PROMPTCUT_EXPORT_DIR` / `PROMPTCUT_DATA_DIR`(测试与探针不写用户的 Videos\PromptCut,要常驻基线);
- *   - `global-setup.mjs`(`npm test` 的全局准备,不是生产代码)用 `scripts/lib/user-dirs.mjs` 摘掉同样两个变量,
- *     和探针共用一份判定。
- *   - `port-file.test.mjs` 测 `scripts/lib/user-dirs.mjs` 的 `markNoPortFile`，并扫描起编辑器的探针都带上 `PROMPTCUT_NO_PORT_FILE=1`
- *     (测试与探针不覆盖公共的 %TEMP%\promptcut\port.json,要常驻基线);
- *   - `asset-lan-discover.test.mjs` 测 `scripts/probes/asset-lan-discover.mjs`(`asset-lan-probe` 按局域网发现找放本机项目的素材服务地址);
- *   - `m8-judges.test.mjs` 测 `cloud/scripts/probes/m8/lib.mjs` 里 `cloud-untouched` 与 `real:tasks` 的判法。
- *   - `maint-3-claim-gate-judge.test.mjs` 测 `scripts/probes/claim-gate-judge.mjs`(认领闸端到端探针的判定:多认领、Agent 任务不排在预渲染后面)。
- *   - `reopen-installed-lib.test.mjs` 测 `cloud/scripts/probes/reopen-installed-lib.mjs`(真实安装验收探针里一次启动算不算数的判定、已装构建与清单的核对);
- *   - `reopen-installed-state.test.mjs` 测 `cloud/scripts/probes/reopen-installed-state.mjs`(安装状态的备份、比对、还原)与 `cloud/scripts/probes/reopen-sealed.mjs`(探针之间只传公钥与密文的口令交接)。
- *   - `test-suite-policy.test.mjs` 测 `scripts/test-suite-policy.mjs` 与 `scripts/test-event-reporter.mjs` 的测试进程异常重跑判定。
- *   - `probe-timings.test.mjs` 测 `scripts/probes/probe-timings.mjs`(探针共用的耗时记录件:耗时只记录,不当闸门)及它与验收运行器对 TIMINGS 行的解析一致。
+ *   - `bake-protocol.test.mjs` tests the command-line validation script
+ *     `scripts/verify-bake-protocol.mjs`;
+ *   - `dev-server-junction.test.mjs` tests that media junction in `scripts/lib/dev-server.mjs` only
+ *     unlinks (unlinking incorrectly deletes user media, so it must stay in the baseline);
+ *   - `probe-coord-mail.test.mjs` tests HTTP mailbox between two Agents in
+ *     `scripts/probes/probe-coord.mjs` (authentication and long polling);
+ *   - `m8-kit.test.mjs` tests criteria, KV conventions, and proxy control commands for M8 probe
+ *     shared utilities in `scripts/probes/m8/` (M8 acceptance criteria rely on them, must stay in
+ *     the baseline).
+ *   - `m7-judge.test.mjs` tests criteria for M7 acceptance probes D1-D2-D12 in
+ *     `scripts/probes/m7-judge.mjs` (grouped by emitted key, mid-flight takeover is informational
+ *     only).
+ *   - `m8-scale.test.mjs` tests task table, node ledger, and K1 / K2 / I1 / I2 criteria in
+ *     `cloud/scripts/probes/m8-scale-probe.mjs` (M8 scale retest criteria rely on them).
+ *   - `m8-no-lan.test.mjs` tests netstat parsing and counting in `scripts/probes/m8/no-lan.mjs` (M8
+ *     "remote connection" requirement of "no LAN connection throughout" relies on it).
+ *   - `no-user-dirs.test.mjs` tests media mirroring in `scripts/lib/user-dirs.mjs` and
+ *     `dev-server.mjs`, and scans that probes strip external `PROMPTCUT_EXPORT_DIR` /
+ *     `PROMPTCUT_DATA_DIR` first (tests and probes do not write to user Videos\PromptCut, must stay
+ *     in the baseline);
+ *   - `global-setup.mjs` (global setup for `npm test`, not production code) uses
+ *     `scripts/lib/user-dirs.mjs` to strip the same two variables, sharing evaluation logic with
+ *     probes.
+ *   - `port-file.test.mjs` tests `markNoPortFile` in `scripts/lib/user-dirs.mjs`, and scans that
+ *     probes launching the editor include `PROMPTCUT_NO_PORT_FILE=1` (tests and probes do not
+ *     overwrite shared %TEMP%\promptcut\port.json, must stay in the baseline);
+ *   - `asset-lan-discover.test.mjs` tests `scripts/probes/asset-lan-discover.mjs` (`asset-lan-probe`
+ *     finds asset service address for local projects via LAN discovery);
+ *   - `m8-judges.test.mjs` tests evaluation logic for `cloud-untouched` and `real:tasks` in
+ *     `cloud/scripts/probes/m8/lib.mjs`.
+ *   - `maint-3-claim-gate-judge.test.mjs` tests `scripts/probes/claim-gate-judge.mjs` (claim gate
+ *     end-to-end probe criteria: multiple claims, Agent tasks not queued behind prerender).
+ *   - `reopen-installed-lib.test.mjs` tests `cloud/scripts/probes/reopen-installed-lib.mjs`
+ *     (evaluation of whether a launch counts in real install acceptance probe, checking installed
+ *     builds against manifests);
+ *   - `reopen-installed-state.test.mjs` tests `cloud/scripts/probes/reopen-installed-state.mjs`
+ *     (backup, diff, and restore of install state) and `cloud/scripts/probes/reopen-sealed.mjs`
+ *     (passphrase handoff between probes transferring only public keys and ciphertext).
+ *   - `test-suite-policy.test.mjs` tests abnormal test process rerun evaluation in
+ *     `scripts/test-suite-policy.mjs` and `scripts/test-event-reporter.mjs`.
+ *   - `probe-timings.test.mjs` tests `scripts/probes/probe-timings.mjs` (shared duration logging
+ *     utility for probes: elapsed time is only recorded, not used as gate) and its consistency with
+ *     acceptance runner parsing of TIMINGS lines.
  *
- * 多一条都要在这里显式写出来,加不进来就说明依赖方向真的破了。
+ * Any additional entry must be explicitly written here; inability to add it indicates dependency
+ * direction is truly broken.
  */
 const ALLOWED_SCRIPT_IMPORTERS = new Set(['server/test/four-stage-acceptance.test.mjs', 'server/test/four-stage-acceptance-v18.test.mjs', 'server/test/probe-timings.test.mjs', 'server/test/wait-writes-quiet.test.mjs', 'server/test/bake-protocol.test.mjs', 'server/test/dev-server-junction.test.mjs', 'server/test/probe-coord-mail.test.mjs', 'cloud/server/test/m8-kit.test.mjs', 'cloud/server/test/m8-scale.test.mjs', 'server/test/m7-judge.test.mjs', 'server/test/m8-no-lan.test.mjs', 'server/test/no-user-dirs.test.mjs', 'server/test/global-setup.mjs', 'server/test/port-file.test.mjs', 'server/test/asset-lan-discover.test.mjs', 'cloud/server/test/m8-judges.test.mjs', 'server/test/maint-3-claim-gate-judge.test.mjs', 'cloud/server/test/reopen-installed-lib.test.mjs', 'cloud/server/test/reopen-installed-state.test.mjs', 'server/test/test-suite-policy.test.mjs',
-  // 2026-10-26 顺手补:main 上这一条本来就判红(f66874c5 进来的测试引了 cloud/scripts/render-host.mjs,
-  // 没进名单),不补上这个守门测试在 main 和任何分支上都过不去
+  // Added on 2026-10-26: this item originally failed on main (tests introduced in f66874c5 referenced
+  // cloud/scripts/render-host.mjs, not in the list); without this fix, this gatekeeper test would
+  // fail on main and any branch
   'cloud/server/test/render-host-sweep.test.mjs']);
 
 const CODE = /\.(mjs|mts|ts|tsx)$/;
@@ -65,7 +91,7 @@ function walk(dir, out = []) {
 
 const rel = (file) => path.relative(ROOT, file).replaceAll('\\', '/');
 
-/** 一个文件里所有的模块说明符:静态 import / export ... from,以及 import("…") */
+/** All module specifiers in a file: static import / export ... from, and import("…") */
 function specifiersOf(file) {
   const text = fs.readFileSync(file, 'utf8');
   const found = [];
@@ -90,8 +116,9 @@ test('server/** does not import modules under scripts/', () => {
 });
 
 test('The server files on the list that are allowed to import scripts/ still exist', () => {
-  // 社区版（公开仓库）不带闭源的 cloud/，也不带内部发版验收（scripts/acceptance/ 与测它的四个单测，
-  // 见 docs/plan/community-boundary.md 第三节）；那几条在那边本来就不在，不算过期
+  // Community edition (public repo) does not include closed-source cloud/, nor internal release
+  // acceptance checks (scripts/acceptance/ and the four unit tests testing it, see section 3 of
+  // docs/plan/community-boundary.md); those items are naturally absent there, not considered stale
   const INTERNAL_ACCEPTANCE = new Set(['server/test/four-stage-acceptance.test.mjs', 'server/test/four-stage-acceptance-v18.test.mjs', 'server/test/probe-timings.test.mjs', 'server/test/wait-writes-quiet.test.mjs']);
   const hasCloud = fs.existsSync(path.join(ROOT, 'cloud'));
   const hasAcceptance = fs.existsSync(path.join(ROOT, 'scripts', 'acceptance'));
@@ -102,7 +129,7 @@ test('The server files on the list that are allowed to import scripts/ still exi
 });
 
 test('The import graph inside server/bakery/** has no cycles', () => {
-  /** 文件 → 它 import 的同目录(或子目录)模块 */
+  /** File → modules in the same directory (or subdirectory) that it imports */
   const graph = new Map();
   for (const file of walk(BAKERY)) {
     const edges = [];
@@ -115,7 +142,7 @@ test('The import graph inside server/bakery/** has no cycles', () => {
   }
   assert.ok(graph.size > 0, 'server/bakery should contain modules');
 
-  const state = new Map(); // 未访问 / 1 在栈上 / 2 已完成
+  const state = new Map(); // Unvisited / 1 on stack / 2 completed
   const cycles = [];
   const visit = (node, stack) => {
     if (state.get(node) === 2) return;

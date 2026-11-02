@@ -1,10 +1,12 @@
 /**
  * node --test server/test/api-models.test.mjs
  *
- * 从 OpenAI 兼容接口拉模型清单。两处容易出错,都钉住:
- *   - baseUrl 拼接:用户填的地址有的带 /v1 有的不带,拼错就是 404;
- *   - 响应形状:中转站的实现参差,认不出来要**返回空清单**而不是抛异常 ——
- *     这是个锦上添花的按钮,不该因为对方回了个怪东西就报错。
+ * Pull the model manifest from OpenAI-compatible APIs. Pin down two error-prone places:
+ *   - baseUrl concatenation: user-entered addresses sometimes have /v1 and sometimes not;
+ *     concatenating incorrectly gives 404;
+ *   - Response shape: relay service implementations vary; if unrecognized, **return an empty
+ *     manifest** instead of throwing an exception: this is a nice-to-have button and should not
+ *     error out just because the other side returned something strange.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

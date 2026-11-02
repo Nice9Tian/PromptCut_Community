@@ -1,7 +1,9 @@
 /**
- * 逐帧导出续签票据(C10 契约第 12 节、第 18 节第 5 条):start / 同步的 ticket() / stop;剩三分之一寿命时提前续签;
- * 失败不换掉旧的、在过期之前再试;素材地址里的 ?t= 换成新的一张。
- * 跑:node --test src/export/ticketRenewal.test.mjs
+ * Frame-by-frame export ticket renewal (C10 contract Section 12, Section 18 Clause 5): start /
+ * synchronous ticket() / stop; renew early when one third of lifetime remains;
+ * do not replace the old one on failure, retry before expiration; replace ?t= in the asset URL with
+ * the new ticket.
+ * Run: node --test src/export/ticketRenewal.test.mjs
  */
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
@@ -41,11 +43,11 @@ test("C10-TR-02 A failed renewal does not replace the old ticket, retry before i
     const r = createTicketRenewer({ fetchTicket, now: () => Date.now() });
     await r.start();
     down = true;
-    mock.timers.tick(40_000);                // 剩 1/3 时续签:失败
+    mock.timers.tick(40_000);                // Renew when 1/3 remains: fails
     await Promise.resolve(); await Promise.resolve();
     assert.equal(r.ticket(), "T1", "On failure the old one is still used");
     assert.ok(r.stats().failures >= 1);
-    mock.timers.tick(RENEW_RETRY_MS);          // 过期之前再试:还失败
+    mock.timers.tick(RENEW_RETRY_MS);          // Retry before expiration: still fails
     await Promise.resolve(); await Promise.resolve();
     down = false;
     mock.timers.tick(RENEW_RETRY_MS);

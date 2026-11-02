@@ -27,7 +27,7 @@ test("unsafe expressions and malformed stages are rejected", () => {
   assert.throws(() => normalizePixelMapDef({ name: "x", where: "1", to: { kind: "color", value: "#fff" }, source: { stage: "shader" } }), /stage/);
 });
 
-/* ------------------------------------------------------------ 分类:A 整帧调色 */
+/* ------------------------------------------------------------ Category: A whole-frame color grading */
 
 test("classify A: channel curve / linear color mix / solid color, the equivalent ops pass normalizeFilterDef", () => {
   const cases = [
@@ -44,7 +44,7 @@ test("classify A: channel curve / linear color mix / solid color, the equivalent
     assert.equal(c.kind, "A", `${label} should classify as A, got ${c.kind}: ${c.reason}`);
     assert.ok(c.diff <= 1, `${label}: equivalent ops differ by ${c.diff} levels`);
     if (kind) assert.ok(c.ops.some((op) => op.kind === kind), `${label} should produce ${kind}, got ${c.ops.map((o) => o.kind).join("+")}`);
-    // 回包里的 ops 必须能直接喂给 create_filter
+    // ops in the response must be able to be fed directly to create_filter
     assert.doesNotThrow(() => normalizeFilterDef({ name: raw.name, ops: c.ops }), `ops of ${label} fail normalizeFilterDef`);
   }
 });
@@ -53,7 +53,7 @@ test("classify A: equivalent ops and mapRgba differ by ≤ 1 level over the full
   const def = pm({ name: "Brighten", where: "1", to: { kind: "expr", r: "r^1.6", g: "g^0.8", b: "b*0.9+0.05", a: "a" } });
   const c = classifyPixelMap(def);
   assert.equal(c.kind, "A");
-  // 每通道只依赖自己,所以 256 级灰阶就是全值域
+  // Each channel depends only on itself, so 256 grayscale levels cover the entire range
   let worst = 0;
   for (let i = 0; i < 256; i++) {
     const v = i / 255;
@@ -69,11 +69,11 @@ test("classify A: equivalent ops and mapRgba differ by ≤ 1 level over the full
   assert.equal(pixelMapOpsDiff(mix, cm.ops), 0);
 });
 
-/* ------------------------------------------------------------ 分类:B 逐像素 */
+/* ------------------------------------------------------------ Category: B per-pixel */
 
 test("classify B: color keying, by position, by time, transparent, asset, step, alpha change", () => {
   const cases = [
-    // 工具描述里举的那条抠色表达式
+    // The chroma key expression cited in the tool description
     ["Key green to transparent", { name: "Key out green", where: "smoothstep(0.35,0.8,g-r)*(1-smoothstep(0.15,0.45,b))", to: "transparent" }],
     ["Key green to solid color", { name: "Key out green, fill blue", where: "smoothstep(0.35,0.8,g-r)*(1-smoothstep(0.15,0.45,b))", to: "#0033ff" }],
     ["Gradient selection by x", { name: "Horizontal", where: "x", to: "#000000" }],
@@ -95,7 +95,7 @@ test("classify B: color keying, by position, by time, transparent, asset, step, 
   assert.equal(classifyPixelMap(pm({ name: "Swap background", where: "1-step(0.5,luma)", to: { kind: "media", mediaId: "m2", stage: "origin" } })).usesTarget, true);
 });
 
-/* ------------------------------------------------------------ 分类:C 翻译不了 */
+/* ------------------------------------------------------------ Category: C untranslatable */
 
 test("classify C: powers whose base may be negative and whose exponent is not an integer constant", () => {
   const c = classifyPixelMap(pm({ name: "Bad", where: "(r-g)^0.5", to: "#ffffff" }));
@@ -103,7 +103,7 @@ test("classify C: powers whose base may be negative and whose exponent is not an
   assert.match(c.reason, /pow is undefined for a negative base/);
   const c2 = classifyPixelMap(pm({ name: "Bad2", where: "1", to: { kind: "expr", r: "pow(r-g, luma)", g: "g", b: "b", a: "a" } }));
   assert.equal(c2.kind, "C");
-  // 底数包进 abs 或指数写成整数常量就能翻译
+  // Wrapping the base in abs or writing the exponent as an integer constant makes it translatable
   assert.equal(classifyPixelMap(pm({ name: "OK", where: "abs(r-g)^0.5", to: "#ffffff" })).kind, "B");
   assert.equal(classifyPixelMap(pm({ name: "Good2", where: "(r-g)^2", to: "#ffffff" })).kind, "B");
 });
@@ -116,14 +116,14 @@ test("compilePixelMapGlsl: key fragments that follow the same conventions as map
   assert.match(fragment, /^#version 300 es\n/);
   assert.match(fragment, /uniform sampler2D uTex;/);
   assert.match(fragment, /float luma = r \* 0\.2126 \+ g \* 0\.7152 \+ b \* 0\.0722;/);
-  // 输入先夹到 0~1(pc01v),where 也夹到 0~1,为 0 时原样返回
+  // Input is first clamped to 0~1 (pc01v); where is also clamped to 0~1, returning as-is when 0
   assert.match(fragment, /vec4 src = pc01v\(texture\(uTex, uv\)\);/);
   assert.match(fragment, /float w = pc01\(\(smoothstep\(0\.35, 0\.8, \(g - r\)\) \* \(1\.0 - smoothstep\(0\.15, 0\.45, b\)\)\)\);/);
   assert.match(fragment, /if \(!\(w > 0\.0\)\) \{ fragColor = src; return; \}/);
-  // continuous 是按 w 混合
+  // continuous blends by w
   assert.match(fragment, /fragColor = src \* \(1\.0 - w\) \+ target \* w;/);
   assert.match(fragment, /target = vec4\(src\.rgb, 0\.0\);/);
-  // y 从上往下数,和 ImageData 的行序一致
+  // y counts from top to bottom, consistent with ImageData row order
   assert.match(fragment, /float row = uSize\.y - gl_FragCoord\.y - 0\.5;/);
   assert.match(fragment, /float y = row \/ uSize\.y;/);
   assert.match(vertex, /gl_VertexID/);
@@ -142,9 +142,9 @@ test("compilePixelMapGlsl: functions map one to one, lerp→mix, ^→pow, round�
   assert.match(f("min(r, g, b)"), /min\(min\(r, g\), b\)/);
   assert.match(f("clamp(luma*2, 0, 1)"), /clamp\(\(luma \* 2\.0\), 0\.0, 1\.0\)/);
   assert.match(f("step(0.5, luma)"), /step\(0\.5, luma\)/);
-  // 负底数 + 整数常量指数:JS 的 Math.pow 有定义,GLSL 要自己补符号
+  // Negative base + integer constant exponent: JS Math.pow is defined, GLSL must handle sign itself
   assert.match(f("(r-g)^3"), /\(sign\(\(r - g\)\) \* pow\(abs\(\(r - g\)\), 3\.0\)\)/);
-  // 解析器的白名单函数一个都不能漏
+  // Not a single parser whitelisted function can be omitted
   for (const name of Object.keys(FUNC_ARITY)) {
     const args = { min: "r, g", max: "r, g", pow: "r, 2", mod: "r, 0.5", clamp: "r, 0, 1", lerp: "0, 1, r", step: "0.5, r", smoothstep: "0, 1, r" }[name] ?? "r";
     assert.doesNotThrow(() => f(`${name}(${args})`), `${name}() cannot be translated`);
@@ -155,15 +155,16 @@ test("compilePixelMapGlsl: color sequences are translated following the semantic
   const disc = compilePixelMapGlsl(pm({ name: "Discrete", where: "1", to: "#fff", mode: "discrete", colorSequence: { from: ["#000", "#fff"], to: ["#ff0000", "#00ff00"], mode: "discrete" } })).fragment;
   assert.match(disc, /const vec4 PC_FROM\[2\] = vec4\[2\]\(/);
   assert.match(disc, /float dd = dot\(dv, dv\);/);
-  // 并列时取靠前那个(sequenceTarget 用的是严格小于):float32 在精确并列上会往两边乱舍,
-  // 所以比较要减掉一个比 float32 噪声大、比相邻非并列距离差小得多的量
+  // In a tie, pick the earlier one (sequenceTarget uses strict less-than): float32 rounds
+  // unpredictably on exact ties, so the comparison subtracts an amount larger than float32
+  // noise but much smaller than adjacent non-tie distances
   assert.match(disc, /const float PC_SEQ_EPS = 1e-6;/);
   assert.match(disc, /if \(dd < best - PC_SEQ_EPS\)/);
   assert.match(disc, /target = PC_TO\[min\(idx, 1\)\];/);
   const cont = compilePixelMapGlsl(pm({ name: "Continuous", where: "1", to: "#fff", colorSequence: { from: ["#000", "#808080", "#fff"], to: ["#001133", "#ffcc88", "#ffffff"], mode: "continuous" } })).fragment;
   assert.match(cont, /float seqP = float\(idx\) \/ 2\.0;/);
   assert.match(cont, /target = PC_TO\[i0\] \+ \(PC_TO\[i0 \+ 1\] - PC_TO\[i0\]\) \* seqF;/);
-  // 同一条定义同一个 key,不同定义不同 key
+  // Same definition shares the same key; different definitions have different keys
   const a = compilePixelMapGlsl(pm({ name: "a", where: "x", to: "#000000" }));
   const b = compilePixelMapGlsl(pm({ name: "b", where: "x", to: "#000000" }));
   const c = compilePixelMapGlsl(pm({ name: "c", where: "y", to: "#000000" }));

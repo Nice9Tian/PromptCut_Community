@@ -44,12 +44,13 @@ test("tileHeight", () => {
 test("tileHeight big_16_9 limits", () => {
   assert.strictEqual(tileHeight("big_16_9", undefined, 1, 100), 100 * (9 / 16));
 
-  // 单列:横竖混排,竖屏最高到 4:3,居中裁掉上下
+  // Single column: mixed landscape and portrait, portrait capped at 4:3, centered and cropped
+  // top and bottom
   assert.strictEqual(tileHeight("big_16_9", 2, 1, 100), 100 * (4 / 3));
   assert.strictEqual(tileHeight("big_16_9", 1000, 1, 100), 100 * (4 / 3)); // clamped to 4/3
   assert.strictEqual(tileHeight("big_16_9", 0.1, 1, 100), 100 * (9 / 21)); // lower bound 9/21
   
-  // 多列:瀑布流,不同高度混排 (max 16/9)
+  // Multi-column: masonry layout, mixed varying heights (max 16/9)
   assert.strictEqual(tileHeight("big_16_9", 2, 2, 100), 100 * (16 / 9));
   assert.strictEqual(tileHeight("big_16_9", 0.1, 2, 100), 100 * (9 / 21));
 });

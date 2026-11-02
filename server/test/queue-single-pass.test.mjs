@@ -1,4 +1,5 @@
-// 队列细任务一段一趟顺推的判定(`FramePipeline#queueSinglePass`,`docs/archive/agent-reports/AGENT-uc-latency.md`)
+// Determination of queue fine-grained task one pass per segment forward push
+// (`FramePipeline#queueSinglePass`, `docs/archive/agent-reports/AGENT-uc-latency.md`)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FramePipeline } from '../frame-pipeline.mjs';
@@ -22,7 +23,7 @@ test('QSP2 no range (the whole card in one pass, the background pass), canvas he
 });
 
 test('QSP3 the playhead wants a frame within this segment of this card (C4 wanted): proceeds batch by batch so that the batch containing the playhead comes out first; when what is wanted is in another segment or another card, it still does a sequential pass', () => {
-  // 全局帧 30 + 本地帧 75 = 105,落在 60-119 这一段
+  // Global frame 30 + local frame 75 = 105, falling in the 60-119 segment
   const wanted = (items) => ({ playheadWanted: () => items });
   assert.equal(judge(wanted([{ clipId: 'c1', frame: 105 }]), control(), { from: 60, to: 119 }), false);
   assert.equal(judge(wanted([{ clipId: 'c1', frame: 105 }]), control(), { from: 0, to: 59 }), true);

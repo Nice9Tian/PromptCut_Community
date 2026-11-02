@@ -1,14 +1,21 @@
 /**
- * 画布卡的轨道流不经过 PNG(渲染重构「己一」,`docs/plan/prerender-products-contract.md` 第 6.1、6.2、9.3 节)接到生产者上的单测。
- * 跑:`npm test -- server/test/stream-direct.test.mjs`
+ * Unit test for connecting canvas card track stream to producer without going through PNG
+ * (render refactor "Ji-1", `docs/plan/prerender-products-contract.md` sections 6.1, 6.2, 9.3).
+ * Run: `npm test -- server/test/stream-direct.test.mjs`
  *
- *   - `bakeStream` 的 `capture`:这一帧怎么取由调用方定,不调 `shoot()` 就不截图;不给 `capture` 时和原来一样每帧截图;
- *   - `StreamProducer.runSegment`(真的 `bakeStream`、真的 ffmpeg,预渲染间是假的):登记为画布卡的单卡流走直取,
- *     产出的分段和关掉直取(每帧截图)产出的**逐字节相同**;画布外面还有别的元素的卡退回截图、有诊断;
- *     没登记成画布卡的卡、组流不问画布;稀疏那一趟量出的实体框和截图那条路量的相同;
- *   - 键:`STREAM_CODE_VERSION` 是 2;`CardFrameCache.plan()` 多算一份不带生成快照的代码指纹的内容键 `streamMemberKey`,
- *     `planStreams` 的单卡流用它;取像素的两个新文件进截图代码的指纹、不进生成快照的代码指纹。
- * 需要 ffmpeg 的几条在没有 ffmpeg 的机器上跳过。
+ *   - `capture` of `bakeStream`: how to capture this frame is decided by the caller; no screenshot
+ *     without calling `shoot()`; when `capture` is omitted, captures every frame as before;
+ *   - `StreamProducer.runSegment` (real `bakeStream`, real ffmpeg, mock prerender room): single-card
+ *     streams registered as canvas cards use direct capture; output segments are **byte-for-byte
+ *     identical** to those produced with direct capture disabled (screenshot every frame); cards
+ *     with extra elements outside canvas fall back to screenshots and have diagnostics; cards not
+ *     registered as canvas cards and group streams do not query canvas; entity box measured in
+ *     sparse pass is identical to that measured via screenshot route;
+ *   - Keys: `STREAM_CODE_VERSION` is 2; `CardFrameCache.plan()` computes an additional content key
+ *     `streamMemberKey` without the generate-snapshots code fingerprint, used by single-card
+ *     streams in `planStreams`; two new pixel-fetching files enter screenshot code fingerprint,
+ *     not generate-snapshots code fingerprint.
+ * Cases requiring ffmpeg are skipped on machines without ffmpeg.
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -41,7 +48,7 @@ const CANVAS_CAPS = { compositing: 'independent', frameMode: 'stateful', canvasH
 const DOM_CAPS = { compositing: 'independent', frameMode: 'stateful', canvasHeavy: false };
 const projectOf = (clips) => ({ ...STAGE, fps: 30, duration: 2, media: [], tracks: clips.map((c, i) => ({ id: `t${i}`, clips: [c] })) });
 
-/** 第 `frame` 帧画布里的像素(整个舞台那么大的 straight RGBA):一个随帧移动的色块,其余全透明 */
+/** Pixels in canvas at frame `frame` (stage-sized straight RGBA): moving color block, rest transparent */
 function canvasPixels(frame) {
   const data = Buffer.alloc(STAGE.width * STAGE.height * 4);
   const x0 = 20 + frame * 3, y0 = 30 + (frame % 7);
@@ -51,7 +58,7 @@ function canvasPixels(frame) {
   }
   return data;
 }
-/** 画布外面的一个元素:左下角一块不透明的色块(只有截图截得到) */
+/** An element outside canvas: opaque color block at bottom-left (captured only by screenshot) */
 function withOutsideElement(data) {
   const out = Buffer.from(data);
   for (let y = 150; y < 170; y++) for (let x = 10; x < 60; x++) out.fill(255, (y * STAGE.width + x) * 4, (y * STAGE.width + x) * 4 + 4);
@@ -65,8 +72,10 @@ const cropOf = (data, rect) => {
 const pngOf = (data, width, height) => { const png = new PNG({ width, height }); data.copy(png.data); return PNG.sync.write(png); };
 
 /**
- * 假的预渲染间,配真的 `bakeStream`:记着当前帧(`__pcSetT`)和截图矩形(设备度量的 `viewport`),
- * 截图回这一帧这个矩形里的 PNG,`__pcGrabCanvas` 回画布里的像素。`outside` 为真时截图比画布多出一个元素。
+ * Mock prerender room paired with real `bakeStream`: records current frame (`__pcSetT`) and
+ * screenshot rectangle (`viewport` in device measurements); screenshot returns PNG in this
+ * rectangle at this frame, `__pcGrabCanvas` returns canvas pixels. When `outside` is true,
+ * screenshot has one more element than canvas.
  */
 function fakeBakery({ outside = false } = {}) {
   const log = { grabs: [], shots: [], primes: 0 };
@@ -104,7 +113,7 @@ function fakeBakery({ outside = false } = {}) {
   return bakery;
 }
 
-/* ------------------------------------------------------------ bakeStream 的 capture */
+/* ------------------------------------------------------------ `capture` in `bakeStream` */
 
 test('bakeStream\'s capture: whatever it returns is what onFrame receives; no screenshot is taken unless shoot is called; primed says whether the next screenshot first discards one', async () => {
   const bakery = fakeBakery();
@@ -119,11 +128,12 @@ test('bakeStream\'s capture: whatever it returns is what onFrame receives; no sc
     onFrame: async (frame, shot) => { seen.push(Buffer.isBuffer(shot) ? 'png' : `raw:${shot.frame}`); } });
   assert.deepEqual(seen, ['png', 'raw:1', 'raw:2', 'raw:3', 'png', 'raw:5']);
   assert.equal(stats.captured, 6);
-  // 截图只发生在调了 shoot 的两帧:第 0 帧(前面没截过,先丢一张)和第 4 帧(第 3 帧没截,也先丢一张)
+  // Screenshots occur only on the two frames where shoot was called: frame 0 (no prior screenshot,
+  // drop one first) and frame 4 (frame 3 not captured, also drop one first)
   assert.deepEqual([...new Set(bakery.log.shots)], [0, 4]);
   assert.equal(bakery.log.shots.length, 4, 'Each of the two frames takes two screenshots (the first one is discarded)');
   assert.deepEqual(primed, [true, false, true, true, true, false], 'The initial discard is skipped only when the immediately preceding frame took a screenshot');
-  // 不给 capture:和原来一样,每帧截图
+  // When capture is omitted: captures every frame as before
   const plain = fakeBakery();
   const kinds = [];
   await bakeStream(plain, { ...opts, onFrame: async (_f, shot) => { kinds.push(Buffer.isBuffer(shot)); } });
@@ -175,7 +185,8 @@ test('A single-card stream registered as a canvas card uses direct grab: the fir
   for (const n of [0, 1]) assert.equal(Buffer.compare(on.bytes[n], off.bytes[n]), 0, `Segment ${n}: direct grab and screenshot output are byte-identical`);
   assert.deepEqual([on.status.direct.failed, on.status.direct.segments, on.status.direct.frames, on.status.direct.checks], [null, 2, 30, 2]);
   assert.deepEqual([on.status.direct.last.pass, on.status.direct.last.color, on.status.direct.last.alpha, on.status.direct.last.bad], [true, 0, 0, 0]);
-  // 分段签名和清单里的东西不因为走了直取而不同(编码器名、矩形都一样)
+  // Segment signature and manifest contents do not differ for using direct capture (encoder name and
+  // rectangle are identical)
   assert.deepEqual(on.state.manifest.segments[0].sig, off.state.manifest.segments[0].sig);
   assert.deepEqual(Object.keys(on.state.manifest.inits), Object.keys(off.state.manifest.inits));
 });
@@ -231,26 +242,26 @@ test('directOf: only single-card streams whose member is registered as a canvas 
   assert.equal(producer.directOf({ spec: { kind: 'group', members: [{ capabilities: CANVAS_CAPS }, { capabilities: CANVAS_CAPS }] } }), null);
   assert.equal(producer.directOf({ spec: { kind: 'below', members: [{ capabilities: CANVAS_CAPS }] } }), null, 'Other kinds of streams do not take it');
   assert.equal(producer.directOf({ spec: { kind: 'card' } }), null, 'A stream pulled in from elsewhere has no member information');
-  // 缺省 always 档:不因 cooldown 歇
+  // Default always tier: does not pause for cooldown
   card.direct.cooldown = 2;
   assert.ok(producer.directOf(card));
   card.direct.failed = 'differs';
   assert.equal(producer.directOf(card), null);
   const off = new StreamProducer(pipeline, { env: { PROMPTCUT_STREAM_DIRECT: '0' } });
   assert.equal(off.directOf({ spec: { kind: 'card', members: [{ capabilities: CANVAS_CAPS }] } }), null);
-  // 显式传 PROMPTCUT_STREAM_DIRECT: 'auto' 时保留 cooldown 退避
+  // Retain cooldown backoff when explicitly passing PROMPTCUT_STREAM_DIRECT: 'auto'
   const auto = new StreamProducer(pipeline, { env: { PROMPTCUT_STREAM_DIRECT: 'auto' } });
   assert.equal(auto.direct, 'auto');
   const autoCard = { spec: { kind: 'card', members: [{ capabilities: CANVAS_CAPS }] } };
   assert.ok(auto.directOf(autoCard));
-  // 歇两个分段:这两次不走,第三次再试
+  // Pause for two segments: skip these two times, retry on the third
   autoCard.direct.cooldown = 2;
   assert.equal(auto.directOf(autoCard), null);
   assert.equal(auto.directOf(autoCard), null);
   assert.ok(auto.directOf(autoCard));
   autoCard.direct.failed = 'differs';
   assert.equal(auto.directOf(autoCard), null);
-  // 显式传 always 档也不歇
+  // Does not pause even when explicitly passing always tier
   const always = new StreamProducer(pipeline, { env: { PROMPTCUT_STREAM_DIRECT: 'always' } });
   const hot = { spec: { kind: 'card', members: [{ capabilities: CANVAS_CAPS }] } };
   always.directOf(hot);
@@ -258,7 +269,7 @@ test('directOf: only single-card streams whose member is registered as a canvas 
   assert.ok(always.directOf(hot));
 });
 
-/* ------------------------------------------------------------ 键(契约第 9.3 节) */
+/* ------------------------------------------------------------ Keys (contract section 9.3) */
 
 test('STREAM_CODE_VERSION is 4 (2: canvas direct grab and member key; 3: segments count from the stream\'s own first frame; 4: the sparse version captures only the first frame per segment, and the manifest carries the position rectangle); a single-card stream\'s member key uses streamMemberKey and no longer follows the snapshot\'s content key', () => {
   assert.equal(STREAM_CODE_VERSION, 4);
@@ -267,10 +278,10 @@ test('STREAM_CODE_VERSION is 4 (2: canvas direct grab and member key; 3: segment
   const base = control('a', 0, 2, DOM_CAPS, { contentKey: 'C-with-snapshot-code', streamMemberKey: 'M-content-only' });
   assert.equal(key(base), key({ ...base, contentKey: 'C-snapshot-code-changed', snapshotKey: 'S-changed' }), 'The snapshot-generating code changed (the snapshot\'s content key changed), the stream key is unchanged');
   assert.notEqual(key(base), key({ ...base, streamMemberKey: 'M-other-params' }), 'The stream key changes only when the content changes');
-  // 没有 streamMemberKey 的旧形状输入:照旧退回内容键
+  // Old-shape input without streamMemberKey: falls back to content key as usual
   const legacy = control('a', 0, 2, DOM_CAPS, { contentKey: 'C1' });
   assert.notEqual(key(legacy), key({ ...legacy, contentKey: 'C2' }));
-  // 代码版本进键
+  // Code version is included in key
   const spec = (codeVersion) => planStreams({ key: 'E', project, cardPlan: [base] }, { envFingerprint: ENV_FP, codeVersion })[0].streamKey;
   assert.notEqual(spec('1:C'), spec('2:C'));
 });
@@ -287,7 +298,7 @@ test('CardFrameCache.plan: streamMemberKey is the same content identity without 
     fps: 30, sampling: cardSampling(0, 30), duration: 1, stage: { width: 320, height: 180, camera3dFov: undefined }, frame: { x: 0 }, themeId: 'dark', fontFingerprint: '', snapshotCode: code });
   assert.equal(ctl.streamMemberKey, identity(''));
   assert.equal(ctl.contentKey, identity(snapshotCode()));
-  // 参数变了成员键跟着变
+  // When parameters change, member key changes accordingly
   const [other] = cache.plan({ ...graph, nodes: [{ ...node, params: { n: 2 } }] });
   assert.notEqual(other.streamMemberKey, ctl.streamMemberKey);
 });

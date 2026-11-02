@@ -1,15 +1,21 @@
 /**
- * 网站账号与项目成员接缝（公开侧扩展注册口，见 `docs/plan/community-boundary.md`）。
+ * Website account and project member seams (public-side extension registry, see
+ * `docs/plan/community-boundary.md`).
  *
- * 两条模式：
- * 1. **替换型接缝（成员源 `MemberSource`、加入源 `JoinSource`）**：
- *    - 公开侧默认实现走局域网共享项目（`server/auth/` 项目口令/票据/邀请码 + `server/lan/` 发现 + `src/editor/sync/` 实时成员同步）；
- *    - 云端实现（`cloud/account/ui-manifest.tsx`）在启动时注册并接管 `accountId` 分支，非账号项目仍回退局域网实现。
- * 2. **贯穿型与可选扩展槽（`AccountExtensions`）**：
- *    - 上传被拒文案、项目链接拼装、账号客户端工厂（`createAccountClient`）、开始页与协作设置的账号入口组件。
- *    - 未安装 `cloud/account/` 时按社区版默认策略运行，不报错、不崩溃。
+ * Two patterns:
+ * 1. **Replacement seams (member source `MemberSource`, join source `JoinSource`)**:
+ *    - The public-side default implementation uses LAN shared projects (`server/auth/` project
+ *      password/ticket/invite code + `server/lan/` discovery + `src/editor/sync/` real-time member sync);
+ *    - The cloud implementation (`cloud/account/ui-manifest.tsx`) registers at startup and takes over the
+ *      `accountId` branch; non-account projects still fall back to the LAN implementation.
+ * 2. **Cross-cutting and optional extension slots (`AccountExtensions`)**:
+ *    - Upload-rejected text, project link assembly, the account client factory (`createAccountClient`),
+ *      and the account entry components of the start page and collaboration settings.
+ *    - Without `cloud/account/` installed it runs with the community edition default policy, with no
+ *      error and no crash.
  *
- * 本模块是唯一允许可选加载 `cloud/account/manifest.ts` 的加载点；公开侧业务文件只引本模块，不直接引 `cloud/` 或 `src/account/`。
+ * This module is the only load point allowed to optionally load `cloud/account/manifest.ts`; public-side
+ * business files only import this module, and do not import `cloud/` or `src/account/` directly.
  */
 import type { JSX } from "react";
 
@@ -244,21 +250,21 @@ export interface CloudAccountClient {
   session(projectId: string, opts?: { minRemainingMs?: number }): Promise<ProjectSession>;
 }
 
-/** 替换型接缝：项目成员源（桌面 `MembersPanel.tsx`、手机 `useMembers.ts` 与 `sheets.tsx` 共用） */
+/** Replacement seam: project member source (shared by desktop `MembersPanel.tsx`, mobile `useMembers.ts` and `sheets.tsx`) */
 export interface MemberSource {
   readonly kind: "lan" | "account";
-  /** 桌面端顶栏「云端账号项目」专用成员浮层；未注册或局域网项目走公开侧 `LegacyMembersButton` */
+  /** Member popover dedicated to "cloud account projects" in the desktop top bar; if unregistered or for LAN projects, the public-side `LegacyMembersButton` is used */
   readonly DesktopAccountPanel?: () => JSX.Element | null;
-  /** 读取当前共享项目成员快照（失败或离线返回 `null`） */
+  /** Read the snapshot of the current shared project's members (returns `null` on failure or offline) */
   fetchMembers(): Promise<AccountMembersSnapshot | null>;
-  /** 成员管理操作（踢人、解禁、改进入方式、审批加入申请） */
+  /** Member management actions (kick, unban, change entry mode, approve join requests) */
   memberAdmin(operation: AccountMemberOperation): Promise<AccountMemberResult>;
-  /** 局域网/口令协作项目移除成员（凭创建者口令或委托票据） */
+  /** Remove a member from a LAN/password collaboration project (with the creator password or a delegation ticket) */
   kickLanMember?(
     row: { username: string; deviceId: string | null },
     auth: { password?: string; key?: string },
   ): Promise<{ ok: true; key: string } | { ok: false; error: string }>;
-  /** 签发局域网/口令共享项目邀请链接 */
+  /** Issue an invite link for a LAN/password shared project */
   createInvite?(
     creatorPassword: string,
   ): Promise<{ ok: true; link: string; expiresAt: number; maxUses: number | null } | { ok: false; error: string }>;
@@ -273,12 +279,12 @@ export interface LanInviteResolution {
   mode: "free" | "restricted";
 }
 
-/** 替换型接缝：加入共享项目源（公开侧默认走局域网邀请码与握手，云端走网站账号项目加入） */
+/** Replacement seam: join-shared-project source (the public-side default uses LAN invite codes and handshake; the cloud uses website account project joining) */
 export interface JoinSource {
   readonly kind: "lan" | "account";
-  /** 解析并核对局域网邀请链接（`#invite=<43位>&doc=<路径>`） */
+  /** Parse and verify a LAN invite link (`#invite=<43 chars>&doc=<path>`) */
   resolveLanInvite(rawLink: string): Promise<LanInviteResolution | { ok: false; error: string }>;
-  /** 凭局域网邀请码与用户名（及可选口令）兑换并握手进入共享项目 */
+  /** Redeem a LAN invite code with a user name (and optional password) and handshake into the shared project */
   joinLanByInvite(params: {
     base: string;
     code: string;
@@ -342,7 +348,7 @@ export interface AccountExtensions {
   MobileAccountStart?: (props: { onEnterEditor: () => void }) => JSX.Element;
 }
 
-/* ---------------- 默认实现与状态 ---------------- */
+/* ---------------- Default implementation and state ---------------- */
 
 const DEFAULT_MEMBER_SOURCE: MemberSource = {
   kind: "lan",
@@ -376,7 +382,7 @@ function notifyListeners() {
     try {
       fn();
     } catch {
-      /* 单个订阅者报错不影响其余订阅者 */
+      /* An error in a single subscriber does not affect the other subscribers */
     }
   }
 }
@@ -388,7 +394,7 @@ export function subscribeAccountExtensions(listener: () => void): () => void {
   };
 }
 
-/** 公开侧局域网成员源在模块初始化时登记为默认实现 */
+/** The public-side LAN member source registers as the default implementation at module initialization */
 export function setDefaultLanMemberSource(source: MemberSource): void {
   defaultLanMemberSource = source;
   if (activeMemberSource === DEFAULT_MEMBER_SOURCE || activeMemberSource.kind === "lan") {
@@ -418,7 +424,7 @@ export function resetMemberSource(): void {
   notifyListeners();
 }
 
-/** 公开侧局域网加入源在模块初始化时登记为默认实现 */
+/** The public-side LAN join source registers as the default implementation at module initialization */
 export function setDefaultLanJoinSource(source: JoinSource): void {
   defaultLanJoinSource = source;
   if (activeJoinSource === DEFAULT_JOIN_SOURCE || activeJoinSource.kind === "lan") {
@@ -464,7 +470,7 @@ export function resetAccountExtensions(): void {
   notifyListeners();
 }
 
-/* ---------------- 贯穿型便捷入口（带默认兜底） ---------------- */
+/* ---------------- Cross-cutting convenience entry points (with a default fallback) ---------------- */
 
 const DEFAULT_UPLOAD_REFUSAL_TEXT: Record<string, string> = {
   "guest-file-too-large": tr("Each source file uploaded by a guest cannot exceed {0} MB.", GUEST_LIMITS.assetMB),
@@ -473,15 +479,16 @@ const DEFAULT_UPLOAD_REFUSAL_TEXT: Record<string, string> = {
 };
 
 /**
- * 贯穿型接缝：素材上传被永久拒绝时的原因说明。
- * 云端已注册时走 `accountErrorText`；未注册（社区版或单独单测）时走内置兜底文案。
+ * Cross-cutting seam: the reason given when an asset upload is permanently rejected.
+ * When the cloud is registered it goes through `accountErrorText`; when unregistered (community edition
+ * or a standalone unit test) it uses the built-in fallback text.
  */
 export function formatUploadRejectionReason(code: string): string {
   if (currentExtensions.formatUploadError) return currentExtensions.formatUploadError(code);
   return DEFAULT_UPLOAD_REFUSAL_TEXT[code] ?? tr("Request failed ({0})", code || "unknown");
 }
 
-/** 项目链接拼装（`<origin>/p/<id>` 或 `<origin>/s/<id>/<linkToken>`） */
+/** Project link assembly (`<origin>/p/<id>` or `<origin>/s/<id>/<linkToken>`) */
 export function projectLink(origin: string, projectId: string, linkToken?: string): string {
   if (currentExtensions.projectLink) return currentExtensions.projectLink(origin, projectId, linkToken);
   return new URL(linkToken ? `/editor/s/${projectId}/${linkToken}` : `/editor/p/${projectId}`, new URL(origin).origin).toString();
@@ -537,21 +544,21 @@ export function createAccountClient(options: AccountClientOptions): CloudAccount
     : createFallbackAccountClient(options);
 }
 
-/* ---------------- 可选加载点（唯一动态加载 cloud/account/ 的位置） ---------------- */
+/* ---------------- Optional load point (the only place that dynamically loads cloud/account/) ---------------- */
 
-// 云端扩展包走**别名**，由 `server/vite-plugin-cloud-seams.ts` 在构建时解析到闭源目录或空桩。
-// 原来这里写的是 `new URL("../../../<闭源目录>/account/manifest.ts", import.meta.url)` 加
-// `@vite-ignore` 的动态 import，三重问题：① 公开文件在拼闭源路径（G1 判红）；
-// ② 没有 PROMPTCUT_CLOUD_DIR 的等价物，子模块布局下相对路径指到 `community/` 而不是私有根，
-//    静默落空，而私有仓库文件齐全所以看不出来；③ `.ts` 不进产物、`@vite-ignore` 又让 Vite 不解析它，
-//    正式构建里根本加载不到。下面两处 import 的说明符必须是**字面量**，Vite 才解析得到。
+// The cloud extension package goes through an **alias**, resolved by `server/vite-plugin-cloud-seams.ts` at build time to the closed-source directory or an empty stub.
+// What was written here before was a dynamic import of `new URL("../../../<closed-source dir>/account/manifest.ts", import.meta.url)` plus
+// `@vite-ignore`, with three problems: ① a public file assembling a closed-source path (G1 flagged red);
+// ② no equivalent of PROMPTCUT_CLOUD_DIR, so under the submodule layout the relative path points to `community/` instead of the private root,
+//    silently missing, and since the private repository has all the files nobody noticed; ③ `.ts` does not go into the output, and `@vite-ignore` makes Vite not resolve it,
+//    so it could never be loaded in the official build. The specifiers of the two imports below must be **literals** for Vite to resolve them.
 
 function isModuleNotFound(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   const code = (err as { code?: unknown }).code;
   const msg = String((err as { message?: unknown }).message ?? "");
-  // ERR_PACKAGE_IMPORT_NOT_DEFINED：Node 直接跑这个文件时（单测、服务端）没有 Vite 的别名表，
-  // `#promptcut-cloud-*` 解析不到就是这个码。那正是「没装云端扩展」，不是错误。
+  // ERR_PACKAGE_IMPORT_NOT_DEFINED: when Node runs this file directly (unit tests, server) there is no Vite alias table,
+  // and `#promptcut-cloud-*` failing to resolve gives this code. That is exactly "cloud extension not installed", not an error.
   if (code === "ERR_MODULE_NOT_FOUND" || code === "MODULE_NOT_FOUND" || code === "ERR_PACKAGE_IMPORT_NOT_DEFINED") return true;
   return (
     msg.includes("Cannot find module") ||
@@ -567,8 +574,9 @@ let coreLoadPromise: Promise<boolean> | null = null;
 let uiLoadPromise: Promise<boolean> | null = null;
 
 /**
- * 尝试加载 `cloud/account/manifest.ts`（以及浏览器环境下的 `cloud/account/ui-manifest.tsx`）。
- * 社区版移走 `cloud/` 时捕获 MODULE_NOT_FOUND 并返回 `false`，保持局域网默认实现运行。
+ * Try to load `cloud/account/manifest.ts` (and, in a browser environment,
+ * `cloud/account/ui-manifest.tsx`). When the community edition moves `cloud/` away, catch
+ * MODULE_NOT_FOUND and return `false`, so the default LAN implementation keeps running.
  */
 export async function loadAccountExtensions(opts: { manifestUrl?: string; includeUi?: boolean } = {}): Promise<boolean> {
   if (opts.manifestUrl) {
@@ -586,7 +594,7 @@ export async function loadAccountExtensions(opts: { manifestUrl?: string; includ
     coreLoadPromise = (async () => {
       try {
         const mod = (await import("#promptcut-cloud-account")) as { register?: () => Promise<void> | void };
-        // 空桩什么都不导出，所以「装上了」的判据是 register 在不在，不是 import 成没成
+        // The empty stub exports nothing, so "installed" is decided by whether `register` exists, not by whether the import succeeded
         if (typeof mod.register !== "function") return false;
         await mod.register();
         return true;
@@ -609,7 +617,7 @@ export async function loadAccountExtensions(opts: { manifestUrl?: string; includ
           return true;
         } catch (err) {
           if (isModuleNotFound(err)) return false;
-          // Node 环境（如不经过 Vite JSX 转译的纯 Node 测试）无法解析 .tsx，静默跳过 UI 扩展
+          // A Node environment (e.g. a plain Node test that skips Vite's JSX transform) cannot resolve .tsx, so silently skip the UI extension
           if (err instanceof SyntaxError || String((err as Error)?.message ?? "").includes("Unexpected token")) {
             return false;
           }
@@ -622,5 +630,5 @@ export async function loadAccountExtensions(opts: { manifestUrl?: string; includ
   return coreLoaded;
 }
 
-// 模块导入时异步预热核心接缝（不阻塞，失败静默当未装扩展处理）
+// Warm up the core seam asynchronously on module import (non-blocking; a failure is silently treated as no extension installed)
 void loadAccountExtensions({ includeUi: typeof document !== "undefined" }).catch(() => false);

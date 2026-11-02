@@ -1,19 +1,30 @@
 /**
- * 冲突合并窗口的验收探针(0.7.19,分支 claude/conflict-merge):桌面界面与手机界面各走一遍,截图。
- * 全程在本机:本机托管组合 + 仿 nginx 的两套代理(`lib/mobile-env.mjs`),在线构建当页面,不连任何远端。
+ * Acceptance probe for conflict merge window (0.7.19, branch claude/conflict-merge): run through
+ * each of the desktop and mobile interfaces, take screenshots.
+ * Entirely local: local hosted setup + two nginx-like proxies (`lib/mobile-env.mjs`), online build
+ * as the page, no remote connections.
  *
  *   npx vite build --mode online
  *   node scripts/probes/conflict-merge-probe.mjs [--dist dist-online] [--out out/conflict-merge] [--base-port 5890] [--base2-port 5893] [--doc-port 5896] [--asset-port 5897]
  *
- * 角色:甲(桌面界面,走第一套代理)、乙(另一名成员,走第二套代理)、甲的手机(同一用户「甲」,手机界面,第一套代理)。
- *   D1 只断甲:甲断网期间改 c1 透明度两次与长度、改 c4 名字、删 c2;乙同时改 c1 透明度、改 c2、删 c4
- *   D2 甲连回:离线批次逐项转进待合并表,冲突合并窗口自己打开;一级按东西(c1、c2、c4)、二级按属性(c1 透明度只一条)
- *   D3 「选中无冲突项」只勾上 c1 的长度;点「合并」:乙那边看到长度变了、透明度仍是乙的
- *   D4 「下次再说」关窗:导航栏顶端的「冲突合并」按钮还在
- *   D5 甲的手机(同一用户)进项目:冲突横条显示同一张表(待合并表存在文档服务、按项目 × 用户);面板里逐项勾选、合并、删除选中,
- *      处理完横条收起,桌面那边的「冲突合并」按钮也跟着消失
- *   D6 在线浏览器断网时「导入媒体」置灰、提示「当前离线」(桌面与手机)
- * 结果最后一行是一行 JSON;截图写进 --out。
+ * Roles: A (desktop interface, first proxy), B (another member, second proxy), A's phone (same
+ * user "A", mobile interface, first proxy).
+ *   D1 Disconnect A only: while A is disconnected, A changes c1 opacity twice and duration, changes
+ *      c4 name, deletes c2; B simultaneously changes c1 opacity, changes c2, deletes c4
+ *   D2 A reconnects: offline batches transfer item by item into the pending merge table, conflict
+ *      merge window opens automatically; level 1 by item (c1, c2, c4), level 2 by property (only
+ *      one for c1 opacity)
+ *   D3 "Select non-conflicting items" checks only c1 duration; click "Merge": B's side sees
+ *      duration changed, opacity remains B's
+ *   D4 Close window via "Maybe later": "Conflict merge" button remains at the top of the
+ *      navigation bar
+ *   D5 A's phone (same user) enters project: conflict banner displays same table (pending merge
+ *      table stored in document service, by project × user); check, merge, or delete selected in
+ *      panel item by item; banner collapses when done, desktop "Conflict merge" button disappears
+ *      too
+ *   D6 When online browser is disconnected, "Import media" is grayed out with "Currently offline"
+ *      (desktop and mobile)
+ * The last line of the result is a JSON line; screenshots are written to --out.
  */
 import puppeteer from 'puppeteer';
 import fs from 'node:fs';
@@ -85,7 +96,7 @@ try {
   await until('A and B both see the four clips', async () => (await clipOf(A, 'c4')) && (await clipOf(B, 'c4')), 60_000);
   await sleep(1500);
 
-  /* ---------------- D1 只断甲 ---------------- */
+  /* ---------------- D1 Disconnect A only ---------------- */
   env.proxy.cutWs();
   await sleep(800);
   await store(A, 'S.actions.updateClip("c1", { opacity: 0.6 }); return true;');
@@ -93,12 +104,12 @@ try {
   await store(A, 'S.actions.updateClip("c1", { opacity: 0.9 }); return true;');
   await store(A, 'S.actions.updateClip("c4", { label: "Checklist (edited by A)" }); return true;');
   await store(A, 'S.actions.removeClip("c2"); return true;');
-  // 改 c1 的长度:直接改结束时间(同 moveClip 的一次改动)
+  // Change c1 duration: directly modify end time (same as a moveClip modification)
   await store(A, 'S.actions.moveClip("c1", { start: 0, end: 2.4 }); return true;');
   const unsent = await until('A is judged offline with unsubmitted changes', () => A.$('[data-pc="offline-unsent"]'), 150_000, 500);
   step('D1-offline', { unsent: !!unsent, text: unsent ? await textOf(A, '[data-pc="offline-unsent"]') : null });
   await shot(A, 'desktop-0-offline');
-  // 断网时导入媒体置灰(D6 桌面)
+  // Gray out "Import media" when disconnected (D6 desktop)
   const importBtn = await A.evaluate(() => { const b = document.querySelector('[data-pc-add="media"]'); return b ? { disabled: b.disabled, text: b.innerText, title: b.title } : null; });
   step('D6-desktop-import', importBtn);
   check(importBtn?.disabled && /Currently offline/.test(importBtn.text), 'D6 when the desktop app is offline, import media is grayed out and the hint says currently offline', importBtn);
@@ -108,7 +119,7 @@ try {
   await store(B, 'S.actions.removeClip("c4"); return true;');
   await sleep(2000);
 
-  /* ---------------- D2 甲连回:窗口自己打开 ---------------- */
+  /* ---------------- D2 A reconnects: window opens automatically ---------------- */
   env.proxy.blockWs = false;
   const win = await until('Conflict merge window opened', () => A.$('[data-pc="conflict-merge"]'), 150_000, 500);
   await sleep(800);
@@ -119,7 +130,7 @@ try {
   step('D2-rows', { open: !!win, summary: await textOf(A, '[data-pc="merge-summary"]'), rows });
   const keys = rows.map((r) => r.key).sort();
   check(JSON.stringify(keys) === JSON.stringify(['offline:clip:c1', 'offline:clip:c2', 'offline:clip:c4']), 'D2 level 1 is per object: one entry each for c1, c2, c4', keys);
-  // 展开 c1 看二级
+  // Expand c1 to view level 2
   await A.evaluate(() => { for (const li of document.querySelectorAll('[data-pc="merge-thing"]')) { const b = li.querySelector('.pc-merge-expand'); if (b?.getAttribute('aria-expanded') === 'false') b.click(); } });
   await sleep(300);
   const c1Props = await A.evaluate(() => [...document.querySelectorAll('[data-pc="merge-thing"][data-key="offline:clip:c1"] [data-pc="merge-prop"]')].map((p) => p.innerText.replace(/\s+/g, ' ').trim()));
@@ -127,7 +138,7 @@ try {
   check(c1Props.length === 2 && c1Props.some((t) => t.includes('Opacity 0.4 → 0.9 (cloud is now 0.7)')) && c1Props.some((t) => t.startsWith('Time')), 'D2 c1 level 2: opacity has only one entry (changed twice), time has one entry, and it states what the cloud value is now', c1Props);
   await shot(A, 'desktop-1-window');
 
-  /* ---------------- D3 选中无冲突项 → 合并 ---------------- */
+  /* ---------------- D3 Select non-conflicting items → Merge ---------------- */
   await clickSel(A, '[data-pc="merge-select-clean"]');
   await sleep(300);
   const picked = await A.evaluate(() => [...document.querySelectorAll('[data-pc="merge-prop"] input:checked')].map((i) => i.closest('[data-pc="merge-prop"]').innerText.replace(/\s+/g, ' ').trim()));
@@ -144,7 +155,7 @@ try {
   check(bC1 && bC1.opacity === 0.7, 'D3 after merging: length follows A, opacity stays B\'s', bC1);
   await shot(A, 'desktop-3-merged');
 
-  /* ---------------- D4 下次再说 → 导航栏按钮 ---------------- */
+  /* ---------------- D4 Maybe later → navigation bar button ---------------- */
   await clickSel(A, '[data-pc="merge-close"]');
   await sleep(500);
   const navBtn = await textOf(A, '[data-pc="conflict-merge-open"]');
@@ -152,14 +163,14 @@ try {
   check(!!navBtn && navBtn.includes('Conflict merge'), 'D4 after the window is closed, the "Conflict merge" button is still at the top of the navigation bar', navBtn);
   await shot(A, 'desktop-4-nav-button');
 
-  /* ---------------- D5 同一用户的手机 ---------------- */
+  /* ---------------- D5 Same user's phone ---------------- */
   const M = await env.newPage(browser, 'phone');
   await env.enter(M, { layout: 'mobile', username: 'jia' });
   const bar = await until('the conflict bar on mobile', () => M.$('[data-pcm="cfbar"]'), 60_000, 500);
   step('D5-bar', { bar: bar ? await textOf(M, '[data-pcm="cfbar-text"]') : null });
   check(!!bar, 'D5 the same user sees the same pending merge table on mobile (conflict bar)');
   await shot(M, 'mobile-1-bar');
-  // 进项目时的气泡(「已切换低内存模式」之类)会盖住横条右侧的「处理」,点不着就直接点元素
+  // Bubble when entering project (e.g. "Switched to low memory mode") covers "Process" on right of banner; click element directly if unable to click
   await tap(M, '[data-pcm="cfbar-open"]');
   if (!(await M.$('[data-pcm="sheet-conflict"]'))) await clickSel(M, '[data-pcm="cfbar-open"]');
   await M.waitForSelector('[data-pcm="sheet-conflict"]', { visible: true, timeout: 20_000 });
@@ -168,16 +179,16 @@ try {
   step('D5-sheet', { mRows });
   check(mRows.length === 3, 'D5 the mobile panel has three level-1 entries (c1 with only opacity left, c2, c4)', mRows);
   await shot(M, 'mobile-2-sheet');
-  // 勾上 c4(我改了、别人删了)整条 → 合并 = 连同我的修改恢复
+  // Check entire c4 row (I modified, others deleted) → Merge = restore along with my modifications
   await M.evaluate(() => document.querySelector('[data-pcm="cf-thing"][data-key="offline:clip:c4"] .cf-head input')?.click());
   await sleep(300);
   await shot(M, 'mobile-3-picked');
   await tap(M, '[data-pcm="cf-merge"]');
   const restored = await until('B sees c4 restored', async () => { const c = await clipOf(B, 'c4'); return c && c.label === 'Checklist (edited by A)' ? c : null; }, 20_000);
   step('D5-restored', { restored: restored && { label: restored.label }, note: await textOf(M, '[data-pcm="cf-note"]') });
-  // 剩下的(c1 透明度、c2 删除)全勾 → 删除选中:云端保持现状
+  // Check all remaining items (c1 opacity, c2 deletion) → Delete selected: keep current state in cloud
   await M.evaluate(() => { for (const i of document.querySelectorAll('[data-pcm="cf-thing"] .cf-head input')) if (!i.checked) i.click(); });
-  // 勾选之后面板要重画,等「删除选中」可点
+  // Panel repaints after checking; wait for "Delete selected" to become clickable
   await M.waitForSelector('[data-pcm="cf-drop"]:not([disabled])', { timeout: 5000 });
   await sleep(300);
   await tap(M, '[data-pcm="cf-drop"]');
@@ -195,7 +206,7 @@ try {
   await shot(M, 'mobile-5-cleared');
   await shot(A, 'desktop-5-cleared');
 
-  /* ---------------- D6 手机断网时导入置灰 ---------------- */
+  /* ---------------- D6 Gray out import when mobile is disconnected ---------------- */
   env.proxy.cutWs();
   await until('mobile detected as offline', () => M.evaluate(() => document.querySelector('[data-pc="offline-unsent"]') !== null || true), 5_000);
   await sleep(6000);

@@ -1,14 +1,20 @@
 /**
- * 在线浏览器模式能在本页执行哪些卡片的声音代码(`docs/semantics/product/platforms.md`「卡片声音的平台边界」)。
+ * Which cards' sound code can be executed on this page in online browser mode
+ * (`docs/semantics/product/platforms.md` "Platform boundaries of card audio").
  *
- * 第一段只放开**内置**卡(页面构建时自带、注册表里有定义的):内置提示音、键盘声、内置有声卡。
- * 用户卡与素材效果卡的声音随「在线执行用户卡与素材效果卡」在第二段放开 —— 那时由隔离环境那一侧调 `setOnlineUserCardAudioGate`
- * 接进来,这里不用再改判据。带素材输入的素材效果卡另有一道闸:在线页面取不到素材的采样块(`audioSources.ts` 的 `mediaBlock`)。
+ * Stage one only opens **built-in** cards (shipped with page build, defined in registry): built-in
+ * notification sounds, keyboard sounds, built-in sound cards.
+ * Audio for user cards and media effect cards is opened in stage two along with "online execution
+ * of user cards and media effect cards": hooked in by calling `setOnlineUserCardAudioGate` from the
+ * isolated environment side, without needing criteria changes here. Media effect cards with asset
+ * input have an additional gate: online pages cannot retrieve sample chunks of assets (`mediaBlock`
+ * in `audioSources.ts`).
  *
- * 轻重(判轻才在浏览器里合成)不在这里判:这里只回答「这段代码这台设备能不能跑」,轻重由
- * `src/editor/io/onlineSoundJudge.ts` 判。
+ * Light vs. heavy (synthesized in browser only when classified as light) is not judged here: this
+ * only answers "can this device run this code"; light vs. heavy is judged by
+ * `src/editor/io/onlineSoundJudge.ts`.
  *
- * 本模块属于 render 这一层(`src/online/`):只引 kernel。
+ * This module belongs to the render layer (`src/online/`): only imports kernel.
  */
 import type { CardDef } from "../kernel/types";
 
@@ -16,12 +22,12 @@ type AudioCard = Pick<CardDef<any>, "source" | "audio">;
 
 let userCardGate: ((def: AudioCard) => boolean) | null = null;
 
-/** 第二段的接口:用户卡、素材效果卡的声音能不能在本页执行,由隔离环境那一侧决定。不接时一律不能 */
+/** Stage two interface: whether audio for user cards and media effect cards can be executed on this page is decided by isolated environment side; disallowed across the board when not connected */
 export function setOnlineUserCardAudioGate(gate: ((def: AudioCard) => boolean) | null): void {
   userCardGate = gate;
 }
 
-/** 这张卡的 `audio()` 在线页面能不能执行 */
+/** Whether this card's `audio()` can be executed by the online page */
 export function onlineCardAudioRunnable(def: AudioCard | undefined | null): boolean {
   if (!def || typeof def.audio !== "function") return false;
   if (def.source === "user") return userCardGate ? userCardGate(def) : false;

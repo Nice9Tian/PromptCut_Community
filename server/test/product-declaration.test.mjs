@@ -1,8 +1,11 @@
 /**
- * 产品声明（`product.config.json`、`server/auth/product.mjs`）：公开版没有托管端，也不连任何我们的服务器。
+ * Product declaration (`product.config.json`, `server/auth/product.mjs`): the public edition
+ * has no hosted side and connects to none of our servers.
  *
- * 2026-10-30 实测过反面：社区版什么都不设，按名字找项目时把项目名发到了缺省托管地址，协作面板还有「云端」按钮。
- * 私有仓库里 `cloud/` 在，所以这里用子进程把 `PROMPTCUT_CLOUD_DIR` 指到空目录，两边跑到的都是公开版的行为。
+ * 2026-10-30 tested the reverse: with nothing configured in community edition, looking up projects
+ * by name sent the project name to the default hosted address, and the collaboration panel had
+ * a "Cloud" button. `cloud/` exists in the private repo, so a child process points
+ * `PROMPTCUT_CLOUD_DIR` to an empty directory here, making both run public edition behavior.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const auth = (name) => new URL(`../auth/${name}`, import.meta.url).href;
 
-/** 在公开版的声明下跑一段模块代码，取它打印的 JSON */
+/** Run a snippet of module code under public edition declaration and take the JSON it prints */
 function asCommunity(code) {
   const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-no-cloud-'));
   try {

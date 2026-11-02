@@ -4,9 +4,9 @@ import { easeExpoOut, accentOf } from "../../cards/native/hud";
 import { fitOr } from "../fit";
 
 /**
- * 翻牌数字:大号的机械滚轮数字加上单位。
- * 从 odometer 拆出,去除了说明小字和玻璃板外壳。
- * 进场:数字轮盘由上往下拨动到位。
+ * Odometer numbers: large mechanical roller numbers plus units.
+ * Extracted from odometer, stripped of explanatory small text and glass board shell.
+ * Entrance: number wheels scroll down into place.
  */
 interface Params {
   value: number;

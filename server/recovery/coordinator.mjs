@@ -13,10 +13,14 @@ export class RecoveryCoordinator {
     if (descriptor.version !== 1) { state('unsupported'); return; }
     let delay = 500;
     /*
-     * 云端项目「不在了」只认文档服务签发、客户端核对过的证明（`gone-proof.mjs`，由 `hooks.gone` 去问并核对）。
-     * 本机凭证被撤（`saved.revoked`）、连到的服务说「没有这个项目」都不是证明：拿到证明才报 `gone`（调用方据此转成本地项目）；
-     * 服务明确答了没有墓碑、或没处可问，报 `missing-unconfirmed`；回来的证明核对不过，报 `proof-rejected`；
-     * 问不到（断网、超时、服务故障）抛出去，照「等主机」重试。局域网项目没有签发方，照旧报 `deleted`。
+     * Cloud project being "gone" only recognizes proofs issued by the document service and verified
+     * by the client (`gone-proof.mjs`, queried and verified by `hooks.gone`). Revocation of local
+     * credentials (`saved.revoked`) or the connected service saying "no such project" are not proofs:
+     * reports `gone` only after obtaining proof (caller converts to a local project accordingly);
+     * if the service explicitly responds that there is no tombstone, or there is nowhere to ask,
+     * reports `missing-unconfirmed`; if the returned proof fails verification, reports `proof-rejected`;
+     * if unreachable (network disconnected, timeout, service failure), throws and retries as
+     * "wait for host". LAN projects have no issuer and still report `deleted` as before.
      */
     const hosted = descriptor.where === 'hosted' && typeof this.hooks.gone === 'function';
     const missing = async () => {
@@ -32,10 +36,11 @@ export class RecoveryCoordinator {
       state('recovering');
       try {
         if (hosted && !asked) {
-          // 先问一次：项目已被清掉时，这台设备上多半没有还能用的身份，走不到服务端答复那一步。
-          // 只有核对过的证明才在这里收场；别的答复、问不到，都照常走恢复。
+          // Query once first: when the project has been cleared, this device likely has no usable identity
+          // left to reach the server reply step. Only verified proofs conclude here; other replies or failure
+          // to query proceed with recovery as usual.
           let answer = null;
-          try { answer = await this.hooks.gone(descriptor, abort.signal); asked = true; } catch { /* 说不清：照常走恢复 */ }
+          try { answer = await this.hooks.gone(descriptor, abort.signal); asked = true; } catch { /* Inconclusive: proceed with recovery as usual */ }
           if (!current()) return;
           if (answer?.state === 'gone' && answer.proof) return state('gone', answer);
         }

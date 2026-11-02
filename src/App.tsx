@@ -6,7 +6,7 @@ import { demoTimeline } from "./demo";
 import "./cards";
 import { tr } from "./i18n/index.ts";
 
-/** 原型预览:播放/暂停/拖动 + 每张卡单独重播。时间轴是 demo.ts 里写死的。 */
+/** Prototype preview: play/pause/drag + replay each card on its own. The timeline is hard-coded in demo.ts. */
 export default function App() {
   const [timeline] = useState<Timeline>(demoTimeline);
   const [t, setT] = useState(0);

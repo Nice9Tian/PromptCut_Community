@@ -1,7 +1,10 @@
 /**
- * M7 D12 页面侧:在线来源按队列推来的 `task.done`(活)与 `task.failed { error: 'superseded' }`(作废的那一份 —— 另一份活着)
- * 认定层表 v 3 的哪个候选活着,整层换成那个候选(结果键、指纹、线上键同出一个候选);之前默认第一个候选。
- * 跑:node --test src/render/m7-alive-source.test.mjs
+ * M7 D12 page side: online source uses `task.done` (alive) and
+ * `task.failed { error: 'superseded' }` (the invalidated one: the other one is alive) pushed by
+ * the queue to determine which candidate in layer table v 3 is alive, replacing the entire layer
+ * with that candidate (result key, fingerprint, and online key all come from the same candidate);
+ * previously defaulted to the first candidate.
+ * Run: node --test src/render/m7-alive-source.test.mjs
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -70,11 +73,12 @@ test("M7-AS-01 With none designated, use the first candidate; after the browser'
   s2.setProject("p1");
   s2.focus(0, 30);
   await settle(s2);
-  // 只有 id 的 task.failed(队列作废时不带 resultKey):从 id 里取结果键
+  // task.failed with only an id (queue invalidation does not include resultKey): extract result key
+  // from id
   s2.noteQueueEvent({ type: "task.failed", id: "snapshot:R-host:0-59", error: "superseded" });
   await settle(s2);
   assert.equal(layerOf(idx2, "a", "html")?.key, "R-page", "Splitter's copy invalidated = the other copy is alive");
-  // 别的失败不算作废
+  // Other failures do not count as invalidation
   s2.noteQueueEvent({ type: "task.failed", id: "snapshot:R-page:0-59", error: "sink-incomplete" });
   await settle(s2);
   assert.equal(layerOf(idx2, "a", "html")?.key, "R-page");

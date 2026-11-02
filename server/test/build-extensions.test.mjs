@@ -1,9 +1,11 @@
 /**
- * `server/vite-plugin-hosted-gate.ts`（构建扩展加载入口）与 `cloud/build/manifest.mjs` 的单测：
- * 云端构建加载表怎么找、找不到怎么办（接缝总纲 `docs/plan/community-boundary.md` 第一、二节，
- * 与 `server/test/docservice-extensions.test.mjs` 同形）。
+ * Unit tests for `server/vite-plugin-hosted-gate.ts` (build extension loading entrypoint) and
+ * `cloud/build/manifest.mjs`: how cloud build manifest tables are located and handled when missing
+ * (seams overview `docs/plan/community-boundary.md` sections 1 and 2, isomorphic with
+ * `server/test/docservice-extensions.test.mjs`).
  *
- * 模块在求值阶段就把表读完了（顶层 await），所以每个用例都用带查询串的动态 import 拿一份新的。
+ * The module reads the entire table during evaluation (top-level await), so each test case uses
+ * a dynamic import with a query string to get a fresh copy.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,17 +16,18 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.join(HERE, '..', '..');
-// 社区版（公开仓库）里没有 cloud/：测闭源那一半的几条在那边跳过，和 agent-extensions 的 EXT1 同一个做法
+// Community edition (public repo) has no cloud/: tests for the closed-source half are skipped
+// there, matching the approach in agent-extensions EXT1
 const NO_CLOUD = fs.existsSync(path.join(ROOT_DIR, 'cloud')) ? false : 'The current checkout has no cloud/ directory (community edition)';
 const ENTRY = path.join(HERE, '..', 'vite-plugin-hosted-gate.ts');
 const CLOUD_RENDER_HOST = path.join(HERE, '..', '..', 'cloud', 'scripts', 'render-host.mjs');
 
-/** 载一份新的 `vite-plugin-hosted-gate.ts`（绕开模块缓存，让顶层 await 重新跑一遍） */
+/** Load a fresh `vite-plugin-hosted-gate.ts` (bypasses module cache to re-run top-level await) */
 async function loadFresh(tag) {
   return import(`${pathToFileURL(ENTRY).href}?case=${tag}`);
 }
 
-/** 造一个临时云端目录，里面放一张构建加载表 */
+/** Create a temporary cloud directory with a build manifest table inside */
 function makeCloudDir(keys) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-build-cloud-'));
   fs.mkdirSync(path.join(dir, 'build'), { recursive: true });
@@ -104,7 +107,7 @@ test('BEXT5 the exported table is frozen: callers cannot modify it', async () =>
 test('BEXT6 the render host entry moved into cloud/scripts/render-host.mjs imports only .mjs files and keeps the real finishTree cleanup', { skip: NO_CLOUD }, async () => {
   const src = fs.readFileSync(CLOUD_RENDER_HOST, 'utf8');
   assert.doesNotMatch(src, /\.ts['"]/, 'A production .mjs entry must not import .ts files');
-  // A3 之后 hosted-render 也在 cloud/ 下，和 render-host.mjs 同一棵树：cloud/scripts → cloud/server
+  // After A3, hosted-render is also under cloud/, in the same tree as render-host.mjs: cloud/scripts -> cloud/server
   assert.match(src, /from '\.\.\/server\/hosted-render\/worker\.mjs'/, 'Imports the real killTree from worker.mjs directly');
   const rh = await import(pathToFileURL(CLOUD_RENDER_HOST).href);
   assert.equal(typeof rh.finishTree, 'function');
@@ -137,12 +140,15 @@ test('BEXT7 when the loader entry is copied to the system temp directory and eva
 const NEWLINE = String.fromCharCode(10);
 
 test('SEAM-VITE-01 every vite config attaches the browser-side cloud alias plugin', () => {
-  // `cloudSeamsPlugin()` 把 `#promptcut-cloud-*` 解析到闭源加载表。漏挂在哪个配置上，那个构建就
-  // 拿不到真实现（2026-10-27 漏在 vite.config.ts 的在线那份配置上，整个在线构建当场报
-  // failed to resolve import）。现在 package.json 的 imports 兜了一层、最坏退化成社区版行为，
-  // 但「本该是私有版却静默变成社区版」照样是 bug，所以仍然要钉住。
-  // 不用正则：那个左方括号在正则里要转义，而本机写这个文件的工具会吃掉反斜杠（踩过四次）。
-  // 直接按 'plugins:' 逐个找，再取到对应的 ']' 为止。
+  // `cloudSeamsPlugin()` resolves `#promptcut-cloud-*` to the closed-source manifest table. If omitted
+  // on any config, that build fails to get the real implementation (on 2026-10-27, omitted on the
+  // online config in vite.config.ts, causing the entire online build to immediately fail with
+  // "failed to resolve import"). Currently package.json imports provide a fallback layer, at worst
+  // degrading to community edition behavior, but "silently becoming community edition when it should
+  // be private edition" is still a bug, so it must still be pinned down.
+  // Do not use regex: the opening bracket requires escaping in regex, and the local tool writing
+  // this file eats backslashes (bitten four times). Directly find 'plugins:' one by one, then take
+  // up to the matching ']'.
   const configs = ['vite.config.ts', 'vite.prerender.config.ts'];
   const missing = [];
   for (const rel of configs) {
@@ -162,10 +168,13 @@ test('SEAM-VITE-01 every vite config attaches the browser-side cloud alias plugi
 });
 
 test('SEAM-VITE-02 alias manifest: every alias the plugin recognizes must appear in the imports of package.json, none missing', () => {
-  // 两边必须同步：插件负责指到闭源表，package.json 负责在**没挂插件的地方**兜到空桩
-  // （探针自己起的 vite、raw Node）。只加插件不加兜底，那些地方就是硬失败 ——
-  // 2026-10-28 审查实测：三个探针的浏览器侧 transform 直接 500、页面打不开，不是优雅降级。
-  // 只加兜底不加插件，私有版会静默拿到社区版行为。所以这两张表必须逐项相等。
+  // Both sides must stay synchronized: plugin points to the closed-source table, while package.json
+  // provides fallback stubs **where plugins are not attached** (vite launched by probes themselves,
+  // raw Node). Adding only the plugin without fallbacks causes hard failures in those places:
+  // actual review on 2026-10-28 showed browser-side transform in three probes failed directly with 500
+  // and pages could not open, not a graceful downgrade. Adding only fallbacks without the plugin
+  // causes the private edition to silently get community edition behavior. Therefore, both tables
+  // must match item by item.
   const ALIAS_RE = new RegExp('"(#promptcut-cloud-[a-z-]+)"', 'g');
   const plugin = fs.readFileSync(path.join(ROOT_DIR, 'server', 'vite-plugin-cloud-seams.ts'), 'utf8');
   const fromPlugin = [...plugin.matchAll(ALIAS_RE)].map((m) => m[1]).sort();
@@ -182,7 +191,7 @@ test('SEAM-VITE-02 alias manifest: every alias the plugin recognizes must appear
       'When adding an alias, add it in both places: the plugin points to the closed-source table, and imports falls back to an empty stub.',
   );
 
-  // 兜底一律指空桩，不许出现任何闭源路径（package.json 是共享文件，不变量 1）
+  // Fallbacks must always point to empty stubs; no closed-source paths allowed (package.json is a shared file, Invariant 1)
   for (const k of fromPkg) {
     assert.equal(
       pkg.imports[k],
@@ -193,17 +202,20 @@ test('SEAM-VITE-02 alias manifest: every alias the plugin recognizes must appear
 });
 
 test('SEAM-PRUNE-01 online build prune table: the entries exist, the criteria are still present, and it is attached only to the online config', async () => {
-  // 这张表把「在线构建里运行期不可达」的桌面专用模块换成空桩，好让它们连同背后的 /api 调用
-  // 一起不进产物（编译期常量做不到这件事，理由见 src/online/pageFlag.ts 的「在线构建剪枝」）。
-  // 它的**前提**是那三处判据都是编译期常量；判据一变，这张表就可能在剪活代码。所以三样都要钉：
+  // This table replaces desktop-only modules that are "runtime-unreachable in online builds" with empty
+  // stubs, keeping them and their underlying /api calls out of build artifacts (compile-time constants
+  // cannot achieve this; see "Online build pruning" in src/online/pageFlag.ts for reasons).
+  // Its **premise** is that all three criteria are compile-time constants; if criteria change, this
+  // table might prune live code. Therefore, all three items must be pinned down:
   const { PRUNED_MODULES } = await import('../vite-plugin-online-prune.ts');
 
-  // 一、条目不许烂掉（CLOUD_FILES 刚因为八条死条目吃过苦头）
+  // 1. Entries must not go stale (CLOUD_FILES just suffered from eight dead entries)
   const dead = PRUNED_MODULES.filter((rel) => !fs.existsSync(path.join(ROOT_DIR, rel)));
   assert.deepEqual(dead, [], 'These modules in the prune table no longer exist, so the table must be updated:' + dead.join(', '));
 
-  // 二、判据还在。少了任何一条，就说明那个模块在在线构建里**可能已经可达**，
-  //     继续剪它就是在剪活代码 —— 这时候该重新算一遍 importer 闭包，不是改这条测试。
+  // 2. Criteria must remain intact. If any is missing, that module **might already be reachable** in
+  //    online builds, and pruning it means pruning live code: at that point, recompute the importer
+  //    closure instead of changing this test.
   const premises = [
     ['src/editor/dock/DockPages.tsx', 'ONLINE_BUILD ? OnlineAgentSwitch : AiPanel', 'src/editor/right/AiPanel.tsx'],
     ['src/StartPage.tsx', 'ONLINE_BUILD ? OnlineStartPage : DesktopStartPage', 'src/start/DesktopStart.tsx'],
@@ -219,7 +231,7 @@ test('SEAM-PRUNE-01 online build prune table: the entries exist, the criteria ar
     );
   }
 
-  // 三、只许挂在在线那份配置上。挂到桌面那份会把桌面版的 AI 栏和开始页一起剪掉。
+  // 3. May only attach to the online config. Attaching to desktop would prune the desktop AI panel and start page.
   const vc = fs.readFileSync(path.join(ROOT_DIR, 'vite.config.ts'), 'utf8');
   const uses = vc.split('onlinePrunePlugin()').length - 1;
   assert.equal(uses, 1, 'onlinePrunePlugin() should appear only once in vite.config.ts (the online config)');

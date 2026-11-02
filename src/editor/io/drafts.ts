@@ -6,7 +6,7 @@ import type { Project } from "../../kernel/project";
 import { onGoneConversion } from "../sync/recoveryAssociation";
 import { tr } from "../../i18n/index.ts";
 
-/** 本地草稿:服务端 `.pc-projects/` 目录里的一个 .proc 文件 */
+/** Local draft: a .proc file in the server's `.pc-projects/` directory */
 export interface DraftInfo {
   id: string;
   name: string;
@@ -15,7 +15,7 @@ export interface DraftInfo {
   duration: number;
   clips: number;
   thumbnail: string | null;
-  /** 文件坏了(解析不出来)。仍然列出来,好让用户删掉 */
+  /** The file is corrupted (cannot be parsed). It is still listed so the user can delete it */
   broken: boolean;
 }
 
@@ -32,13 +32,13 @@ export async function listDrafts(): Promise<DraftInfo[]> {
   return data.projects ?? [];
 }
 
-/** 草稿 id:时间戳打头,列表按名字排也大致是按时间 */
+/** Draft id: starts with a timestamp, so sorting the list by name is also roughly sorting by time */
 export function newDraftId(): string {
   return `${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 export async function saveDraft(id: string, thumbnail: string | null = null): Promise<DraftInfo> {
-  // 只读查看的页面在这里就停住,不用等服务端拒了再报错 —— 报错文案也更像人话
+  // A read-only view page stops here, with no need to wait for the server to reject it and then report an error; the error message also reads more human
   if (isViewOnly()) throw new Error(viewOnlyText());
   await (await import("../sync/syncManager")).whenSaved();
   return json<DraftInfo>(
@@ -50,11 +50,12 @@ export async function saveDraft(id: string, thumbnail: string | null = null): Pr
   );
 }
 
-/** 读一份草稿并载入 store。返回载入后的 Project */
+/** Read a draft and load it into the store. Returns the loaded Project */
 export async function openDraft(id: string): Promise<Project> {
   /*
-   * 先抢独占锁再读内容。顺序不能反 —— 读完再抢的话,两个实例可能都已经把项目
-   * 载进内存了,再告诉其中一个「你没抢到」就晚了,它已经能编辑了。
+   * Grab the exclusive lock first, then read the content. The order must not be reversed: if we read first and
+   * then grab, two instances may both have loaded the project into memory, and telling one of them
+   * "you did not get the lock" would be too late, since it can already edit.
    */
   const lock = await acquireDraftLock(id);
   if (!lock.ok) throw new Error(lock.error || tr("This project is open in another PromptCut"));
@@ -63,9 +64,9 @@ export async function openDraft(id: string): Promise<Project> {
     await releaseDraftLock();
     throw new Error(tr("Cannot open this draft ({0})", res.status));
   }
-  // 老草稿没有 project.id:拿草稿 id 顶上,和定制卡归属表里的老条目对得上
+  // Old drafts have no project.id: use the draft id instead, so it matches the old entries in the custom card ownership table
   const project = loadProc(await res.text(), { legacyId: id });
-  // 换了草稿就换了落点,不能再覆盖上一个项目的文件
+  // Switching drafts changes the destination, so it must not overwrite the previous project's file
   forgetSaveTarget();
   actions.loadProject(project, `${project.name}.proc`);
   return project;
@@ -73,29 +74,29 @@ export async function openDraft(id: string): Promise<Project> {
 
 export async function deleteDraft(id: string): Promise<void> {
   if (isViewOnly()) throw new Error(viewOnlyReason() === "read-only-member" ? tr("You can only view this project, so you cannot delete it.") : tr("This is read-only view mode, so this project cannot be deleted"));
-  // 和 saveDraft 一样要带 owner 头:删也是写,无头实例上的写闸认的是这个头。
-  // 漏了的话,实例**自己的**页面点删除会被自己的闸拦下。
+  // Like saveDraft, this must carry the owner header: delete is also a write, and the write gate on a headless instance checks this header.
+  // If it is missing, clicking delete on the instance's **own** page gets blocked by its own gate.
   await json(await fetch(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" }));
 }
 
 /**
- * 当前编辑的是哪份草稿。
+ * Which draft is currently being edited.
  *
- * 放模块级变量而不是 store:它只影响「保存」往哪个文件写,不参与撤销重做,
- * 也不该进 .proc 文件本身。开始页选中草稿时写入,顶栏保存时读出。
+ * Kept in a module-level variable rather than the store: it only affects which file "save" writes to, does not take part in undo/redo,
+ * and should not go into the .proc file itself. Written when the start page selects a draft, read when the top bar saves.
  */
 let activeDraftId: string | null = null;
 
 export function setActiveDraftId(id: string | null): void {
-  // 换草稿(含设成 null:新建项目、从文件打开)就把上一份的锁放掉。
-  // 只放上一份(带 id):开草稿是先 openDraft(id) 抢到新锁、再来这里记 id 的,
-  // 不带 id 会把刚抢到的那把放掉(换草稿后正在编辑的草稿失锁)。
-  // 不 await:调用点大多在用户手势里,放锁慢一点不该卡住界面;放锁本身是幂等的。
+  // Switching drafts (including setting it to null: new project, open from file) releases the previous lock.
+  // Release only the previous one (with id): opening a draft first does openDraft(id) to grab the new lock, then comes here to record the id,
+  // and without the id it would release the lock just grabbed (the draft being edited after the switch loses its lock).
+  // No await: most call sites are inside a user gesture, so a slow release should not block the UI; releasing is idempotent itself.
   if (activeDraftId && activeDraftId !== id) void releaseDraftLock(activeDraftId);
   activeDraftId = id;
 }
 
-/** 没有就现开一个,这样「保存」永远有地方写 */
+/** If there is none, create one on the spot, so "save" always has somewhere to write */
 export function ensureActiveDraftId(): string {
   if (!activeDraftId) activeDraftId = newDraftId();
   return activeDraftId;
@@ -104,5 +105,5 @@ export function ensureActiveDraftId(): string {
 export function getActiveDraftId(): string | null {
   return activeDraftId;
 }
-// 过期的云端项目转成本地项目之后,原来那份草稿保留:转出来的项目不再属于它,保存时另开一份
+// After an expired cloud project is converted to a local project, the original draft is kept: the converted project no longer belongs to it, and saving opens a new one
 onGoneConversion(() => setActiveDraftId(null));

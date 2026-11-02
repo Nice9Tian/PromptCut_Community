@@ -1,10 +1,11 @@
 import { tr } from "../../i18n/index.ts";
 /**
- * 时间轴片段的卡名(C10 契约第 9 节)。纯函数,单测直接载入。
- * 原先这里还判「本地 PC 辅助渲染」的徽标出不出,2026-10-21 用户定撤掉(没有这种情况),文件名沿用。
+ * The card name of a timeline clip (C10 contract, section 9). Pure function, loaded directly by unit tests.
+ * It used to also decide whether the "local PC assisted render" badge shows; removed by user decision,
+ * 2026-10-21 (that case does not exist), and the file name is kept.
  */
 
-/** 卡片段的标签:构建时定义的名字 → 同步表里的名字(`knownCardName` 已按这个顺序取好)→「未知卡片」 */
+/** Label of a card clip: name defined at build time → name in the sync table (`knownCardName` has already taken them in this order) → "Unknown card" */
 export const UNKNOWN_CARD_LABEL = tr("Unknown card");
 export function clipCardLabel(knownName: string | null | undefined): string {
   return typeof knownName === "string" ? knownName : UNKNOWN_CARD_LABEL;

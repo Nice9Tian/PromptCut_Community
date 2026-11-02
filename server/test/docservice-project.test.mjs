@@ -1,11 +1,16 @@
 /**
- * 项目版本模块（契约 `docs/plan/docservice-contract.md` 第 1 节、第 3 节，用例 P1～P7）。
- * 跑：node --test server/test/docservice-project.test.mjs
+ * Project version module (contract `docs/plan/docservice-contract.md` sections 1 and 3,
+ * test cases P1 to P7).
+ * Run: node --test server/test/docservice-project.test.mjs
  *
- * 只照契约写，不看实现。被测模块用动态 import 取，模块缺失时每条用例各自失败。
- * `createDocService` 独立模式、端口 0、`autoTick: false`；时钟用 `now` 注入；存储用 memory 或临时目录。
- * principal 由测试的 `authenticate` 按查询串 `?user=` 给出（见 `fake-docservice-env.mjs`）。
- * 本模块的回包都原样带回请求的 `reqId`（契约第 1 节），测试按 `reqId` 取回包。
+ * Written strictly against contract, ignoring implementation. Tested module is retrieved via
+ * dynamic import; each test case fails individually when module is missing.
+ * `createDocService` standalone mode, port 0, `autoTick: false`; clock injected via `now`; storage
+ * uses memory or temporary directory.
+ * principal is provided by test `authenticate` based on query string `?user=`
+ * (see `fake-docservice-env.mjs`).
+ * All responses from this module return the request's `reqId` as is (contract section 1); tests
+ * retrieve responses by `reqId`.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +21,7 @@ import { byType } from './fake-ws-kit.mjs';
 import { loadStore, loadProject, tempDir, startStandalone, ask } from './fake-docservice-env.mjs';
 
 const T0 = 1_700_000_000_000;
-/** 64 位十六进制摘要 */
+/** 64-character hexadecimal digest */
 const dg = (seed) => createHash('sha256').update(String(seed)).digest('hex');
 
 async function start({ store, clock = { t: T0 } } = {}) {
@@ -49,7 +54,7 @@ test('P1 project.open on a project never seen: projectRev 0, digest null, at nul
   const h = await env.health();
   assert.ok(Array.isArray(h.modules) && h.modules.includes('project'), `/healthz.modules must include project: ${JSON.stringify(h.modules)}`);
 
-  // 契约第 10 节第 5 条：不往 /healthz 加字段，只提供 describe()
+  // Contract section 10 item 5: does not add fields to /healthz, only provides describe()
   const bare = await startStandalone({ modules: [] });
   t.after(bare.cleanup);
   assert.deepEqual(Object.keys(h).sort(), Object.keys(await bare.health()).sort(), 'the /healthz field set is unchanged after mounting the project module');
@@ -82,7 +87,7 @@ test('P2 announce a new digest: projectRev increments by one; only connections s
   const pick = (m) => ({ type: m.type, projectId: m.projectId, projectRev: m.projectRev, digest: m.digest, actor: m.actor, at: m.at });
   assert.deepEqual(pick(await b.next(byType('project.rev'))), expected, 'another subscriber of the same project receives project.rev');
   assert.deepEqual(pick(await a.next(byType('project.rev'))), expected, 'the originator is also among the subscribers');
-  // 契约第 10 节第 2 条：同一条请求先回包、后广播
+  // Contract section 10 item 2: for the same request, respond first, then broadcast
   const iAck = a.all.findIndex((m) => m.type === 'project.announced');
   const iRev = a.all.findIndex((m) => m.type === 'project.rev');
   assert.ok(iAck >= 0 && iRev > iAck, `project.announced comes before project.rev: announced@${iAck}, rev@${iRev}`);
@@ -91,7 +96,7 @@ test('P2 announce a new digest: projectRev increments by one; only connections s
   assert.equal(idle.all.filter(byType('project.announced')).length, 0, 'project.announced is not sent to connections other than the originator');
   assert.equal(b.all.filter(byType('project.announced')).length, 0, 'project.announced is not sent to connections other than the originator');
 
-  // 第二次变化：再加一
+  // Second change: add one more
   env.clock.t = T0 + 2000;
   const ack2 = await announce(b, { projectId: 'proj-A', digest: dg(2) });
   assert.equal(ack2.projectRev, 2);
@@ -101,16 +106,16 @@ test('P2 announce a new digest: projectRev increments by one; only connections s
     'actor.session is null when no session is given');
   await b.next(byType('project.rev'));
 
-  // 没 open 的连接也能 announce：拿到 announced，但收不到广播
+  // Connections without open can also announce: get announced, but do not receive broadcasts
   const ack3 = await announce(idle, { projectId: 'proj-A', digest: dg(3) });
   assert.equal(ack3.projectRev, 3);
   assert.deepEqual(await revs(idle), [], 'the originator does not receive project.rev when not subscribed');
   assert.equal((await a.next(byType('project.rev'))).projectRev, 3);
 
-  // 状态
+  // State
   const st = await open(other, 'proj-A');
   assert.deepEqual({ projectRev: st.projectRev, digest: st.digest, at: st.at }, { projectRev: 3, digest: dg(3), at: T0 + 2000 });
-  // project.close 退订
+  // project.close unsubscribe
   const closedAck = await ask(b, { type: 'project.close', projectId: 'proj-A' });
   assert.deepEqual({ type: closedAck.type, projectId: closedAck.projectId }, { type: 'project.closed', projectId: 'proj-A' });
   await announce(a, { projectId: 'proj-A', digest: dg(4) });
@@ -159,10 +164,12 @@ test('P4 file storage: after the service is shut down and created anew in the sa
     assert.equal((await announce(a, { projectId: 'p4', digest: dg(i) })).projectRev, i);
   }
   assert.equal((await announce(a, { projectId: 'p4-other', digest: dg('o') })).projectRev, 1);
-  // 合法的 projectId 可以含 ':'（契约第 1 节的正则）；文件名怎么映射由实现决定，这里只要求能恢复
+  // Valid projectId may contain ':' (regex in contract section 1); filename mapping is
+  // implementation-defined, only recoverability is required here
   assert.equal((await announce(a, { projectId: 'scene:p4', digest: dg('c1') })).projectRev, 1);
   assert.equal((await announce(a, { projectId: 'scene:p4', digest: dg('c2') })).projectRev, 2);
-  // 只差大小写的两个项目（契约第 10 节第 9 条：Windows 上可能落到同一个文件，回放按 projectId 过滤）
+  // Two projects differing only by case (contract section 10 item 9: may land on the same file on
+  // Windows, replay filters by projectId)
   assert.equal((await announce(a, { projectId: 'CaseP4', digest: dg('U1') })).projectRev, 1);
   assert.equal((await announce(a, { projectId: 'casep4', digest: dg('l1') })).projectRev, 1);
   assert.equal((await announce(a, { projectId: 'casep4', digest: dg('l2') })).projectRev, 2);
@@ -202,7 +209,7 @@ test('P5 every line of the log file is valid JSON with all fields present, and a
   clock.t = T0 + 20;
   await announce(a, { projectId: 'p5', digest: dg(2), userId: 'mallory' });
   clock.t = T0 + 30;
-  await announce(a, { projectId: 'p5', digest: dg(2) }); // 相同，不写
+  await announce(a, { projectId: 'p5', digest: dg(2) }); // Identical, do not write
 
   const file = join(dir, 'projects', 'p5.ndjson');
   assert.ok(existsSync(file), `log file is at <dir>/projects/<projectId>.ndjson: ${JSON.stringify(readdirSync(dir, { recursive: true }))}`);
@@ -250,7 +257,8 @@ test('P6 validation: an invalid projectId, digest or session → bad-message (ca
 
   let n = 0;
   for (const msg of cases) {
-    // 按 reqId 或 error 类型等，免得 reqId 没带回时每条都等到超时；reqId 另行断言
+    // Wait by reqId or error type to avoid waiting until timeout when reqId is not returned; reqId
+    // asserted separately
     const reqId = `p6-${++n}`;
     a.send({ ...msg, reqId });
     const reply = await a.next((m) => m.reqId === reqId || m.type === 'error');
@@ -264,7 +272,7 @@ test('P6 validation: an invalid projectId, digest or session → bad-message (ca
   const st = await open(w, 'p6');
   assert.deepEqual({ projectRev: st.projectRev, digest: st.digest }, { projectRev: 1, digest: dg(1) }, 'state unchanged');
 
-  // 边界上合法的值照常通过
+  // Borderline valid values pass as usual
   const ok = await announce(a, { projectId: 'A-z.0_:9', digest: '0123456789abcdef', session: 'x'.repeat(128) });
   assert.deepEqual({ type: ok.type, projectRev: ok.projectRev }, { type: 'project.announced', projectRev: 1 });
   const ok2 = await announce(a, { projectId: 'y'.repeat(128), digest: 'f'.repeat(128), session: 's' });
@@ -286,7 +294,7 @@ test('P7 the last line of the log is truncated (a half line written by hand): th
 
   const file = join(dir, 'projects', 'p7.ndjson');
   assert.ok(existsSync(file), 'log file is at <dir>/projects/p7.ndjson');
-  appendFileSync(file, `{"projectId":"p7","rev":3,"digest":"${dg(3).slice(0, 20)}`); // 半行，没有换行
+  appendFileSync(file, `{"projectId":"p7","rev":3,"digest":"${dg(3).slice(0, 20)}`); // Half line, no newline
 
   const env2 = await start({ store: createFileStore({ dir }), clock });
   t.after(env2.cleanup);

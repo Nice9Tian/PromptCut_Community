@@ -1,13 +1,17 @@
 /**
- * C10 预留接口 L5：素材服务的合并分发（`docs/plan/c10-contract.md` 第 11 节；语义 `mechanism/platforms.md`「预留的接口」）。
- * 跑：node --test server/test/c10-merge-501.test.mjs
+ * C10 reserved interface L5: asset service merge distribution (`docs/plan/c10-contract.md` Section
+ * 11; semantics `mechanism/platforms.md` "reserved interface").
+ * Run: node --test server/test/c10-merge-501.test.mjs
  *
- *   C10-MG-01 `POST merge/<projectId>/<共享键>` 回 501；
- *   C10-MG-02 只占位、不解析 projectId：什么样的 projectId 都回 501，不回 400 / 404；
- *   C10-MG-03 占位不影响原有路由：`GET media/<hash>` 照旧（不存在回 404）。
+ *   C10-MG-01 `POST merge/<projectId>/<sharedKey>` returns 501;
+ *   C10-MG-02 Placeholder only, does not parse projectId: returns 501 for any projectId, does not
+ *             return 400 / 404;
+ *   C10-MG-03 Placeholder does not affect existing routes: `GET media/<hash>` as before (returns
+ *             404 if nonexistent).
  *
- * 素材服务按 `auth-kit.mjs` 的 `loadAsset()` 转译后起在 `listen(0)` 上，内存存储，回环来源。
- * 假设见 `c10-kit.mjs` 的 K11。门不开时整组 skip。
+ * Asset service starts on `listen(0)` after translation via `loadAsset()` from `auth-kit.mjs`,
+ * in-memory storage, loopback origin.
+ * Assumptions see K11 in `c10-kit.mjs`. Skip entire group when gate is closed.
  */
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';

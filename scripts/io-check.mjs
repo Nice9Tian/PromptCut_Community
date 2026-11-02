@@ -3,8 +3,8 @@ import fs from 'fs';
 import path from 'path';
 import { PNG } from 'pngjs';
 
-// 地址必须显式给(--url <地址> 或环境变量 PROMPTCUT_BASE),不给就报用法退出:
-// 永不缺省连用户常驻的编辑器(5190～5192)。
+// URL must be explicitly provided (--url <url> or environment variable PROMPTCUT_BASE);
+// if omitted, report usage and exit: never connect to the user's resident editor by default (5190-5192).
 const urlArg = process.argv.indexOf('--url');
 const BASE = ((urlArg >= 0 ? process.argv[urlArg + 1] : '') || process.env.PROMPTCUT_BASE || '').replace(/\/+$/, '');
 if (!BASE || BASE.startsWith('--')) {
@@ -108,8 +108,9 @@ if (!BASE || BASE.startsWith('--')) {
   console.log('Warnings caught during this step:', warnCount - oldFormatWarnCountBefore);
 
   console.log('\n--- Step 6: Final exportVideo ---');
-  // 第 5 步把项目换成了只含 1 张卡(0-2s)的旧编排,直接导 0-89 帧的话第 89 帧上没有卡片。
-  // reload 一次让 Editor 重新自动铺满 10 张演示卡,保证 0-3s 全程都有动效叠在视频上。
+  // Step 5 replaced the project with an old arrangement containing only 1 card (0-2s); if exporting
+  // frames 0-89 directly, frame 89 has no card. Reload once to let Editor automatically tile 10 demo
+  // cards again, ensuring motion graphics are overlaid on the video across the entire 0-3s.
   await page.reload();
   await page.waitForFunction(() => {
     if (!window.__pcIo) return false;

@@ -1,10 +1,16 @@
 /**
- * 保存时的界面:保存进行中盖一层「正在保存」(前台编辑暂停,见 `saveLock.ts`),保存结束后把结果说清楚。
+ * UI while saving: while a save is in progress, overlay a "Saving" layer (foreground editing paused,
+ * see `saveLock.ts`), and when saving ends, state the result clearly.
  *
- * - 保存中:整页盖一层半透明的罩子,中间一张小卡写「正在保存项目」和正在等的本机写入;罩子只是让用户看得见现在不能编辑,
- *   真正拦输入的是 `saveLock.ts` 在 window 捕获阶段挂的拦截。
- * - 结束后:没保存成(等本机写入超时、写盘失败)或保存成了但有话要说(退回浏览器下载、包里缺素材、预渲染快照没存进去)时,
- *   顶部出一张不挡操作的卡片 —— 锁已经解了,编辑照常,卡片点「知道了」或按 Esc 收起。
+ * - Saving: a semi-transparent scrim over the whole page, with a small card in the middle reading
+ *   "Saving project" and the local writes being waited on; the scrim only lets the user see that
+ *   editing is not possible right now, what actually blocks input is the interception that
+ *   `saveLock.ts` attaches in the window capture phase.
+ * - After it ends: when saving did not succeed (timeout waiting for local writes, disk write
+ *   failure) or succeeded but has something to say (fell back to a browser download, media missing
+ *   from the package, prerender snapshots not saved), a card that does not block operation appears
+ *   at the top: the lock is already released and editing continues as usual; the card is dismissed
+ *   with "Got it" or Esc.
  */
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { dismissSaveNotice, getSaveLockState, getSaveNotice, subscribeSaveLock, subscribeSaveNotice } from "./saveLock";

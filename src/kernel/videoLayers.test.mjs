@@ -1,12 +1,17 @@
 /**
- * 画面层的「现在」和「下一段」。跑:node --test src/kernel/videoLayers.test.mjs
+ * "Current" and "next clip" for video layers. Run: node --test src/kernel/videoLayers.test.mjs
  *
- * 预览的双缓冲播放器(editor/preview/MediaLayers.tsx)每条序列固定两个 <video>:一个放当前段,
- * 一个提前装好下一段、seek 到起点。「下一段是谁」就是 nextVideoLayerAfter 回答的。钉死:
- *   - 按序列分开找,每条序列只给离 t 最近的那一段,而且严格在 t 之后(正在播的那段不算);
- *   - 口径和 videoLayersAt 一致:跳过隐藏序列、音频段、卡片段、找不到素材的段,顺序也一样;
- *   - 空档里(这一刻这条序列没有画面)照样能找到空档后面那段 —— 空档正是提前装好的好时机;
- *   - videoLayersAt 带上 trackId,预览才能按序列把「当前段」和「下一段」配成一对。
+ * The preview double-buffered player (editor/preview/MediaLayers.tsx) fixes two <video> elements
+ * per track: one holds the current clip, and one preloads the next clip and seeks to the start.
+ * "Which clip is next" is what nextVideoLayerAfter answers. Pin down:
+ *   - Search per track, returning only the clip closest to t for each track, strictly after t
+ *     (the currently playing clip does not count);
+ *   - Matches videoLayersAt criteria: skips hidden tracks, audio clips, card clips, and clips
+ *     with missing media, in the same order;
+ *   - In gaps (when this track has no video at this moment), the clip after the gap is still
+ *     found: a gap is the ideal time to preload;
+ *   - videoLayersAt includes trackId so preview can pair up "current clip" and "next clip"
+ *     by track.
  */
 import test from "node:test";
 import assert from "node:assert/strict";

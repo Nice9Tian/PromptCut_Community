@@ -1,9 +1,14 @@
 /**
- * 「冲突合并」窗口的界面状态(桌面窗口 `ConflictMerge.tsx` 与手机版面板 `src/mobile/sheets.tsx` 共用):
- * 两级列表按当前项目现算(`mergeItems.ts` 的 `mergeRows`),勾选、顶端两个按钮、底部三个按钮的动作都在这里。
+ * UI state of the "Conflict merge" window (shared by the desktop window `ConflictMerge.tsx` and the
+ * mobile app panel `src/mobile/sheets.tsx`):
+ * the two-level list is computed from the current project (`mergeRows` in `mergeItems.ts`), and the
+ * actions of the checkboxes, the two buttons at the top and the three buttons at the bottom are all
+ * here.
  *
- * 「每次点合并时重新核对」在两处做:列表重算时某个已勾选的二级项的云端值变了(窗口开着时别人又改了它),
- * 当场取消勾选并说一句;点「合并」时再按显示时记下的云端值核一遍(`syncManager.mergeSelected`)。
+ * "Re-check on every Merge click" is done in two places: when the list is recomputed and the cloud
+ * value of a checked second-level item has changed (someone else changed it again while the window
+ * was open), uncheck it on the spot and say so; on clicking "Merge", check once more against the
+ * cloud value recorded when it was displayed (`syncManager.mergeSelected`).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "../../store/project";
@@ -28,13 +33,13 @@ export interface ConflictMergeState {
   sel: Selection;
   counts: { total: number; conflicts: number };
   selected: number;
-  /** 连着文档服务(能点「合并」) */
+  /** Connected to the document service (the "Merge" button works) */
   online: boolean;
-  /** 最近一次操作的结果,或「刚被别人改过」的提醒 */
+  /** Result of the latest action, or the "just changed by someone else" notice */
   note: string | null;
-  /** 还有可选项:关闭按钮叫「下次再说」;没有了叫「完成」 */
+  /** There are still options: the close button reads "Later"; when none are left it reads "Done" */
   hasItems: boolean;
-  /** 文档服务不收待合并表时的原因(旧服务、超限) */
+  /** Why the document service does not accept a pending merge list (old service, over the limit) */
   blocked: string | null;
   check(row: ThingRow): "all" | "some" | "none";
   toggleThing(row: ThingRow): void;
@@ -55,7 +60,7 @@ export function useConflictMerge(): ConflictMergeState {
   const rows = useMemo(() => mergeRows(project, things), [project, things]);
   const [sel, setSel] = useState<Selection>(new Map());
   const [note, setNote] = useState<string | null>(null);
-  /** 显示时各二级项的云端值(点「合并」时拿它核对) */
+  /** Cloud value of each secondary item at display time (checked against when "Merge" is clicked) */
   const seen = useRef(new Map<string, Box>());
 
   useEffect(() => {
@@ -80,7 +85,7 @@ export function useConflictMerge(): ConflictMergeState {
     } else {
       setSel((s) => pruneSelection(rows, s));
     }
-    // 只跟着列表变;勾选变了不重算
+    // Follows the list only; changing the checkboxes does not recompute
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows]);
 
@@ -120,14 +125,14 @@ export function useConflictMerge(): ConflictMergeState {
   };
 }
 
-/** 冲突横条与导航栏按钮的计数(不开窗口时也要) */
+/** Count for the conflict banner and the nav bar button (needed even when the window is closed) */
 export function useMergeCounts(): { total: number; conflicts: number } {
   const things = useSync((v) => v.merge.things);
   const project = useStore((s) => s.project);
   return useMemo(() => mergeCounts(mergeRows(project, things)), [project, things]);
 }
 
-/** 横条与按钮上的那句话:「N 处改动待合并，其中 M 处有冲突」 */
+/** The sentence on the banner and the button: "N changes pending merge, M of them in conflict" */
 export function mergeBarText(c: { total: number; conflicts: number }): string {
   return tr("{0} changes to merge{1}", c.total, c.conflicts ? tr(", {0} of them in conflict", c.conflicts) : "");
 }

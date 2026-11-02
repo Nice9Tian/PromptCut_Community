@@ -1,8 +1,12 @@
 /**
- * M7-T：凭证一侧。D9（profile 与 nodeId 绑到凭证，自报不作数）、D10（环境指纹由服务端按原始值算）、D14（非 Chromium 不当节点）。
- * 依据：`docs/plan/m7-contract.md` 第 5 节与第 13 节裁定；验收 M7-A2 末句（D9：B 以 pc 报到回 forbidden）。
- * 经真路由 + 真队列模块 + 真队列驱动（两层任一实现都覆盖），不起网络。假设见 `m7-kit.mjs` 的 K2、K3。
- * 跑：node --experimental-test-module-mocks --test server/test/m7-credentials.test.mjs
+ * M7-T: Credential side. D9 (profile and nodeId bound to credentials, self-reporting does not count),
+ * D10 (environment fingerprint computed by server from raw values), D14 (non-Chromium does not act
+ * as node).
+ * Basis: `docs/plan/m7-contract.md` section 5 and section 13 rulings; acceptance check M7-A2 last
+ * sentence (D9: B checking in as pc returns forbidden).
+ * Driven by real router + real queue module + real queue (covers either implementation at both
+ * layers), without network. Assumptions see K2, K3 in `m7-kit.mjs`.
+ * Run: node --experimental-test-module-mocks --test server/test/m7-credentials.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,7 +25,7 @@ const isForbidden = (m) => m?.type === 'error' && m.reason === 'forbidden';
 test('D9 normalizeOwner accepts { kind: "browser" } and does not accept extra keys (K2)', gateOpts(authOwnerGate()), () => {
   assert.deepEqual(normalizeOwner({ kind: 'browser' }), { kind: 'browser' });
   assert.equal(normalizeOwner({ kind: 'browser', c: 1 }), null);
-  // 原有两种照旧
+  // Original two types remain as before
   assert.deepEqual(normalizeOwner({ kind: 'user' }), { kind: 'user' });
   assert.deepEqual(normalizeOwner({ kind: 'agent', c: 2 }), { kind: 'agent', c: 2 });
 });
@@ -74,7 +78,7 @@ test('D9 nodeId is bound to the userId that first checked in: another userId (sa
     const r = hello(rig, conn, { nodeId: 'n-shared', profile, environment: ENV.winNvidiaChrome, envFingerprint: fpA });
     assert.ok(isForbidden(r), `${p.userId} (owner ${p.owner?.kind}) spoofing the nodeId should be forbidden: ${JSON.stringify(r)}`);
   }
-  // 原节点还连着、还收本人任务的增量
+  // Original node is still connected and still receives deltas for own tasks
   const node = rig.describe().nodes.find((n) => n.nodeId === 'n-shared');
   assert.equal(node?.connected, true, JSON.stringify(node));
   rig.connect('pageA', memberPrincipal({ username: 'zoe', device: 'devA', role: 'page' }));
@@ -145,14 +149,14 @@ test('D10 a browser connection that reports only envFingerprint and not the raw 
   assert.notEqual(rig.ask('a', { type: 'task.claim', id: t.id, expectVersion: 1 })?.type, 'task.claimed');
 });
 
-/* ================================================================== D14（服务端这一侧，见 K3 末段） */
+/* ================================================================== D14 (Server side, see end of K3) */
 
 test('D14 a non-Chromium (Firefox, Safari) browser node cannot claim a single snapshot task, even if the task key happens to be the fingerprint it would run into', gateOpts(serverFpGate()), () => {
   const rig = createDocQueueRig();
   rig.connect('pageA', memberPrincipal({ username: 'zoe', device: 'devA', role: 'page' }));
   rig.send('pageA', { type: 'publisher.hello', publisherId: 'pub-A' });
   for (const [name, env] of [['firefox', ENV.winNvidiaFirefox], ['safari', ENV.macSafari]]) {
-    // 今天的 chromeMajorOf 对这两种 UA 取到 5（Mozilla/5.0），这就是会撞的指纹
+    // Today's chromeMajorOf gets 5 (Mozilla/5.0) for both UAs, which is the colliding fingerprint
     const collide = serverFingerprintOf(env);
     const t = snapTask({ contentKey: `ck-${name}`, fp: collide });
     rig.send('pageA', { type: 'task.publish', tasks: [t] });

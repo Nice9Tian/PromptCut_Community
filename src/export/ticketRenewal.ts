@@ -1,31 +1,36 @@
 /**
- * 逐帧导出续签只读票据(C10 契约第 12 节、第 18 节第 5 条)。
+ * Renew read-only ticket for frame-by-frame export (C10 contract Section 12, Section 18 Item 5).
  *
- * 在线页面的逐帧导出(c10a 契约第 11.1 节)可能比只读票据的时限(15 分钟)还长。导出途中按时限**提前**续签,
- * 不中断、不出错:
+ * Frame-by-frame export on online pages (c10a contract Section 11.1) may take longer than the
+ * read-only ticket lifetime (15 minutes). Renew **in advance** during export based on the limit,
+ * without interruptions or errors:
  *
- *   - `start()` 取第一张(回 Promise);`ticket()` 同步回当前这一张(导出页每一帧装素材时读);`stop()` 收摊;
- *   - 每张票据在剩下三分之一寿命时续签(与页面的 `assetTicketSource` 同一个时点);
- *   - 续签失败不换掉旧的(旧的还没过期就照用),在过期之前再试:每隔 `RENEW_RETRY_MS`、且不晚于过期前 `RENEW_MARGIN_MS`;
- *   - 取票复用页面已有的 `assetTicketSource`(`src/editor/media/assetTiers.ts`),由调用方经 `fetchTicket` 注入。
+ *   - `start()` fetches the first ticket (returns Promise); `ticket()` synchronously returns the
+ *     current ticket (read when export page loads assets on each frame); `stop()` cleans up;
+ *   - Renew each ticket when one-third of its lifetime remains (same timing as the page's
+ *     `assetTicketSource`);
+ *   - If renewal fails, do not replace the old one (keep using it if not expired), retry before
+ *     expiration: every `RENEW_RETRY_MS`, and no later than `RENEW_MARGIN_MS` before expiration;
+ *   - Ticket fetching reuses the page's existing `assetTicketSource`
+ *     (`src/editor/media/assetTiers.ts`), injected by caller via `fetchTicket`.
  *
- * 用全局 `setTimeout`(单测用 `mock.timers` 推时间)。
+ * Uses global `setTimeout` (unit tests advance time using `mock.timers`).
  */
 
 export interface TicketInfo { ticket: string; exp: number }
 
-/** 剩下寿命的这个比例时续签 */
+/** Renew when this ratio of lifetime remains */
 export const RENEW_AT_REMAINING = 1 / 3;
-/** 续签失败后多久再试 */
+/** How long to wait before retrying after renewal failure */
 export const RENEW_RETRY_MS = 5_000;
-/** 最晚在过期前这么久再试一次 */
+/** Retry at the latest this long before expiration */
 export const RENEW_MARGIN_MS = 1_000;
 
 export interface TicketRenewer {
   start(): Promise<string | null>;
   ticket(): string | null;
   stop(): void;
-  /** 探针看:续签过几次、失败几次、当前这张哪一刻过期 */
+  /** Probe view: renewal count, failure count, and when the current ticket expires */
   stats(): { renewals: number; failures: number; exp: number | null };
 }
 
@@ -44,7 +49,7 @@ export function createTicketRenewer({ fetchTicket, now = Date.now }: { fetchTick
     timer = setTimeout(() => { timer = null; fn(); }, Math.max(0, ms));
   };
 
-  /** 下一次续签的时刻:剩下三分之一寿命时 */
+  /** Next renewal time: when one-third of lifetime remains */
   const scheduleRenew = () => {
     if (!cur) return;
     const life = Math.max(0, cur.exp - issuedAt);
@@ -52,7 +57,7 @@ export function createTicketRenewer({ fetchTicket, now = Date.now }: { fetchTick
     at(renewAt - now(), () => { void renew(); });
   };
 
-  /** 续签失败:过期之前再试(不晚于过期前 RENEW_MARGIN_MS) */
+  /** Renewal failed: retry before expiration (no later than RENEW_MARGIN_MS before expiration) */
   const scheduleRetry = () => {
     const left = cur ? cur.exp - now() : 0;
     const wait = cur && left > RENEW_MARGIN_MS ? Math.min(RENEW_RETRY_MS, left - RENEW_MARGIN_MS) : RENEW_RETRY_MS;
@@ -61,7 +66,7 @@ export function createTicketRenewer({ fetchTicket, now = Date.now }: { fetchTick
 
   const accept = (t: TicketInfo | null): boolean => {
     if (!t || typeof t.ticket !== "string" || !t.ticket || !Number.isFinite(t.exp)) return false;
-    // 取回来的还是同一张(来源还在用缓存):不算续上,稍后再试
+    // Retrieved ticket is still the same one (source still using cache): not renewed, retry later
     if (cur && t.ticket === cur.ticket && t.exp <= cur.exp) return false;
     cur = { ticket: t.ticket, exp: t.exp };
     issuedAt = now();
@@ -93,7 +98,7 @@ export function createTicketRenewer({ fetchTicket, now = Date.now }: { fetchTick
   };
 }
 
-/** 素材地址里的只读票据(`?t=` / `&t=`)换成这一张;没带票据的原样 */
+/** Replace read-only ticket (`?t=` / `&t=`) in asset URL with this one; keep unchanged if no ticket */
 export function withTicket(url: string, ticket: string | null): string {
   if (!ticket || !url) return url;
   const m = /([?&])t=[^&#]*/.exec(url);

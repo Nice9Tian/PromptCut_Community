@@ -1,15 +1,23 @@
 /*
- * 查询渲染的调度(`docs/semantics/product/rendering.md`「Agent 优先只是插队」「AI 栏的操作预览可以插队」,
- * `docs/semantics/mechanism/rendering.md`「查询渲染与预渲染进程」;报告 `docs/reports/AGENT-query-render.md`)。
+ * Scheduling of query render (`docs/semantics/product/rendering.md` "Agent priority is only
+ * queue-jumping", "Operation previews in the AI panel can jump the queue";
+ * `docs/semantics/mechanism/rendering.md` "Query render and prerender process"; report
+ * `docs/reports/AGENT-query-render.md`).
  *
- *   QR-G1-*  用户在 AI 栏点开的操作预览(`see_frames` 的 `'preview'` 批):不进 Agent lane、插在普通预渲染队列所有待办之前、
- *            不打断正在跑的那一项、Agent 专用实例空着也不接它;模型自己要的仍走 Agent lane。
- *   QR-G2-*  Agent 专用实例空闲时接普通预渲染:Agent 队列空才接、一次一项;Agent 任务来了在当前那一项做完后先做,
- *            不排在预渲染待办后面;不为接预渲染开 Chrome;同一张卡不在两个实例上同时渲;编辑器进程仍没有 Agent lane;
- *            后台那一趟的卡批可以被借走,每批只做一次、收尾只做一次。
+ *   QR-G1-*  Operation previews opened by user in AI panel (`'preview'` batch of `see_frames`):
+ *            does not enter Agent lane, inserted ahead of all pending items in normal prerender
+ *            queue, does not interrupt currently running item, Agent dedicated instance will not
+ *            take it even if idle; requests requested by model itself still go through Agent lane.
+ *   QR-G2-*  Agent dedicated instance takes normal prerenders when idle: only when Agent queue is
+ *            empty, one item at a time; when Agent task arrives, runs first after current item
+ *            finishes without queuing behind pending prerenders; does not launch Chrome to take
+ *            prerenders; same card is not rendered on two instances concurrently; editor process
+ *            still has no Agent lane; card batches from background pass can be borrowed, each batch
+ *            processed only once, finalized only once.
  *
- * 浏览器全部替掉:lane 上预先放假的预渲染间(`acquire` 走「复用、重置」那条路),`bakeFrames` 换成假的。
- * 跑法:`node --experimental-test-module-mocks --test server/test/query-render.test.mjs`
+ * All browsers replaced: lanes pre-populated with fake prerender rooms (`acquire` takes "reuse,
+ * reset" path), `bakeFrames` replaced with fake.
+ * Run: `node --experimental-test-module-mocks --test server/test/query-render.test.mjs`
  */
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,7 +35,7 @@ async function until(check, ms = 3000) {
   }
 }
 
-/** 假 `bakeFrames`:记下在哪个预渲染间上推了哪些帧,每帧调 `onFrame` */
+/** Fake `bakeFrames`: records which frames pushed to which prerender room, calls `onFrame` per frame */
 const bakeLog = [];
 let onBakeStart = null;
 mock.module(new URL('../bakery/index.mjs', import.meta.url).href, {
@@ -72,13 +80,15 @@ function tmpRoot() {
 test.after(() => { for (const dir of tmpRoots) fs.rmSync(dir, { recursive: true, force: true }); });
 
 /**
- * `agentOpen`:Agent 专用实例的预渲染间是不是已经开着(Agent 最近用过)。`'queue'` lane 的预渲染间总是预先放好。
- * `readFramesCore` 换成「借一下、记下是哪条 lane、在哪个预渲染间上」。
+ * `agentOpen`: whether prerender room for Agent dedicated instance is open (used recently by
+ * Agent). Prerender room for `'queue'` lane is always pre-populated.
+ * `readFramesCore` replaced with "borrow, record which lane and on which prerender room".
  */
 function harness({ agentOpen = false, interactive = true, graceMs = 0 } = {}) {
   const log = [];
   const svc = new FramePipeline({ root: tmpRoot(), origin: () => 'http://127.0.0.1:1', interactive });
-  // Agent 任务做完之后的空档(`AGENT_GRACE_MS`)只在 QR-G2-10 里量,其余用例给 0
+  // Grace period (`AGENT_GRACE_MS`) after Agent task completes is only measured in QR-G2-10;
+  // other cases use 0
   svc.agentGraceMs = graceMs;
   const bakeries = { queue: fakeBakery('queue', log), agent: fakeBakery('agent', log) };
   svc.lanes.set('queue', { bakery: bakeries.queue });
@@ -92,7 +102,7 @@ function harness({ agentOpen = false, interactive = true, graceMs = 0 } = {}) {
     if (!lease) svc.release(lane);
     return new Map(frames.map(n => [n, { buf: Buffer.alloc(0), source: 'mov' }]));
   };
-  /** 排一项普通预渲染:开工记 `<name>:start@<预渲染间>`,放行后记 `<name>:end` */
+  /** Queues normal prerender: on start records `<name>:start@<prerender room>`, after release `<name>:end` */
   const task = (name, { hold = null, ...options } = {}) => svc.runQueueTask(async lease => {
     const bakery = await lease(project);
     log.push(`${name}:start@${bakery.name}`);
@@ -118,7 +128,7 @@ test('QR-G1-1 an operation preview opened by the user does not enter the Agent l
     assert.deepEqual(log.filter(x => x.includes('@')), ['preview@queue']);
     assert.equal(agentTasks, 0, 'did not go through runAgentTask');
     assert.ok(!log.includes('agent.reset'), 'the prerender room of the Agent dedicated instance was neither reset nor borrowed');
-    // 操作预览按 1 倍渲(同它原来在 Agent lane 上一样),不跟着预渲染缩放
+    // Operation previews render at 1x (same as originally on Agent lane), without scaling with prerender
     assert.deepEqual(bakeries.queue.scales, [1]);
     assert.equal(svc.diagnostics().scheduler.counts['preview@queue'], 1);
     assert.equal(svc.diagnostics().scheduler.counts['agent@agent'], undefined);
@@ -202,7 +212,7 @@ test('QR-G1-6 routes are split by who asked: a GIF opened by the user goes throu
     'the model branch still goes through enqueue with foreground priority and the Agent lane');
   assert.match(routes, /const lane = pri > 0 \? "preview" : "prerender";/);
   assert.match(routes, /bakeClip\(root, originOf\(server\), resolved, clipId, ts, size, bg, "box", pri, \{ signal, lane \}\)/);
-  // bake_card(模型)不带 lane = 缺省 Agent
+  // bake_card (model) without lane = defaults to Agent
   assert.match(routes, /bakeOne\(root, originOf\(server\), resolveMediaUrls\(project\)\.project, clipId, Number\(t\), size, bg, "square", 1, undefined, \{ signal \}\)/);
   const render = read('../vision/render.ts');
   assert.match(render, /service\.see_frames\(normalized, times, \{ signal: o\.signal, lane: o\.lane \?\? "agent" \}\)/);
@@ -219,7 +229,7 @@ test('QR-G1-7 the image of a single card (bake_card, 3D view textures) is render
   const render = read('../vision/render.ts');
   assert.match(render, /if \(!o\.runner && o\.bitmapOnly\) \{\s*const shots = await renderCardBitmaps\(root, origin, project, times, \{ signal: o\.signal, lane: o\.lane \?\? "agent" \}\);/,
     'the bitmap path branches off before entering see_frames of frameService');
-  // 去掉注释再查:说明文字里会提到这些名字
+  // Check again after stripping comments: description text will mention these names
   const bitmap = read('../vision/card-bitmap.ts').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   for (const banned of ['see_frames', '.entry(', 'onSnapshot', 'snapshotFrames', '.record(', 'cardRender', 'writeMov', 'domCache'])
     assert.ok(!bitmap.includes(banned), `card-bitmap.ts should not contain ${banned}: this path creates no frame store entry and neither generates nor records snapshots`);
@@ -265,7 +275,7 @@ test('QR-G2-2 when an Agent task arrives: it runs first once the item in hand of
     assert.ok(at('B:end') < at('X@agent'), 'X comes after B finishes');
     assert.ok(!log.includes('C:start@agent') || at('X@agent') < at('C:start@agent'), 'X is queued ahead of the queued C');
     await Promise.all([c, d]);
-    // A 还占着 queue lane:C、D 都由 Agent 专用实例在 X 之后接走
+    // A still occupies queue lane: C and D are both taken by Agent dedicated instance after X
     assert.ok(at('X@agent') < at('C:start@agent') && at('C:end') < at('D:start@agent'), JSON.stringify(log));
     holdA.open();
     await a;
@@ -274,7 +284,7 @@ test('QR-G2-2 when an Agent task arrives: it runs first once the item in hand of
 
 test('QR-G2-3 the editor process (interactive: false) has no Agent lane: regular prerender runs only on the queue lane, and Agent tasks return NO_AGENT_LANE', async () => {
   const { svc, log, task } = harness({ interactive: false });
-  // 就算 lanes 里有一个 'agent'(编辑器进程里不会有),也不借它
+  // Even if lanes contains an 'agent' (which won't exist in editor process), do not borrow it
   svc.lanes.set('agent', { bakery: fakeBakery('agent', log) });
   try {
     const holdA = gate();
@@ -359,7 +369,7 @@ test('QR-G2-6 the idle timer fires while the dedicated instance is borrowed for 
   } finally { globalThis.setTimeout = realSet; await svc.close(); }
 });
 
-/* ---------------------------------------------- 后台那一趟的卡批(fillCardControls 的 share) */
+/* ---------------------------------------------- Card batches from background pass (fillCardControls share) */
 
 function cardHarness({ agentOpen = true } = {}) {
   const log = [];
@@ -378,7 +388,7 @@ function cardHarness({ agentOpen = true } = {}) {
       finish: async () => { finishes.push(puts.length); return true; },
     },
   };
-  // 32 帧 = 8 批;没有快照键(不在预渲染集合里的卡那一支),只走 PNG
+  // 32 frames = 8 batches; no snapshot key (branch for cards not in prerender set), PNG only
   const control = { clipId: 'c1', key: 'ck1', cacheable: true, count: 32, sampling: { firstFrame: 0 }, end: 2, capabilities: {} };
   return { svc, log, bakeries, entry, control, puts, finishes };
 }
@@ -409,7 +419,7 @@ test('QR-G2-8 an Agent task arrives while a background card batch is in progress
   let x = null;
   onBakeStart = async rec => {
     order.push(`${rec.bakery}:${rec.frames[0]}`);
-    // 专用实例第一次开工一批时,Agent 任务到达
+    // When dedicated instance starts working on a batch for the first time, Agent task arrives
     if (rec.bakery === 'agent' && !x) {
       x = svc.runAgentTask(async lease => { const bakery = await lease(project); order.push(`X@${bakery.name}`); });
     }
@@ -420,7 +430,7 @@ test('QR-G2-8 an Agent task arrives while a background card batch is in progress
     const agentBatches = order.map((e, i) => [e, i]).filter(([e]) => e.startsWith('agent:'));
     const xAt = order.indexOf('X@agent');
     assert.ok(xAt > agentBatches[0][1], 'X comes after the batch the dedicated instance had in hand');
-    // X 之前专用实例只开工了那一批:没有第二批插到 X 前面
+    // Dedicated instance only started that batch before X: no second batch inserted ahead of X
     assert.equal(agentBatches.filter(([, i]) => i < xAt).length, 1, JSON.stringify(order));
     const firstAgentEnd = bakeLog.findIndex(r => r.phase === 'end' && r.bakery === 'agent');
     assert.ok(firstAgentEnd >= 0, 'that batch finished (not interrupted)');
@@ -454,7 +464,7 @@ test('QR-G2-10 after an Agent task finishes, it stays idle for AGENT_GRACE_MS be
     const b = task('B');
     await sleep(20);
     assert.ok(!log.some(e => e.startsWith('B')), 'within the gap the dedicated instance does not take B');
-    // 空档之内又来一个 Agent 任务:马上做,不用等任何预渲染
+    // Another Agent task arrives within grace period: run immediately, no need to wait for prerender
     const t0 = Date.now();
     await svc.runAgentTask(async lease => { await lease(project); log.push('X2'); });
     assert.ok(Date.now() - t0 < 60, `X2 did not wait (${Date.now() - t0} ms)`);

@@ -1,14 +1,17 @@
 /**
- * J2 的守门脚本:预渲染页的驱动协议只能经 `window.__*`,而且必须和
- * `docs/guides/bake-page-protocol.md` 的两栏清单字字对上。
+ * Gatekeeper script for J2: the driver protocol for the prerender page can only go through
+ * `window.__*`, and must match word for word with the two-column manifest in
+ * `docs/guides/bake-page-protocol.md`.
  *
- * 做三件事:
- *   1. 扫 Node 侧的抓帧代码,收集全部 `window.__…` 的读写;
- *   2. 解析文档的两张表(HTML 路必需 / PNG 路 · puppeteer 专用),两边求对称差,不为空就失败;
- *   3. 断言导出页和舞台页都挂了 `__pcCreateSnapshot`(舞台页也提供 `__pcCreateSnapshot`)。
+ * Does three things:
+ *   1. Scans frame capture code on the Node side and collects all reads and writes of `window.__…`;
+ *   2. Parses the two tables in the doc (Required for HTML path / PNG path · puppeteer dedicated),
+ *      computes the symmetric difference of both sides, and fails if not empty;
+ *   3. Asserts that both the export page and the stage page attach `__pcCreateSnapshot` (the stage
+ *      page also provides `__pcCreateSnapshot`).
  *
- * 直接跑:`node scripts/verify-bake-protocol.mjs`。进 npm test 的落点是
- * `server/test/bake-protocol.test.mjs`。
+ * Run directly: `node scripts/verify-bake-protocol.mjs`. The drop target for npm test is
+ * `server/test/bake-protocol.test.mjs`.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-/** 只扫这几个:预渲染页的驱动全在这里(capture-snapshot.mjs 没有 window.__,不用扫) */
+/** Only scan these: prerender page drivers are all here (capture-snapshot.mjs has no window.__, no need to scan) */
 export const SCANNED_FILES = [
   'server/bakery/chrome.mjs',
   'server/bakery/bake.mjs',
@@ -37,7 +40,7 @@ const SECTIONS = [
   { heading: 'PNG 路 / puppeteer 专用', key: 'png' }, // i18n-allow
 ];
 
-/** 文件里出现的全部 `window.__xxx`,连它出现在哪个文件一起记 */
+/** All `window.__xxx` appearing in files, recorded along with which file it appears in */
 export function scanUsage() {
   const found = new Map();
   for (const file of SCANNED_FILES) {
@@ -52,7 +55,7 @@ export function scanUsage() {
   return found;
 }
 
-/** 文档两栏里列出的名字。表格行形如 `| \`__pcSetT\` | … | … |` */
+/** Names listed in the two columns of the doc. Table rows take the form `| \`__pcSetT\` | … | … |` */
 export function readDocLists() {
   const text = fs.readFileSync(path.join(root, DOC), 'utf8');
   const lists = {};
@@ -91,7 +94,7 @@ export function verifyBakeProtocol() {
     }
   }
 
-  // 舞台页也提供 __pcCreateSnapshot:两页同一份 src/render/createSnapshot.ts。
+  // Stage page also provides __pcCreateSnapshot: both pages share the same src/render/createSnapshot.ts.
   for (const page of ['src/ExportView.tsx', 'src/StageView.tsx']) {
     const text = fs.readFileSync(path.join(root, page), 'utf8');
     if (!/window\.__pcCreateSnapshot\s*=/.test(text)) problems.push(`${page} does not set window.__pcCreateSnapshot`);

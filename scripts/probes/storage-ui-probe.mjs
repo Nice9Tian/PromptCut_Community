@@ -1,25 +1,40 @@
 /**
- * 开始页「存储」一块与标题栏「存储…」的界面探针(存储占用计划 `docs/plan/storage-plan.md` 第 6 节「界面」)。
- * 在 worktree 根目录跑:
+ * UI probe for start page "Storage" section and title bar "Storage…" (storage footprint plan
+ * `docs/plan/storage-plan.md` section 6 "UI").
+ * Run from the worktree root directory:
  *
- *   node scripts/probes/storage-ui-probe.mjs [--port 5720] [--out <截图目录>]
+ *   node scripts/probes/storage-ui-probe.mjs [--port 5720] [--out <screenshot directory>]
  *
- * 起的东西(都由本探针起、跑完关掉):一台编辑器 dev server(`--port`,另占 +1、+2 当舞台端口;它自己再起一个预渲染进程),
- * 无头 Chrome。导出目录、数据目录都在系统临时目录里,里面预先造 3 份导出(一份完整、一份同秒重名且没有 project.json、
- * 一份未完成)和一份 `export-vision-*`;不碰桌面版的 `Videos\PromptCut`,不写公共的 port.json。
+ * Things started (all started by this probe and stopped upon completion): an editor dev server
+ * (`--port`, also occupying +1 and +2 as stage ports; it spawns its own prerender process), and
+ * headless Chrome. Export directory and data directory are located in system temporary directory,
+ * pre-populated with 3 exports (one complete, one duplicate name in the same second without
+ * project.json, one incomplete) and one `export-vision-*`; does not touch desktop app's
+ * `Videos\PromptCut`, does not write public port.json.
  *
- * 断言:
- *   U1 「存储」一块在;导出列表 3 条(`export-vision-*` 不列),新的在前;`/api/storage` 还没有(storage-cap 未合入)时缓存那一行是「暂时取不到」,页面没有报错;
- *   U2 「只删中间文件」后那一份的大小变小、中间文件那一栏没了,磁盘上只剩成片、透明层与 project.json;
- *   U3 「删除」(确认框)后少一份,磁盘上那个目录没了;
- *   U4 开始页上点标题栏「文件 → 存储…」滚到「存储」;从编辑器(`?editor`)点也回到开始页并滚到「存储」;
- *   U5 用拦截模拟 `/api/storage*`:显示占用与上限,「清理缓存」后显示腾出多少、数字变小,改上限发出的请求与回显对;
- *   U6 接口的路径校验:`..`、`export-vision-*` 回 400(不点真的「打开所在目录」,那会在桌面上弹资源管理器)。
- *   U7 (三支合并后)不拦截:真的 `/api/storage` 与 `/api/exports` 都 ok,导出一栏 = 列表合计(删一份、只删中间文件之后马上跟上);
- *      页面上真的「清理缓存」与改上限落到服务端(帧库、`storage.json` 都在临时目录)。U1 此时要求缓存那一行显示数字。
- *   U8 (最先跑,约多花 60 秒)往帧库里写一批帧,过 60 秒再打开开始页:先显示旧数,服务端后台量(`scanning: true`),
- *      页面自己隔几秒再取,十几秒内显示成真实值。大小一律按 1024(GB = 1024³)。
- * 结果最后一行是一行 JSON(`ok`、`fails`),截图在 --out。
+ * Assertions:
+ *   U1 "Storage" section is present; 3 export list items (`export-vision-*` excluded), newest
+ *      first; when `/api/storage` does not yet exist (storage-cap not merged), the cache row
+ *      displays "Temporarily unavailable", with no page errors;
+ *   U2 After "Delete intermediate files only", that export's size decreases, intermediate files
+ *      column is gone, and only final video, transparent layer, and project.json remain on disk;
+ *   U3 After "Delete" (confirmation dialog), one fewer export remains, and that directory is gone;
+ *   U4 Clicking title bar "File → Storage…" on start page scrolls to "Storage"; clicking from
+ *      editor (`?editor`) also returns to start page and scrolls to "Storage";
+ *   U5 Simulates `/api/storage*` with interception: displays usage and cap; after "Clear cache",
+ *      shows freed space and the number decreases; requests to update cap match echoes;
+ *   U6 Endpoint path validation: `..` and `export-vision-*` return 400 (avoids clicking real
+ *      "Open containing folder", which opens Explorer on desktop);
+ *   U7 (After 3-branch merge) Without interception: real `/api/storage` and `/api/exports` both
+ *      succeed; export column = list total (updates immediately after deleting an export or
+ *      intermediate files only); page's real "Clear cache" and cap change persist to server (frame
+ *      store and `storage.json` are both in temporary directory). U1 now requires cache row to
+ *      display numbers;
+ *   U8 (Runs first, takes ~60s longer) Writes batch of frames into frame store, waits 60s, then
+ *      opens start page: displays old numbers while server measures in background
+ *      (`scanning: true`), then page refetches every few seconds, displaying real value within a
+ *      dozen seconds. Sizes always based on 1024 (GB = 1024³).
+ * The last line of the output is a single JSON line (`ok`, `fails`), with screenshots in --out.
  */
 import '../lib/no-user-dirs.mjs';
 import fs from 'node:fs';
@@ -47,7 +62,7 @@ const DATA = path.join(TMP, 'data');
 fs.mkdirSync(DATA, { recursive: true });
 
 const fails = [];
-/** 耗时只记录(docs/semantics/guide_files/verification.md「耗时只记录,不当闸门」):开始页的占用数字自动变成真实值用了多久只写进 TIMINGS 行,不决定过不过 */
+/** Elapsed time is only recorded (docs/semantics/guide_files/verification.md "Record elapsed time only, do not treat as gate"): how long it took for the start page's usage number to automatically update to the real value is only written to the TIMINGS line, and does not determine pass/fail */
 const timingLog = createTimings('storage-ui-probe');
 const out = { ok: false, out: OUT, tmp: TMP };
 const check = (cond, label, extra) => { if (!cond) fails.push(label + (extra === undefined ? '' : ' :: ' + JSON.stringify(extra).slice(0, 400))); return !!cond; };
@@ -78,7 +93,7 @@ function makeExport(id, { preview = 0, overlay = 0, frames = 0, parts = 0, proje
   if (project) fs.writeFileSync(path.join(dir, 'project.json'), JSON.stringify(project));
   return dir;
 }
-// 完整的一份(有中间文件)、同秒重名且没有 project.json 的一份、未完成的一份(取消或失败留下的)、视觉工具的临时目录
+// One complete export (with intermediate files), one duplicate name in the same second without project.json, one incomplete export (leftover from cancellation or failure), and temporary directory for vision tools
 const FULL = 'export-20260920-101500';
 const DUP = 'export-20260920-101500-2';
 const HALF = 'export-20260921-080000';
@@ -108,7 +123,7 @@ async function stopTree(child) {
 let browser = null;
 try {
   for (const p of [PORT, PORT + 1, PORT + 2]) if (!(await portFree(p))) throw new Error(`port ${p} is in use`);
-  // vite 的 exports 不导出 bin/,按包目录找(同 server/vite-plugin-prerender.ts 的 viteBin);依赖向上解析到主仓库
+  // vite's exports does not export bin/; locate via package directory (same as viteBin in server/vite-plugin-prerender.ts); dependencies resolve upward to the main repository
   const viteBin = path.join(path.dirname(createRequire(path.join(ROOT, 'package.json')).resolve('vite/package.json')), 'bin', 'vite.js');
   const log = [];
   vite = spawn(process.execPath, [viteBin, '--port', String(PORT), '--strictPort', '--host', '127.0.0.1'], {
@@ -126,7 +141,7 @@ try {
     return r.status === 200;
   }, 120_000, 300);
 
-  // 合并后 `/api/storage*` 是真的(编辑器进程转给预渲染进程):等预渲染进程起来、答得上再开页面
+  // After merge, `/api/storage*` is real (editor process forwards to prerender process): wait for the prerender process to start and respond before opening the page
   const storageJson = async (p, init) => {
     const r = await fetch(ORIGIN + p, { ...init, signal: AbortSignal.timeout(30_000) });
     const body = await r.json().catch(() => null);
@@ -156,17 +171,19 @@ try {
     prune: !!el.querySelector('[data-pc="storage-export-prune"]'),
   })));
   const inView = (page) => page.$eval('[data-pc="start-storage"]', (el) => {
-    // 滚到了:标题贴到视野上半,或者「存储」是最后一块、容器已经滚到底(再也滚不上去)
+    // Scrolled into view: title is in upper half of viewport, or "Storage" is last section and container has scrolled to bottom (cannot scroll any further)
     const r = el.getBoundingClientRect();
     const main = el.closest('.sp-main');
     const atBottom = !!main && main.scrollTop > 0 && main.scrollTop + main.clientHeight >= main.scrollHeight - 2;
     return r.top >= 0 && r.top < window.innerHeight && (r.top < window.innerHeight * 0.5 || atBottom);
   });
 
-  // ── U8 刚写完一批帧后打开开始页:数字在十几秒内变成真实值 ──
-  // 上面等就绪的那次 GET 已经让服务端量过一次;之后往帧库里写一批帧(就像预渲染刚写完),
-  // 等过 60 秒(`SUMMARY_STALE_MS`)再打开开始页:第一次回包是旧数、带 scanning: true,页面隔几秒自己再取,
-  // 直到显示真实值。这期间不发任何 /api/storage 请求。
+  // ── U8 Open start page right after writing a batch of frames: number updates to real value within a dozen seconds ──
+  // The GET above waiting for readiness already triggered a server measurement; then write a batch of
+  // frames to the frame store (as if prerender just finished), wait past 60s (`SUMMARY_STALE_MS`), then
+  // open the start page: first response returns old number with scanning: true; page refetches on its
+  // own every few seconds until real value is displayed. No /api/storage requests are sent during
+  // this period.
   {
     const readyAt = Date.now();
     const batchKey = [...Array(64)].map((_, i) => '0123456789abcdef'[(i * 7 + 3) % 16]).join('');
@@ -182,7 +199,7 @@ try {
       const t = await p8.$eval('[data-pc="storage-cache-bytes"]', (el) => el.textContent);
       if (texts.at(-1) !== t) texts.push(t);
       return t.startsWith('5.0M') ? t : null;
-    }, 120_000, 250).catch(() => null); // 等待时限只为防卡死(原 20 秒)
+    }, 120_000, 250).catch(() => null); // Wait timeout is only to prevent hangs (originally 20s)
     const elapsedMs = Date.now() - t0;
     const server = (await storageJson('/api/storage')).body?.frameLibrary;
     out.U8 = { first, settled, elapsedMs, texts, serverBytes: server?.bytes, scanning: server?.scanning };
@@ -214,7 +231,7 @@ try {
   if (unavailable) {
     check(await page.$eval('[data-pc="storage-clear-cache"]', (b) => b.disabled), 'U1 "Clear cache" is grayed out when the data cannot be fetched');
   }
-  // U7a 真的 /api/storage 与 /api/exports:都 ok,导出一栏与列表同一套规则(vision 不算),数字对得上
+  // U7a Real /api/storage and /api/exports: both ok; export column follows the same rules as the list (vision excluded), numbers match
   {
     const s = await storageJson('/api/storage');
     const e = await exportsSum();
@@ -231,7 +248,7 @@ try {
   await page.$eval('[data-pc="start-storage"]', (el) => el.scrollIntoView());
   await page.screenshot({ path: path.join(OUT, 'u1-storage.png') });
 
-  // ── U2 只删中间文件 ──
+  // ── U2 Delete intermediate files only ──
   const beforeFull = r1.find((r) => r.id === FULL);
   await page.click(`[data-export-id="${FULL}"] [data-pc="storage-export-prune"]`);
   await until('notice for deleting intermediate files only', () => page.$eval('[data-pc="storage-notice"]', (el) => el.textContent.includes('Deleted intermediate files')));
@@ -242,14 +259,14 @@ try {
   check(JSON.stringify(fs.readdirSync(path.join(EXPORTS, FULL)).sort()) === JSON.stringify(['overlay.mov', 'preview.mp4', 'project.json']), 'U2 only the final video, transparent layer and project.json remain on disk', fs.readdirSync(path.join(EXPORTS, FULL)));
   await page.screenshot({ path: path.join(OUT, 'u2-pruned.png') });
 
-  // ── U3 删除 ──
+  // ── U3 Delete ──
   await page.click(`[data-export-id="${HALF}"] [data-pc="storage-export-delete"]`);
   await until('one fewer export after deletion', async () => (await rows(page)).length === 2);
   out.U3 = { rows: (await rows(page)).map((r) => r.id) };
   check(!fs.existsSync(path.join(EXPORTS, HALF)), 'U3 that export is gone from disk');
   check(fs.existsSync(path.join(EXPORTS, 'export-vision-probe-1')), 'U3 the vision directory is untouched');
   await page.screenshot({ path: path.join(OUT, 'u3-deleted.png') });
-  // U7b 删了一份、只删了中间文件之后,/api/storage 的导出一栏马上跟上(不回 60 秒前的缓存)
+  // U7b After deleting an export or intermediate files only, /api/storage's export column updates immediately (does not return cache from 60s ago)
   {
     const s = await storageJson('/api/storage');
     const e = await exportsSum();
@@ -257,7 +274,7 @@ try {
     check(s.body?.ok === true && JSON.stringify(s.body?.exports) === JSON.stringify({ bytes: e.bytes, count: e.count, intermediateBytes: e.intermediateBytes }) && e.count === 2,
       'U7 after deleting and after deleting intermediate files only, the exports field matches the list', out.U7.afterDelete);
   }
-  // U7c 真的「清理缓存」与改上限(帧库、数据目录都在临时目录里)
+  // U7c Real "Clear cache" and cap change (frame store and data directory are both in temporary directory)
   {
     const sent = [];
     const onReq = (req) => { if (req.url().includes('/api/storage/')) sent.push({ path: new URL(req.url()).pathname, body: req.postData() ?? null }); };
@@ -286,7 +303,7 @@ try {
     await page.screenshot({ path: path.join(OUT, 'u7-real-cap.png') });
   }
 
-  // ── U4 标题栏「存储…」──
+  // ── U4 Title bar "Storage…" ──
   await page.$eval('.sp-main', (el) => { el.scrollTop = 0; });
   await sleep(100);
   check(!(await inView(page)), 'U4 precondition: after scrolling back to the top, "Storage" is not in the upper half of the view');
@@ -308,14 +325,15 @@ try {
   await until('back to the start page', () => ed.$('[data-pc="start-storage"]'), 15_000);
   out.U4.fromEditor = await until('scroll to "Storage" after returning from the editor', () => inView(ed), 8000).catch(() => false);
   check(out.U4.fromEditor, 'U4 clicking "Storage…" in the editor returns to the start page and scrolls to "Storage"');
-  await sleep(1700); // 跟滚的 1.5 s 过去之后还在
+  await sleep(1700); // Still present after 1.5s of smooth scrolling has passed
   out.U4.fromEditorSettled = await inView(ed);
   check(out.U4.fromEditorSettled, 'U4 "Storage" is still in view after the sections above finish loading');
   await ed.screenshot({ path: path.join(OUT, 'u4-menu-from-editor.png') });
   await ed.close();
 
-  // ── U5 模拟 /api/storage* ──
-  // 「存储」一块与服务端一样 GB = 1024³:缺省 50 GB 显示成 50.0G,填 20 发 20 × 1024³
+  // ── U5 Simulate /api/storage* ──
+  // "Storage" section matches server with GB = 1024³: default 50 GB displays as 50.0G; entering 20
+  // sends 20 × 1024³
   const GB = 1024 ** 3;
   const mock = { bytes: 12 * GB, capBytes: 50 * GB, capSource: 'default', diskBytes: 931 * GB };
   const sent = [];
@@ -360,7 +378,7 @@ try {
   await mp.click('[data-pc="storage-cap-save"]');
   await until('notice for changing the cap', () => mp.$eval('[data-pc="storage-notice"]', (el) => el.textContent.includes('Cap changed')));
   const fig2 = await mp.$eval('[data-pc="storage-cache-bytes"]', (el) => el.textContent);
-  // 低于 5 GB 的不发
+  // Does not send if below 5 GB
   await mp.$eval('[data-pc="storage-cap-input"]', (el) => { el.select(); });
   await mp.type('[data-pc="storage-cap-input"]', '2');
   await mp.click('[data-pc="storage-cap-save"]');
@@ -375,7 +393,7 @@ try {
   await mp.screenshot({ path: path.join(OUT, 'u5-cap.png') });
   await mp.close();
 
-  // ── U6 接口路径校验 ──
+  // ── U6 Endpoint path validation ──
   const post = (p) => page.evaluate(async (u) => { const r = await fetch(u, { method: 'POST' }); return r.status; }, p);
   out.U6 = {
     dotdot: await post('/api/exports/..%2F..%2Fdata/delete'),
@@ -394,7 +412,7 @@ try {
   await browser?.close().catch(() => {});
   await stopTree(vite);
   await sleep(500);
-  try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* 留着也在临时目录里 */ }
+  try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* Even if kept, stays in temporary directory */ }
 }
 out.fails = fails;
 out.ok = fails.length === 0;

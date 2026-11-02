@@ -1,22 +1,24 @@
 import { useSyncExternalStore } from "react";
 
 /**
- * 时间轴上方剪辑标签栏的「打开了哪几条」(`workflow/editing.md`「剪辑标签」)。
+ * "Which cuts are open" in the cut tab bar above the timeline (`workflow/editing.md` "Cut tabs").
  *
- * 这是本机界面状态,不进项目文档、不同步给别的成员(`product/project-model.md`「剪辑」;
- * 存法见 `mechanism/project-model.md`):按项目 id 存在浏览器 / 桌面版的本地存储里,
- * 刷新、重开项目后恢复。读写都包 try/catch:隐私窗口、存储被禁时只留在内存里,不影响使用。
+ * This is local UI state: it does not go into the project document and is not synced to other members
+ * (`product/project-model.md` "Cut"; for how it is stored see `mechanism/project-model.md`): it is
+ * stored per project id in the local storage of the browser / desktop app, and restored after a refresh
+ * or reopening the project. Reads and writes are all wrapped in try/catch: in a private window or when
+ * storage is disabled it stays in memory only, without affecting use.
  *
- * 规则(纯函数 `reconcileTabs`,单测在 cutTabsState.test.mjs):
- *   - 激活的那条剪辑一定在标签里(Agent 切过去、撤销切回去,都自动补上标签);
- *   - 已经不存在的剪辑(被删、协作同伴删了、撤销了新建)自动从标签里拿掉;
- *   - 一个都不剩时(新项目、旧存储)就是激活的那一条。
- * 标签只靠用户点「×」关,失去焦点、点别处、切面板都不动它。
+ * Rules (pure function `reconcileTabs`, unit test in cutTabsState.test.mjs):
+ *   - The active cut is always among the tabs (when the Agent switches to it or undo switches back, the tab is added automatically);
+ *   - Cuts that no longer exist (deleted, deleted by a collaborator, or a creation that was undone) are removed from the tabs automatically;
+ *   - When none is left (new project, old storage), the only tab is the active one.
+ * Tabs are closed only when the user clicks "×"; losing focus, clicking elsewhere or switching panels never touches them.
  */
 
 const KEY = (projectId: string) => `pc.cutTabs.v1:${projectId}`;
 
-/** 存储里读出来的、和项目对齐之后的标签顺序 */
+/** Tab order read from storage, after aligning with the project */
 export function reconcileTabs(stored: readonly string[] | null | undefined, cutIds: readonly string[], activeId: string | undefined): string[] {
   const exists = new Set(cutIds);
   const out: string[] = [];
@@ -26,7 +28,7 @@ export function reconcileTabs(stored: readonly string[] | null | undefined, cutI
   return out;
 }
 
-/** 关掉一个标签之后该切到哪一条(关的是激活的那条时):优先右邻,没有就左邻;关不了(只剩一个)返回 null */
+/** Which cut to switch to after closing a tab (when the closed one is the active one): prefer the right neighbor, else the left neighbor; returns null if it cannot be closed (only one left) */
 export function closeTab(tabs: readonly string[], id: string, activeId: string | undefined): { tabs: string[]; switchTo: string | null } | null {
   if (tabs.length <= 1 || !tabs.includes(id)) return null;
   const i = tabs.indexOf(id);
@@ -49,7 +51,7 @@ function read(projectId: string): string[] | null {
       memory.set(projectId, parsed);
       return parsed;
     }
-  } catch { /* 存储不可用:只留在内存里 */ }
+  } catch { /* Storage unavailable: stay in memory only */ }
   return null;
 }
 
@@ -58,21 +60,21 @@ function write(projectId: string, tabs: string[]): void {
   if (prev && prev.length === tabs.length && prev.every((x, i) => x === tabs[i])) return;
   memory.set(projectId, tabs);
   version++;
-  try { globalThis.localStorage?.setItem(KEY(projectId), JSON.stringify(tabs)); } catch { /* 同上 */ }
+  try { globalThis.localStorage?.setItem(KEY(projectId), JSON.stringify(tabs)); } catch { /* Same as above */ }
   for (const l of [...listeners]) l();
 }
 
-/** 当前项目的标签(已和项目对齐) */
+/** Tabs of the current project (already aligned with the project) */
 export function openTabs(projectId: string, cutIds: readonly string[], activeId: string | undefined): string[] {
   return reconcileTabs(read(projectId), cutIds, activeId);
 }
 
-/** 把对齐后的结果写回(组件渲染后调;和存的不同才写) */
+/** Write the aligned result back (called after the component renders; only writes if different from what is stored) */
 export function saveTabs(projectId: string, tabs: string[]): void {
   write(projectId, tabs);
 }
 
-/** 打开一条剪辑的标签(不负责切换,切换是 store 的 switchCut) */
+/** Open the tab of a cut (does not switch; switching is the store's switchCut) */
 export function openTab(projectId: string, cutIds: readonly string[], activeId: string | undefined, id: string): void {
   const tabs = openTabs(projectId, cutIds, activeId);
   if (!tabs.includes(id)) write(projectId, [...tabs, id]);
@@ -82,7 +84,7 @@ export function setTabs(projectId: string, tabs: string[]): void {
   write(projectId, tabs);
 }
 
-/** 测试用 */
+/** For tests */
 export function resetCutTabsMemory(): void {
   memory = new Map();
   version++;
@@ -93,7 +95,7 @@ function subscribe(f: () => void) {
   return () => { listeners.delete(f); };
 }
 
-/** 组件里订阅「标签变了」 */
+/** Subscribe in a component to "tabs changed" */
 export function useCutTabsVersion(): number {
   return useSyncExternalStore(subscribe, () => version, () => version);
 }

@@ -12,8 +12,10 @@ const TASK_ENDPOINTS = ['/cancel-host', '/activate-host', '/restore-host'];
 
 /**
  * Local-only identity API. Its root and protection backend are owned by the app.
- * 局域网项目的开启、刷新、重开都靠它。`extension` 是可选的：闭源版用它把房间登记到托管端、做搬迁（`cloud/server/recovery/http.mjs`），
- * 没有它时主机只在本机绑定，不起后台任务。
+ * Enabling, refreshing, and reopening LAN projects all rely on it. `extension` is optional:
+ * the commercial edition uses it to register rooms with the hosted side and perform moves
+ * (`cloud/server/recovery/http.mjs`); without it, the host binds only on this machine and does
+ * not start background tasks.
  */
 export function recoveryHttp({ dir, dataDir, store, device, baseOf, assetBaseOf, assets, reloadSpace, onClose, extension }) {
   let vault;

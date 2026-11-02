@@ -1,17 +1,27 @@
 /**
- * 任务 E（`claude/queue-maint`）：执行器按本机快照库的超限记录标 `snapshotOversize`，切分据此不给纯浏览器另出一份。
- * 出处：`docs/archive/agent-reports/AGENT-rq-m7-node.md`「没做成的」第 3 条、`REPORT-M7.md` 第 11 节第 2 行。
+ * Task E (`claude/queue-maint`): Executor marks `snapshotOversize` based on oversize records in
+ * local snapshot store; splitter uses this to avoid generating a separate copy for pure browser.
+ * Origin: `docs/archive/agent-reports/AGENT-rq-m7-node.md` "What wasn't done" item 3,
+ * `REPORT-M7.md` Section 11 line 2.
  *
- *   QM-E-01 本机快照库里这张卡（本机指纹的键）记过超限帧：执行器交给切分的 control 标上，切分只出切分方那一份；
- *           没有记录的卡照旧出两份（切分方 + 浏览器）
- *   QM-E-02 超限记录在锁定方指纹的键下（这张卡锁在别的环境上，本机拉过它的结果）同样标
- *   QM-E-03 标在整张卡上：只有一帧超限，整张卡的每一段都不给浏览器
- *   QM-E-04 不标的情形：本地档、画布卡（切分本来不给浏览器）、读不到快照库（测试替身、库坏了）—— cardPlan 原样（同一个数组）
- *   QM-E-05 每次切分现读、不改缓存：同一版项目先切一次（没记录）、本机渲出超限帧后再切一次就标上；缓存里的 control 不变
- *   QM-E-06 跨机器：记录只在本机快照库里。另一台没渲过、没拉过这张卡的切分方不标，浏览器照旧拿到一份；
- *           那台一旦拉回这张卡的结果（落盘走同一个写入口，超限照样判出来记下），下一次切分就标
+ *   QM-E-01 Oversize frame recorded for this card in local snapshot store (local fingerprint key):
+ *           executor marks control passed to splitter, splitter only generates copy for splitter;
+ *           cards without records still generate two copies (splitter + browser)
+ *   QM-E-02 Oversize record under locking side's fingerprint key (card locked in another
+ *           environment, local pulled its results) is also marked
+ *   QM-E-03 Marked on whole card: if only one frame is oversize, no segment of entire card is
+ *           given to browser
+ *   QM-E-04 Cases not marked: local tier, canvas card (splitter wouldn't give to browser anyway),
+ *           snapshot store unreadable (test double, corrupted store), cardPlan as is (same array)
+ *   QM-E-05 Read dynamically on each split without mutating cache: same project revision is split
+ *           once (no record), split again after local renders oversize frames and marked; control
+ *           in cache remains unchanged
+ *   QM-E-06 Cross-machine: records only in local snapshot store. Another splitter that hasn't
+ *           rendered or pulled this card will not mark it, and browser receives a copy as usual;
+ *           once that machine pulls back results for this card (persisted via same write entrypoint,
+ *           oversize is detected and recorded just the same), next split marks it
  *
- * 跑：node --test server/test/queue-maint-oversize.test.mjs
+ * Run: node --test server/test/queue-maint-oversize.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -25,9 +35,9 @@ import { splitPlan, planTaskOf } from '../render-node/split.mjs';
 
 const sha256 = (text) => crypto.createHash('sha256').update(text, 'utf8').digest('hex');
 const rk = (contentKey, fp) => sha256(`${contentKey}\n${fp}`);
-const P = 'pppppppppppppppp';   // 切分方（本机）
-const B = 'bbbbbbbbbbbbbbbb';   // 浏览器
-const X = 'xxxxxxxxxxxxxxxx';   // 锁定方（第三种环境）
+const P = 'pppppppppppppppp';   // Splitter (local)
+const B = 'bbbbbbbbbbbbbbbb';   // Browser
+const X = 'xxxxxxxxxxxxxxxx';   // Locking side (third environment)
 const CV = 'c0de5a';
 const SMALL = '<div>ok</div>';
 const BIG = `<div>${'x'.repeat(DOM_SNAPSHOT_LIMIT + 16)}</div>`;
@@ -46,10 +56,13 @@ async function tempStore() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'qm-oversize-'));
   return { store: new SnapshotStore(root), cleanup: () => fs.rm(root, { recursive: true, force: true }) };
 }
-/** 本机快照库里给这个键落几帧（走生产的唯一写入口：写文件 → 判体积 → 并 index） */
+/**
+ * Persist a few frames for this key in local snapshot store (production sole write entrypoint:
+ * write file → check size → merge index)
+ */
 const commit = (store, key, frames) => store.commitSnapshots({ tier: 'shared', key, clipId: 'c', capabilities: {}, items: frames.map(([localFrame, html]) => ({ localFrame, html })) });
 
-/** 假管线：planForQueue 回固定上下文；快照库是真的 SnapshotStore */
+/** Fake pipeline: planForQueue returns fixed context; snapshot store is real SnapshotStore */
 function executorOver(store, cardPlan, { cardLocks } = {}) {
   const entry = { key: 'entry-1', cardPlan };
   let plans = 0;
@@ -94,7 +107,8 @@ test('QM-E-02 an oversize record under the key of the lock holder fingerprint (t
     const { exec } = executorOver(store, [a], { cardLocks: new Map([[lockKey, X]]) });
     const ctx = await exec.plan(PLAN);
     assert.equal(ctx.cardPlan[0].snapshotOversize, true);
-    // 普通对象形式的 cardLocks 一样认；锁在本机指纹上时只看本机的键
+    // cardLocks in plain object form is also recognized; when locked on local fingerprint,
+    // only checks local key
     const plain = await markSnapshotOversize({ snapshots: () => store }, { cardPlan: [a], cardLocks: { [lockKey]: X } });
     assert.deepEqual(plain.marked, ['a']);
     const own = await markSnapshotOversize({ snapshots: () => store }, { cardPlan: [a], cardLocks: { [lockKey]: P } });
@@ -129,7 +143,7 @@ test('QM-E-04 cases that are not marked: local tier, canvas card, snapshot store
       const out = await markSnapshotOversize(pipeline, c2);
       assert.equal(out.cardPlan, c2.cardPlan);
     }
-    // 执行器没有快照库（测试替身）：plan 回的就是管线给的上下文本身
+    // Executor has no snapshot store (test double): plan returns the context given by the pipeline itself
     const entry = { key: 'e', cardPlan: [control('a')] };
     const context = { cardPlan: entry.cardPlan };
     const exec = createPrerenderExecutor({ pipeline: { planForQueue: async () => ({ entry, context }) }, projects: { get: async () => ({ tracks: [], duration: 1 }) } });
@@ -164,7 +178,8 @@ test('QM-E-06 across machines: the record exists only in the local snapshot stor
     assert.equal(on1.cardPlan[0].snapshotOversize, true, 'the machine that rendered it marks it');
     assert.equal('snapshotOversize' in on2.cardPlan[0], false, 'the other one cannot get this record: not marked');
     assert.deepEqual(fpsOf(split(on2), 'a'), [B, P].sort(), 'so the browser still gets a copy (the oversize frames it produces are dropped just the same)');
-    // 第二台从素材服务拉回这张卡的结果：applyResult 落盘走同一个写入口（commitSnapshots），超限在那台照样判出来记下
+    // Second machine pulls card results from asset service: applyResult persists via the same write
+    // entrypoint (commitSnapshots); oversize is still detected and recorded on that machine
     await commit(m2.store, a.snapshotKey, [[0, SMALL], [1, BIG]]);
     const again = await executorOver(m2.store, [a]).exec.plan(PLAN);
     assert.equal(again.cardPlan[0].snapshotOversize, true);

@@ -1,19 +1,28 @@
 /**
- * 冲突合并的逐项引擎(`mergeItems.ts`)。跑:npm test -- src/editor/sync/mergeItems.test.mjs
+ * Item-by-item engine for conflict merge (`mergeItems.ts`). Run: npm test -- src/editor/sync/mergeItems.test.mjs
  *
- * 对着语义(`workflow/editing.md`「撤销、重做」两级列表,`product/document-service.md`「冲突」,2026-10-22 用户定)逐条钉:
- *   MI-01 一级按「东西」分组:每个片段、每条字幕、项目设置各一条;别的片段另起一条
- *   MI-02 二级按属性去重:同一属性改了几次只出一条;先改长度又改透明度是两条;跨批次并表也不重复
- *   MI-03 二级文字写明改成什么、云端现在是什么:「透明度 0.4 → 0.8（云端现在是 0.6）」;冲突按属性各判
- *   MI-04 我删了、别人改了:算冲突;「合并」删掉;「删除选中」保留云端现状
- *   MI-05 我改了、别人删了:算冲突;「合并」连同我的修改恢复;「删除选中」保持删除
- *   MI-06 新增:新片段连带新素材一起并;所在序列、素材都不在时如实失败、留在表里
- *   MI-07 展开后单独勾一项:只并那一项,其余留在表里
- *   MI-08 每次点「合并」重新核对:窗口打开后云端又变了的项报出来
- *   MI-09 勾选:「选中无冲突项」「取消全部勾选」、一级全勾 / 部分 / 没勾
- *   MI-10 字幕逐条:改一条的字、另一条的时间、删一条、加一条,各算一条;合并写回字幕卡的 lines
- *   MI-11 同一序列里放不下(重叠)不硬塞,如实失败
- *   MI-12 留给「撤销冲突」(0.7.20)的来源:source 不同的两条并存,同一套显示与合并
+ * Pinned down item-by-item against semantics (`workflow/editing.md` two-level list for "Undo, Redo",
+ * `product/document-service.md` "Conflicts", (user decision, 2026-10-22)):
+ *   MI-01 Level 1 grouped by "items": one item each for each clip, each caption, and project settings;
+ *         other clips start a separate item
+ *   MI-02 Level 2 deduplicated by property: modifying same property multiple times yields only one item;
+ *         changing duration then opacity yields two items; no duplicates across batches merged into table
+ *   MI-03 Level 2 text specifies change target and current cloud state: "opacity 0.4 → 0.8 (cloud is
+ *         currently 0.6)"; conflicts evaluated separately per property
+ *   MI-04 Deleted by me, modified by others: counts as conflict; "Merge" deletes; "Delete selected"
+ *         keeps current cloud state
+ *   MI-05 Modified by me, deleted by others: counts as conflict; "Merge" restores along with my changes;
+ *         "Delete selected" keeps deleted
+ *   MI-06 Additions: new clip merged together with new asset; faithfully fails and remains in table
+ *         when target track or asset is absent
+ *   MI-07 Check a single item after expanding: merges only that item, others remain in table
+ *   MI-08 Re-check each time clicking "Merge": report items that changed in cloud after dialog was opened
+ *   MI-09 Checkbox: "Select non-conflicting items", "Deselect all", level 1 all checked / partial / none checked
+ *   MI-10 Captions item-by-item: changing text of one, timing of another, deleting one, adding one each
+ *         count as one item; merge writes back to lines of captions card
+ *   MI-11 When it cannot fit into the same track (overlap), do not force-fit, faithfully fail
+ *   MI-12 Sources reserved for "Undo conflict" (0.7.20): two items with different source coexist,
+ *         sharing same display and merge
  */
 import "../../testing/registerTs.mjs";
 import test from "node:test";
@@ -63,7 +72,7 @@ test("MI-02 level two is deduplicated by property: changing the same property tw
   const [t] = M.diffThings(base, mine, meta());
   assert.deepEqual(t.props.map((x) => x.prop).sort(), ["@time", "opacity"]);
   assert.deepEqual(t.props.find((x) => x.prop === "opacity"), { prop: "opacity", base: { v: 0.4 }, mine: { v: 0.8 } }, "opacity changed twice: record only the base → the final value");
-  // 第二批:同一属性又改了一次、另加一个属性
+  // Second batch: same property modified once more, plus an additional property
   const later = edit(base, (p) => { clipIn(p, "c1").opacity = 0.9; clipIn(p, "c1").fadeIn = 0.5; });
   const table = M.mergeIntoTable([t], M.diffThings(base, later, meta("b2")));
   assert.equal(table.length, 1, "the same item still gets one entry");
@@ -97,16 +106,16 @@ test("MI-04 I deleted it, someone else changed it: conflict; \"Merge\" deletes i
   const [row] = M.mergeRows(cloud, table);
   assert.equal(row.conflict, true);
   assert.equal(row.props[0].text, "Deleted on my side (the cloud version has since been changed by someone else)");
-  // 合并 = 照我这边办:删掉
+  // Merge = follow my side: delete
   const merged = M.applyMerge(cloud, table, all([row]));
   assert.equal(clipIn(merged.project, "c2"), undefined);
   assert.deepEqual(merged.done, [{ key: row.key, props: [""] }]);
   assert.equal(M.removeFromTable(table, merged.done).length, 0);
-  // 删除选中 = 只从表里拿掉,云端不动(别人改的透明度还在)
+  // Delete selected = only remove from table, cloud untouched (opacity modified by others remains)
   const left = M.removeFromTable(table, M.selectionList(all([row])));
   assert.equal(left.length, 0);
   assert.equal(clipIn(cloud, "c2").opacity, 0.5);
-  // 云端没人改过:同一项不算冲突
+  // Untouched by anyone in cloud: same item does not count as conflict
   const [clean] = M.mergeRows(base, table);
   assert.equal(clean.conflict, false);
 });
@@ -124,11 +133,11 @@ test("MI-05 I changed it, someone else deleted it: conflict; \"Merge\" restores 
   assert.equal(back.opacity, 0.7);
   assert.equal(back.label, "Outro");
   assert.deepEqual([back.start, back.end], [6, 8]);
-  // 只勾一项:恢复回来,没勾的按基准
+  // Only check one item: restored, unchecked items follow baseline
   const one = M.applyMerge(cloud, table, new Map([[row.key, new Set(["opacity"])]]));
   assert.equal(clipIn(one.project, "c3").opacity, 0.7);
   assert.equal(clipIn(one.project, "c3").label, "c3", "an unchecked name follows the base");
-  // 删除选中:保持删除
+  // Delete selected: keep deleted
   assert.equal(M.removeFromTable(table, M.selectionList(all([row]))).length, 0);
   assert.equal(clipIn(cloud, "c3"), undefined);
 });
@@ -147,7 +156,7 @@ test("MI-06 additions: a new clip is merged together with its new media; when th
   assert.ok(clipIn(r.project, "c9"));
   assert.ok(r.project.media.some((m) => m.id === "m2"), "the media is merged in along with it");
   assert.equal(M.removeFromTable(table, r.done).length, 0, "the associated media is also removed from the table");
-  // 序列被别人删了:不硬塞
+  // Track was deleted by others: do not force-fit
   const noTrack = edit(base, (p) => { p.tracks = p.tracks.filter((t) => t.id !== "t1"); });
   const f = M.applyMerge(noTrack, table, new Map([[clipRow.key, new Set([""])]]));
   assert.deepEqual(f.failed.map((x) => x.reason), ["Its track no longer exists in the cloud"]);
@@ -205,7 +214,7 @@ test("MI-10 captions line by line: editing the text, editing the timing, deletin
   assert.deepEqual(kinds, ['add:Captions "新的一句"', 'delete:Captions "再见"', 'modify:Captions "你好呀"', 'modify:Captions "世界"'].sort());
   const world = table.find((t) => t.label === 'Captions "世界"');
   assert.deepEqual(world.props.map((x) => x.prop), ["time"]);
-  // 云端别人改了第一句的英文:我的中文照并,英文不动
+  // Someone else modified English of the first sentence in cloud: my Chinese merges as usual, English untouched
   const cloud = edit(base, (p) => { p.tracks[1].clips[0].params.lines = "0.00|1.00|你好|hi\n1.00|2.00|世界|world\n3.00|4.00|再见|bye"; });
   const rows = M.mergeRows(cloud, table);
   const hello = rows.find((r) => r.label === 'Captions "你好呀"');
@@ -229,7 +238,7 @@ test("MI-11 when it doesn't fit in the same track (overlap), don't force it in; 
 test("MI-12 undo conflicts (0.7.20) use the same shape: two entries from different sources coexist, with the same display and merge", () => {
   const base = project();
   const off = M.diffThings(base, edit(base, (p) => { clipIn(p, "c1").opacity = 0.8; }), meta());
-  // 撤销冲突:base = 那一步落地后的值,mine = 撤回后要变成的值
+  // Undo conflict: base = value after that step landed, mine = value to become after undoing
   const undo = M.diffThings(edit(base, (p) => { clipIn(p, "c2").label = "Edited by Agent"; }), base, { source: "undo", batch: "u1", baseRev: 9, at: 2 });
   const table = M.mergeIntoTable(off, undo);
   assert.deepEqual(table.map((t) => t.key).sort(), ["offline:clip:c1", "undo:clip:c2"]);
@@ -263,10 +272,11 @@ test("MI-13 card source: one entry per card, level two is \"Source\"; counts as 
 
 test("MI-14 [ruling] list only what the user changed directly: derived values such as total duration, media metadata backfill, and card sound output do not enter the table; after merging, the total duration is recomputed from the content", () => {
   const base = project({ duration: 10 });
-  // 用户只挪了 c3(内容末尾 10 → 11):总时长跟着变成 11,但不该冒出一条「项目设置 · 时长」
+  // User only moved c3 (content end 10 → 11): total duration becomes 11 accordingly, but a
+  // "Project settings · Duration" item should not pop up
   const mine = edit(base, (p) => {
     clipIn(p, "c3").start = 9; clipIn(p, "c3").end = 11; p.duration = 11;
-    // 系统回填素材元数据、生成卡片声音产物
+    // System backfills asset metadata, generates card sound artifacts
     Object.assign(p.media[0], { hash: "a".repeat(64), duration: 12, width: 1920, height: 1080, pending: false });
     clipIn(p, "c1").cardAudio = { v: 1, hash: "b".repeat(64) };
     clipIn(p, "c1").embeddedAudio = true;
@@ -274,10 +284,10 @@ test("MI-14 [ruling] list only what the user changed directly: derived values su
   const things = M.diffThings(base, mine, meta());
   assert.deepEqual(things.map((t) => t.key), ["offline:clip:c3"], "only the clip the user moved");
   assert.deepEqual(things[0].props.map((p) => p.prop), ["@time"]);
-  // 改名照列
+  // Renaming listed as usual
   const renamed = M.diffThings(base, edit(base, (p) => { p.media[0].name = "new-name.mp4"; }), meta());
   assert.deepEqual(renamed.map((t) => `${t.key}:${t.props.map((p) => p.prop)}`), ["offline:lib:media:m1:name"]);
-  // 合并后总时长按内容末尾重算(不进表、也不留旧值)
+  // After merge, total duration is recalculated from content end (does not enter table, old value not retained)
   const r = M.applyMerge(base, things, new Map([["offline:clip:c3", new Set(["@time"])]]));
   assert.equal(r.project.duration, 11);
   const truncated = M.applyMerge(base, things, new Map([["offline:clip:c3", new Set(["@time"])]]), { manualDuration: 10.5 });

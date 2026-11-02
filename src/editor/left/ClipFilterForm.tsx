@@ -6,7 +6,7 @@ import { createFilterTools } from "../right/filterTools";
 import { NumberField } from "../fields/NumberField";
 import { tr } from "../../i18n/index.ts";
 
-/** 和 Agent 的 apply_filter 同一份校验 */
+/** Same validation as the Agent's apply_filter */
 const tools = createFilterTools({ getState, actions });
 
 const stepOf = (spec: FilterParamSpec) => {
@@ -14,7 +14,7 @@ const stepOf = (spec: FilterParamSpec) => {
   return span <= 2 ? 0.01 : span <= 20 ? 0.1 : 1;
 };
 
-/** 编辑页里素材段的滤镜一栏:从滤镜库挑一个挂上,再逐段调它声明的参数 */
+/** The filter row for a media clip in the editor: pick one from the filter library to attach, then tune its declared parameters per clip */
 export function ClipFilterForm({ clip }: { clip: TrackClip }) {
   const filters = useStore((s) => s.project.filters) ?? [];
   const [err, setErr] = useState<string | null>(null);
@@ -66,7 +66,7 @@ export function ClipFilterForm({ clip }: { clip: TrackClip }) {
               max={spec.max}
               value={clip.filter?.params?.[k] ?? spec.default}
               onCommit={(n) => {
-                // 只带声明过的键:update_filter 删掉过的参数还留在片段上的话,整栏都会被「没有参数 X」卡住
+                // Carry only declared keys: if parameters removed by update_filter are still left on the clip, the whole row gets stuck on "no parameter X"
                 const kept = Object.fromEntries(Object.entries(clip.filter?.params ?? {}).filter(([key]) => cur.params && key in cur.params));
                 apply(cur.id, { ...kept, [k]: n });
               }}

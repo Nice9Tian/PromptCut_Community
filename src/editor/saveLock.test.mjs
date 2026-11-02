@@ -1,25 +1,34 @@
 /**
- * 保存时暂停前台编辑(`docs/semantics/mechanism/document-service.md`「保存基准与修改状态检查」:
- * 「保存暂时禁用前台编辑，等待本机写完；失败不覆盖上次有效保存，并恢复编辑」)。
- * 跑:node --experimental-test-module-mocks --test src/editor/saveLock.test.mjs
+ * Pause foreground editing while saving (`docs/semantics/mechanism/document-service.md`
+ * "Save baseline and modification state check": "Save temporarily disables foreground editing while
+ * waiting for this machine to finish writing; failures do not overwrite the last valid save, and
+ * restore editing").
+ * Run: node --experimental-test-module-mocks --test src/editor/saveLock.test.mjs
  *
- * 钉死:从挑好落点开始到保存结束(成功、超时、写失败)之间,键盘快捷键、拖放、鼠标、Agent 面板的输入
- * 都到不了编辑器自己的处理函数,项目改不动;保存一结束(不论成败)就恢复。用户在「另存为」里点取消不上锁。
+ * Pin down: from picking a drop target until save completes (success, timeout, write failure),
+ * keyboard shortcuts, drag-and-drop, mouse, and Agent panel inputs do not reach the editor's own
+ * handlers, and the project cannot be modified; restored as soon as save ends (regardless of
+ * success or failure). Clicking Cancel in "Save as" does not lock.
  *
- * node 里没有 DOM:拿一个 EventTarget 当 window。真页面里的拦截见探针 `scripts/probes/save-state-probe.mjs`。
+ * No DOM in node: use an EventTarget as window. For interception in real pages, see probe
+ * `scripts/probes/save-state-probe.mjs`.
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-// 编辑器的输入监听都挂在 window 上;拦截要在模块载入时先挂上,所以 window 得先有
+// Editor input listeners are all attached to window; interception must be attached first upon
+// module load, so window must exist first
 globalThis.window = new EventTarget();
 
 const { actions, getState } = await import(srcUrl("store/project.ts"));
 const { saveProcFile, savePackedFile } = await import(srcUrl("editor/io/saveFlow.ts"));
 const { undoRedoKey } = await import(srcUrl("editor/undoKeys.ts"));
 
-/** 模拟编辑器各处自己挂的输入处理:快捷键撤销、拖放导入素材、鼠标改片段、Agent 面板回车发送 */
+/**
+ * Mock input handlers attached across the editor: shortcut undo, drag-and-drop import media, mouse
+ * clip edits, Enter to send in the Agent panel
+ */
 const agentSent = [];
 window.addEventListener("keydown", (e) => {
   const op = undoRedoKey(e);
@@ -36,20 +45,21 @@ window.addEventListener("pointerdown", () => {
 window.addEventListener("paste", () => {
   actions.setProjectMeta({ name: "Changed by paste" });
 });
-// 桌面版标题栏菜单的「撤销」(TopBar 收这个事件)
+// "Undo" from the desktop app title bar menu (TopBar receives this event)
 window.addEventListener("pc-titlebar-command", (e) => {
   if (e.detail === "undo") actions.undo();
 });
 
 function fire(type, props = {}) {
   const e = new Event(type, { cancelable: true });
-  // Event 的 target 是只读的、由派发填:测试里「焦点在哪」另放在 pcTarget 上
+  // Event target is read-only and populated by dispatch: in tests, "where focus is" is placed
+  // separately on pcTarget
   Object.assign(e, { ctrlKey: false, metaKey: false, shiftKey: false, key: "" }, props);
   window.dispatchEvent(e);
   return e;
 }
 
-/** 一个停在「写盘」那一步的保存:返回放行函数 */
+/** A save stopped at the "write to disk" step: returns the release function */
 function heldDeps(overrides = {}) {
   let release;
   const gate = new Promise((r) => { release = r; });
@@ -141,7 +151,8 @@ test("Editing resumes after the wait for confirmation times out (no file written
   let timeUp;
   const h = heldDeps({ settle: () => new Promise((_, reject) => { timeUp = () => reject(new Error("timeout")); }) });
   const saving = saveProcFile("a.proc", h.deps);
-  // 先等它走到「等文档服务确认」那一步(前面还要等后台写入停下来)
+  // First wait for it to reach the "wait for document service confirmation" step (before that,
+  // also wait for background writes to stop)
   while (!timeUp) await new Promise((r) => setTimeout(r, 20));
   try {
     fire("keydown", { key: "Delete" });

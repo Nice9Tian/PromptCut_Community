@@ -1,9 +1,11 @@
 /**
- * 路径操作(diffProject / applyOps)的单测与性质测试。跑:node --test src/kernel/diffProject.test.mjs
+ * Unit tests and property tests for path operations (diffProject / applyOps).
+ * Run: node --test src/kernel/diffProject.test.mjs
  *
- * 钉的是 docs/plan/c65-ops-spec.md 与 c65-design.md 第 2 节:
- *   V1:1000 个随机项目,apply(prev, ops) 深相等 next、apply(next, inverse) 深相等 prev;
- *   V8:1000 个片段的项目,单次差异 ≤ 5 ms。
+ * Pins down docs/plan/c65-ops-spec.md and c65-design.md section 2:
+ *   V1: 1000 random projects, apply(prev, ops) deeply equals next,
+ *       apply(next, inverse) deeply equals prev;
+ *   V8: project with 1000 clips, single diff ≤ 5 ms.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -34,7 +36,7 @@ test("V1-1000 random projects: forward ops turn prev into next, inverse ops turn
     assert.deepEqual(JSON.parse(JSON.stringify(fwd)), JSON.parse(JSON.stringify(next)));
     const back = apply(next, inverse);
     assert.ok(deepEqual(back, prev), `Project ${i}: the inverse ops result does not equal prev`);
-    // 操作经过 JSON 往返(真实场景要过网络)也一样成立
+    // Operations still hold after a JSON round-trip (which goes over the network in real scenarios)
     const wire = JSON.parse(JSON.stringify({ ops, inverse }));
     assert.ok(deepEqual(apply(prev, wire.ops), next));
     assert.ok(deepEqual(apply(next, wire.inverse), prev));
@@ -73,7 +75,7 @@ test("V1-More than 500 ops become a root replacement, and forward and inverse st
   assert.deepEqual(ops[0], { op: "set", path: "", value: next });
   assert.deepEqual(inverse[0], { op: "set", path: "", value: prev });
   assert.ok(MAX_DIFF_OPS === 500);
-  // 500 条以内不退化
+  // No degradation within 500 items
   const d2 = diffProject(prev, next, { limit: 10_000 });
   assert.ok(d2.ops.length > 500);
   assert.ok(deepEqual(apply(prev, d2.ops), next));
@@ -84,7 +86,7 @@ test("V1-Identical objects produce no ops; clips are addressed by id, so inserts
   assert.deepEqual(diffProject(prev, prev).ops, []);
   const next = { tracks: [{ id: "t1", clips: [{ id: "c1", x: 1 }, { id: "c2", x: 5 }] }] };
   assert.deepEqual(diffProject(prev, next).ops, [{ op: "set", path: "/tracks/@t1/clips/@c2/x", value: 5 }]);
-  // 别人先在前面插了一个片段:我的操作照样打到 c2 上
+  // Someone else inserted a clip in front first: my operation still lands on c2
   const theirs = apply(prev, [{ op: "insert", path: "/tracks/@t1/clips", index: 0, value: { id: "c0", x: 0 } }]);
   const mine = apply(theirs, diffProject(prev, next).ops);
   assert.deepEqual(mine.tracks[0].clips.map((c) => [c.id, c.x]), [["c0", 0], ["c1", 1], ["c2", 5]]);
@@ -108,7 +110,7 @@ test("V1-Path escaping: / and ~ in keys and ids", () => {
   assert.equal(getAt(next, "/list/@x~1y~0z/v"), 2);
 });
 
-/* ---------------- 规范逐条 ---------------- */
+/* ---------------- Specification item by item ---------------- */
 
 const base = () => deepFreeze({ name: "p", meta: { a: 1 }, tracks: [{ id: "t1", clips: [{ id: "c1" }, { id: "c2" }] }], tags: [1, 2] });
 const bad = (doc, ops) => {
@@ -144,13 +146,13 @@ test("Spec-remove: the parent must exist; a missing target is a no-op (two peopl
   const out = apply(base(), [{ op: "remove", path: "/meta" }, { op: "remove", path: "/tracks/@t1/clips/@c1" }]);
   assert.deepEqual(Object.keys(out), ["name", "tracks", "tags"]);
   assert.deepEqual(out.tracks[0].clips, [{ id: "c2" }]);
-  // 目标不在:照常落地,原对象原样返回
+  // Target does not exist: apply as usual, original object returned as-is
   const doc = base();
   assert.equal(apply(doc, [{ op: "remove", path: "/nope" }]), doc);
   assert.equal(apply(doc, [{ op: "remove", path: "/tracks/@t1/clips/@c9" }]), doc);
   const twice = apply(doc, [{ op: "remove", path: "/tracks/@t1/clips/@c1" }, { op: "remove", path: "/tracks/@t1/clips/@c1" }]);
   assert.deepEqual(twice.tracks[0].clips, [{ id: "c2" }]);
-  // 父级不在、父级是标量、数组上用非 @ 段、删根:bad-path
+  // Parent missing, parent is scalar, non-@ segment on array, delete root: bad-path
   bad(base(), [{ op: "remove", path: "/tracks/@t9/clips/@c1" }]);
   bad(base(), [{ op: "remove", path: "/nope/x" }]);
   bad(base(), [{ op: "remove", path: "/name/x" }]);
@@ -198,10 +200,10 @@ test("Spec-the whole batch is atomic: if one in the middle fails, the original o
   const doc = base();
   const r = bad(doc, [{ op: "set", path: "/name", value: "x" }, { op: "remove", path: "/nope/x" }]);
   assert.equal(r.index, 1);
-  // 格式错先于内容错报:整批先查格式
+  // Format errors reported before content errors: check format for the entire batch first
   assert.equal(bad(doc, [{ op: "remove", path: "/nope/x" }, { op: "move", path: "/a", index: 0 }]).index, 1);
   assert.equal(doc.name, "p");
-  // 不认识的操作
+  // Unrecognized operation
   bad(doc, [{ op: "patch", path: "/name" }]);
   bad(doc, [{ op: "set", path: "name", value: 1 }]);
 });
@@ -244,22 +246,31 @@ test("Spec-entity: clip, track, part goes to its clip, clip inside a cut, effect
   ]), ["/tracks/@t1/clips/@c1", "/meta/name"]);
 });
 
-/* ---------------- V8 性能 ---------------- */
+/* ---------------- V8 performance ---------------- */
 
 /*
- * 每批 40 次、取墙钟中位数(中位数挡掉单次的 GC 停顿);最多量 MAX_BATCHES 批,批间让出 100 ms,
- * 有一批中位数达标就算过,达标立刻停(健康时只量一批)。
+ * 40 runs per batch, taking the wall-clock median (the median filters out occasional GC pauses);
+ * measure at most MAX_BATCHES batches, yielding 100 ms between batches; passes as long as one
+ * batch's median meets the target, stopping immediately upon meeting it (only one batch measured
+ * when healthy).
  *
- * 全量测试是几十个进程并行跑的,同一台机器上别的会话也在吃 CPU:所有核都忙时睿频降下来、
- * 同一物理核上的另一个超线程分走执行单元,同样的活会一阵一阵地变慢(实测这台笔记本在后台负载
- * 70%~80% 时,「整份深拷贝」那一项同一进程里能从约 2 ms 跳到 4~6 ms,持续零点几秒到几秒)。
- * 以前是连着量三批取最好,三批挤在半秒里,正好一起撞上一阵慢;现在把最多八批摊开在两三秒里。
- * 判据(中位数 ≤ 5 ms)不变,前三批就是以前那三批,所以只会比以前更容易量到真实水平、不会更松:
- * 代码真退化时每一批都超,照样拦得住。
+ * Full suite tests run in dozens of parallel processes, and other sessions on the same machine
+ * also consume CPU: when all cores are busy, turbo boost drops, and another hyper-thread on the
+ * same physical core takes execution units, so the same workload experiences intermittent slowdowns
+ * (empirically on this laptop with 70%~80% background load, the "full deep copy" item in the same
+ * process can jump from ~2 ms to 4~6 ms for tenths of a second to several seconds). Previously,
+ * three consecutive batches were measured to take the best, squeezed into half a second, easily
+ * colliding with a transient slowdown; now up to eight batches are spread across two to three
+ * seconds. The criterion (median ≤ 5 ms) remains unchanged; the first three batches are identical
+ * to the previous three, making it only easier to measure true performance rather than being looser:
+ * if the code truly regresses, every batch will exceed the threshold, still caught as expected.
  *
- * 试过按主线程 CPU 时间(process.threadCpuUsage)计,不管用:机器没被占满时线程很少被挂起,
- * CPU 时间约等于墙钟,慢是硬件层面的(降频、超线程),CPU 时间一样涨;交替对照 15 轮,
- * 老写法挂 2 轮、CPU 时间写法挂 4 轮。详见 docs/archive/agent-reports/AGENT-flaky-timing.md。
+ * Measuring by main-thread CPU time (process.threadCpuUsage) was tried but did not work: when the
+ * machine is not fully saturated, threads are rarely suspended, so CPU time roughly equals
+ * wall-clock time; slowness is at the hardware level (frequency throttling, hyper-threading), and
+ * CPU time increases just the same; across 15 alternating comparison rounds, the old implementation
+ * failed 2 rounds and the CPU-time implementation failed 4 rounds. See
+ * docs/archive/agent-reports/AGENT-flaky-timing.md for details.
  */
 const MAX_BATCHES = 8;
 
@@ -288,7 +299,7 @@ test("V8-1000-clip project, a single diff ≤ 5 ms (drag, param edit, delete, ad
   const prev = bigProject(r, 1000);
   const t3 = prev.tracks[3];
   const cases = {
-    // 像 actions 那样的不可变更新:只换改到的那条路径
+    // Immutable update like actions: only replaces the modified path
     dragOneClip: () => ({ ...prev, tracks: prev.tracks.map((t) => (t === t3 ? { ...t, clips: t.clips.map((c, i) => (i === 50 ? { ...c, start: c.start + 0.5, end: c.end + 0.5 } : c)) } : t)) }),
     editOneParam: () => ({ ...prev, tracks: prev.tracks.map((t) => (t === t3 ? { ...t, clips: t.clips.map((c, i) => (i === 7 ? { ...c, params: { ...c.params, text: "新" } } : c)) } : t)) }),
     deleteOneClip: () => ({ ...prev, tracks: prev.tracks.map((t) => (t === t3 ? { ...t, clips: t.clips.filter((_, i) => i !== 20) } : t)) }),

@@ -7,7 +7,7 @@ import path from 'node:path';
 import { loadCosts, loadTuning, saveTuning, upsertCosts, mergeCosts, filterCosts, costsPath, tuningPath, RENAME_RETRIES } from '../costs-store.mjs';
 import { DEFAULT_TUNING } from '../../src/render/pipelineTuning.mjs';
 
-/** 每个用例一个干净的根;PROMPTCUT_DATA_DIR 会把落点挪走,测试期间一律摘掉 */
+/** Clean root for each case; PROMPTCUT_DATA_DIR moves drop target away, stripped during testing */
 function withRoot(fn) {
   const saved = process.env.PROMPTCUT_DATA_DIR;
   delete process.env.PROMPTCUT_DATA_DIR;
@@ -62,14 +62,14 @@ test('Different identityKeys on the same device each take a row', () => {
 test('demoted / pinnedHeavy stay sticky on re-measurement and are overwritten only when a value is given explicitly', () => {
   withRoot((root) => {
     upsertCosts(root, [rec({ demoted: true, pinnedHeavy: true })]);
-    // 探针复测上报的记录里没有这两个字段
+    // Records reported by probe re-measurement do not have these two fields
     upsertCosts(root, [rec({ stepMs: 11 })]);
     const kept = loadCosts(root)[0];
     assert.equal(kept.stepMs, 11);
     assert.equal(kept.demoted, true, 'If the downgrade flag is wiped, K1 would skip this card forever');
     assert.equal(kept.pinnedHeavy, true);
 
-    // 显式写 false 就以新的为准(K6 撤销降级走这条)
+    // Explicitly passing false takes the new value (K6 undo downgrade takes this path)
     upsertCosts(root, [rec({ demoted: false })]);
     assert.equal(loadCosts(root)[0].demoted, false);
     assert.equal(loadCosts(root)[0].pinnedHeavy, true, 'The flag that was not mentioned stays sticky as before');
@@ -121,7 +121,7 @@ test('Writing to disk is atomic: no temp files are left besides the save file', 
   });
 });
 
-/* ------------------------------------------------ K2 的可调系数(out/pipeline-tuning.json) */
+/* ------------------------------------------------ K2 tunable coefficients (out/pipeline-tuning.json) */
 
 const writeTuning = (root, text) => {
   fs.mkdirSync(path.dirname(tuningPath(root)), { recursive: true });
@@ -175,7 +175,7 @@ test('What saveTuning writes is the clamped copy, and loadTuning can read it bac
     const out = saveTuning(root, { COST_SCALE: 2, STEP_PERCENTILE: 0.95 });
     assert.deepEqual({ ...out }, { COST_SCALE: 2, STEP_PERCENTILE: 0.95, STEP_MIN_SAMPLES: DEFAULT_TUNING.STEP_MIN_SAMPLES });
     assert.deepEqual({ ...loadTuning(root) }, { ...out });
-    // 文件里躺着的也是夹取后的,不是请求里的原话
+    // What is stored in the file is also clamped, not the raw value from the request
     assert.deepEqual(JSON.parse(fs.readFileSync(tuningPath(root), 'utf8')), { ...out });
   });
 });
@@ -196,7 +196,7 @@ test('saveTuning(null) clears the overrides: it deletes the file instead of writ
     assert.deepEqual({ ...saveTuning(root, null) }, { ...DEFAULT_TUNING });
     assert.equal(fs.existsSync(tuningPath(root)), false, '"No such file = use all defaults" is stated explicitly in K2');
     assert.deepEqual({ ...loadTuning(root) }, { ...DEFAULT_TUNING });
-    // 本来就没有文件时再清一次也不抛
+    // Clearing again when there was no file to begin with does not throw
     assert.deepEqual({ ...saveTuning(root, [1, 2]) }, { ...DEFAULT_TUNING });
   });
 });
@@ -225,7 +225,7 @@ test('PROMPTCUT_DATA_DIR overrides where files are written', () => {
   }
 });
 
-/** 让 fs.renameSync 前 n 次抛 code 错,之后照常改名 */
+/** Make fs.renameSync throw code errors for the first n times, then rename as usual */
 function flakyRename(n, code) {
   const real = fs.renameSync;
   let calls = 0;

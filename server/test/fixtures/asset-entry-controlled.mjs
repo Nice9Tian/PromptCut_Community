@@ -1,4 +1,4 @@
-/** TMP配置＋真实stage runtime；仅拥有当前测试子树，可控真实文件流_destroy用于关闭证据。 */
+/** TMP config + real stage runtime; owns only current test subtree; controllable real file stream _destroy used for closure evidence. */
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));

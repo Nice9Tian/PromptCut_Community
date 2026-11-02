@@ -1,26 +1,41 @@
 /**
- * 视频取帧节奏探针(`docs/plan/TODO.md`「用户真机缺陷」一条:素材效果卡的视频输入源在 0.5 倍慢放导出时节奏不均)。
- * 这条行为此后的回归基线;G0-R「预渲染探针」一行,改到取帧、解码、素材效果卡视频源、`src/render/frameMedia.ts` 时必跑。
+ * Video frame-fetching cadence probe (`docs/plan/TODO.md` "User physical device defects" item:
+ * uneven cadence in video input source of media effect cards during 0.5x slow-motion export).
+ * This behavior is the regression baseline going forward; a G0-R "prerender probe" line, required
+ * to run whenever touching frame fetching, decoding, media effect card video sources, or
+ * `src/render/frameMedia.ts`.
  *
  *   node scripts/probes/video-source-cadence-probe.mjs [--port 6030] [--keep]
  *
- * 做法:
- *   - ffmpeg 合成两份素材:30 fps 与 25 fps,各 3 s、64×64,第 n 帧整幅灰度 = 16 × (n mod 16)(RGB 值,色度中性;
- *     阶梯 16,扛有损编码)。TODO 写的是 2 s,这里取 3 s:用例③的 mediaOffset 0.35 要取到第 69 帧,2 s 只有 60 帧。
- *   - 一份 30 fps、256×144 的项目,每个用例一段 2 s(60 帧)、首尾相接排在时间轴上:
- *       ① 素材效果卡节点(原样输出上游的直通素材效果卡 `probe-cadence-pass`)输入源 rate 0.5、offset 0 与 0.35(10.5 帧,非整帧);
- *       ② 同一素材效果卡 rate 1、offset 0;
- *       ③ 时间轴普通视频片段 mediaOffset 0 与 0.35(覆盖 `src/render/frameMedia.ts`);
- *       ④ 25 fps 素材经素材效果卡 rate 1(另加一段 25 fps 的时间轴片段,同一条规则)。
- *   - 起一台 dev server(导出目录、数据目录都是新建的临时目录;直通素材效果卡写进临时的卡片改动层 `PROMPTCUT_CARD_OVERRIDES`,
- *     检出目录一个文件都不写),`exportFrames` 单进程导出全片 PNG。
- *   - 读每帧中心 16×16 的平均灰度,四舍五入到 16 的倍数得到 n mod 16,按单调性还原成源帧号 m(n)。
- *   - 断言 m(n) = floor((offset + rate × n / 30) × 源帧率 + 1e-6)(n 是这一段里的第几帧)。
+ * Approach:
+ *   - ffmpeg synthesizes two assets: 30 fps and 25 fps, each 3 s, 64×64, frame n full grayscale =
+ *     16 × (n mod 16) (RGB value, neutral chroma; step size 16, resilient to lossy encoding).
+ *     TODO specifies 2 s, but 3 s is used here: case (3) with mediaOffset 0.35 needs up to frame
+ *     69, while 2 s only has 60 frames.
+ *   - A 30 fps, 256×144 project, with each test case a 2 s (60 frames) segment arranged end-to-end
+ *     on the timeline:
+ *       (1) Media effect card node (pass-through media effect card `probe-cadence-pass` outputting
+ *           upstream as-is) input source rate 0.5, offset 0 and 0.35 (10.5 frames, non-integer
+ *           frame);
+ *       (2) Same media effect card rate 1, offset 0;
+ *       (3) Regular timeline video clip mediaOffset 0 and 0.35 (covering `src/render/frameMedia.ts`);
+ *       (4) 25 fps asset through media effect card rate 1 (plus an additional 25 fps timeline clip,
+ *           following the same rule).
+ *   - Start a dev server (export directory and data directory are newly created temporary
+ *     directories; pass-through media effect card is written to temporary card overlay layer
+ *     `PROMPTCUT_CARD_OVERRIDES`, writing zero files to checkout directory), and `exportFrames`
+ *     exports the full video as PNGs in a single process.
+ *   - Read average grayscale of center 16×16 for each frame, round to multiples of 16 to obtain
+ *     n mod 16, and reconstruct source frame number m(n) by monotonicity.
+ *   - Assert m(n) = floor((offset + rate × n / 30) × source frame rate + 1e-6) (where n is the
+ *     frame index within this segment).
  *
- * 输出最后一行一行 JSON:`{ ok, fails: [], cases: [{ name, got, want, bad }] }`;退出码 0 当且仅当 `fails` 为空。
- * 端口:编辑器 `--port`,舞台另占 +1、+2;默认 6030。`--keep` 留下临时目录(帧、日志)。
+ * Outputs a single JSON line at the end: `{ ok, fails: [], cases: [{ name, got, want, bad }] }`;
+ * exit code 0 if and only if `fails` is empty.
+ * Ports: editor `--port`, stage takes +1 and +2; default 6030. `--keep` preserves temporary
+ * directories (frames, logs).
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
+import '../lib/no-user-dirs.mjs'; // First import: do not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -51,7 +66,7 @@ const log = (msg) => console.log(`[cadence] ${msg}`);
 
 const FPS = 30, SEG = 60, W = 256, H = 144, SRC_SECONDS = 3;
 
-/* ---------------- 素材 ---------------- */
+/* ---------------- Assets ---------------- */
 
 const ffmpeg = await findFfmpeg();
 function makeSource(rate) {
@@ -68,7 +83,7 @@ function makeSource(rate) {
 const src30 = makeSource(30);
 const src25 = makeSource(25);
 
-/* ---------------- 直通素材效果卡(写进临时改动层) ---------------- */
+/* ---------------- Pass-through media effect card (written to temporary overlay layer) ---------------- */
 
 const CARD_ID = 'probe-cadence-pass';
 const cardFile = path.join(OVERRIDES, 'src', 'cards', 'user', `${CARD_ID}.tsx`);
@@ -95,9 +110,9 @@ export const probeCadencePass: CardDef<Record<string, never>> = {
 };
 `);
 
-/* ---------------- 项目 ---------------- */
+/* ---------------- Project ---------------- */
 
-/** kind: 'card' 走素材效果卡节点;'clip' 走时间轴视频片段 */
+/** kind: 'card' goes through media effect card node; 'clip' goes through timeline video clip */
 const CASES = [
   { name: '(1) media effect card rate 0.5 offset 0', kind: 'card', media: src30, rate: 0.5, offset: 0 },
   { name: '(1) media effect card rate 0.5 offset 0.35', kind: 'card', media: src30, rate: 0.5, offset: 0.35 },
@@ -132,7 +147,7 @@ const PROJECT = {
 };
 fs.writeFileSync(path.join(OUT_DIR, 'project.json'), JSON.stringify(PROJECT));
 
-/* ---------------- 导出 ---------------- */
+/* ---------------- Export ---------------- */
 
 const env = { PROMPTCUT_EXPORT_DIR: WORK, PROMPTCUT_DATA_DIR: DATA_DIR, PROMPTCUT_CARD_OVERRIDES: OVERRIDES, PROMPTCUT_NO_PORT_FILE: '1' };
 let server = null;
@@ -146,7 +161,7 @@ try {
   out.exportMs = Date.now() - t0;
   if (server.restarts()) fails.push(`dev server restarted ${server.restarts()} times during export`);
 
-  /* ---------------- 读帧、还原源帧号 ---------------- */
+  /* ---------------- Read frames, reconstruct source frame numbers ---------------- */
 
   const framesDir = path.join(OUT_DIR, 'frames');
   const level = (frame) => {
@@ -173,8 +188,8 @@ try {
       if (!l) { missing++; got.push(null); continue; }
       maxOff = Math.max(maxOff, l.off);
       let m;
-      if (prev === null) m = l.level + 16 * Math.round((want[0] - l.level) / 16); // 第一帧:取最接近期望的那一圈
-      else m = prev + ((l.level - (prev % 16) + 16) % 16);                       // 之后:单调不减,每步 < 16
+      if (prev === null) m = l.level + 16 * Math.round((want[0] - l.level) / 16); // First frame: take the cycle closest to expectation
+      else m = prev + ((l.level - (prev % 16) + 16) % 16);                       // Afterwards: monotonically non-decreasing, each step < 16
       got.push(m); prev = m;
     }
     const bad = want.map((w, n) => (got[n] === w ? null : { n, got: got[n], want: w })).filter(Boolean);

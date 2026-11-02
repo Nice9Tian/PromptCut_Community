@@ -1,11 +1,19 @@
 /**
- * 桌面的「冲突合并」窗口与导航栏上的「冲突合并」按钮(语义 `workflow/editing.md`「撤销、重做」,`workflow/project.md`
- * 「暂时离线项目与保存」,`product/document-service.md`「冲突」;2026-10-18、2026-10-22 用户定)。
+ * The desktop "Merge conflicts" window and the "Merge conflicts" button on the navigation bar
+ * (semantics `workflow/editing.md`, "Undo and redo"; `workflow/project.md`, "Temporarily offline
+ * projects and saving"; `product/document-service.md`, "Conflicts"; user decisions, 2026-10-18 and
+ * 2026-10-22).
  *
- * - 两级可勾选列表:一级是被改的那样东西,二级是它被改的各个属性,写明改成什么、云端现在是什么;展开后可单独勾一项;
- * - 顶端「选中无冲突项」「取消全部勾选」;底部「合并」「删除选中」,以及关闭按钮(还有可选项是「下次再说」,没有了是「完成」);
- * - 只要还有待处理的项,导航栏顶端就显示「冲突合并」按钮。
- * 离线重连与 0.7.20 的撤销冲突共用这一个窗口(列表里的来源由 `source` 区分,显示与操作不分)。
+ * - Two-level checkable list: the first level is the thing that was changed, the second level is
+ *   each of its changed properties, stating what it was changed to and what the cloud has now; once
+ *   expanded, single items can be checked on their own;
+ * - At the top "Select conflict-free items" and "Clear all selections"; at the bottom "Merge" and
+ *   "Delete selected", plus a close button ("Later" while selectable items remain, "Done" when none
+ *   are left);
+ * - As long as there are pending items, the "Merge conflicts" button is shown at the top of the
+ *   navigation bar.
+ * Offline reconnection and the undo conflicts of 0.7.20 share this one window (the source of each
+ * entry in the list is told apart by `source`; display and operations do not differ).
  */
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
@@ -15,7 +23,7 @@ import type { ThingRow } from "./mergeItems";
 import "./sync.css";
 import { tr } from "../../i18n/index.ts";
 
-/** 文档服务不收待合并表时的说法(超限:整条不收、什么都不丢;处理掉一些之后自动再交) */
+/** What to say when the document service does not accept the pending merge table (over the limit: the whole entry is rejected, nothing is lost; it is resubmitted automatically after some are handled) */
 export const MERGE_BLOCKED_TEXT: Record<string, string> = {
   unsupported: tr("The document service version is outdated; items pending merge exist only on this device for now."),
   "too-large": tr("Too many items pending merge for the document service to store; they exist only on this device for now. They will be resubmitted automatically after you merge or delete some."),
@@ -123,7 +131,7 @@ function DialogBody() {
   );
 }
 
-/** 导航栏顶端的「冲突合并」按钮:有待处理的项才显示 */
+/** The "Merge conflicts" button at the top of the navigation bar: shown only when there are pending items */
 export function ConflictMergeButton() {
   const c = useMergeCounts();
   if (!c.total) return null;

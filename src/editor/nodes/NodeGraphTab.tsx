@@ -4,7 +4,7 @@ import { graphOf } from "./layout";
 import "./nodeGraph.css";
 import { tr } from "../../i18n/index.ts";
 
-/** 编辑分区 → 节点:当前播放头处的节点管线(媒体 → 滤镜 / 像素映射 / 音频 → 输出) */
+/** Edit section → Nodes: the node pipeline at the current playhead (media → filter / pixel map / audio → output) */
 export function NodeGraphTab() {
   const project = useStore((s) => s.project);
   const time = useStore((s) => s.t);

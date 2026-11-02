@@ -1,26 +1,38 @@
 /**
- * 无条件推送（契约 `docs/plan/manifest-contract.md` 第 4 节，第 6 节用例 W1～W6）。
- * 跑：node --experimental-test-module-mocks --test server/test/artifact-push.test.mjs
+ * Unconditional push (contract `docs/plan/manifest-contract.md` Section 4, Section 6 test cases
+ * W1-W6).
+ * Run: node --experimental-test-module-mocks --test server/test/artifact-push.test.mjs
  *
- * 只照契约写，不看实现。
+ * Written strictly against the contract, without looking at the implementation.
  *
- * 约定：
- *   - 一个临时帧库、一个真的 `FramePipeline`（注入 `environment`、不探测；`bakery/index.mjs` 换成假的，不起 Chrome）；
- *     素材服务（memory，端口 0）与文档服务（内容库，memory，端口 0）同 `artifact-dedup.test.mjs`。
- *   - 推送队列：`createPushQueue({ pipeline, client, content, dir, log, concurrency, now, setTimeout, clearTimeout })`。
- *     `dir` 是帧库根。契约说退避要「注入时钟」但没写选项名，这里按 M5a `createWsEndpoint` 的写法传
- *     `now` / `setTimeout` / `clearTimeout`（假时钟，见 `fake-manifest-env.mjs` 的 `createManualClock`）。每个队列都传，
- *     免得失败的段挂一个真的 5 s 计时器。
- *   - 「配了推送队列的管线」：契约没写怎么配。这里 `attachQueue(pipeline, queue)`：管线有 `setPushQueue` 就调它，
- *     否则设 `pipeline.pushQueue = queue`（`createPushQueue` 自己已经挂上的，两种写法都不冲突）。
- *   - `enqueue(unit, priority)`：`priority` 传数字 0 / 1 / 2（契约表的 `normal` / `low` / `lowest`，第 9 节第 2 条定为最终级别）；
- *     返回 `Promise<void>`，队列文件写回后兑现（第 9 节第 1 条），测试里要读 `push-queue.json` 之前都先 await 它；
- *     `unit` = `{ kind, tier, resultKey, dirKey, entryKey, range, canvasHeavy }`。
- *   - 推送顺序看内容库清单的写入顺序（`content.put`，并发 1 时就是推送顺序）。
- *   - 钩子要算这一段的 `to`（与 `split.mjs` 一致：最后一段到 `count - 1`），所以用到钩子的用例都在管线上挂一个
- *     entry，card plan 里有这张卡的 control（`clipId`、`snapshotKey`、`tier`、`count`）。
+ * Conventions:
+ *   - A temporary frame store, a real `FramePipeline` (injects `environment`, does not probe;
+ *     `bakery/index.mjs` replaced with a mock, does not launch Chrome); asset service (memory,
+ *     port 0) and document service (content store, memory, port 0) same as
+ *     `artifact-dedup.test.mjs`.
+ *   - Push queue:
+ *     `createPushQueue({ pipeline, client, content, dir, log, concurrency, now, setTimeout, clearTimeout })`.
+ *     `dir` is the frame store root. The contract states backoff requires "injecting a clock" but
+ *     does not specify the option name; here we pass `now` / `setTimeout` / `clearTimeout`
+ *     following the M5a `createWsEndpoint` convention (fake clock, see `createManualClock` in
+ *     `fake-manifest-env.mjs`). Passed to every queue so failed segments do not hold a real 5 s timer.
+ *   - "Pipeline configured with a push queue": the contract does not specify how to configure it.
+ *     Here `attachQueue(pipeline, queue)`: calls `setPushQueue` if the pipeline has it, otherwise
+ *     sets `pipeline.pushQueue = queue` (`createPushQueue` itself already attached it; neither
+ *     conflicts).
+ *   - `enqueue(unit, priority)`: `priority` takes numeric 0 / 1 / 2 (`normal` / `low` / `lowest` in
+ *     the contract table, established as final tiers in Section 9 Item 2); returns `Promise<void>`,
+ *     which fulfills after the queue file is written back (Section 9 Item 1); tests await it before
+ *     reading `push-queue.json`;
+ *     `unit` = `{ kind, tier, resultKey, dirKey, entryKey, range, canvasHeavy }`.
+ *   - Push order follows the write order of the content store manifest (`content.put`, which is the
+ *     push order when concurrency is 1).
+ *   - The hook needs to calculate this segment's `to` (consistent with `split.mjs`: the last segment
+ *     goes to `count - 1`), so test cases using hooks attach an entry to the pipeline, with this
+ *     card's control (`clipId`, `snapshotKey`, `tier`, `count`) in the card plan.
  *
- * 实现模块还不存在时每条用例各自失败、报原因。
+ * When implementation modules do not exist yet, each test case fails individually and reports the
+ * reason.
  */
 import { test, mock, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -84,7 +96,7 @@ async function rig(t) {
   return { roots, svc };
 }
 
-/** 建队列（带假时钟），测试结束时 stop */
+/** Creates a queue (with a fake clock), calls stop when the test ends */
 function queueOf(t, { pipeline, client, content, dir, concurrency = 1, clock = createManualClock() }) {
   const logs = [];
   const queue = P().createPushQueue({
@@ -94,14 +106,17 @@ function queueOf(t, { pipeline, client, content, dir, concurrency = 1, clock = c
   });
   assert.ok(queue && typeof queue.enqueue === 'function' && typeof queue.start === 'function' && typeof queue.stop === 'function' && typeof queue.stats === 'function',
     'PushQueue = { enqueue, start, stop, stats }');
-  t.after(async () => { try { await queue.stop(); } catch { /* 已停 */ } });
+  t.after(async () => { try { await queue.stop(); } catch { /* Stopped */ } });
   const live = { queue, logs };
   liveQueues.add(live);
   t.after(() => { liveQueues.delete(live); });
   return { queue, clock, logs };
 }
 
-/** 本条用例建过的队列：等待超时时把各队列的 lastError 和最近的重试日志带进报错，偶发失败时才看得出原因 */
+/**
+ * Queues created by this test case: on wait timeout, includes each queue's lastError and recent
+ * retry logs in the error, so intermittent failures can be diagnosed
+ */
 const liveQueues = new Set();
 const queueDiag = () => JSON.stringify([...liveQueues].map(({ queue, logs }) => ({
   stats: (({ running, pending, inflight, backingOff, pushed, failures, uploaded, skipped, manifests }) => ({ running, pending, inflight, backingOff, pushed, failures, uploaded, skipped, manifests }))(queue.stats()),
@@ -114,7 +129,7 @@ function attachQueue(pipeline, queue) {
   else if (pipeline.pushQueue !== queue) pipeline.pushQueue = queue;
 }
 
-/** 共享档一张卡的 control（card plan 形状，`card-cache.mjs`） */
+/** Shared-tier control for one card (card plan shape, `card-cache.mjs`) */
 function sharedControl({ clipId, contentKey, count, capabilities = SHARED_CAPS }) {
   return { clipId, key: `png-${clipId}`, snapshotKey: resultKeyOf(contentKey, FP), contentKey, envFingerprint: FP, tier: 'shared', capabilities, count, sampling: { firstFrame: 0 } };
 }
@@ -127,11 +142,15 @@ const unitOf = (task, canvasHeavy = false) => ({
   kind: 'snapshot', tier: task.tier, resultKey: task.resultKey, dirKey: dirKeyOf(task), entryKey: task.tier === 'local' ? task.input.entryKey : null,
   range: { ...task.range }, canvasHeavy,
 });
-/** 清单写入顺序里，每个键第一次出现的位置 */
+/** First occurrence of each key in the manifest write order */
 const putOrder = (content) => [...new Set(content.puts().map((c) => c.key))];
 const waitPuts = (content, n, ms = 15_000) => until(() => content.puts().length >= n, { timeoutMs: ms, what: () => `The content store has only ${content.puts().length} manifests written: ${JSON.stringify(putOrder(content))}; queue: ${queueDiag()}` });
 
-/** 读队列文件；没有回 null。撞上队列正在改名替换它（Windows 上报 EPERM / EBUSY / EACCES）就稍等重读，不当成「没有」 */
+/**
+ * Reads the queue file; returns null if absent. If hitting an in-progress rename replacement by the
+ * queue (reporting EPERM / EBUSY / EACCES on Windows), waits briefly and retries instead of treating
+ * it as "absent"
+ */
 async function readQueueFile(dir) {
   for (let attempt = 0; ; attempt++) {
     try { return await fs.readFile(path.join(dir, 'push-queue.json'), 'utf8'); }
@@ -161,12 +180,14 @@ test('W1 A pipeline with a push queue configured: commitSnapshots writes 130 fra
   const control = sharedControl({ clipId: 'clip-w1', contentKey, count: 130 });
   entryWith(A, [control]);
   const rk = control.snapshotKey;
-  // 按批写（每批 10 帧，13 批），和预渲染一样经 commitSnapshots
+  // Writes in batches (10 frames per batch, 13 batches), via commitSnapshots just like prerendering
   for (let from = 0; from < 130; from += 10) {
     await A.snapshots().commitSnapshots({ tier: 'shared', key: rk, clipId: 'clip-w1', capabilities: SHARED_CAPS,
       items: range(from, from + 9).map((n) => ({ localFrame: n, html: htmlOf(n, 'W1') })) });
   }
-  // 钩子若经 pipeline 上挂的队列对象调 enqueue，这里看得到进队的单元；看不到（实现在闭包里直接进队）就只看推送结果
+  // If the hook calls enqueue via the queue object attached to the pipeline, queued units can be
+  // observed here; if not (the implementation enqueues directly in a closure), inspect only the push
+  // results
   if (enqueued.length) {
     const distinct = new Map(enqueued.map((e) => [`${e.unit.resultKey}:${e.unit.range.from}-${e.unit.range.to}`, e]));
     assert.deepEqual([...distinct.keys()].sort(), [`${rk}:0-59`, `${rk}:120-129`, `${rk}:60-119`].sort(),
@@ -178,7 +199,8 @@ test('W1 A pipeline with a push queue configured: commitSnapshots writes 130 fra
     }
   }
   assert.equal(content.puts().length, 0, 'Nothing is pushed before start()');
-  // 钩子不 await enqueue（第 9 节第 1 条）：等它回的 Promise 兑现（看得到的话），再读队列文件
+  // The hook does not await enqueue (Section 9 Item 1): wait for the returned Promise to fulfill (if
+  // observable) before reading the queue file
   await Promise.all(pending);
   await until(async () => (await readQueueFile(root)) !== null, { timeoutMs: 3000, what: () => 'push-queue.json was not written after enqueueing' });
   const persisted = await readQueueFile(root);
@@ -187,7 +209,7 @@ test('W1 A pipeline with a push queue configured: commitSnapshots writes 130 fra
 
   queue.start();
   await waitPuts(content, 3);
-  await new Promise((resolve) => setTimeout(resolve, 300)); // 看看有没有多推
+  await new Promise((resolve) => setTimeout(resolve, 300)); // Check for extra pushes
   assert.deepEqual(putOrder(content).sort(), [`${rk}:0-59`, `${rk}:120-129`, `${rk}:60-119`].sort());
   assert.equal(content.puts().length, 3, `Each segment is pushed exactly once: ${JSON.stringify(content.puts().map((c) => c.key))}`);
   const perHash = new Map();
@@ -227,8 +249,10 @@ test('W1 Pushing runs in the background: when the asset service hangs, commitSna
   await A.snapshots().commitSnapshots({ tier: 'shared', key: control.snapshotKey, clipId: 'clip-w1b', capabilities: SHARED_CAPS,
     items: range(0, 59).map((n) => ({ localFrame: n, html: htmlOf(n, 'W1b') })) });
   await until(() => asset.puts.length > 0, { timeoutMs: 5000, what: () => 'The queue did not start pushing the first segment' });
-  // 推送卡在 gate 上、测试放行之前永远不会完成：commitSnapshots 只要在放行之前返回，就说明它不等推送。
-  // 不用「< 2000 ms」这种墙钟阈值 —— 全量并行时 CPU 满载，写 60 帧本身偶尔就要两三秒。
+  // The push is stuck on the gate and will never complete before the test releases it:
+  // if commitSnapshots returns before the release, it proves it does not wait for the push.
+  // Do not use a wall-clock threshold like "< 2000 ms": during full parallel runs the CPU is at full
+  // load, and writing 60 frames alone occasionally takes two to three seconds.
   const t0 = Date.now();
   let limit;
   const idx = await Promise.race([
@@ -252,7 +276,7 @@ test('W2 Priority: when one shared-tier segment, one local-tier segment and one 
   const entryKey = sha256('entry-W2');
   const local = snapshotTask({ tier: 'local', entryKey, contentKey: sha256('card-W2-local'), from: 0, to: 59, fp: FP, clipId: 'clip-l' });
   const over = snapshotTask({ contentKey: sha256('card-W2-over'), from: 0, to: 59, fp: FP });
-  // 先写帧库（队列还没建：不走钩子）
+  // Writes to the frame store first (queue not yet created: bypasses hooks)
   await seedSnapshots(A, shared, range(0, 59), { tag: 'S' });
   await seedSnapshots(A, local, range(0, 59), { tag: 'L' });
   const idx = await seedSnapshots(A, over, range(0, 59), { html: (n) => (n === 17 ? bigHtml(n) : htmlOf(n, 'O')) });
@@ -260,14 +284,14 @@ test('W2 Priority: when one shared-tier segment, one local-tier segment and one 
 
   const content = countingContent(svc.content);
   const { queue } = queueOf(t, { pipeline: A, client: svc.client, content, dir: root, concurrency: 1 });
-  // 故意按 lowest → low → normal 进队
+  // Deliberately enqueued in order: lowest → low → normal
   await queue.enqueue(unitOf(over), LOWEST);
   await queue.enqueue(unitOf(local), LOW);
   await queue.enqueue(unitOf(shared), NORMAL);
   queue.start();
   await waitPuts(content, 3);
   assert.deepEqual(putOrder(content), [manifestKey(shared), manifestKey(local), manifestKey(over)], 'normal → low → lowest');
-  // 三份清单都对
+  // All three manifests are correct
   for (const task of [shared, local, over]) {
     const got = await svc.content.get('snapshot-manifest', manifestKey(task));
     assert.deepEqual(got?.body, unpack(await T().collectSnapshotResult(A, task)).result, `Manifest of ${task.tier} ${manifestKey(task).slice(-6)}`);
@@ -294,7 +318,7 @@ test('W3 A segment where data:image takes more than half is pushed at low (the h
 
   const X = sharedControl({ clipId: 'clip-img', contentKey: sha256('card-W3-img'), count: 60 });      // data:image ≈ 80%
   const Y = sharedControl({ clipId: 'clip-some', contentKey: sha256('card-W3-some'), count: 60 });    // data:image ≈ 30%
-  const Z = sharedControl({ clipId: 'clip-over', contentKey: sha256('card-W3-over'), count: 60 });    // 一帧超体积
+  const Z = sharedControl({ clipId: 'clip-over', contentKey: sha256('card-W3-over'), count: 60 });    // One frame is oversized
   entryWith(A, [X, Y, Z]);
   const htmlX = (n) => dataImageHtml(n, 0.8);
   const htmlY = (n) => dataImageHtml(n, 0.3);
@@ -303,7 +327,7 @@ test('W3 A segment where data:image takes more than half is pushed at low (the h
   assert.ok(share(htmlY) < 0.4 && share(htmlY) > 0.2, `Fixture: the data:image share of Y is ${share(htmlY).toFixed(3)}`);
   const commit = (c, html) => A.snapshots().commitSnapshots({ tier: 'shared', key: c.snapshotKey, clipId: c.clipId, capabilities: SHARED_CAPS,
     items: range(0, 59).map((n) => ({ localFrame: n, html: html(n) })) });
-  // 进队顺序 X、Z、Y（先进先出的话就是这个顺序）
+  // Enqueue order X, Z, Y (this is the order under FIFO)
   await commit(X, htmlX);
   await commit(Z, (n) => (n === 30 ? bigHtml(n) : htmlOf(n, 'Z')));
   await commit(Y, htmlY);
@@ -327,7 +351,8 @@ test('W4 stop() halfway through pushing, then rebuild the queue from the same di
     for (const [, h] of unpack(await T().collectSnapshotResult(A, task)).result.frames) segOf.set(h, i);
   }
 
-  // 第一个队列：第一段照常推完；第二段一开始推就卡住，这时 stop()，再让它失败
+  // First queue: the first segment pushes to completion as usual; the second segment blocks as soon as
+  // pushing starts, at which point stop() is called, then let it fail
   let first = null, second = null, releaseSecond;
   const blocked = new Promise((resolve) => { releaseSecond = resolve; });
   const asset1 = countingAsset(svc.client, {
@@ -342,7 +367,7 @@ test('W4 stop() halfway through pushing, then rebuild the queue from the same di
   });
   const content1 = countingContent(svc.content);
   const q1 = queueOf(t, { pipeline: A, client: asset1, content: content1, dir: root, concurrency: 1 });
-  for (const task of tasks) await q1.queue.enqueue(unitOf(task), NORMAL); // 第 9 节第 1 条：写回队列文件后才兑现
+  for (const task of tasks) await q1.queue.enqueue(unitOf(task), NORMAL); // Section 9 Item 1: fulfills only after writing back the queue file
   const before = await readQueueFile(root);
   assert.ok(before && tasks.every((task) => before.includes(task.resultKey)), 'All four segments were written into push-queue.json');
   q1.queue.start();
@@ -350,10 +375,12 @@ test('W4 stop() halfway through pushing, then rebuild the queue from the same di
   assert.equal(content1.puts().length, 1, 'The first segment finished pushing and its manifest was written');
   await q1.queue.stop();
   releaseSecond();
-  // stop() 不等在推的段（契约）：第二段放行后失败、再写一次队列文件。等它收尾、写完再读文件，
-  // 否则读到的可能是正在替换的文件（Windows 上改名替换的瞬间读会失败），也可能和下面 q2 的 restore 撞上。
+  // stop() does not wait for in-flight pushing segments (contract): after the second segment is
+  // released, it fails and writes the queue file once more. Wait for it to finalize and finish writing
+  // before reading the file; otherwise it may read a file mid-replacement (on Windows, reading at the
+  // instant of rename-replacement fails), or collide with q2's restore below.
   await until(() => q1.queue.stats().inflight === 0, { timeoutMs: 10_000, what: () => `The second segment never finished; queue: ${queueDiag()}` });
-  await q1.queue.stop(); // 已停的队列再 stop 一次只做一件事：等排着的写回全部完成
+  await q1.queue.stop(); // Calling stop again on an already-stopped queue does only one thing: wait for all queued writebacks to complete
   await new Promise((resolve) => setTimeout(resolve, 100));
   const doneKey = manifestKey(tasks[first]);
   assert.deepEqual(content1.puts().map((c) => c.key), [doneKey], 'No other segments are pushed after stopping');
@@ -362,7 +389,7 @@ test('W4 stop() halfway through pushing, then rebuild the queue from the same di
   assert.ok(!persisted.includes(tasks[first].resultKey), 'Finished segments are not left in the file');
   for (const [i, task] of tasks.entries()) if (i !== first) assert.ok(persisted.includes(task.resultKey), `Unfinished segment ${i} is still in the file`);
 
-  // 第二个队列：同一个 dir，重建之后接着推
+  // Second queue: same dir, resumes pushing after reconstruction
   const asset2 = countingAsset(svc.client);
   const content2 = countingContent(svc.content);
   const q2 = queueOf(t, { pipeline: A, client: asset2, content: content2, dir: root, concurrency: 1 });
@@ -393,9 +420,12 @@ test('W5 The asset service returns 500 for a segment: that segment is retried wi
     const frames = unpack(await T().collectSnapshotResult(A, task)).result.frames;
     if (i === 1) { for (const [, h] of frames) bad.add(h); sentinel = frames[0][1]; }
   }
-  // 每个块按它自己被 put 的次数决定成败（前两次 500、第三次成功）。不能按哨兵块的次数判：一段里的块是
-  // 4 路并发 put 的，谁先到 beforePut 由读盘快慢决定，第三轮里别的块可能抢在哨兵前面、仍被判失败，
-  // 于是这一段又进 120 s 退避，假时钟不再拨，测试就等到超时（全量并行时偶发）。
+  // Each chunk determines success or failure based on its own put count (500 for the first two,
+  // succeeds on the third). Cannot decide by the sentinel chunk's count: chunks within a segment are
+  // put with 4-way concurrency; which one reaches beforePut first depends on disk read speed. In the
+  // third round other chunks may race ahead of the sentinel and still be judged as failures, causing
+  // this segment to re-enter 120 s backoff; the fake clock is not advanced further, causing the test
+  // to time out (intermittent during full parallel runs).
   let attempts = 0;
   const tries = new Map();
   const asset = countingAsset(svc.client, {
@@ -438,7 +468,7 @@ test('W5 The asset service returns 500 for a segment: that segment is retried wi
 
 /* ------------------------------------------------------------------ W6 */
 
-// fMP4 合成件（同 frame-stream.test.mjs）：storeSegment 要能切分、校验
+// fMP4 composite file (same as frame-stream.test.mjs): storeSegment must be able to split and validate
 const u32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32BE(n >>> 0); return b; };
 const box = (type, ...parts) => { const body = Buffer.concat(parts); return Buffer.concat([u32(8 + body.length), Buffer.from(type, 'latin1'), body]); };
 const full = (version, flags) => u32(((version & 0xff) << 24) | (flags & 0xffffff));
@@ -464,8 +494,9 @@ function makeSegment(sizes, fill = 1) {
 }
 
 /**
- * C6.2 之后 main 上（没配推送队列）同一串写入的结果，由本测试在 `claude/c6-4`（dc1addc）上跑出来记下：
- * 文件 → sha256；`stream.json` 的 `at`（`Date.now()`）先归一成 0 再算。
+ * The results of the same write sequence on main (without a push queue configured) after C6.2,
+ * recorded by running this test on `claude/c6-4` (dc1addc):
+ * file → sha256; `at` (`Date.now()`) in `stream.json` is normalized to 0 before computing.
  */
 const GOLDEN = {
   commit1: {
@@ -587,32 +618,40 @@ const GOLDEN = {
     'streams/5517a8bfe97b060bb52e6467e56b225715869c8e8b895dd54ffa48496cab01c9/0-312d810e32dd8d36.m4s': '312d810e32dd8d364cccbb4b2ea1e96c55d3053576bf6299f58a4679bb5d7a66',
     'streams/5517a8bfe97b060bb52e6467e56b225715869c8e8b895dd54ffa48496cab01c9/1-8b7a9f5ffe8ee475.m4s': '8b7a9f5ffe8ee475c119bbda4b033f157e4540456187e3546a57a0b7161c7252',
     'streams/5517a8bfe97b060bb52e6467e56b225715869c8e8b895dd54ffa48496cab01c9/init-a01177ae56eef330.mp4': 'a01177ae56eef330122d54c5a419f0c7843e5dfbeb656f3ceb5c254e91ba238e',
-    // 清单里记着 `version: STREAM_CODE_VERSION`。渲染重构「己一」把它从 1 加到 2,这一个文件的字节跟着变(别的字段、流键、分段都没变:
-    // 把常量改回 1,这里仍是原来记下的 5c074ef83138e314fb829b238eeac62127ebfaac4844ac83d5107d015b66c75e)
-    // 2026-10-13「稀疏流一」改过这一项:流的清单多记一项 `originFrame`(这条流自己的第一帧)、`version` 跟着 `STREAM_CODE_VERSION` 从 2 到 3。
-    // 「稀疏流一」第二期再改一次:`version` 跟着 `STREAM_CODE_VERSION` 从 3 到 4(这里直接调 storeSegment、不带位置矩形,清单别处没变)。
-    // 2026-10-17 流清单分桶对齐:流的清单多记一项 `lastFrame`(这条流自己的最后一帧,供跨任务 8 段桶截尾;去掉它仍是 c25fc173...)。
-    // 推送队列配没配不影响它;别的文件一个字没变
+    // The manifest records `version: STREAM_CODE_VERSION`. Render refactor "Ji-1" incremented it from 1
+    // to 2, and bytes of this single file changed accordingly (other fields, stream keys, and segments
+    // remained unchanged: changing the constant back to 1 still yields the originally recorded
+    // 5c074ef83138e314fb829b238eeac62127ebfaac4844ac83d5107d015b66c75e).
+    // 2026-10-13 "Sparse Stream 1" modified this entry: the stream manifest records an additional
+    // `originFrame` (this stream's own first frame), and `version` followed `STREAM_CODE_VERSION` from 2
+    // to 3.
+    // "Sparse Stream 1" Phase 2 modified it again: `version` followed `STREAM_CODE_VERSION` from 3 to 4
+    // (here storeSegment is called directly without a position rectangle; nowhere else in the manifest
+    // changed).
+    // 2026-10-17 Stream manifest bucket alignment: the stream manifest records an additional
+    // `lastFrame` (this stream's own last frame, used for cross-task 8-segment bucket tail truncation;
+    // removing it still yields c25fc173...).
+    // Whether a push queue is configured does not affect it; other files are completely unchanged.
     'streams/5517a8bfe97b060bb52e6467e56b225715869c8e8b895dd54ffa48496cab01c9/stream.json': '33b11571683bb2954d727db01a93beafc56c8d95d8fa209940b6299a18161863'
   }
 };
 
 async function w6Scenario(A, rootA) {
   const out = {};
-  // 共享档：两批，第二批含一帧超体积
+  // Shared tier: two batches, the second batch contains one oversized frame
   const shared = snapshotTask({ contentKey: sha256('card-W6-shared'), from: 0, to: 59, fp: FP });
   out.commit1 = wire(await A.snapshots().commitSnapshots({ tier: 'shared', key: shared.resultKey, clipId: 'clip-w6', capabilities: SHARED_CAPS,
     items: range(0, 9).map((n) => ({ localFrame: n, html: htmlOf(n, 'W6') })) }));
   out.commit2 = wire(await A.snapshots().commitSnapshots({ tier: 'shared', key: shared.resultKey, clipId: 'clip-w6', capabilities: SHARED_CAPS,
     items: range(10, 19).map((n) => ({ localFrame: n, html: n === 12 ? bigHtml(n) : htmlOf(n, 'W6') })) }));
-  // 本地档
+  // Local tier
   const entryKey = sha256('entry-W6');
   const local = snapshotTask({ tier: 'local', entryKey, contentKey: sha256('card-W6-local'), from: 0, to: 59, fp: FP, clipId: 'clip-w6l' });
   out.commit3 = wire(await A.snapshots().commitSnapshots({ tier: 'local', entryKey, key: dirKeyOf(local), clipId: 'clip-w6l', capabilities: LOCAL_CAPS,
     items: range(0, 4).map((n) => ({ localFrame: n, html: htmlOf(n, 'W6L') })) }));
   out.staged = A.ready.stagedKeys().map(wire);
 
-  // 流：storeSegment 两个分段（第二个替换第一个的稀疏版）
+  // Stream: storeSegment two segments (the second replaces the sparse version of the first)
   const prod = producerOf(A, 'libx264');
   const streamKey = resultKeyOf(sha256('stream-W6'), FP);
   const spec = { streamKey, contentKey: sha256('stream-W6'), envFingerprint: FP, kind: 'card', plane: 'local', clipIds: ['clip-s'], topClipId: 'clip-s', fps: 30,
@@ -627,11 +666,11 @@ async function w6Scenario(A, rootA) {
   out.streamStats = prod.stats.segments;
   out.stagedAfter = A.ready.stagedKeys().map(wire).sort((a, b) => `${a.kind}${a.key}`.localeCompare(`${b.kind}${b.key}`));
 
-  // 盘面：全部文件的 sha256（stream.json 的 at 归一）
+  // On-disk state: sha256 of all files (at in stream.json normalized)
   const tree = await treeOf(rootA);
   out.files = {};
   for (const [rel, buf] of Object.entries(tree).sort(([a], [b]) => a.localeCompare(b))) {
-    if (rel.startsWith('controls-lock/')) continue; // 锁库与本测试无关
+    if (rel.startsWith('controls-lock/')) continue; // Lock store is unrelated to this test
     let bytes = buf;
     if (rel.endsWith('stream.json')) {
       const m = JSON.parse(buf.toString('utf8'));

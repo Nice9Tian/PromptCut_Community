@@ -1,27 +1,37 @@
 /**
- * 划分轨道流时「哪张卡出哪一种流」的判据 —— **唯一出处**。预渲染进程、渲染主机(`server/frame-stream.mjs` 的 `planStreams`)
- * 与在线页面(`src/online/pageStreamPlan.ts` 的 `planPageStreams`)都从这里取,所以两边对「哪些流占解码器预算、哪几张独立卡要并进组流」
- * 判得一样:页面只产平面独立卡的单卡流,但单独成流的两类卡(`soloStreamKind`)和依赖下层的流(`belowTargets`)
- * 也照切分方的算法算进预算(`docs/reports/AGENT-rr-page-plan-parity.md`)。
+ * Criteria for "which card produces which type of stream" when partitioning track streams: the
+ * **sole source of truth**. Both prerender process and render host (`planStreams` in
+ * `server/frame-stream.mjs`) and online page (`planPageStreams` in `src/online/pageStreamPlan.ts`)
+ * fetch from here, so both sides judge "which streams occupy decoder budget, and which standalone cards
+ * merge into group streams" identically: page only produces single-card streams for planar standalone
+ * cards, but the two categories of cards that form solo streams (`soloStreamKind`) and below-dependent
+ * streams (`belowTargets`) are also counted toward budget per the splitter's algorithm
+ * (`docs/reports/AGENT-rr-page-plan-parity.md`).
  *
- * 原来写在 `server/frame-stream.mjs` 里,挪过来一字不改;那里照旧以原名再导出。纯函数,不碰文件、网络、注册表。
- * `control` 是卡片计划的一项(`clipId`、`count`、`sampling`、`compositing` 或 `capabilities.compositing`),`clip`、`track` 是项目里的片段与序列。
+ * Originally written in `server/frame-stream.mjs`, moved here verbatim; re-exported there under original
+ * name as before. Pure function: does not touch files, network, or registry.
+ * `control` is an item in the card plan (`clipId`, `count`, `sampling`, `compositing`, or
+ * `capabilities.compositing`); `clip` and `track` are clips and tracks in the project.
  */
 import { mountFrameOf } from './frameWindow.mjs';
 
-/** 外框用了三维变形(`rotateX`、`rotateY`、`translateZ` 有一项非零) */
+/** Outer box uses 3D transform (at least one of `rotateX`, `rotateY`, `translateZ` is non-zero) */
 export const frame3d = frame => !!(frame?.rotateX || frame?.rotateY || frame?.translateZ);
 
 /**
- * 这张卡是不是**平面的独立卡**(单卡流里可以和相邻的独立卡并成组流的那一种)。**只收 `independent`**:毛玻璃(`belowDependent`)
- * 要采样下层,`unknown` 一律按 `belowDependent` 处理(G1「哪些卡不进流」)。源依赖卡(转场、接素材的素材效果卡)和框用了三维的
- * 独立卡不在这里:它们同样产单卡流,但单独成流、不并进组流,判据在下面的 `soloStreamKind`。
+ * Whether this card is a **planar standalone card** (the kind in single-card streams that can merge
+ * with adjacent standalone cards into group streams). **Accepts only `independent`**: frosted glass
+ * (`belowDependent`) needs to sample lower layers; `unknown` is always treated as `belowDependent`
+ * (G1 "Which cards do not enter streams"). Source-dependent cards (transitions, media effect cards
+ * connected to media) and standalone cards whose frame uses 3D are not here: they also produce
+ * single-card streams, but form solo streams without merging into group streams; criteria are in
+ * `soloStreamKind` below.
  */
 export function streamEligible(control, clip, track) {
   if (!control?.clipId || !clip || !track) return false;
   if (track.hidden || track.sourceOnly) return false;
   if (!clip.cardId) return false;
-  // 剪辑段里摊出来的卡单独成流(`soloStreamKind` 的 `'flat'`),不并进组流
+  // Cards flattened from cut segments form solo streams (`'flat'` in `soloStreamKind`) and do not merge into group streams
   if (clip.flat) return false;
   const compositing = control.capabilities?.compositing ?? control.compositing;
   if (compositing !== 'independent') return false;
@@ -29,7 +39,7 @@ export function streamEligible(control, clip, track) {
   return Number.isInteger(control.count) && control.count > 0;
 }
 
-/** 项目里 `id` 是这个值的卡片节点(`project.cardNodes`;数组,旧数据里也可能是按 id 存的对象) */
+/** Card node in project whose `id` has this value (`project.cardNodes`; array, or object keyed by id in legacy data) */
 export function cardNodeOf(project, nodeId) {
   if (typeof nodeId !== 'string' || !nodeId) return null;
   const raw = project?.cardNodes;
@@ -38,9 +48,13 @@ export function cardNodeOf(project, nodeId) {
 }
 
 /**
- * 这个片段是不是**接着输入的素材效果卡**(转场、套在素材上的滤镜这一类):片段挂的节点是出画面的素材效果卡节点
- * (判据同 `src/render/cards/GraphCard.tsx` 的 `graphVisualNode`),而且它有输入(接素材、接别的片段、接另一张素材效果卡;
- * 输入指向的片段已经删掉的也算 —— 边还记在节点上)。没有输入的素材效果卡(自己生成画面的)不算。
+ * Whether this clip is a **media effect card connected to inputs** (such as transitions or filters
+ * applied to media): the node attached to the clip is a visual-producing media effect card node
+ * (criteria same as `graphVisualNode` in `src/render/cards/GraphCard.tsx`), and it has inputs
+ * (connected to media, connected to other clips, or connected to another media effect card;
+ * even if the clip targeted by an input has been deleted, it still counts: the edge is still
+ * recorded on the node). Media effect cards without inputs (those generating visuals themselves)
+ * do not count.
  */
 export function graphCardWithInputs(project, clip) {
   const node = cardNodeOf(project, clip?.nodeId);
@@ -49,35 +63,69 @@ export function graphCardWithInputs(project, clip) {
 }
 
 /**
- * 两类**单独成流**的卡(`docs/semantics/mechanism/rendering.md`「重管线:预渲染」「怎么产,按卡分」;用户 2026-10-13 定,
- * `docs/plan/user-decisions-2026-10-13.md` 第 1 节第 7 条)。它们各产一条单卡流(`kind: 'card'`、`plane: 'local'`,和独立卡的单卡流
- * 同一种形状、走同一套稀疏版与满密度版、分段、位置矩形、任务队列),只是不参加组流合并,浏览器也不产(见下):
+ * Two categories of cards that **form solo streams** (`docs/semantics/mechanism/rendering.md`
+ * "Heavy pipeline: prerender", "How to produce, by card"; (user decision, 2026-10-13), Section 1,
+ * Item 7 of `docs/plan/user-decisions-2026-10-13.md`). Each produces a single-card stream
+ * (`kind: 'card'`, `plane: 'local'`, same shape as single-card streams of standalone cards, going
+ * through the same set of sparse and full density versions, segments, position rectangles, and
+ * task queues), except they do not participate in group stream merging and are not produced by
+ * browsers (see below):
  *
- *   - `'source'` **源依赖卡**:转场、套在视频上的素材效果卡 —— 画面取决于别的素材或别的片段。连同它用到的视频一起渲:
- *     隔离工程里它的源片段都留着(藏起来的序列是 `sourceOnly`,不出画,素材效果卡解输入时找得到),流里就是「视频经过这张卡以后」
- *     的画面;贴的时候这条流顶替这张卡原来的画面(套在视频上的那一种,这一段的视频本来就由这张卡画,不另画)。
- *     判据:审阅表写了 `sourceDependent`;或者没有审阅过(`unknown`、旧的统称 `context`)而片段挂着接了输入的素材效果卡节点
- *     (`graphCardWithInputs`)。素材效果卡的画面是宿主照它给的描述在画布上执行出来的,采样不到下面的层,所以不走「依赖下层的流」。
- *     流键里顺着输入带着整条源链(`CardFrameCache.plan` 的 `streamMemberKey`:素材本身、素材的裁剪起点、每条输入的时间映射、
- *     上游各张卡的参数与源码版本),页面的输入签名同样(`src/render/layerInputSig.mjs`),任一变了旧流就不再贴;
- *   - `'spatial'` **外框用了三维变形的独立卡**:流里是变形之前的平面画面(隔离工程里框只留位置和宽高,`localClip`),
- *     贴的时候流平面是包裹层的子元素,包裹层照常带着三维变形,所以画面跟着变形。三维那几项不进流键(它们不在流里)。
+ *   - `'source'` **Source-dependent card**: transitions, media effect cards applied onto video:
+ *     visuals depend on other media or other clips. Rendered together with the video it uses:
+ *     its source clips are kept in the isolated project (hidden tracks are `sourceOnly`, producing
+ *     no visuals, reachable when the media effect card resolves inputs), and the stream contains
+ *     the visuals of "video after passing through this card"; when pasted, this stream replaces
+ *     the original visuals of this card (the kind applied onto video; this section of video was
+ *     originally drawn by this card and is not drawn separately).
+ *     Criteria: review table states `sourceDependent`; or not reviewed (`unknown`, legacy generic
+ *     term `context`) while the clip has an attached media effect card node connected to inputs
+ *     (`graphCardWithInputs`). Visuals of media effect cards are executed on canvas by the host
+ *     according to its description and cannot sample lower layers, so they do not go through
+ *     "below-dependent streams". The stream key carries the entire source chain along inputs
+ *     (`streamMemberKey` in `CardFrameCache.plan`: the asset itself, asset trim start, time mapping
+ *     of each input, parameters and source code versions of upstream cards); the page's input
+ *     signature does the same (`src/render/layerInputSig.mjs`); if any changes, the old stream is
+ *     no longer pasted;
+ *   - `'spatial'` **Standalone card whose frame uses 3D transform**: the stream contains planar
+ *     visuals before transform (in the isolated project, the frame retains only position, width,
+ *     and height, `localClip`); when pasted, the stream plane is a child of the wrapper layer, and
+ *     the wrapper layer carries 3D transform as usual, so visuals transform accordingly. The 3D
+ *     properties do not enter the stream key (they are not in the stream).
  *
- *   - `'flat'` **剪辑段里摊出来的独立卡**(`src/kernel/cutFlatten.mjs`;用户 2026-10-21 定:剪辑段里的卡和没有剪辑段时一样,
- *     重卡各自走轨道流):流里是这张卡在它自己包裹层里的画面(平面的和外框三维的都一样,三维那几项不在流里),贴的时候嵌套场景
- *     外面那几层(段的框、不透明度、淡入淡出)照常加。产流的隔离工程要带着这条剪辑段链(`isolatedFlatProject`),
- *     所以不并进组流(组流按舞台坐标画,嵌套场景里的卡摆不进去)。浏览器也产外框平面的那些(〔裁〕R02:在线浏览器也替剪辑段里的重卡产流;
- *     外框三维的和顶层的 `'spatial'` 一样只由桌面应用和渲染主机产,见 `render-node/split.mjs` 的 `browserStreamInputOf`)。
- *     只收独立卡:剪辑段里依赖下层、源依赖、没审阅过的卡不产流,照旧在嵌套场景里活渲(〔裁〕R01 2026-10-23 用户推翻「带着下层一起产流」,
- *     按做不通处理:嵌套场景里的毛玻璃会透过剪辑段采样段外面的层,只带段里下层的流和活渲对不上)。
+ *   - `'flat'` **Standalone card flattened from cut segments** (`src/kernel/cutFlatten.mjs`;
+ *     (user decision, 2026-10-21): cards inside cut segments work the same as without cut segments,
+ *     heavy cards each follow track streams): the stream contains visuals of this card in its own
+ *     wrapper layer (identical for both planar and 3D frames; 3D properties are not in the stream);
+ *     when pasted, the layers outside the nested scene (segment frame, opacity, fade in/out) are
+ *     applied as usual. The isolated project producing the stream must carry this cut segment chain
+ *     (`isolatedFlatProject`), so it is not merged into group streams (group streams are drawn in
+ *     stage coordinates; cards in nested scenes cannot be placed in them). Browsers also produce
+ *     those with planar frames ([ruling] R02: online browsers also produce streams for heavy cards
+ *     in cut segments; those with 3D frames, like top-level `'spatial'`, are only produced by the
+ *     desktop app and render host; see `browserStreamInputOf` in `render-node/split.mjs`). Accepts
+ *     only standalone cards: below-dependent, source-dependent, or unreviewed cards inside cut
+ *     segments do not produce streams and are live rendered in nested scenes as before ([ruling]
+ *     R01 2026-10-23 (overruled by user, "producing stream with lower layers together", treated as
+ *     unfeasible: frosted glass in nested scenes samples layers outside the segment through the cut
+ *     segment; a stream carrying only lower layers in the segment does not match live render)).
  *
- * 两类同时成立时算 `'source'`(框的三维照样不在流里)。别的卡回 null:平面的独立卡走 `streamEligible`,
- * 依赖下层的、没审阅过又没接输入的走 `belowStreamEligible`(外框带不带三维都走那条路:带三维时三维摆放画进流里)。
+ * When both categories apply simultaneously, it counts as `'source'` (frame 3D is still not in the
+ * stream). Other cards return null: planar standalone cards use `streamEligible`; below-dependent
+ * cards and unreviewed cards without inputs use `belowStreamEligible` (regardless of whether the frame
+ * has 3D: when 3D is present, 3D placement is rendered into the stream).
  *
- * 不参加组流合并:组流按舞台坐标产,成员的外观(含三维)全画进流里,和「流里是变形之前的画面」对不上;源依赖卡多半整幅不透明,
- * 并进组流会把夹在中间的层关系压平。它们各占一个解码器,算进预算。
- * 浏览器不产(`'flat'` 里外框平面的那些除外,见上):源依赖卡要解素材、执行素材效果卡,三维外框的卡浏览器那条取像素的路没有验过;
- * 切分不出浏览器那一份(`render-node/split.mjs` 的 `browserStreamInputOf`),在线页面本页产流也不认它们(`src/online/pageStreamPlan.ts`),只算进预算。
+ * Do not participate in group stream merging: group streams are produced in stage coordinates, and
+ * members' appearance (including 3D) is fully rendered into the stream, which conflicts with "stream
+ * contains visuals before transform"; source-dependent cards are mostly fully opaque, and merging them
+ * into group streams would flatten layer relationships sandwiched in between. Each occupies one
+ * decoder and counts toward the budget.
+ *
+ * Browsers do not produce them (except planar-frame ones in `'flat'`, see above): source-dependent
+ * cards need to decode media and execute media effect cards; the browser's pixel-fetching path for cards
+ * with 3D frames has not been verified; the browser portion cannot be split out (`browserStreamInputOf`
+ * in `render-node/split.mjs`), and online pages producing streams locally do not recognize them either
+ * (`src/online/pageStreamPlan.ts`), only counting them toward the budget.
  */
 export function soloStreamKind(control, clip, track, project) {
   if (!control?.clipId || !clip || !track) return null;
@@ -85,7 +133,7 @@ export function soloStreamKind(control, clip, track, project) {
   if (!clip.cardId) return null;
   if (!(Number.isInteger(control.count) && control.count > 0)) return null;
   const compositing = control.capabilities?.compositing ?? control.compositing;
-  // 剪辑段里摊出来的卡(`kernel/cutFlatten.mjs`,片段带 `flat`):独立卡单独成流(见上 `'flat'`),别的不产流
+  // Cards flattened from cut segments (`kernel/cutFlatten.mjs`, clips with `flat`): standalone cards form solo streams (see `'flat'` above); others do not produce streams
   if (clip.flat) return compositing === 'independent' ? 'flat' : null;
   if (compositing === 'sourceDependent') return 'source';
   if (compositing === 'independent') return frame3d(clip.frame) ? 'spatial' : null;
@@ -94,25 +142,40 @@ export function soloStreamKind(control, clip, track, project) {
 }
 
 /**
- * 「依赖下层的流」收哪些卡(契约第 5.1 节)之外,另外两类卡进不进:
- *   - `sourceDependent`(不进):源依赖卡(转场、接素材的素材效果卡)。用户 2026-10-13 定它单独成流(上面的 `soloStreamKind`),
- *     `planStreams` 先把它挑走;
- *   - `frame3d`(**进**):**依赖下层(或没审阅过、又没接输入)而外框又用了三维变形的卡**。它的画面取决于它在屏幕上盖住了什么,
- *     产不出「变形之前的画面」,所以照普通的依赖下层的流产:按舞台坐标,三维摆放(`rotateX`、`rotateY`、`translateZ`,
- *     连同项目的透视 `camera3dFov`)照原样画进流里;贴的时候平面挂在舞台根下,不再做变形(舞台的透视只作用在带三维变形的
- *     直接子元素上,平面没有变形,不受它影响)。后果:改一下三维角度流就要重产 —— 三维那几项在目标卡的缓存内容键里
- *     (`server/card-cache.mjs` 的 `appearance.frame`),也在页面的输入签名里(`streamInputSig.mjs` 的 `frame`),
- *     改了键和签名都变,旧流当场不再贴。〔裁:主会话 2026-10-14,按建议的「甲」定,用户可以推翻;`AGENT-rr-below-3d.md`〕
- *     差分取层对它照旧成立(两张都是整幅截图逐像素算,不看卡摆成什么样);只是毛玻璃外框的掩码不收带三维的
- *     (`capture-below.mjs` 的 `axisAligned`:投影以后外框不是圆角矩形),那一块照最小不透明度算,盖回去仍然等于原画面。
- * 外框用了三维的**独立卡**不走这条路(它的流里是变形之前的画面,`soloStreamKind` 的 `'spatial'`),不管这里怎么设。
+ * Besides which cards are accepted by "below-dependent streams" (Section 5.1 of the contract),
+ * whether the other two categories of cards enter:
+ *   - `sourceDependent` (does not enter): source-dependent cards (transitions, media effect cards
+ *     connected to media). (user decision, 2026-10-13) specified that they form solo streams
+ *     (`soloStreamKind` above), so `planStreams` picks them out first;
+ *   - `frame3d` (**enters**): **cards that are below-dependent (or unreviewed and not connected to
+ *     inputs) whose frame also uses 3D transform**. Their visuals depend on what they cover on
+ *     screen, and "visuals before transform" cannot be produced, so they are produced as normal
+ *     below-dependent streams: in stage coordinates, 3D placement (`rotateX`, `rotateY`, `translateZ`,
+ *     along with project perspective `camera3dFov`) is rendered into the stream as-is; when pasted,
+ *     the plane is mounted under the stage root without further transform (stage perspective only
+ *     acts on direct children with 3D transform; the plane has no transform and is unaffected).
+ *     Consequence: changing the 3D angle requires the stream to be re-produced: the 3D properties
+ *     are in the target card's cached content key (`appearance.frame` in `server/card-cache.mjs`) and
+ *     in the page's input signature (`frame` in `streamInputSig.mjs`); modifying them changes both key
+ *     and signature, so the old stream stops being pasted immediately. [ruling: lead session
+ *     2026-10-14, settled on recommended "Jia", user can overturn; `AGENT-rr-below-3d.md`]
+ *     Differential layer extraction still holds for it (both are whole screenshots calculated
+ *     pixel-by-pixel, regardless of card placement); except masks for frosted-glass frames do not
+ *     accept those with 3D (`axisAligned` in `capture-below.mjs`: frame is not a rounded rectangle
+ *     after projection); that area is calculated using minimum opacity, and covering it back still
+ *     equals the original visuals.
+ * **Standalone cards** whose frame uses 3D do not take this path (their stream contains visuals before
+ * transform, `'spatial'` in `soloStreamKind`), regardless of how this is set.
  */
 export const BELOW_STREAM_RULES = Object.freeze({ sourceDependent: false, frame3d: true });
 
 /**
- * 回放从哪一刻挂载算:剪辑段里摊出来的片段(带 `flat`)从嵌套场景最早挂上的那一刻起(`flat.mount`,预卷不会比它更早),
- * 别的片段就是它自己(原样回同一个对象)。与 `server/frame-stream.mjs` 里同名的那一份一字不差;在线页面算预算时用它
- * (`src/online/pageStreamPlan.ts`,剪辑段里单独成流的卡的解码器窗口和切分方一样从这一帧算)。
+ * From which moment playback mounting is calculated: clips flattened from cut segments (with `flat`)
+ * start from the earliest moment the nested scene mounts (`flat.mount`; preroll will not be earlier
+ * than it); other clips use themselves (returns the same object as-is). Verbatim identical to the
+ * one with the same name in `server/frame-stream.mjs`; used by the online page when calculating budgets
+ * (`src/online/pageStreamPlan.ts`; decoder windows for cards forming solo streams in cut segments are
+ * calculated from this frame, matching the splitter).
  */
 export function mountClipOf(clip) {
   const mount = clip?.flat?.mount;
@@ -120,16 +183,19 @@ export function mountClipOf(clip) {
 }
 
 /**
- * 这张卡进不进「依赖下层的流」。收:依不依赖下层这一样是「依赖下层」(`belowDependent`)、旧的统称 `context`、
- * 或「未知」(`unknown`,审阅表没覆盖到的卡;没写、认不出的值也按未知)的卡,外框带三维的也收(`rules.frame3d`)。
- * 独立卡一律不进这里(平面的走单卡流 `streamEligible`,带三维的单独成流 `soloStreamKind`);源依赖卡看 `rules`。
- * 和 `streamEligible` 不会同时为真。
+ * Whether this card enters "below-dependent streams". Accepts: cards whose lower-layer dependency is
+ * "below-dependent" (`belowDependent`), the legacy generic term `context`, or "unknown" (`unknown`,
+ * cards not covered by the review table; unwritten or unrecognized values are also treated as unknown);
+ * also accepts those with 3D frames (`rules.frame3d`).
+ * Standalone cards never enter here (planar ones go to single-card streams `streamEligible`, those
+ * with 3D form solo streams `soloStreamKind`); source-dependent cards depend on `rules`.
+ * Cannot be true simultaneously with `streamEligible`.
  */
 export function belowStreamEligible(control, clip, track, rules = BELOW_STREAM_RULES) {
   if (!control?.clipId || !clip || !track) return false;
   if (track.hidden || track.sourceOnly) return false;
   if (!clip.cardId) return false;
-  // 剪辑段里摊出来的卡不出依赖下层的流(嵌套场景里的毛玻璃照旧活渲;〔裁〕R01 2026-10-23 被推翻,按做不通处理)
+  // Cards flattened from cut segments do not produce below-dependent streams (frosted glass in nested scenes live renders as before; [ruling] R01 2026-10-23 was overruled, treated as unfeasible)
   if (clip.flat) return false;
   const spatial = frame3d(clip.frame);
   if (spatial && rules?.frame3d !== true) return false;
@@ -140,8 +206,11 @@ export function belowStreamEligible(control, clip, track, rules = BELOW_STREAM_R
 }
 
 /**
- * 这一版里要出「依赖下层的流」的目标卡,按画家顺序。每项带它占解码器的那一段 `from..to`(同单卡流的算法)。
- * `where`:片段 id → `{ clip, track }`;`orderOf`:片段 id → 画家顺序;`taken`:已经单独成流的卡(不再出这种流)。
+ * Target cards that need to produce "below-dependent streams" in this version, in painter's order.
+ * Each entry carries the `from..to` range where it occupies a decoder (same algorithm as
+ * single-card streams).
+ * `where`: clip id → `{ clip, track }`; `orderOf`: clip id → painter's order;
+ * `taken`: cards that already formed solo streams (no longer produce this stream).
  */
 export function belowTargets(plan, { picked, where, fps, total, orderOf, taken = null }) {
   const out = [];

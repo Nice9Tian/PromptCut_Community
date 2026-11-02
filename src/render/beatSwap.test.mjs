@@ -1,6 +1,8 @@
 /**
- * L4 的按拍换快照预算(C10 契约第 6 节、第 18 节第 1 条):deadMs = max(0, budgetOf(fps) − 已占用),
- * 装得下 floor(deadMs / swapMs) 层,按调用方给的层序取,装不下的占位;SWAP_MS 缺省 3。
+ * Per-tick snapshot swap budget for L4 (C10 contract Section 6, Section 18 Item 1):
+ * deadMs = max(0, budgetOf(fps) − used),
+ * fits floor(deadMs / swapMs) layers, taken in caller-provided layer order, placeholders for those
+ * that do not fit; SWAP_MS defaults to 3.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -14,12 +16,12 @@ test("C10-BS-01 SWAP_MS defaults to 3 ms; budget and dispatch use the same B", (
 });
 
 test("C10-BS-02 number of layers that fit = floor(deadMs / swapMs), taken in layer order, the rest get placeholders", () => {
-  // 30 fps:B = 23.333…;已占用 11.333… → deadMs 12 → 4 层
+  // 30 fps: B = 23.333…; used 11.333… → deadMs 12 → 4 layers
   const r = fitBeatSwaps({ fps: 30, occupiedMs: budgetOf(30) - 12, layers: ["top", "b", "c", "d", "e", "f"] });
   assert.equal(r.fit, 4);
   assert.deepEqual(r.swap, ["top", "b", "c", "d"]);
   assert.deepEqual(r.placeholder, ["e", "f"]);
-  // 同一输入结果稳定
+  // Stable results for the same input
   assert.deepEqual(fitBeatSwaps({ fps: 30, occupiedMs: budgetOf(30) - 12, layers: ["top", "b", "c", "d", "e", "f"] }), r);
 });
 
@@ -46,24 +48,24 @@ test("C10-BS-04 at dispatch deadMs is replaced with swapMs: the more heavy cards
   assert.equal(online.segments[0].light.size, 1, "Online swapMs 3: 9+9+2×3 > 23.3, one card is squeezed out");
 });
 
-/* ---------------------------------------------------------------- 按卡种的换帧成本(swap-tuning 任务 A) */
+/* ---------------------------------------------------------------- Frame swap cost by card type (swap-tuning task A) */
 
 import { SWAP_MS_BY_KIND, swapCostOf, swapKindOf } from "./beatSwap.mjs";
 
 test("ST-A-01 packing by accumulated per-layer cost: add each layer's own cost from top to bottom, every layer from the one that exceeds deadMs gets a placeholder", () => {
   const cost = { top: 2, lot: 20, can: 6, d1: 2, d2: 2 };
-  // 30 fps:B = 23.333…;已占用 3.333… → deadMs 20
+  // 30 fps: B = 23.333…; used 3.333… → deadMs 20
   const occupiedMs = budgetOf(30) - 20;
   const r = fitBeatSwaps({ fps: 30, occupiedMs, layers: ["top", "can", "d1", "d2", "lot"], costOf: (id) => cost[id] });
-  assert.deepEqual(r.swap, ["top", "can", "d1", "d2"]);   // 2 + 6 + 2 + 2 = 12 ≤ 20;再加 20 超了
+  assert.deepEqual(r.swap, ["top", "can", "d1", "d2"]);   // 2 + 6 + 2 + 2 = 12 ≤ 20; adding another 20 exceeds it
   assert.deepEqual(r.placeholder, ["lot"]);
   assert.equal(r.fit, 4);
   assert.equal(r.usedMs, 12);
-  // 贵的层在上面:它装进去了,下面的就装不下
+  // Expensive layer is on top: once it fits in, lower ones cannot fit
   const s = fitBeatSwaps({ fps: 30, occupiedMs, layers: ["lot", "top", "can"], costOf: (id) => cost[id] });
   assert.deepEqual(s.swap, ["lot"]);
   assert.deepEqual(s.placeholder, ["top", "can"]);
-  // 同一输入结果稳定;层去重
+  // Stable results for the same input; layer deduplication
   assert.deepEqual(fitBeatSwaps({ fps: 30, occupiedMs, layers: ["top", "can", "top", "d1", "d2", "lot"], costOf: (id) => cost[id] }), r);
 });
 
@@ -71,14 +73,14 @@ test("ST-A-02 default fallback: if a layer cannot give a positive number (missin
   const bad = { a: undefined, b: 0, c: -1, d: NaN, e: "x" };
   const costOf = (id) => { if (id === "f") throw new Error("boom"); return bad[id]; };
   const layers = ["a", "b", "c", "d", "e", "f", "g", "h"];
-  // deadMs = B = 23.333…;每层按 SWAP_MS 3 → 7 层
+  // deadMs = B = 23.333…; each layer uses SWAP_MS 3 → 7 layers
   const r = fitBeatSwaps({ fps: 30, layers, costOf });
   assert.equal(r.fit, Math.floor(budgetOf(30) / SWAP_MS));
   assert.equal(r.fit, 7);
-  // 给了 swapMs 就按 swapMs 兜底
+  // Falls back to swapMs if swapMs is provided
   const s = fitBeatSwaps({ fps: 30, layers, costOf, swapMs: 10 });
   assert.equal(s.fit, 2);
-  // 卡种认不出来 / 表里没有:按 SWAP_MS
+  // Unrecognized card type / not in table: use SWAP_MS
   assert.equal(swapCostOf(null), SWAP_MS);
   assert.equal(swapCostOf(undefined), SWAP_MS);
   assert.equal(swapCostOf("nope"), SWAP_MS);
@@ -99,7 +101,7 @@ test("ST-A-03 legacy call compatibility: when only swapMs is given, results matc
       }
     }
   }
-  // costOf 回的和 swapMs 一样时,结果与旧调用相同
+  // When costOf returns the same as swapMs, results are identical to the legacy call
   const old = fitBeatSwaps({ fps: 30, occupiedMs: budgetOf(30) - 12, layers: ["a", "b", "c", "d", "e"], swapMs: 3 });
   const per = fitBeatSwaps({ fps: 30, occupiedMs: budgetOf(30) - 12, layers: ["a", "b", "c", "d", "e"], costOf: () => 3 });
   assert.deepEqual({ ...per, usedMs: undefined }, { ...old, usedMs: undefined });
@@ -116,7 +118,7 @@ test("ST-A-04 boundary: with budget 0 (used ≥ B) all layers get placeholders h
   const exact = fitBeatSwaps({ fps: 30, occupiedMs: budgetOf(30) - 6, layers: ["can", "d"], costOf: (id) => (id === "can" ? 6 : 2) });
   assert.deepEqual(exact.swap, ["can"]);
   assert.deepEqual(exact.placeholder, ["d"]);
-  // 没有层
+  // No layers
   assert.deepEqual(fitBeatSwaps({ fps: 30, layers: [], costOf: () => 1 }), { swap: [], placeholder: [], deadMs: budgetOf(30), fit: 0, usedMs: 0 });
 });
 
@@ -142,7 +144,7 @@ test("ST-A-06 card kinds: Lottie, canvas (particles, canvas contract, canvasHeav
   assert.equal(swapKindOf({ cardId: "synced-user-card", known: false, source: "user" }), null, "Code is not on this page: not recognized, falls back");
   assert.equal(swapKindOf({ cardId: null }), null, "Media effect card (only nodeId)");
   assert.equal(swapKindOf(undefined), null);
-  // 表:三种都有正数;缺省 SWAP_MS 仍是 3(C10-BS-01)
+  // Table: all three have positive numbers; default SWAP_MS is still 3 (C10-BS-01)
   for (const k of ["dom", "lottie", "canvas"]) assert.ok(SWAP_MS_BY_KIND[k] > 0, k);
   assert.ok(SWAP_MS_BY_KIND.canvas > SWAP_MS_BY_KIND.dom && SWAP_MS_BY_KIND.lottie > SWAP_MS_BY_KIND.dom);
   assert.equal(SWAP_MS, 3);
@@ -159,17 +161,18 @@ test("ST-A-07 dispatch takes each clip's own fixed cost: a function with the sam
   const byNumber = planPipelines(project, costs, 30, { identityKeys, deadMs: SWAP_MS });
   const byFn = planPipelines(project, costs, 30, { identityKeys, deadMs: () => SWAP_MS });
   assert.deepEqual([...byFn.segments[0].light], [...byNumber.segments[0].light]);
-  // 7 + 7 + 2 × 2(两张 DOM 重层) = 18 ≤ 23.3:两张轻卡都装得下
+  // 7 + 7 + 2 × 2 (two DOM heavy layers) = 18 ≤ 23.3: both light cards fit
   const cheap = planPipelines(project, costs, 30, { identityKeys, deadMs: () => 2 });
   assert.equal(cheap.segments[0].light.size, 2);
-  // 两张 Lottie 重层各 20:7 + 40 > 23.3,一张轻卡都装不下
+  // Two Lottie heavy layers at 20 each: 7 + 40 > 23.3, neither light card fits
   const dear = planPipelines(project, costs, 30, { identityKeys, deadMs: (id) => (id.startsWith("H") ? 20 : 2) });
   assert.equal(dear.segments[0].light.size, 0);
-  // 候选(轻卡)被挤出时,它自己的固定成本按它的卡种算:挤出 L2 后剩 H1 + H2 + L2 三张重层
+  // When a candidate (light card) is pushed out, its own fixed cost is calculated by its card type:
+  // after pushing out L2, three heavy layers H1 + H2 + L2 remain
   const mixed = planPipelines(project, costs, 30, { identityKeys, deadMs: (id) => ({ H1: 3, H2: 3, L1: 2, L2: 9 })[id] });
-  // L1(7) + H1 3 + H2 3 + L2 9 = 22 ≤ 23.3 → L1 进;L1 + L2 (14) + 6 = 20 ≤ 23.3 → L2 也进
+  // L1(7) + H1 3 + H2 3 + L2 9 = 22 ≤ 23.3 → L1 enters; L1 + L2 (14) + 6 = 20 ≤ 23.3 → L2 also enters
   assert.equal(mixed.segments[0].light.size, 2);
-  // 函数回的不是非负数:按 DEAD_MS
+  // When the function does not return a non-negative number: use DEAD_MS
   const junk = planPipelines(project, costs, 30, { identityKeys, deadMs: () => NaN });
   const desk = planPipelines(project, costs, 30, { identityKeys });
   assert.deepEqual([...junk.segments[0].light], [...desk.segments[0].light]);

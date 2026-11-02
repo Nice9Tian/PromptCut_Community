@@ -1,64 +1,96 @@
 /**
- * 没有任何成员在线时的预渲染重试(契约 `docs/plan/cloud-agent-contract.md` 第 16 节):云端 Agent 的写入落地后,
- * 由 Agent 服务以**服务身份**发布清单计划,让渲染节点把被改到的片段渲出来;保持到结果入库。
+ * Prerender retries when no members are online (contract `docs/plan/cloud-agent-contract.md` section
+ * 16): after a Cloud Agent write commits, the Agent service publishes manifest plans under
+ * **service identity**, having render nodes render modified clips; maintained until results are
+ * stored.
  *
- * - 发什么:与在线页面同一种清单计划(`server/render-queue/messages.mjs` 的 `clipsPlanTaskOf`,与页面那份单测对拍)。
- *   清单里只放这一轮被写到的、判重的片段(素材片段不放;轻重由写入一侧按文档服务的共享成本记录判,判轻的不进来,
- *   见 `render-clips.mjs`「只发重卡」;这里收到的已经是判过的);
- *   每个计划最多 200 个片段,多了分批。
- * - 什么时候发:每次写入落地后攒 3 秒(一连串写入合成一个计划);一轮结束时再补发一次。新计划发出后撤回这个对话
- *   上一批还没渲完的旧计划(旧版本的画面没人要了),旧计划里还没渲完的片段并进新计划。
- * - 保持到入库:按「连续多久没有进度」判——连续 10 分钟没有任何一条进度或完成就放弃并撤回;另有 12 小时的绝对上限。
- *   放弃之后由下一个进来的页面按现有规则自己发。
- * - 结果与失败都记进对话的事件记录(`render` 事件),不悄悄丢。
- * - 每个对话没渲完的清单写在它目录下的 `pending-render.json`;进程起来后按它重新发布(队列只在内存里),不需要成员在场。
+ * - What to publish: the same manifest plan as online pages (`clipsPlanTaskOf` in
+ *   `server/render-queue/messages.mjs`, verified against unit tests for the page counterpart).
+ *   The manifest includes only clips written in this round and classified as heavy (media clips are
+ *   excluded; heavy/light classification is determined on the write side using shared cost records
+ *   from the document service, and clips classified as light do not enter, see "Only dispatch heavy
+ *   cards" in `render-clips.mjs`; clips received here are already classified); up to 200 clips per
+ *   plan, batched if exceeded.
+ * - When to publish: accumulate for 3 seconds after each write commits (merging consecutive writes
+ *   into a single plan); send an extra dispatch at the end of a round. After a new plan is
+ *   dispatched, withdraw unrendered older plans for this chat from the previous batch (frames from
+ *   older revisions are obsolete), merging clips from older plans that have not finished rendering
+ *   into the new plan.
+ * - Maintain until stored: evaluated by "how long continuously without progress": abandoned and
+ *   withdrawn if there is no progress or completion for 10 consecutive minutes; additionally has an
+ *   absolute ceiling of 12 hours. After abandonment, the next page entering will dispatch on its
+ *   own according to existing rules.
+ * - Both results and failures are recorded in the chat's event log (`render` event), never dropped
+ *   silently.
+ * - Unrendered manifests for each chat are written to `pending-render.json` under its directory;
+ *   republished from it after the process starts up (queue is in-memory only), requiring no member
+ *   presence.
  *
- * 发布通道(`publisher`)是接口位:真的那个要第三段的队列改动(服务身份能发清单计划)与乙块的服务身份,合流后接;
- * 这之前由测试替身给。不给 `publisher` 时本模块什么都不做、什么事件都不发。形状:
+ * The publication channel (`publisher`) is an interface slot: the real one requires third-stage
+ * queue changes (service identity able to publish manifest plans) and Block Yi's service identity,
+ * wired after merge; before that, provided by test doubles. When `publisher` is not provided, this
+ * module does nothing and emits no events. Shape:
  *
- *   publisher.availability(projectId) → { available: boolean, enabled: boolean, streams?: boolean }  渲染节点对这个项目开没开;
- *       `streams === false`(只有知道「生成轨道流」开关的发布通道才给,账号模式)= 托管渲染节点不为这个项目产流
- *       (`docs/semantics/product/rendering.md`「谁产流与托管方开关」):不发,记 `render { state: 'off' }`
- *   publisher.codeVersion?.() → string | null                                         这份检出的代码版本
+ *   publisher.availability(projectId) → { available: boolean, enabled: boolean, streams?: boolean }
+ *       Whether render nodes are enabled for this project;
+ *       `streams === false` (provided only by publication channels aware of the "generate track
+ *       streams" toggle, account mode) = hosted render nodes do not produce streams for this project
+ *       (`docs/semantics/product/rendering.md` "Who produces streams and host toggle"): do not dispatch,
+ *       record `render { state: 'off' }`
+ *   publisher.codeVersion?.() → string | null                                         Code version of this checkout
  *   publisher.open(projectId, { onProgress({ id, done?, total? }), onDone({ id }), onFail({ id, reason?, clips? }), onClose() })
  *       → { publish(task): Promise<void> | void, withdraw(id): Promise<void> | void, close(): void }
  *
- * 本文件不引用 `src/`。
+ * This file does not import `src/`.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { clipsPlanTaskOf } from '../../render-queue/messages.mjs';
 
 export const RENDER_REQUEST_DEFAULTS = Object.freeze({
-  /** 写入落地后攒多久再发 */
+  /** How long to accumulate writes after landing before dispatching */
   debounceMs: 3000,
-  /** 每个计划最多多少个片段 */
+  /** Maximum number of clips per plan */
   maxClipsPerPlan: 200,
-  /** 连续这么久没有任何进度就放弃 */
+  /** Abandon if there is no progress continuously for this duration */
   stallMs: 10 * 60_000,
   /**
-   * 项目带着用户卡时的那个时限:这样的项目由渲染服务的隔离工作进程渲——同时只渲一个项目、冷启动约 10 秒、
-   * 多个项目在等时每个最多 5 分钟一换,所以轮到它之前可以很久没有任何进度。按「前面排着五个项目」加冷启动留足
+   * Timeout when a project contains user cards: such projects are rendered by isolated worker
+   * processes of the render service: only rendering one project at a time, cold start takes about
+   * 10 seconds, and when multiple projects are waiting they switch every 5 minutes at most, so there
+   * can be no progress for a long time before its turn. Generously budgeted assuming "five projects
+   * queued ahead" plus cold start
    */
   userCardStallMs: 30 * 60_000,
-  /** 绝对上限 */
+  /** Absolute ceiling */
   maxMs: 12 * 60 * 60_000,
-  /** `render progress` 事件至多多久一条 */
+  /** Minimum interval between `render progress` events */
   progressEveryMs: 30_000,
-  /** 发布通道断了之后多久重发(逐次加倍,到上限为止) */
+  /**
+   * How long to wait before republishing after publication channel disconnects (doubles each time up
+   * to ceiling)
+   */
   reopenMs: [2000, 5000, 15_000, 60_000],
 });
 
-/** 素材片段的卡片 id:它们不预渲染,不进清单 */
+/** Card IDs of media clips: they are not prerendered and do not enter the manifest */
 export const MEDIA_CARD_IDS = Object.freeze(new Set(['video', 'image', 'audio']));
 
 export const STALL_REASON = 'Render node made no progress for 10 minutes';
-/** 发布通道开不了、而且不是暂时性的(文档服务明确不给发布票据):这些原因直接记失败,不悄悄重试 */
+/**
+ * Publication channel cannot be opened and failure is non-transient (document service explicitly
+ * denies publish ticket): record failure directly for these reasons, do not retry silently
+ */
 export const PERMANENT_OPEN_REASONS = Object.freeze(new Set(['no-project', 'forbidden', 'service-disabled', 'service-revoked', 'relocated', 'not-listed', 'banned']));
-/** 带用户卡的项目(隔离工作进程渲,要排队)放弃时的原因 */
+/**
+ * Reason when abandoning projects with user cards (rendered by isolated worker processes, must
+ * queue)
+ */
 export const USER_CARD_STALL_REASON = 'Render node made no progress for 30 minutes (projects with user cards must be queued for rendering)';
 
-/** 从项目里挑出这些 id 中要预渲染的片段(还在项目里、不是素材片段) */
+/**
+ * Picks clips to prerender from the project among these IDs (still in project, not media clips)
+ */
 export function renderableClips(project, clipIds) {
   const want = new Set(clipIds);
   const out = [];
@@ -74,13 +106,13 @@ const chunk = (list, n) => { const out = []; for (let i = 0; i < list.length; i 
 
 /**
  * @param {object} o
- * @param {object | null} o.publisher 见文件头;null 时整个模块不做事
+ * @param {object | null} o.publisher See file header; when null, the entire module does nothing
  * @param {ReturnType<import('./conversations.mjs').createConversationStore>} o.store
  */
 export function createRenderRequests({ publisher = null, store, now = () => Date.now(), limits: limitsIn = {}, log = () => {} } = {}) {
   const limits = { ...RENDER_REQUEST_DEFAULTS, ...limitsIn };
-  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响预渲染重试 */ } };
-  /** 对话键 → 这个对话的预渲染重试状态 */
+  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* Logging failure does not affect prerender retries */ } };
+  /** Chat key → prerender retry state for this chat */
   const jobs = new Map();
   /** projectId → { handle, opening, plans: Set(planId), retry, retryTimer } */
   const channels = new Map();
@@ -98,7 +130,7 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
     if (!file) return;
     try {
       if (!job.plans.size && !job.dirty.size) { fs.rmSync(file, { force: true }); return; }
-      if (!fs.existsSync(path.dirname(file))) return; // 对话已经删了
+      if (!fs.existsSync(path.dirname(file))) return; // Chat has already been deleted
       const tmp = `${file}.tmp-${process.pid}`;
       fs.writeFileSync(tmp, JSON.stringify({
         v: 1, rev: job.rev, runId: job.runId, dirty: [...job.dirty],
@@ -120,7 +152,7 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
     return job ?? null;
   }
 
-  /** 往这个对话的事件记录里记一条 `render`;对话已经删了回 false */
+  /** Records a `render` entry into this chat's event log; returns false if chat was deleted */
   function report(job, fields) {
     const conv = store.get(job.projectId, job.ownerKey, job.id);
     if (!conv) return false;
@@ -138,7 +170,7 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
     if (!ch || ch.plans.size) return;
     clearTimeout(ch.retryTimer);
     channels.delete(projectId);
-    try { ch.handle?.close(); } catch { /* 已经关了 */ }
+    try { ch.handle?.close(); } catch { /* Already closed */ }
   }
 
   function forgetPlan(job, planId) {
@@ -150,7 +182,7 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
   async function withdraw(job, planId) {
     const ch = channels.get(job.projectId);
     forgetPlan(job, planId);
-    try { await ch?.handle?.withdraw(planId); } catch { /* 通道断了:队列里的任务随连接清掉 */ }
+    try { await ch?.handle?.withdraw(planId); } catch { /* Channel disconnected: tasks in the queue are cleared with the connection */ }
   }
 
   function onProgress({ id, done, total } = {}) {
@@ -197,7 +229,10 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
     dropJobIfDone(job);
   }
 
-  /** 发布通道自己断了(文档服务重启、网络):过一会儿重开,把还没渲完的计划原样重发 */
+  /**
+   * Publication channel disconnected on its own (document service restart, network): reopen after a
+   * delay and republish unrendered plans as is
+   */
   function onChannelClose(projectId) {
     const ch = channels.get(projectId);
     if (!ch || closed) return;
@@ -240,7 +275,7 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
     }
   }
 
-  /** 把这个对话攒着的片段发成计划 */
+  /** Dispatches accumulated clips for this chat as a plan */
   function publish(job) {
     clearTimeout(job.timer);
     job.timer = null;
@@ -249,7 +284,8 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
       let avail;
       try { avail = await publisher.availability(job.projectId); } catch { avail = null; }
       if (avail?.streams === false) {
-        // 「生成轨道流」关着:托管渲染节点完全不为这个项目产流,发了也没人渲。如实记一条,不报「完成」
+        // "Generate track streams" is off: hosted render nodes do not produce streams for this project
+        // at all, and no one will render even if dispatched. Record faithfully, do not report "done"
         const clips = [...job.dirty];
         job.dirty.clear();
         report(job, { state: 'off', clips });
@@ -267,7 +303,8 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
         dropJobIfDone(job);
         return;
       }
-      // 上一批还没渲完的并进来:它们会被撤回,而那些片段在新版本上仍然要渲
+      // Merge in unrendered clips from the previous batch: they will be withdrawn, but still need
+      // rendering in the new version
       const old = [...job.plans.values()];
       const clips = [...new Set([...old.flatMap((p) => p.clips), ...job.dirty])].sort();
       const rev = job.rev;
@@ -277,7 +314,8 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
         ch = await channelFor(job.projectId);
       } catch (err) {
         if (PERMANENT_OPEN_REASONS.has(err?.reason)) {
-          // 文档服务明确不给这个项目发预渲染计划:记失败并说原因,不无限重试
+          // Document service explicitly refuses prerender plans for this project: record failure with reason,
+          // do not retry indefinitely
           for (const p of old) forgetPlan(job, p.id);
           report(job, { state: 'failed', clips, reason: `The cloud render service does not accept this project's prerender (${err.reason})` });
           say('agent.render.open-refused', { projectId: job.projectId, reason: err.reason });
@@ -286,7 +324,8 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
           dropJobIfDone(job);
           return;
         }
-        // 通道开不了:片段放回去,过一会儿再试(不记失败:这是暂时性的)
+        // Cannot open channel: release clips back and retry after a delay (do not record failure: this is
+        // transient)
         for (const c of clips) job.dirty.add(c);
         say('agent.render.open-failed', { projectId: job.projectId, message: String(err?.message ?? err).slice(0, 120) });
         if (!job.timer && !closed) { job.timer = setTimeout(() => publish(job), limits.reopenMs[0]); job.timer.unref?.(); }
@@ -307,7 +346,7 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
       }
       persist(job);
       for (const plan of fresh) await ch.handle.publish(plan.task);
-      // 新的发出去之后再撤旧的
+      // Withdraw the old plan only after the new one is dispatched
       for (const p of old) if (!fresh.some((f) => f.id === p.id)) await withdraw(job, p.id);
       job.lastReportAt = 0;
       report(job, { state: 'published', clips, plans: fresh.length });
@@ -319,7 +358,10 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
     return job.publishing;
   }
 
-  /** 定时看一遍:连续太久没有进度的、超过绝对上限的,放弃并撤回 */
+  /**
+   * Periodic sweep: abandon and withdraw plans with no progress for too long or exceeding absolute
+   * ceiling
+   */
   function watchdog() {
     const at = now();
     for (const job of [...jobs.values()]) {
@@ -341,20 +383,27 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
 
   return {
     enabled: !!publisher,
-    /** 写入落地后攒多久再发(写入一侧「攒一会儿再判轻重」用同一个数,`render-clips.mjs` 的 `createHeavyRenderGate`) */
+    /**
+     * How long to accumulate writes after landing before dispatching (the write side uses the same
+     * value for "accumulate before classifying heavy/light", `createHeavyRenderGate` in
+     * `render-clips.mjs`)
+     */
     debounceMs: limits.debounceMs,
 
     /**
-     * 一次写入落地了。`project` 是写入之后的项目内容(挑要渲的片段用),`rev` 是它的版本。
-     * @param {{ projectId: string, ownerKey: string, id: string }} ref 哪个对话
+     * A write committed. `project` is the project content after the write (used to pick clips to
+     * render), and `rev` is its revision.
+     * @param {{ projectId: string, ownerKey: string, id: string }} ref Which chat
      */
     noteWrite(ref, { clipIds = [], clips: given = null, rev, project, runId = null, userCards = false } = {}) {
       if (!publisher || closed) return;
-      // `clips`:写入方已经按项目内容挑好的片段(账号模式:任务进程挑好、经主服务转来);否则按 `project` 挑
+      // `clips`: clips already selected by writer from project content (account mode: selected by task
+      // process, forwarded via lead service); otherwise selected via `project`
       const clips = Array.isArray(given) ? [...new Set(given.filter((c) => typeof c === 'string' && c))] : renderableClips(project, clipIds);
       const job = jobOf(ref, clips.length > 0);
       if (!job) return;
-      // 项目带着用户卡:由隔离工作进程渲,判「没有进度」的时限放长(见 userCardStallMs)
+      // Project contains user cards: rendered by isolated worker process, extend timeout for
+      // determining "no progress" (see userCardStallMs)
       if (userCards) job.userCards = true;
       if (Number.isSafeInteger(rev)) job.rev = rev;
       if (runId) job.runId = runId;
@@ -367,7 +416,9 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
       persist(job);
     },
 
-    /** 一轮结束:攒着的马上发(保证最后的版本有计划) */
+    /**
+     * Round finished: dispatch accumulated items immediately (ensuring the final version has a plan)
+     */
     flush(ref) {
       const job = jobOf(ref, false);
       if (!publisher || !job || !job.dirty.size) return Promise.resolve();
@@ -375,7 +426,9 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
     },
 
     /**
-     * 进程起来后调:按各对话的 `pending-render.json` 重新发布。只用服务身份,不需要成员在场。回重发的对话数。
+     * Called after process startup: republish according to each chat's `pending-render.json`.
+     * Uses only service identity; does not require member presence. Returns the number of republished
+     * chats.
      */
     async restore() {
       if (!publisher) return 0;
@@ -390,7 +443,9 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
         job.finished ??= [];
         job.rev = rev;
         job.runId = typeof saved.runId === 'string' ? saved.runId : null;
-        // 重启后不知道这个项目带不带用户卡:按带着的时限等(多等不会出错,少等会把排着队的计划误判成放弃)
+        // After restart, unknown whether this project has user cards: wait according to the timeout limit
+        // it carries (waiting longer will not cause errors; waiting less will misjudge queued plans as
+        // abandoned)
         job.userCards = true;
         for (const c of clips) job.dirty.add(c);
         n += 1;
@@ -400,7 +455,7 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
       return n;
     },
 
-    /** 云端 Agent 的开关关了、项目删了:撤回并清掉这个项目的清单 */
+    /** Cloud Agent switch is off or project is deleted: recall and clear this project's manifest */
     async cancelProject(projectId) {
       for (const job of [...jobs.values()]) {
         if (job.projectId !== projectId) continue;
@@ -414,7 +469,10 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
       closeChannelIfIdle(projectId);
     },
 
-    /** 一个对话被删:它的清单不再跟(已经发出去的计划照常渲完,改动在项目里,别人要看) */
+    /**
+     * A chat is deleted: no longer track its manifest (already dispatched plans finish rendering as
+     * usual; changes are in the project for others to view).
+     */
     forget(ref) {
       const job = jobOf(ref, false);
       if (!job) return;
@@ -424,25 +482,25 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
       closeChannelIfIdle(job.projectId);
     },
 
-    /** 诊断:不含正文 */
+    /** Diagnostics: does not contain body */
     describe() {
       return { jobs: [...jobs.values()].map((j) => ({ projectId: j.projectId, dirty: j.dirty.size, plans: j.plans.size })), channels: channels.size };
     },
 
-    /** 测试:等这个对话手头的发布做完 */
+    /** Test: wait for this chat's current publish to finish */
     _settled(ref) {
       return jobOf(ref, false)?.publishing ?? Promise.resolve();
     },
     _watchdog: watchdog,
 
-    /** 收尾:停表、关通道。清单留在盘上,下次起来重发 */
+    /** Finalize: stop timers, close channels. Manifests remain on disk, republished on next startup */
     close() {
       closed = true;
       if (sweep) clearInterval(sweep);
       for (const job of jobs.values()) clearTimeout(job.timer);
       for (const ch of channels.values()) {
         clearTimeout(ch.retryTimer);
-        try { ch.handle?.close(); } catch { /* 已经关了 */ }
+        try { ch.handle?.close(); } catch { /* Already closed */ }
       }
       channels.clear();
     },

@@ -1,54 +1,84 @@
 #!/usr/bin/env node
 /**
- * 己零:量「画布的像素怎么到编码器」的三条路。出处:`docs/plan/prerender-products-contract.md` 第 6.2、6.3 节与第 13.2 节「己零」。
+ * Ji-0: measure three paths for "how canvas pixels reach the encoder". Source:
+ * `docs/plan/prerender-products-contract.md` sections 6.2, 6.3 and section 13.2 "Ji-0".
  *
- * 单文件、零依赖:只用 Node 内置模块和 Node 22 以上自带的全局 WebSocket、fetch(按 Node 24 写)。
- * 不引 puppeteer,不引仓库里任何模块;页面的 HTML 和脚本内嵌在本文件里。把这一个文件拷到别的机器(例如 Linux 渲染节点)的
- * 临时目录就能跑。自己起无头 Chrome、自己说 CDP(Chrome DevTools Protocol)。
+ * Single file, zero dependencies: only uses Node built-in modules and global WebSocket and fetch
+ * included in Node 22+ (written for Node 24).
+ * Does not import puppeteer, does not import any module in the repo; page HTML and script are
+ * embedded in this file. Copying this single file to a temporary directory on another machine
+ * (e.g. Linux render node) is enough to run. Spawns headless Chrome itself, speaks CDP (Chrome
+ * DevTools Protocol) itself.
  *
- *   node canvas-encode-paths-probe.mjs --chrome <chrome 或 chrome-headless-shell 的可执行文件> [选项]
+ *   node canvas-encode-paths-probe.mjs --chrome <chrome or chrome-headless-shell executable> [options]
  *
- *   --chrome <路径>        必填。节点上是 chrome-headless-shell 152
- *   --no-gpu               给 Chrome 加 --disable-gpu 系列(与 server/bakery/chrome.mjs 一致),模拟节点没有显卡
- *   --no-sandbox           给 Chrome 加 --no-sandbox(以 root 跑要它)
- *   --ffmpeg <路径>        缺省 ffmpeg(在 PATH 里找)
- *   --out <目录>           缺省 ./canvas-encode-paths-out;summary.json、各路产物、临时 Chrome 用户目录都在它下面
- *   --frames <数>          缺省 90
- *   --sizes 960x540,1920x1080   画面尺寸(偶数),缺省这两种
- *   --scenes particles,three    缺省两种
- *   --fps <数>             缺省 30
- *   --hw no-preference,prefer-software   浏览器编码器额外按哪几种 hardwareAcceleration 各跑一遍;缺省两种
- *   --chrome-arg <参数>    追加给 Chrome 的启动参数,可重复
- *   --timeout <秒>         每条路每个场景的时限(防卡死),缺省 300
+ *   --chrome <path>        Required. chrome-headless-shell 152 on the node
+ *   --no-gpu               Pass --disable-gpu series to Chrome (consistent with
+ *                          server/bakery/chrome.mjs), simulating node without GPU
+ *   --no-sandbox           Pass --no-sandbox to Chrome (required when running as root)
+ *   --ffmpeg <path>        Defaults to ffmpeg (looked up in PATH)
+ *   --out <dir>            Defaults to ./canvas-encode-paths-out; summary.json, outputs of each
+ *                          path, and temporary Chrome user dir are under it
+ *   --frames <number>      Defaults to 90
+ *   --sizes 960x540,1920x1080   Frame sizes (even numbers), defaults to these two
+ *   --scenes particles,three    Defaults to two
+ *   --fps <number>         Defaults to 30
+ *   --hw no-preference,prefer-software   Which additional hardwareAcceleration values the browser
+ *                          encoder runs for; defaults to both
+ *   --chrome-arg <arg>     Additional startup arguments passed to Chrome, repeatable
+ *   --timeout <seconds>    Timeout for each path and each scene (prevent hanging), defaults to 300
  *
- * 量什么(契约第 6.3 节的五项),每种场景 × 每种尺寸:
- *   1. Chrome 版本、是不是无头壳、WebGL 的渲染器(UNMASKED_RENDERER)。
- *   2. VideoEncoder.isConfigSupported:avc1 基线 / 主 / 高三个档次 × 拼合后的两种尺寸 × hardwareAcceleration 取「不限」和「只用软件」。
- *   3. 浏览器自带的编码器:画布拼成上半颜色、下半不透明度(streamEncode.ts 的拼法),VideoEncoder,每 15 帧一个关键帧;
- *      记每秒压多少帧、字节数;VideoDecoder 解回来的帧数;解回来和原画比的颜色、不透明度平均差(满分 255,抽若干帧比全图)。
- *   4. 原始像素交给 ffmpeg:页面里读出画布的 RGBA(2D 用 getImageData,WebGL 用 readPixels 并翻转、反预乘),用 fetch POST 到探针在
- *      127.0.0.1 上起的 HTTP 口,探针喂给 ffmpeg(rawvideo + rgba,滤镜链和 libx264 参数抄 server/bakery/ffmpeg.mjs)。
- *      分段记每帧毫秒数:读像素、搬到 Node、编码;再把 ffmpeg 的产物解回来和原画比同样两个差。
- *   5. 现在的办法作基线:CDP Page.captureScreenshot(PNG、背景透明、clip 到画布),PNG 交给 ffmpeg(image2pipe)。同样分段、同样比差。
+ * What to measure (the five items in section 6.3 of the contract), each scene × each size:
+ *   1. Chrome version, whether it is headless shell, WebGL renderer (UNMASKED_RENDERER).
+ *   2. VideoEncoder.isConfigSupported: avc1 Baseline / Main / High tiers × two sizes after
+ *      compositing × hardwareAcceleration set to "no-preference" and "prefer-software".
+ *   3. Browser built-in encoder: canvas composited into top half color, bottom half opacity
+ *      (compositing method of streamEncode.ts), VideoEncoder, keyframe every 15 frames; records
+ *      frames compressed per second, byte count; frame count decoded back by VideoDecoder; average
+ *      difference in color and opacity between decoded frames and original image (out of 255,
+ *      sampling several frames to compare whole images).
+ *   4. Raw pixels handed to ffmpeg: page reads canvas RGBA (getImageData for 2D, readPixels with
+ *      flip and un-premultiply for WebGL), uses fetch POST to the HTTP port opened by the probe on
+ *      127.0.0.1, probe feeds to ffmpeg (rawvideo + rgba, filter chain and libx264 parameters
+ *      copied from server/bakery/ffmpeg.mjs).
+ *      Records milliseconds per frame by segment: reading pixels, transferring to Node, encoding;
+ *      then decodes ffmpeg output back to compare the same two differences against the original
+ *      image.
+ *   5. Current approach as baseline: CDP Page.captureScreenshot (PNG, transparent background,
+ *      clipped to canvas), PNG handed to ffmpeg (image2pipe). Same segmentation, same difference
+ *      comparison.
  *
- * 判据(契约第 6.3 节):某条路在这台机器上「可用」= 编得出来、解回来帧数对、颜色平均差不到 1、不透明度平均差不到 0.5。
- * 探针只给数字和「可用 / 不可用」标记,不替人下「用哪条」的结论。
+ * Criteria (section 6.3 of the contract): a path is "usable" on this machine = can encode, decoded
+ * frame count matches, average color difference < 1, average opacity difference < 0.5.
+ * The probe only provides numbers and "usable / unusable" flags, without making conclusions for
+ * humans on "which to use".
  *
- * 输出:`--out` 下的 summary.json(全部数字和机器信息);标准输出最后一行是它的路径。
- * 退出码:任一场景(某个尺寸)三条路全都跑不出来 → 1;参数不对或 Chrome 起不来 → 2;其余 0(某条路「不可用」不影响退出码)。
+ * Output: summary.json under `--out` (all numbers and machine info); the last line of stdout is its
+ * path.
+ * Exit code: all three paths fail to run for any scene (at some size) → 1; invalid arguments or
+ * Chrome fails to start → 2; otherwise 0 (a path being "unusable" does not affect the exit code).
  *
- * 场景是真实卡片的替身,不是卡片本身:
- *   粒子 = 2D 画布上几百个半透明小圆点(像 particles 卡);
- *   三维 = WebGL 画布上带光照的转动球体加一圈环(像 scene-3d)。两者都带透明背景,按帧号直接算(不靠真实时间)。
+ * Scenes are stand-ins for real cards, not the cards themselves:
+ *   Particles = hundreds of translucent dots on 2D canvas (like particles card);
+ *   3D = rotating sphere with lighting plus a ring on WebGL canvas (like scene-3d). Both have
+ *   transparent backgrounds and compute directly by frame number (not relying on real time).
  *
- * 耗时的口径:
- *   - 「画」(把这一帧画到画布上)三条路都一样,不算进对比;截图那条还要等两次 requestAnimationFrame 让合成器出帧,也归入「画」。
- *   - 「端到端每帧」= (从第一帧开始到最后一个字节产出的总墙钟 − 画的总耗时) / 帧数。读、搬、编码在流水线上是重叠的,
- *     所以三段之和可能大于端到端;「编码」另有一个单独量的数(同一批已缓存的 15 帧反复喂 ffmpeg 凑 90 帧,没有页面参与)。
- *   - ffmpeg 那两条路按生产的做法:每 15 帧一个 ffmpeg 进程(openStreamSegmentEncoder 的一个分段),并预先拉起下一个进程。
- *   - 浏览器那条路的「搬」是最后把全部编码块一次 POST 给 Node 的耗时。
+ * Timing methodology:
+ *   - "Draw" (drawing this frame to the canvas) is identical for all three paths and excluded from
+ *     comparison; the screenshot path also waits for two requestAnimationFrame calls for the
+ *     compositor to output frames, which is also grouped into "Draw".
+ *   - "End-to-end per frame" = (total wall clock from first frame start to last byte output -
+ *     total draw time) / frame count. Reading, transferring, and encoding overlap on the pipeline,
+ *     so the sum of the three segments may exceed end-to-end; "Encode" also has a separately
+ *     measured number (repeatedly feeding the same cached batch of 15 frames to ffmpeg to make 90
+ *     frames, without page involvement).
+ *   - The two ffmpeg paths follow production practice: one ffmpeg process per 15 frames (one
+ *     segment of openStreamSegmentEncoder), with the next process spawned in advance.
+ *   - "Transfer" in the browser path is the time spent posting all encoded chunks to Node in one
+ *     batch at the end.
  *
- * ffmpeg 兼容:节点上是 4.4.2,不用 -vsync / -fps_mode 之类新旧版本不一的选项。
+ * ffmpeg compatibility: 4.4.2 on nodes; do not use options that differ across versions such as
+ * -vsync / -fps_mode.
  */
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import http from 'node:http';
@@ -59,11 +89,11 @@ import crypto from 'node:crypto';
 
 const PROBE_VERSION = 1;
 const SEGMENT_FRAMES = 15;
-const COLOR_MEAN_MAX = 1;      // 判据:颜色平均差(0~255)要小于它
-const ALPHA_MEAN_MAX = 0.5;    // 判据:不透明度平均差要小于它
-const HALF_PAD = 8;            // 拼合后两个半区下面各垫的黑边行数(streamEncode.ts 的 STREAM_HALF_PAD)
+const COLOR_MEAN_MAX = 1;      // Criterion: average color difference (0-255) must be less than this
+const ALPHA_MEAN_MAX = 0.5;    // Criterion: average opacity difference must be less than this
+const HALF_PAD = 8;            // Number of black-border rows padded under each of the two halves after compositing (STREAM_HALF_PAD in streamEncode.ts)
 
-/* ====================================================================== 参数 */
+/* ====================================================================== Parameters */
 
 function parseArgs(argv) {
   const o = { chrome: null, noGpu: false, noSandbox: false, ffmpeg: 'ffmpeg', out: null, frames: 90, sizes: '960x540,1920x1080',
@@ -107,7 +137,7 @@ function parseArgs(argv) {
   return o;
 }
 
-/* ====================================================================== 小工具 */
+/* ====================================================================== Utilities */
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const round = (x, n = 2) => (Number.isFinite(x) ? Math.round(x * 10 ** n) / 10 ** n : null);
@@ -119,7 +149,7 @@ function withTimeout(promise, ms, label) {
   return Promise.race([promise, timer]).finally(() => clearTimeout(t));
 }
 
-/** 自己起的子进程都登记在这里,结束时(包括出错)统统收掉 */
+/** All child processes spawned by itself are registered here, cleaned up on exit (including errors) */
 const children = new Set();
 function track(proc) { children.add(proc); proc.once('exit', () => children.delete(proc)); return proc; }
 function killTree(proc) {
@@ -127,10 +157,14 @@ function killTree(proc) {
   try {
     if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
     else { try { process.kill(-proc.pid, 'SIGKILL'); } catch { proc.kill('SIGKILL'); } }
-  } catch { /* 已经没了 */ }
+  } catch { /* Already gone */ }
 }
 function killAllChildren() { for (const p of [...children]) killTree(p); }
-/** 兜底:命令行里带着我们这个临时用户目录的进程(Chrome 的各个子进程)统统结束。目录名是随机的,不会误伤别人的进程。回结束了几个 */
+/**
+ * Fallback: terminate all processes whose command line contains our temporary user directory
+ * (Chrome child processes). Directory name is random and won't affect others' processes. Returns
+ * how many were terminated
+ */
 function killByProfileDir(dir) {
   const leaf = path.basename(dir);
   let n = 0;
@@ -143,10 +177,10 @@ function killByProfileDir(dir) {
       for (const pid of fs.readdirSync('/proc').filter(x => /^d+$/.test(x))) {
         try {
           if (fs.readFileSync(`/proc/${pid}/cmdline`, 'latin1').includes(leaf)) { process.kill(Number(pid), 'SIGKILL'); n++; }
-        } catch { /* 进程已没了或读不了 */ }
+        } catch { /* Process already gone or unreadable */ }
       }
     }
-  } catch { /* 兜底而已 */ }
+  } catch { /* Just a fallback */ }
   return n;
 }
 
@@ -188,7 +222,8 @@ function hostInfo() {
   };
 }
 
-/* ====================================================================== ffmpeg 命令行(抄自 server/bakery/ffmpeg.mjs,提交 37d5ce4f) */
+/* ====================================================================== ffmpeg command line
+   (copied from server/bakery/ffmpeg.mjs, commit 37d5ce4f) */
 
 const STREAM_X264_ARGS = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '16', '-g', '15', '-keyint_min', '15', '-sc_threshold', '0', '-bf', '0'];
 const STREAM_INPUT_ARGS = ['-probesize', '32', '-analyzeduration', '0', '-threads', '1'];
@@ -203,7 +238,7 @@ function streamFilter(pixFmt = 'yuv420p') {
     + '[a]alphaextract,format=gbrp,pad=iw:ih+8:0:0:black[mask];'
     + `[rgb][mask]vstack=inputs=2,scale=out_range=tv:out_color_matrix=bt709,format=${pixFmt}`;
 }
-/** 输出端:滤镜链之后到 pipe:1 */
+/** Output: from after the filter chain to pipe:1 */
 function streamOutputArgs(fps) {
   return ['-filter_complex', streamFilter('yuv420p'), ...STREAM_X264_ARGS,
     '-color_range', 'tv', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709',
@@ -211,16 +246,16 @@ function streamOutputArgs(fps) {
     '-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-an', '-f', 'mp4', 'pipe:1'];
 }
 const COMMON_HEAD = (threads) => ['-y', '-hide_banner', '-loglevel', 'error', '-filter_complex_threads', String(threads), '-reinit_filter', '0'];
-/** 现在的办法:PNG 经 image2pipe 进 stdin(streamSegmentArgs 原样) */
+/** Current approach: PNG into stdin via image2pipe (streamSegmentArgs as is) */
 function pngSegmentArgs(fps) {
   return [...COMMON_HEAD(streamFilterThreads()), ...STREAM_INPUT_ARGS, '-f', 'image2pipe', '-c:v', 'png', '-framerate', String(fps), '-i', 'pipe:0', ...streamOutputArgs(fps)];
 }
-/** 新的一种输入:rawvideo + rgba,后面的滤镜链和编码器不变 */
+/** New input type: rawvideo + rgba, downstream filter chain and encoder unchanged */
 function rawSegmentArgs(w, h, fps) {
   return [...COMMON_HEAD(streamFilterThreads()), '-f', 'rawvideo', '-pix_fmt', 'rgba', '-video_size', `${w}x${h}`, '-framerate', String(fps), '-i', 'pipe:0', ...streamOutputArgs(fps)];
 }
 
-/** 一个分段 = 一个 ffmpeg 进程:帧从 stdin 喂,fMP4 字节从 stdout 收 */
+/** One segment = one ffmpeg process: frames fed via stdin, fMP4 bytes received from stdout */
 class SegmentProc {
   constructor(ffmpeg, args) {
     this.proc = track(spawn(ffmpeg, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }));
@@ -240,18 +275,20 @@ class SegmentProc {
       if (this.inputError) throw this.inputError;
       await new Promise((resolve, reject) => this.proc.stdin.write(buf, (e) => (e ? reject(e) : resolve())));
     } catch (e) {
-      // 管道断了多半是 ffmpeg 自己退了:把它的报错原文带出来
+      // Broken pipe usually means ffmpeg exited on its own: surface its raw error output
       await Promise.race([this.done, sleep(500)]);
       throw e;
     }
   }
-  end() { if (!this.ended) { this.ended = true; try { this.proc.stdin.end(); } catch { /* 已断 */ } } return this.done; }
+  end() { if (!this.ended) { this.ended = true; try { this.proc.stdin.end(); } catch { /* Broken */ } } return this.done; }
   kill() { this.ended = true; killTree(this.proc); }
 }
 
 /**
- * 按分段喂帧的流水线(生产里 openStreamSegmentEncoder 的用法):每 15 帧换一个 ffmpeg 进程,下一个进程预先拉起。
- * `write(i, buf)` 按帧号顺序喂;`finish()` 回每段的 fMP4 字节。段与段之间不互相等(上一段在后台收尾)。
+ * Pipeline feeding frames by segment (usage of openStreamSegmentEncoder in production): switch
+ * to a new ffmpeg process every 15 frames, spawning the next process in advance.
+ * `write(i, buf)` feeds in frame-number order; `finish()` returns each segment's fMP4 bytes.
+ * Segments do not wait for each other (the previous segment finalizes in the background).
  */
 class SegmentPipeline {
   constructor(ffmpeg, args) { this.ffmpeg = ffmpeg; this.args = args; this.cur = null; this.spare = null; this.pending = []; this.frames = 0; this.firstWriteAt = null; }
@@ -275,7 +312,10 @@ class SegmentPipeline {
   abort() { if (this.cur) this.cur.kill(); if (this.spare) this.spare.kill(); }
 }
 
-/** 只量编码:拿已缓存的一批帧(≤15)循环喂满 `frames` 帧,没有页面参与。回每帧毫秒数 */
+/**
+ * Measure encoding only: loop-feed a cached batch of frames (≤15) to fill `frames` frames,
+ * without page involvement. Returns ms per frame.
+ */
 async function isolatedEncodeMs(ffmpeg, args, cached, frames) {
   const pipe = new SegmentPipeline(ffmpeg, args);
   const t = performance.now();
@@ -286,9 +326,12 @@ async function isolatedEncodeMs(ffmpeg, args, cached, frames) {
   return (performance.now() - t) / frames;
 }
 
-/* ====================================================================== 解回来比对(Node 一侧,给 ffmpeg 的产物用) */
+/* ====================================================================== Decode back for comparison (Node side, for ffmpeg output) */
 
-/** 把一个 fMP4 分段用 ffmpeg 解成 rgb24 的原始帧,逐帧回调。色彩按 bt709 限定范围展开 */
+/**
+ * Decode an fMP4 segment into raw rgb24 frames using ffmpeg, with frame-by-frame callbacks.
+ * Colors expanded from bt709 limited range.
+ */
 function decodeSegment(ffmpeg, bytes, frameSize, onFrame) {
   return new Promise((resolve, reject) => {
     const args = ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-an',
@@ -296,7 +339,7 @@ function decodeSegment(ffmpeg, bytes, frameSize, onFrame) {
     const proc = track(spawn(ffmpeg, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }));
     let err = '', pend = [], pendLen = 0, n = 0, fail = null;
     proc.stderr.on('data', (d) => { err = (err + d).slice(-3000); });
-    proc.stdin.on('error', () => { /* 看退出码 */ });
+    proc.stdin.on('error', () => { /* Check exit code */ });
     proc.stdout.on('data', (d) => {
       pend.push(d); pendLen += d.length;
       while (pendLen >= frameSize) {
@@ -316,7 +359,10 @@ function decodeSegment(ffmpeg, bytes, frameSize, onFrame) {
   });
 }
 
-/** 一帧解出来的 rgb24(拼合画面)对原画(straight RGBA)的差:色半区对预乘色,透明度半区对 alpha */
+/**
+ * Diff between decoded rgb24 (composite image) and original (straight RGBA): color half
+ * against premultiplied color, transparency half against alpha.
+ */
 function compareDecoded(dec, ref, w, h, acc) {
   const alphaTop = h + HALF_PAD;
   for (let y = 0; y < h; y++) {
@@ -351,7 +397,7 @@ async function decodeAndCompare(ffmpeg, segments, w, h, refs) {
   return { decoded, compared: acc.compared, colorMean: acc.colorN ? round(acc.colorSum / acc.colorN, 3) : null, alphaMean: acc.alphaN ? round(acc.alphaSum / acc.alphaN, 3) : null, colorMax: acc.colorMax, alphaMax: acc.alphaMax };
 }
 
-/* ====================================================================== 预览图(把参照帧垫在棋盘格上存成 PNG,人眼核对场景画得对不对) */
+/* ====================================================================== Preview image (save reference frame over checkerboard as PNG to visually check if scene is rendered correctly) */
 
 const CRC_TABLE = (() => { const t = new Int32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c; } return t; })();
 function crc32(buf) { let c = -1; for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8); return (c ^ -1) >>> 0; }
@@ -375,7 +421,7 @@ async function writePreviewPng(file, rgba, w, h) {
   fs.writeFileSync(file, Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), pngChunk('IHDR', ihdr), pngChunk('IDAT', await zlibDeflate(raw)), pngChunk('IEND', Buffer.alloc(0))]));
 }
 
-/* ====================================================================== CDP(自己说,不用库) */
+/* ====================================================================== CDP (speak directly, no library) */
 
 class Cdp {
   constructor(url) { this.url = url; this.id = 0; this.pending = new Map(); this.ws = null; }
@@ -405,7 +451,7 @@ class Cdp {
       this.ws.send(JSON.stringify(msg));
     });
   }
-  close() { try { this.ws?.close(); } catch { /* 已关 */ } }
+  close() { try { this.ws?.close(); } catch { /* Closed */ } }
 }
 
 async function launchChrome(opts, userDataDir) {
@@ -431,7 +477,7 @@ async function launchChrome(opts, userDataDir) {
   return { proc, wsUrl, args };
 }
 
-/* ====================================================================== 页面(内嵌;下面这个函数的源码原样塞进 <script>) */
+/* ====================================================================== Page (embedded; source code of the function below injected into <script> as is) */
 
 function pageMain() {
   const P = (window.P = {});
@@ -443,7 +489,7 @@ function pageMain() {
     return function () { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   }
 
-  /* ---------------------------------------------------------------- 信息 */
+  /* ---------------------------------------------------------------- Info */
   P.info = () => {
     const out = { userAgent: navigator.userAgent, hardwareConcurrency: navigator.hardwareConcurrency, secureContext: isSecureContext,
       videoEncoder: typeof VideoEncoder === 'function', videoDecoder: typeof VideoDecoder === 'function', offscreenCanvas: typeof OffscreenCanvas === 'function',
@@ -451,7 +497,7 @@ function pageMain() {
     try {
       const c = document.createElement('canvas');
       out.webgl2Available = !!c.getContext('webgl2');
-    } catch { /* 记 false */ }
+    } catch { /* Record false */ }
     try {
       const c = document.createElement('canvas');
       const gl = c.getContext('webgl');
@@ -466,10 +512,10 @@ function pageMain() {
     return out;
   };
 
-  /* ---------------------------------------------------------------- 场景 */
+  /* ---------------------------------------------------------------- Scene */
   P.setup = (scene, w, h) => {
     if (S.canvas) {
-      try { if (S.gl) { const l = S.gl.getExtension('WEBGL_lose_context'); if (l) l.loseContext(); } } catch { /* 忽略 */ }
+      try { if (S.gl) { const l = S.gl.getExtension('WEBGL_lose_context'); if (l) l.loseContext(); } } catch { /* Ignore */ }
       S.canvas.remove();
     }
     Object.assign(S, { scene, w, h, ctx: null, gl: null, drawFn: null, kind: null, rb: null, sb: null });
@@ -572,9 +618,10 @@ function pageMain() {
       gl.enable(gl.DEPTH_TEST); gl.useProgram(prog);
       drawMesh(sphere, mul(rotZ(0.4), rotY(i * 0.06)), new Float32Array([0.25, 0.55, 0.95]), 7.0);
       drawMesh(ring, mul(mul(rotY(0.35 * Math.sin(i * 0.04)), rotX(1.25 + 0.2 * Math.sin(i * 0.06))), rotZ(i * 0.05)), new Float32Array([0.95, 0.7, 0.2]), 14.0);
-      // 软件 WebGL 的命令是拖到有人读像素时才执行的:不等它画完,「画」的耗时会漏到第一个取像素的那一步里,三条路的对比就不干净
+      // Software WebGL commands are deferred until pixels are read: if we do not wait for drawing to finish,
+      // the "draw" time leaks into the first pixel-reading step, making the three-path comparison unclean
       gl.finish();
-      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, tiny);   // 读一个像素逼它现在就画完(finish 在软件 WebGL 上不一定等)
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, tiny);   // Read one pixel to force it to finish drawing now (finish does not necessarily wait in software WebGL)
     };
     S.rb = new Uint8Array(w * h * 4); S.sb = new Uint8Array(w * h * 4);
   }
@@ -586,7 +633,7 @@ function pageMain() {
     await new Promise((r) => requestAnimationFrame(() => r()));
   };
 
-  /** 读出这一帧画布的 straight-alpha RGBA(上到下)。回 { data, gpuMs, convMs } */
+  /** Read this frame's canvas as straight-alpha RGBA (top to bottom). Returns { data, gpuMs, convMs } */
   function readStraight() {
     const w = S.w, h = S.h;
     if (S.kind === '2d') {
@@ -595,7 +642,7 @@ function pageMain() {
     }
     const gl = S.gl, src = S.rb, dst = S.sb;
     const a = now(); gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, src); const b = now();
-    // readPixels 是下到上、预乘:翻转并反预乘(给 ffmpeg 的 rgba 要 straight)
+    // readPixels is bottom-to-top and premultiplied: flip and unpremultiply (ffmpeg expects straight rgba)
     const rowB = w * 4;
     for (let y = 0; y < h; y++) {
       let s = (h - 1 - y) * rowB, d = y * rowB;
@@ -614,7 +661,7 @@ function pageMain() {
 
   const post = async (url, body) => { const r = await fetch(url, { method: 'POST', body }); if (!r.ok) throw new Error(`POST ${url}:${r.status} ${(await r.text()).slice(0, 300)}`); };
 
-  /** 抽样帧的参照:画一遍、读出 straight RGBA,留一份在页面里,也 POST 给 Node */
+  /** Reference for sampled frame: draw once, read straight RGBA, keep a copy in page and POST to Node */
   P.makeRefs = async (indices) => {
     let covered = 0, total = 0;
     for (const i of indices) {
@@ -628,7 +675,7 @@ function pageMain() {
     return { count: indices.length, opaqueFraction: total ? covered / total : 0 };
   };
 
-  /* ---------------------------------------------------------------- 编码器能力 */
+  /* ---------------------------------------------------------------- Encoder capabilities */
   const levelOf = (pw, ph) => { const px = pw * ph; return px <= 414720 ? 0x1e : px <= 921600 ? 0x1f : px <= 2088960 ? 0x28 : px <= 5652480 ? 0x32 : px <= 9437184 ? 0x33 : 0x34; };
   const avcCodec = (profileHex, pw, ph) => `avc1.${profileHex}${levelOf(pw, ph).toString(16).padStart(2, '0')}`;
   const bitrateFor = (pw, ph, fps) => Math.max(1000000, Math.round(pw * ph * fps * 0.2));
@@ -650,16 +697,17 @@ function pageMain() {
     return { packed: `${w}x${ph}`, rows };
   };
 
-  /* ---------------------------------------------------------------- 浏览器自带的编码器 */
+  /* ---------------------------------------------------------------- Browser built-in encoder */
   P.runBrowserEncoder = async ({ frames, fps, hw, quantizer, indices }) => {
     const w = S.w, h = S.h, ph = 2 * h + 2 * PAD;
     if (typeof VideoEncoder !== 'function' || typeof VideoFrame !== 'function') throw new Error('This browser has no VideoEncoder / VideoFrame');
-    // 配置:高档,先按固定量化,不认再按码率(照 streamEncode.ts 的 probeStreamEncoder)
+    // Config: high tier, try fixed quantization first, then bitrate if rejected (per
+    // probeStreamEncoder in streamEncode.ts)
     const base = { codec: avcCodec('6400', w, ph), width: w, height: ph, framerate: fps, avc: { format: 'avc' }, latencyMode: 'quality', ...(hw && hw !== 'no-preference' ? { hardwareAcceleration: hw } : {}) };
     let cfg = null, mode = null;
     for (const [m, extra] of [['quantizer', { bitrateMode: 'quantizer' }], ['variable', { bitrateMode: 'variable', bitrate: bitrateFor(w, ph, fps) }]]) {
       const c = { ...base, ...extra };
-      try { const r = await VideoEncoder.isConfigSupported(c); if (r && r.supported) { cfg = c; mode = m; break; } } catch { /* 下一种 */ }
+      try { const r = await VideoEncoder.isConfigSupported(c); if (r && r.supported) { cfg = c; mode = m; break; } } catch { /* Next */ }
     }
     if (!cfg) throw new Error(`The encoder does not support ${base.codec} at ${w}x${ph} (hardwareAcceleration=${hw})`);
 
@@ -716,18 +764,18 @@ function pageMain() {
     if (!orderOk) problems.push('Output sample timestamps are not monotonic (B-frame reordering present)');
     const bytes = chunks.reduce((s, c) => s + c.data.length, 0);
 
-    // 交给 Node(把全部编码块一次 POST 过去,量搬运)
+    // Hand off to Node (POST all encoded chunks at once, measure transport)
     a2 = now();
     const all = new Uint8Array(bytes); let off = 0; for (const c of chunks) { all.set(c.data, off); off += c.data.length; }
     await post('/seg', all);
     const handoffMs = now() - a2;
 
-    // 解回来
+    // Decode back
     const out = { frames, mode, codec: cfg.codec, hardwareAcceleration: hw || 'no-preference', packed: `${w}x${ph}`, bytes, kbps: Math.round(bytes * 8 / (frames / fps) / 1000),
       paintMs, packMs, waitMs, loopMs, handoffMs, problems, decoded: 0, compared: 0, colorMean: null, alphaMean: null, colorMax: null, alphaMax: null, decodeMs: null };
     if (!decCfg) { problems.push('The encoder did not provide a decoderConfig'); return out; }
     let decSupported = false;
-    try { const r = await VideoDecoder.isConfigSupported({ codec: decCfg.codec, codedWidth: w, codedHeight: ph, description: decCfg.description }); decSupported = !!r.supported; } catch { /* 记 false */ }
+    try { const r = await VideoDecoder.isConfigSupported({ codec: decCfg.codec, codedWidth: w, codedHeight: ph, description: decCfg.description }); decSupported = !!r.supported; } catch { /* Record false */ }
     if (!decSupported) { problems.push('VideoDecoder does not support this config (' + decCfg.codec + ')'); return out; }
     const og = new OffscreenCanvas(w, ph).getContext('2d', { willReadFrequently: true });
     const acc = { cs: 0, cn: 0, cm: 0, as: 0, an: 0, am: 0, n: 0 };
@@ -752,9 +800,9 @@ function pageMain() {
     for (let k = 0; k < chunks.length; k++) {
       const c = chunks[k];
       dec.decode(new EncodedVideoChunk({ type: c.type, timestamp: c.timestamp, data: c.data }));
-      if (k % SEG === SEG - 1 || k === chunks.length - 1) await dec.flush();   // 一段一段解,手里不留一堆没关的帧
+      if (k % SEG === SEG - 1 || k === chunks.length - 1) await dec.flush();   // Decode segment by segment, avoiding keeping a bunch of unclosed frames around
     }
-    try { dec.close(); } catch { /* 已关 */ }
+    try { dec.close(); } catch { /* Closed */ }
     out.decodeMs = now() - td;
     if (decErr) problems.push('Decode error:' + decErr);
     out.decoded = decoded; out.compared = acc.n;
@@ -762,7 +810,7 @@ function pageMain() {
     return out;
   };
 
-  /* ---------------------------------------------------------------- 只量搬运:同一帧原始像素 POST 给一个收下就丢的口 */
+  /* ---------------------------------------------------------------- Measure transport only: POST raw pixels of the same frame to an endpoint that drops on receipt */
   P.measureTransfer = async (n) => {
     S.drawFn(0);
     const r = readStraight();
@@ -771,7 +819,7 @@ function pageMain() {
     return { msPerFrame: (now() - t0) / n, bytes: r.data.length };
   };
 
-  /* ---------------------------------------------------------------- ffmpeg 的产物交给浏览器的 VideoDecoder 解(播放端就是这么解的),和原画比 */
+  /* ---------------------------------------------------------------- Hand ffmpeg output to browser's VideoDecoder (how player decodes it) and compare with original */
   function parseFmp4(buf) {
     const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
     const boxesIn = (start, end) => {
@@ -851,12 +899,12 @@ function pageMain() {
       m.samples.forEach((sm, k) => dec.decode(new EncodedVideoChunk({ type: sm.key ? 'key' : 'delta', timestamp: Math.round((s * SEG + k) * 1e6 / fps), data: sm.data })));
       await dec.flush();
     }
-    try { dec.close(); } catch { /* 已关 */ }
+    try { dec.close(); } catch { /* Closed */ }
     if (decErr) throw new Error('Decode error:' + decErr);
     return { decoded, compared: acc.n, colorMean: acc.cn ? acc.cs / acc.cn : null, alphaMean: acc.an ? acc.as / acc.an : null };
   };
 
-  /* ---------------------------------------------------------------- 原始像素 POST 给 Node */
+  /* ---------------------------------------------------------------- POST raw pixels to Node */
   P.runRaw = async ({ frames, runId }) => {
     let paintMs = 0, readMs = 0, gpuReadMs = 0, convertMs = 0, transferMs = 0, bytes = 0;
     const t0 = now();
@@ -877,7 +925,7 @@ function pageHtml() {
 <script>(${pageMain.toString()})();</script>`;
 }
 
-/* ====================================================================== 编排 */
+/* ====================================================================== Arrangement */
 
 function sampleIndices(frames) {
   const s = new Set([0, frames - 1, Math.min(SEGMENT_FRAMES, frames - 1)]);
@@ -914,12 +962,12 @@ async function main() {
   let cleaned = false;
   const cleanup = async () => {
     if (cleaned) return; cleaned = true;
-    try { cdp?.close(); } catch { /* 忽略 */ }
+    try { cdp?.close(); } catch { /* Ignore */ }
     killAllChildren();
     if (chrome?.proc) { killTree(chrome.proc); await sleep(300); }
     const left = killByProfileDir(profileDir);
     if (left) { log(`Fallback cleanup terminated ${left} leftover Chrome processes`); await sleep(500); }
-    try { server?.closeAllConnections?.(); server?.close(); } catch { /* 忽略 */ }
+    try { server?.closeAllConnections?.(); server?.close(); } catch { /* Ignore */ }
     let rmErr = null;
     for (let k = 0; k < 15; k++) { try { fs.rmSync(profileDir, { recursive: true, force: true }); rmErr = null; break; } catch (e) { rmErr = e; await sleep(400); } }
     if (rmErr) log(`Could not delete the temporary Chrome user directory (${rmErr.code}): ${profileDir}`);
@@ -940,7 +988,7 @@ async function main() {
     else if (!summary.ffmpeg.libx264) log('This ffmpeg has no libx264: both ffmpeg paths will be recorded as "unavailable"');
     const ffmpegOk = summary.ffmpeg.usable && summary.ffmpeg.libx264;
 
-    // HTTP 口
+    // HTTP endpoint
     server = http.createServer(async (req, res) => {
       try {
         const url = new URL(req.url, 'http://x');
@@ -959,7 +1007,7 @@ async function main() {
           const body = Buffer.concat(chunks, len);
           if (m[1] === 'ref') { state.refs.set(Number(m[2]), body); }
           else if (m[1] === 'seg') { state.seg = { bytes: body.length }; }
-          else if (m[1] === 'null') { /* 只量搬运:收下就丢 */ }
+          else if (m[1] === 'null') { /* Measure transport only: drop on receipt */ }
           else {
             const sink = state.rawSinks.get(m[2]);
             if (!sink) throw new Error('No sink for this runId');
@@ -1003,7 +1051,7 @@ async function main() {
     };
     const loadPage = async () => {
       await call('Page.navigate', { url: origin + '/' });
-      for (let k = 0; k < 100; k++) { try { if (await evalPage('typeof window.P === "object" && document.readyState !== "loading"', 5000)) return; } catch { /* 还没好 */ } await sleep(100); }
+      for (let k = 0; k < 100; k++) { try { if (await evalPage('typeof window.P === "object" && document.readyState !== "loading"', 5000)) return; } catch { /* Not ready yet */ } await sleep(100); }
       throw new Error('Page did not load');
     };
     await loadPage();
@@ -1020,7 +1068,7 @@ async function main() {
       await call('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
       await call('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } });
 
-      // 第 2 项:编码器能力(每种尺寸一份)
+      // Item 2: encoder capabilities (one per size)
       try { summary.encoderSupport[size.label] = await evalPage(`P.supportMatrix(${w},${h},${fps})`, 60000); }
       catch (e) { summary.encoderSupport[size.label] = { error: String(e.message || e) }; }
 
@@ -1046,7 +1094,10 @@ async function main() {
           continue;
         }
 
-        /** ffmpeg 的产物交给页面里的 VideoDecoder 解(播放端就是这么解的),和原画比;只作旁证,出错不影响判定 */
+        /**
+         * Hand ffmpeg output to VideoDecoder in page (how player decodes it) and compare with original;
+         * for corroboration only, errors do not affect outcome.
+         */
         const browserDecodeOf = async (runId, segments) => {
           state.segOut.set(runId, segments);
           try {
@@ -1056,7 +1107,10 @@ async function main() {
           finally { state.segOut.delete(runId); }
         };
 
-        /** 跑一条路:失败(含超时)记「不可用」和原因,超时则重载页面再把场景准备好 */
+        /**
+         * Run one path: on failure (including timeout) record "unavailable" and reason; if timed out,
+         * reload page and prepare scene again.
+         */
         const runPath = async (key, fn) => {
           const t = performance.now();
           let r;
@@ -1072,7 +1126,7 @@ async function main() {
           log(`  ${key}: ${r.verdict}${r.available ? '' : '(' + r.reasons.join(';') + ')'} end-to-end ${r.e2ePerFrameMs ?? '-'} ms/frame`);
         };
 
-        // 3. 浏览器自带的编码器(默认「不限」一遍,另按 --hw 里的其它取值各一遍)
+        // 3. Browser built-in encoder (default "unlimited" once, plus once for each other value in --hw)
         for (const hw of opts.hwList) {
           const key = hw === 'no-preference' ? 'browserEncoder' : `browserEncoder:${hw}`;
           await runPath(key, async () => {
@@ -1088,7 +1142,7 @@ async function main() {
           });
         }
 
-        // 4. 原始像素交给 ffmpeg
+        // 4. Send raw pixels to ffmpeg
         await runPath('ffmpegRaw', async () => {
           if (!ffmpegOk) throw new Error('ffmpeg unavailable (not found or no libx264)');
           const args = rawSegmentArgs(w, h, fps);
@@ -1114,7 +1168,7 @@ async function main() {
           } catch (e) { sink.pipeline.abort(); throw e; } finally { state.rawSinks.delete(runId); }
         });
 
-        // 5. 现在的办法:截图 → PNG → ffmpeg
+        // 5. Current approach: screenshot → PNG → ffmpeg
         await runPath('ffmpegScreenshot', async () => {
           if (!ffmpegOk) throw new Error('ffmpeg unavailable (not found or no libx264)');
           const args = pngSegmentArgs(fps);
@@ -1152,12 +1206,13 @@ async function main() {
           } catch (e) { pipe.abort(); throw e; }
         });
 
-        // 清掉这个场景的参照,省内存
+        // Clear reference for this scene to save memory
         state.refs = new Map();
       }
     }
 
-    // 机器级汇总:每条路在这台机器上是否「可用」(所有跑了的场景 × 尺寸都可用才算),以及三条路端到端每帧耗时的对比
+    // Machine-level summary: whether each path is "usable" on this machine (only counted if all
+    // tested scenes × sizes are usable), plus end-to-end per-frame time comparison across the three paths
     const pathKeys = new Set(); for (const r of summary.results) for (const k of Object.keys(r.paths)) pathKeys.add(k);
     summary.pathVerdicts = {};
     for (const k of pathKeys) {

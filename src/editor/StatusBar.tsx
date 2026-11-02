@@ -4,9 +4,11 @@ import { tr } from "../i18n/index.ts";
 const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
 
 /**
- * 底部状态栏(配色诊断与修正 v2 整屏):28 高,和窗口栏同一档最深的底,等宽小字。
- * 就绪 · 序列数与卡片数 · 时长 · 右侧保存状态(绿点已保存 / 琥珀点有未保存改动;在线页面都是云端项目,不显示本机草稿保存状态)。
- * 纯展示,不带任何操作。
+ * Bottom status bar (color diagnosis and fix v2, full screen): 28 high, the same deepest tier of
+ * background as the window bar, small monospace text.
+ * Ready · track count and card count · duration · save status on the right (green dot saved / amber
+ * dot unsaved changes; online pages are all cloud projects, so the local draft save status is not shown).
+ * Display only, carries no actions.
  */
 export function StatusBar() {
   const tracks = useStore((s) => s.project.tracks);

@@ -1,4 +1,8 @@
-/** 合规样例（测试夹具，不进卡片库）：用不到框架的工具、只用 t 做算术的卡，写一行裸导入。载入时顶层照样锁成只读。 */
+/**
+ * Compliant example (test fixture, not added to the card library): a card that does not need
+ * framework tools and only uses t for arithmetic, with a single bare import. The top level is
+ * still locked as read-only on load.
+ */
 import "../../kernel/remotionStyle";
 import type { CardDef, CardProps } from "../../kernel/types";
 interface Params { text: string }

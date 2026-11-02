@@ -1,23 +1,36 @@
 /**
- * C6.5 收尾:Agent 在服务端的写入让内容超出项目总时长时,总时长的连带更新随同一批 ops 提交(主会话裁定)。
+ * C6.5 finalize: When Agent writes on the server cause content to exceed total project duration,
+ * cascading updates to total duration are submitted with the same batch of ops (lead session ruling).
  *
- * 以前:服务端只提交 handler 的改动,总时长由页面收到后按时间轴的规则补写一次 —— 那一次是页面身份的写入,
- * 这个 Agent 对话紧接着的下一次写入因版本不符(stale)被拒一次。
- * 现在:执行器在服务端副本上按 `src/kernel/duration.ts` 的同一条规则算好总时长(`settleDuration`),一起提交;
- * 页面收到后按自己的规则再算一遍,结果相同,不再补写。
+ * Before: The server only submitted handler changes, and total duration was backfilled once by the
+ * page according to timeline rules after receiving them: that write had the page identity, and the
+ * next write immediately following from this Agent chat was rejected once due to version mismatch
+ * (stale).
+ * Now: The executor calculates total duration (`settleDuration`) on the server replica following
+ * the same rule in `src/kernel/duration.ts` and submits them together; the page recalculates
+ * according to its own rules upon receipt, gets the same result, and does not perform a backfill write.
  *
- * 用例 DUR-1～DUR-4:
- *   DUR-1 `settleDuration` 纯函数:跟内容走、截断保留、改了总时长按改后的推、只改名不碰、空项目、至少 1 s;
- *   DUR-2 端到端:Agent 加一张超出末尾的卡 → 同一次提交里总时长跟上;页面(真 DocSync + 页面的总时长规则)不补写;
- *         紧接着第二次写入不被拒;页面、文档服务、Agent 副本三份总时长一致;
- *   DUR-3 对照:同样的改动由不带总时长的写入方提交时,这个页面模拟确实会补写一次(证明 DUR-2 的「不补写」不是空断言);
- *   DUR-4 截断之后:Agent 先截断总时长,再加一张超出末尾的卡 → 总时长保持截断值;页面不补写,下一次写入不被拒。
+ * Test cases DUR-1 to DUR-4:
+ *   DUR-1 `settleDuration` pure function: follows content, preserves truncation, infers from
+ *     modified total duration, leaves untouched if only renaming, empty project, at least 1 s;
+ *   DUR-2 End-to-end: Agent adds a card extending past the end → total duration catches up in the
+ *     same submission; page (real DocSync + page total duration rules) does not backfill; the
+ *     second write immediately following is not rejected; all three copies of total duration
+ *     (page, document service, Agent replica) match;
+ *   DUR-3 Control: when identical changes are submitted by a writer without total duration, this
+ *     page simulation does indeed backfill once (proves "no backfill" in DUR-2 is not a vacuous
+ *     assertion);
+ *   DUR-4 After truncation: Agent first truncates total duration, then adds a card extending past
+ *     the end → total duration retains truncated value; page does not backfill, next write is not
+ *     rejected.
  *
- * 页面一侧用真的 `src/store/docsync.ts`(DocSync)连真的文档服务,总时长照页面的两处代码算:
- * 收到远端改动时 `pageStateAfterRemote` 推手动值;时间轴 effect 按 `effectiveDuration` 算、`syncDuration`(至少 1 s)写。
- * 不 bindStore:服务端 store 在同一进程里被执行器用着。
+ * The page side uses real `src/store/docsync.ts` (DocSync) to connect to real document service,
+ * calculating total duration according to two places in page code:
+ * `pageStateAfterRemote` infers manual values upon remote changes; timeline effect calculates
+ * per `effectiveDuration` and writes per `syncDuration` (at least 1 s).
+ * No bindStore: server store is used by executor in the same process.
  *
- * 跑:node --test server/test/agent-c65-duration.test.mjs
+ * Run: node --test server/test/agent-c65-duration.test.mjs
  */
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -34,7 +47,7 @@ import { waitFor, sleep } from './fake-ws-kit.mjs';
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const toolDef = (name) => tools.find((t) => t.name === name);
 
-/* ------------------------------------------------------------------ DUR-1 纯函数 */
+/* ------------------------------------------------------------------ DUR-1 Pure function */
 
 const clip = (id, start, end) => ({ id, cardId: 'probe', params: {}, start, end });
 const proj = (duration, clips, extra = {}) => ({ name: 'p', duration, tracks: [{ id: 't1', clips }], ...extra });
@@ -45,45 +58,48 @@ test('DUR-1 settleDuration: follows the content, a truncation is kept, a changed
       .then(async (v) => { try { return await v.ssrLoadModule('/src/kernel/duration.ts'); } finally { await v.close(); } }));
   const base = proj(5, [clip('a', 0, 5)]);
 
-  // 加一张超出末尾的卡:总时长跟到新的末尾
+  // Add a card extending beyond the end: total duration follows to the new end
   const grown = proj(5, [clip('a', 0, 5), clip('b', 10, 14)]);
   assert.equal(settleDuration(base, grown, rules).duration, 14);
-  // 内容缩短:跟着缩
+  // Content shortened: shrinks accordingly
   assert.equal(settleDuration(base, proj(5, [clip('a', 0, 3)]), rules).duration, 3);
 
-  // 改前是截断的(总时长 3 < 末尾 5):加卡后仍保持截断值,原样回 after
+  // Truncated before edit (total duration 3 < end 5): still keeps truncated value after adding card,
+  // returns after as is
   const cut = proj(3, [clip('a', 0, 5)]);
   const cutGrown = proj(3, [clip('a', 0, 5), clip('b', 10, 14)]);
   assert.equal(settleDuration(cut, cutGrown, rules), cutGrown);
-  // 截断值比新末尾还长:夹到新末尾(与页面 effectiveDuration 的 min 相同)
+  // Truncated value is longer than new end: clamp to new end (matches min of page effectiveDuration)
   assert.equal(settleDuration(cut, proj(3, [clip('a', 0, 2)]), rules).duration, 2);
 
-  // 这次写入自己改了总时长(set_project_meta 截断到 4):按改后的推,保持 4
+  // This write modifies total duration itself (set_project_meta truncated to 4): infer based on
+  // edited value, keep 4
   const metaCut = proj(4, [clip('a', 0, 5)]);
   assert.equal(settleDuration(base, metaCut, rules), metaCut);
-  // 改成比末尾长的值:拉不长,回到末尾
+  // Change to a value longer than the end: cannot stretch, reverts to the end
   assert.equal(settleDuration(base, proj(9, [clip('a', 0, 5)]), rules).duration, 5);
 
-  // 片段、总时长都没变(只改名):不碰
+  // Neither clips nor total duration changed (only renamed): do not touch
   const renamed = { ...base, name: 'renamed' };
   assert.equal(settleDuration(base, renamed, rules), renamed);
-  // 页面也不会为这次写入跑时间轴的 effect,所以即使改前本来就不一致也不在这里顺手改
+  // The page will not run timeline effects for this write either, so even if already inconsistent
+  // before the change, do not casually adjust it here
   const loose = proj(30, [clip('a', 0, 5)]);
   const looseRenamed = { ...loose, name: 'x' };
   assert.equal(settleDuration(loose, looseRenamed, rules), looseRenamed);
 
-  // 空项目:保留原值
+  // Empty project: keep original value
   const empty = proj(30, []);
   const emptyTouched = { ...empty, tracks: [{ id: 't1', clips: [] }, { id: 't2', clips: [] }] };
   assert.equal(settleDuration(empty, emptyTouched, rules), emptyTouched);
-  // 从空项目加第一张卡:跟到它的末尾
+  // Add the first card to an empty project: follow to its end
   assert.equal(settleDuration(empty, proj(30, [clip('a', 2, 6)]), rules).duration, 6);
 
-  // 至少 1 s(与 syncDuration 相同)
+  // At least 1 s (same as syncDuration)
   assert.equal(settleDuration(base, proj(5, [clip('a', 0, 0.4)]), rules).duration, 1);
 });
 
-/* ------------------------------------------------------------------ 端到端的环境 */
+/* ------------------------------------------------------------------ End-to-end environment */
 
 async function startEnv(t) {
   const server = http.createServer((req, res) => { res.statusCode = 404; res.end(); });
@@ -93,7 +109,7 @@ async function startEnv(t) {
   const vite = await createVite({ configFile: false, root: ROOT, logLevel: 'silent', server: { middlewareMode: true, hmr: false, ws: false, watch: null }, appType: 'custom', optimizeDeps: { noDiscovery: true, include: [] } });
   const closers = [];
   t.after(async () => {
-    for (const c of closers.reverse()) { try { c(); } catch { /* 已关 */ } }
+    for (const c of closers.reverse()) { try { c(); } catch { /* Closed */ } }
     await vite.close();
     await built.service.close();
     await new Promise((resolve) => server.close(resolve));
@@ -104,7 +120,7 @@ async function startEnv(t) {
   const { pageStateAfterRemote } = await load('/src/store/remotePageState.ts');
   const { contentEndOf, effectiveDuration } = await load('/src/kernel/duration.ts');
 
-  /** 项目:t1 上一张 0～5 s 的卡,总时长 5(与内容末尾一致,页面打开时不会补写) */
+  /** Project: a 0-5 s card on t1, total duration 5 (matches content end, no backfill when page opens) */
   function project(projectId) {
     const p = createEmptyProject('duration-test');
     p.id = projectId;
@@ -116,7 +132,7 @@ async function startEnv(t) {
     return p;
   }
 
-  /** 一条裸连接(本机页面身份):发提交、读真身 */
+  /** A bare connection (local page identity): send commits, read authoritative copy */
   async function raw(session) {
     const ws = new WebSocket(url);
     closers.push(() => ws.close());
@@ -146,7 +162,7 @@ async function startEnv(t) {
     return r;
   }
 
-  /** 真页面的数据流(DocSync)+ 页面的总时长规则;回 { ds, commits(), duration(), manual() } */
+  /** Real page data stream (DocSync) + page total duration rules; returns { ds, commits(), duration(), manual() } */
   async function page(projectId, session = 'page-1') {
     const ws = new WebSocket(url);
     closers.push(() => ws.close());
@@ -157,19 +173,20 @@ async function startEnv(t) {
       send: (m) => { if (m.type === 'project.op') sent.push(m); ws.send(JSON.stringify(m)); },
     });
     ws.addEventListener('message', (e) => ds.receive(JSON.parse(e.data)));
-    // 页面状态里只有总时长手动值与这条规则相关
+    // In page state, only the manual total duration value is relevant to this rule
     const st = { t: 0, selection: [], durationManual: null, playToken: 0 };
     let prev = ds.project;
     ds.on('project', (next, cause) => {
       const before = prev;
       prev = next;
       if (cause === 'commit') return;
-      // docsync.ts bindStore:别人的改动 → 页面状态跟着推(总时长手动值)
+      // docsync.ts bindStore: changes from others → page state updates accordingly (manual total duration value)
       if (cause === 'remote') {
         const patch = pageStateAfterRemote(before, next, st);
         if (patch && 'durationManual' in patch) st.durationManual = patch.durationManual;
       }
-      // 时间轴 effect(src/editor/timeline/index.tsx)+ actions.syncDuration(至少 1 s、差不到 1e-6 不写)
+      // Timeline effect (src/editor/timeline/index.tsx) + actions.syncDuration
+      // (at least 1 s, skip write if difference < 1e-6)
       queueMicrotask(() => {
         const p = ds.project;
         const target = effectiveDuration(contentEndOf(p.tracks), p.duration, st.durationManual);
@@ -195,7 +212,7 @@ async function startEnv(t) {
   return { raw, seeded, page, agent };
 }
 
-/** 页面把收到的改动都处理完、该补写的(如果有)也发出去并确认 */
+/** Page finishes processing all received changes, sends out and confirms any backfills (if any) */
 async function quiet(pg, ms = 300) {
   await sleep(ms);
   await waitFor(() => pg.ds.unconfirmed === 0, 3000);
@@ -215,7 +232,7 @@ test('DUR-2 Agent adds a card that runs past the end: the total duration follows
   const added = await ag.call('add_clip', { cardId: 'probe', start: 10, duration: 4, trackId: 't2' });
   assert.equal(added.rev, 2, 'adding the card lands as rev 2');
 
-  // 页面收到 rev 2:按页面的规则算,总时长已经是 14,不补写
+  // Page receives rev 2: calculated by page rules, total duration is already 14, do not backfill
   await waitFor(() => pg.ds.rev >= 2, 3000);
   await quiet(pg);
   assert.equal(pg.commits(), 0, 'the page did not write the total duration again');
@@ -225,7 +242,7 @@ test('DUR-2 Agent adds a card that runs past the end: the total duration follows
   assert.equal(body2.rev, 2, 'the document service has only this one commit, the card addition');
   assert.equal(body2.project.duration, 14, 'the total duration lands with the card-adding commit');
 
-  // 紧接着的第二次写入:期望版本 = 2 = 当前版本,不被拒
+  // Immediate second write: expected version = 2 = current version, not rejected
   let second;
   try {
     second = await ag.call('update_clip', { clipId: 'c1', opacity: 0.5 });
@@ -244,7 +261,7 @@ test('DUR-2 Agent adds a card that runs past the end: the total duration follows
   assert.equal(JSON.stringify(pg.ds.project), JSON.stringify(body3.project), 'the page and the authoritative copy are identical item by item');
 });
 
-/* ------------------------------------------------------------------ DUR-3 对照 */
+/* ------------------------------------------------------------------ DUR-3 control */
 
 test('DUR-3 control case: when the same card addition is committed by a writer that does not carry the total duration, the page back-fills the total duration once by its own rules (this is how the Agent used to behave)', async (t) => {
   const env = await startEnv(t);
@@ -261,7 +278,7 @@ test('DUR-3 control case: when the same card addition is committed by a writer t
   assert.deepEqual([body.rev, body.project.duration], [3, 14], 'the back-fill is a separate commit (rev 3)');
 });
 
-/* ------------------------------------------------------------------ DUR-4 截断 */
+/* ------------------------------------------------------------------ DUR-4 truncation */
 
 test('DUR-4 after truncation: the Agent truncates the total duration and then adds a card that runs past the end, the total duration stays at the truncated value; the page does not back-fill, and the next write is not rejected', async (t) => {
   const env = await startEnv(t);

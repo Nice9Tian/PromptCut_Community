@@ -1,22 +1,28 @@
 /**
- * **桌面版**的氛围式那一屏(用户 2026-10-23 定:「桌面版也要可以用。云端不是必须。因为聊天窗可以走用户的CLI或者API。」)。
+ * The Vibe mode screen of the **desktop app** (user decision, 2026-10-23: "The desktop app must be
+ * usable too. The cloud is not required, because the chat window can go through the user's CLI or API.").
  *
- * 和在线浏览器那一屏(`OnlineStart.tsx`)长得一样、用的是同一批部件(顶栏、侧栏、说一句话的输入框、
- * 项目那一排、聊天页、右侧拓展栏、详细编辑),差别只在**数据从哪来**:
+ * It looks the same as the online browser screen (`OnlineStart.tsx`) and uses the same parts (top bar,
+ * sidebar, the one-sentence input box, the project row, chat page, right side panel, detail editing).
+ * The only difference is **where the data comes from**:
  *
- * |          | 在线浏览器(`OnlineStart.tsx`) | 桌面版(本文件) |
+ * |          | Online browser (`OnlineStart.tsx`) | Desktop app (this file) |
  * |---|---|---|
- * | 身份     | 网站账号 / 游客                | 没有账号,就是这台机器 |
- * | 项目     | 云端文档服务的项目列表          | 本机草稿(`src/editor/io/drafts.ts`,和传统开始页的「本地草稿」是同一批) |
- * | 对话     | 云端 Agent(`useVibeCloud.ts`) | 本机的 CLI / API Agent(`useVibeLocal.ts`,和编辑界面 AI 栏同一套,同一段对话) |
- * | 画面     | 一样                           | 一样(`VibeStage.tsx`、`DetailEdit.tsx` 读的都是 store 里的当前项目) |
+ * | Identity | website account / guest            | no account, it is just this machine |
+ * | Projects | project list from the cloud document service | local drafts (`src/editor/io/drafts.ts`, the same ones as "Local drafts" on the Classic start page) |
+ * | Chat     | Cloud Agent (`useVibeCloud.ts`)    | local CLI / API Agent (`useVibeLocal.ts`, the same one as the editor AI panel, the same chat) |
+ * | Visuals  | same                               | same (`VibeStage.tsx` and `DetailEdit.tsx` both read the current project in the store) |
  *
- * 入口:传统开始页上的「氛围式」,以及编辑界面顶栏工作方式开关的第一格(`src/editor/ModeSwitch.tsx`)。
- * 两处都把地址改成 `?ui=vibe`,刷新后还在这一屏(判断在 `src/StartPage.tsx` 的 `wantsVibe`)。
- * 桌面版的缺省仍是传统开始页 —— 「在线浏览器登录后的默认界面」那一条(`user-workflow.md`「工作方式」)说的是在线,
- * 桌面版改缺省是一级改动,不由会话定。
+ * Entry: "Vibe mode" on the Classic start page, and the first slot of the working mode switch in the editor
+ * top bar (`src/editor/ModeSwitch.tsx`). Both change the URL to `?ui=vibe`, so a refresh stays on this
+ * screen (the check is `wantsVibe` in `src/StartPage.tsx`).
+ * The desktop app still defaults to the Classic start page. The "default screen after online browser login"
+ * item (`user-workflow.md`, "Working mode") is about online only; changing the desktop app default is a
+ * top-level change, not up to a session.
  *
- * 传统开始页上有而这一屏没有的几样(打开项目文件、加入别人的项目、拓展功能、存储),顶栏右边那颗「拓展与存储」回去用。
+ * A few things the Classic start page has but this screen does not (open a project file, join someone
+ * else's project, extensions, storage): use the "Extensions and storage" button on the right of the top
+ * bar to go back there.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { JSX } from "react";
@@ -42,45 +48,48 @@ import type { Ratio, VibeChat, VibeGroup, VibeProject } from "./types";
 import "./start.css";
 
 /**
- * 这一屏的分组是**本地分组**(`vibeOrg.ts` 文件头):只装本机草稿项目、存在本机,键是 `orgKey("local", LOCAL_ORG_SCOPE)`。
- * 云端分组是在线那一屏(`OnlineStart.tsx`)的,键前缀不同,两边不会串;本地项目也放不进云端分组。
+ * The groups on this screen are **local groups** (see the header of `vibeOrg.ts`): they only hold local
+ * draft projects, stored on this machine, and the key is `orgKey("local", LOCAL_ORG_SCOPE)`.
+ * Cloud groups belong to the online screen (`OnlineStart.tsx`) and use a different key prefix, so the two
+ * never mix; a local project cannot be put into a cloud group either.
  */
 const ORG_REALM = "local" as const;
 
 /**
- * 改动落定之后隔多久存一次草稿。
+ * How long to wait after a change settles before saving a draft.
  *
- * 氛围式里动手的是 Agent,用户手边没有编辑界面那颗「保存项目」—— 不自动存,这一屏里 Agent 做的东西
- * 一回首页就没了。语义里本来就是这么说的:`workflow/project.md`「草稿自动保存在本机」。
- * 等这一轮跑完再存(`streaming` 落下来),不在流式过程中一遍遍写盘。
+ * In Vibe mode the Agent does the work, and the user has no "Save project" button from the editor at hand.
+ * Without auto-save, whatever the Agent makes on this screen is gone once the user returns to the home
+ * page. The semantics already say so: `workflow/project.md`, "Drafts are auto-saved on this machine".
+ * Save after this round finishes running (when `streaming` drops), not over and over during streaming.
  */
 const AUTOSAVE_MS = 2500;
 
-/** 同级的键:和 `ProjectSidebar` 里判能不能拖到一起用的是同一套 */
+/** Sibling key: the same scheme `ProjectSidebar` uses to decide whether items can be dragged together */
 /** Address parameter that carries the open project across the reload of a language switch */
 const REOPEN_PARAM = "vibeOpen";
 
 const projectSib = (p: VibeProject) => `project:${p.realm}:${p.groupId ?? "loose"}`;
 const chatSib = (c: VibeChat) => `chat:p:${c.projectId}`;
 
-/** 开始页上说的那句话:等项目建好、Agent 就绪之后发出去 */
+/** The sentence typed on the start page: sent once the project is created and the Agent is ready */
 interface PendingPrompt {
   projectId: string;
   text: string;
 }
 
 export function DesktopStart(props: {
-  /** 切到传统式:打开编辑界面(项目已经载进 store 了,这里只管换视图) */
+  /** Switch to Classic mode: open the editor (the project is already loaded into the store, so only the view changes here) */
   onEnterEditor: () => void;
-  /** 回传统开始页:那边才有打开项目文件、加入别人的项目、拓展功能和存储 */
+  /** Back to the Classic start page: that is where open project file, join someone else's project, extensions and storage are */
   onClassic: () => void;
 }): JSX.Element {
   const [drafts, setDrafts] = useState<DraftInfo[]>([]);
   const [listError, setListError] = useState("");
   const [loading, setLoading] = useState(true);
-  /** 这一屏里打开着的项目(已经载进 store);null 是没开 */
+  /** The project open on this screen (already loaded into the store); null means none is open */
   const [openId, setOpenId] = useState<string | null>(null);
-  /** 打开着的项目显示聊天页(true)还是开始页(点了房子) */
+  /** Whether the open project shows the chat page (true) or the start page (the house icon was clicked) */
   const [chatPage, setChatPage] = useState(false);
   const [scope, setScope] = useState<Scope>({ kind: "all" });
   const [notice, setNotice] = useState("");
@@ -106,19 +115,21 @@ export function DesktopStart(props: {
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
 
-  /* ---------------- 本机整理(分组、置顶、归档、顺序) ---------------- */
+  /* ---------------- Local organizing (groups, pinning, archive, order) ---------------- */
   const [org, setOrgState] = useState<OrgState>(() => loadOrg(ORG_REALM, LOCAL_ORG_SCOPE));
   const setOrg = (next: (o: OrgState) => OrgState) => setOrgState((o) => { const n = next(o); saveOrg(LOCAL_ORG_SCOPE, n); return n; });
 
-  /* ---------------- 项目清单:本机草稿 + 本机整理 ---------------- */
+  /* ---------------- Project manifest: local drafts + local organizing ---------------- */
   const entries = useMemo<OrgEntry[]>(
-    // 本机草稿都是自己的,没有「别人的项目」这一类;都属本地这一套
+    // Local drafts are all the user's own, so there is no "someone else's project" kind; all belong to the local scheme
     () => drafts.map((d) => ({ id: d.id, name: d.name, role: "owned" as const, realm: ORG_REALM })),
     [drafts],
   );
   /**
-   * 列表上那一格显示什么。在线那边靠「这台浏览器打开过」才记得下(`thumbCache.ts`),
-   * 桌面版不用猜 —— 草稿文件自己就带着首帧和时长,直接拿来用。画幅草稿里没有,给 null,那一格退回色块比例。
+   * What each cell in the list shows. The online side only remembers it if "this browser opened it before"
+   * (`thumbCache.ts`); the desktop app does not need to guess: the draft file itself carries the first frame
+   * and the duration, so use them directly. The draft has no aspect ratio, so give null, and the cell falls
+   * back to a color block ratio.
    */
   const meta = useMemo<Record<string, SeenMeta>>(() => {
     const m: Record<string, SeenMeta> = {};
@@ -128,15 +139,16 @@ export function DesktopStart(props: {
   const projects = useMemo(() => mergeProjects(org, entries, meta), [org, entries, meta]);
   const groups = useMemo(() => groupsOf(org), [org]);
 
-  /* ---------------- 打开着的项目的本机 Agent ---------------- */
+  /* ---------------- Local Agent of the open project ---------------- */
   const vibe = useVibeLocal({ projectId: openId });
   const chats = useMemo(() => (openId ? mergeChats(org, openId, vibe.chats) : []), [org, openId, vibe.chats]);
   const openChat: VibeChat | null = chatPage && openId ? (chats.find((c) => c.id === vibe.tabId) ?? vibe.current) : null;
 
-  /* ---------------- 两栏自己弹开的时机(和在线那一屏同一套,`OnlineStart.tsx`) ---------------- */
+  /* ---------------- When the two rails pop open by themselves (same scheme as the online screen, `OnlineStart.tsx`) ---------------- */
   /**
-   * 手上已经有项目:左侧栏自动展开(issue #11)。桌面版没有登录这一说,有本机项目就算数。
-   * 只弹一次:用户自己动过侧栏之后听他的。
+   * Once there is already a project: the left sidebar expands automatically (issue #11). The desktop app has
+   * no login, so having a local project is enough.
+   * Pops open only once: after the user moves the sidebar themselves, follow the user.
    */
   const sideAuto = useRef(false);
   useEffect(() => {
@@ -149,7 +161,7 @@ export function DesktopStart(props: {
     });
   }, [projects.length]);
 
-  /** 点进一条对话:右侧拓展栏自动展开(issue #6)。按对话记,同一条里关掉了就不再弹开 */
+  /** Click into a chat: the right side panel expands automatically (issue #6). Tracked per chat; if closed within the same chat it does not pop open again */
   const extAuto = useRef<string | null>(null);
   useEffect(() => {
     const id = openChat?.id ?? null;
@@ -166,9 +178,9 @@ export function DesktopStart(props: {
     return true;
   };
 
-  /* ---------------- 自动保存 ---------------- */
+  /* ---------------- Auto-save ---------------- */
   const dirty = useStore((s) => s.dirty);
-  /** 存一次当前项目。存不下去(只读、盘满)如实说,不吞掉 */
+  /** Save the current project once. If it cannot be saved (read-only, disk full), say so honestly, do not swallow it */
   const save = useCallback(async (id: string) => {
     try {
       await saveDraft(id);
@@ -185,27 +197,30 @@ export function DesktopStart(props: {
     return () => window.clearTimeout(timer);
   }, [openId, dirty, vibe.streaming, busy, save]);
 
-  /* ---------------- 动作 ---------------- */
+  /* ---------------- Actions ---------------- */
 
   /**
-   * 点进一个项目:读那份草稿载进 store,再进它的聊天页。已经开着就直接回聊天页。
+   * Click into a project: read that draft into the store, then go to its chat page. If it is already open,
+   * go straight back to the chat page.
    *
-   * `intoClassic` 为真时载完直接切**传统式**(打开编辑界面)——「最近项目」那一排的缩略图卡片走这条
-   * (2026-10-23 用户定,原话:「红色区域是项目卡片，点击这个位置的卡片会进入传统式」),
-   * 和在线那一屏(`OnlineStart.tsx`)同一条规矩。侧栏的项目条目不带这个开关,仍然停在聊天页。
+   * When `intoClassic` is true, switch to **Classic mode** right after loading (open the editor). The
+   * thumbnail cards in the "Recent projects" row take this path
+   * (user decision, 2026-10-23, verbatim: "The red area is the project card, clicking a card in this position enters Classic mode"),
+   * the same rule as the online screen (`OnlineStart.tsx`). Project entries in the sidebar do not carry this
+   * flag and still stay on the chat page.
    */
   const openProject = (id: string, intoClassic = false) => {
     if (openId === id) { if (intoClassic) enterEditor(); else setChatPage(true); return; }
     setNotice("");
     setBusy(true);
-    // 换项目之前先把手上这个存了 —— 换完 store 就是另一个项目,没存的就找不回来了
+    // Save the current one before switching projects: once the switch is done the store holds another project, and unsaved changes cannot be recovered
     const prior = openId && dirty ? save(openId) : Promise.resolve(true);
     void prior.then(() => openDraft(id))
       .then(() => {
         setActiveDraftId(id);
         setOpenId(id);
         setChatPage(true);
-        // 刚载进来的草稿还没动过,不会有没存的改动,所以这里直接切,不用再存一次
+        // The draft just loaded has not been touched, so there are no unsaved changes; switch directly here, no need to save again
         if (intoClassic) props.onEnterEditor();
       })
       .catch((e: unknown) => setNotice(e instanceof Error ? e.message : tr("This project cannot be opened.")))
@@ -224,15 +239,16 @@ export function DesktopStart(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** 进传统式之前先存一次:编辑界面那边是手动存,带着没存的改动过去,顶栏会一直标着「*」 */
+  /** Save once before entering Classic mode: the editor saves manually, and going there with unsaved changes leaves the top bar marked "*" permanently */
   const enterEditor = () => {
     if (openId && dirty) void save(openId).then(props.onEnterEditor);
     else props.onEnterEditor();
   };
 
   /**
-   * 新建一个本机项目并进去。**建完立刻存一份草稿**:氛围式是对着项目说话,项目得先在列表里有一行,
-   * 不能像传统开始页那样等用户自己按「保存项目」。
+   * Create a local project and enter it. **Save a draft right after creating**: Vibe mode talks to the
+   * project, so the project must already have a row in the list, and it cannot wait for the user to press
+   * "Save project" as on the Classic start page.
    */
   const createLocal = async (name: string): Promise<string> => {
     const id = newDraftId();
@@ -243,7 +259,7 @@ export function DesktopStart(props: {
     setChatPage(true);
     await refresh();
     return id;
-    // 之后这个项目的改动由上面那段自动保存管,用户不用自己按「保存项目」
+    // After this, changes to the project are handled by the auto-save above; the user does not need to press "Save project"
   };
 
   const createBlank = () => {
@@ -254,14 +270,14 @@ export function DesktopStart(props: {
       .finally(() => setBusy(false));
   };
 
-  /** 开始页说一句话:建项目 → 定画幅 → 放素材 → 进聊天页 → 这句话发给本机 Agent */
+  /** Say one sentence on the start page: create project → set aspect ratio → add media → enter chat page → send the sentence to the local Agent */
   const submitPrompt = async (text: string, ratio: Ratio) => {
     setBusy(true);
     setNotice(tr("Creating project…"));
     const picked = files;
     try {
-      // 顺序不能反:`createLocal` 里的 `newProject` 会把 store 里的项目整个换掉,
-      // 先设画幅的话会被它冲掉(建完再设才留得住)
+      // The order must not be reversed: `newProject` inside `createLocal` replaces the whole project in the store,
+      // so setting the aspect ratio first would be wiped by it (set it after creation and it sticks)
       const id = await createLocal(projectNameFromPrompt(text));
       if (ratio !== "16:9") actions.setProjectMeta({ ...RATIO_SIZE[ratio] });
       if (picked.length) {
@@ -269,7 +285,7 @@ export function DesktopStart(props: {
         const n = r.counts.video + r.counts.audio + r.counts.image;
         setNotice(n ? tr("Added {0} media to the project.", n) : (r.rejected[0] ?? tr("None of the chosen files contain media that can be imported.")));
       } else setNotice("");
-      // 画幅和素材一起落盘,免得等自动保存那几秒里关掉就白设了
+      // Write the aspect ratio and media to disk together, so closing during the few seconds of waiting for auto-save does not lose the setting
       if (ratio !== "16:9" || picked.length) await saveDraft(id);
       setFiles([]);
       setPending({ projectId: id, text });
@@ -280,7 +296,7 @@ export function DesktopStart(props: {
     }
   };
 
-  /* ---------------- 侧栏的改动 ---------------- */
+  /* ---------------- Sidebar changes ---------------- */
   const writeProjects = (f: (list: VibeProject[]) => VibeProject[]) => setOrg((o) => withProjects(o, f(mergeProjects(o, entries, meta))));
   const writeGroups = (f: (list: VibeGroup[]) => VibeGroup[]) => setOrg((o) => withGroups(o, f(groupsOf(o))));
   const writeChats = (f: (list: VibeChat[]) => VibeChat[]) => { if (openId) setOrg((o) => withChats(o, openId, f(mergeChats(o, openId, vibe.chats)))); };
@@ -331,7 +347,7 @@ export function DesktopStart(props: {
     move: (projectId, groupId) => {
       const project = projects.find((x) => x.id === projectId);
       if (!project) return;
-      // 只许同一套(本地项目对本地分组):跨套的整理信息不动,说明给用户
+      // Only the same scheme is allowed (local project into local group): organizing info across schemes is left untouched, and the user is told why
       const out = moveProject(withProjects(org, projects), project, groupId);
       if (out.refused) { setNotice(out.refused); return; }
       setOrg(() => out.org);
@@ -347,7 +363,7 @@ export function DesktopStart(props: {
     },
   };
 
-  /* ---------------- 右边那一排 ---------------- */
+  /* ---------------- The row on the right ---------------- */
   const shown = useMemo(() => {
     const live = visible(projects);
     if (scope.kind === "group") return live.filter((p) => p.groupId === scope.id);
@@ -378,7 +394,7 @@ export function DesktopStart(props: {
         }}
         collapsed={collapsed}
         onToggleSide={() => {
-          // 用户自己动过了:这一次打开页面里不再替他自动展开(issue #11 那条只弹一次)
+          // The user moved it themselves: do not auto-expand it for them again during this page open (the issue #11 rule pops only once)
           sideAuto.current = true;
           setCollapsed((v) => {
             writeSideCollapsed(!v);
@@ -535,7 +551,7 @@ export function DesktopStart(props: {
         )}
       </div>
 
-      {/* 挑 Agent、登录、填 API 密钥:和编辑界面 AI 栏开的是同一个窗口 */}
+      {/* Pick an Agent, log in, fill in the API key: the same window the editor AI panel opens */}
       <AiSetupDialog
         open={vibe.ai.setupOpen}
         onClose={vibe.ai.closeSetup}

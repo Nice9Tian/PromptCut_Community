@@ -1,6 +1,7 @@
 /**
- * 侧栏里能右键、能拖的三种东西。
+ * The three kinds of things in the sidebar that can be right-clicked and dragged.
  *
- * 单放一个文件:`RowMenu.tsx` 和 `ProjectSidebar.tsx` 都要它,谁 import 谁都会绕成环。
+ * Kept in a file of its own: both `RowMenu.tsx` and `ProjectSidebar.tsx` need it, and whichever imports
+ * the other would create an import cycle.
  */
 export type TreeKind = "group" | "project" | "chat";

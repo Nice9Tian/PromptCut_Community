@@ -1,8 +1,11 @@
-// 导出产物的列表、删除、只删中间文件(存储占用计划 docs/plan/storage-plan.md 第 4 节的 /api/exports*)。
-// 跑法:node --test server/test/exports-list.test.mjs
+// Listing, deleting, and deleting only intermediate files for export artifacts (Section 4 of storage
+// plan docs/plan/storage-plan.md, /api/exports*).
+// Run: node --test server/test/exports-list.test.mjs
 //
-// 模块本身(server/exports-list.mjs)与路由(server/vite-plugin-exports-list.ts,转译后按中间件调)各测一遍。
-// 全在系统临时目录里造导出目录,不碰真实的导出目录。
+// Test both the module itself (server/exports-list.mjs) and the route
+// (server/vite-plugin-exports-list.ts, called as middleware after transpilation).
+// All export directories are created in the system temporary directory without touching real
+// export directories.
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -25,7 +28,7 @@ function put(file, bytes) {
   fs.writeFileSync(file, Buffer.alloc(bytes, 1));
 }
 
-/** 造一份导出:成片、透明层、project.json、逐帧与分片 */
+/** Create an export: final video, transparent layer, project.json, frame-by-frame and chunks */
 function makeExport(root, id, { preview = 100, overlay = 1000, frames = [500, 500], parts = 300, project = { name: 'Video', id: 'p-1' } } = {}) {
   const dir = path.join(root, id);
   fs.mkdirSync(dir, { recursive: true });
@@ -38,7 +41,7 @@ function makeExport(root, id, { preview = 100, overlay = 1000, frames = [500, 50
 }
 const projBytes = (p = { name: 'Video', id: 'p-1' }) => Buffer.byteLength(JSON.stringify(p));
 
-/** Windows 上建 junction 不要管理员;别的平台用目录符号链接 */
+/** Creating junctions on Windows does not require admin; other platforms use directory symlinks */
 function link(target, at) {
   fs.symlinkSync(target, at, process.platform === 'win32' ? 'junction' : 'dir');
 }
@@ -59,7 +62,7 @@ test('list: recognized ones, same-second suffix, export-vision-* excluded, ones 
   makeExport(root, 'export-vision-abc-1');
   fs.mkdirSync(path.join(root, 'frame-library'));
   fs.mkdirSync(path.join(root, '.export-staging'));
-  put(path.join(root, 'export-20260903-100000'), 10); // 同名的文件不是目录,不认
+  put(path.join(root, 'export-20260903-100000'), 10); // Files with the same name are not directories, reject them
 
   const items = await listExports(root);
   assert.deepEqual(items.map((i) => i.id), ['export-20260902-100000-2', 'export-20260902-100000', 'export-20260901-100000']);
@@ -169,7 +172,7 @@ test('in progress: an export that is running, has no final video, or was written
   assert.match(d.error, /still in progress/);
   const p = await pruneExport(root, 'export-20260909-100000', { exportsRunning: true });
   assert.equal(p.status, 409);
-  // 没有导出在跑,或者早就不写了:可以删
+  // No export is running, or writing stopped long ago: safe to delete
   assert.equal((await listExports(root, { exportsRunning: true, now: Date.now() + 3600_000 }))[0].running, false);
   assert.equal((await deleteExport(root, 'export-20260909-100000')).ok, true);
 });
@@ -177,7 +180,8 @@ test('in progress: an export that is running, has no final video, or was written
 test('cannot delete when in use: returns a clear error (a file opened exclusively on Windows)', { skip: process.platform !== 'win32' && 'only on Windows can an open file make deletion fail' }, async () => {
   const root = freshRoot();
   const dir = makeExport(root, 'export-20260910-100000');
-  // 共享模式 0 独占打开:Node 的 fs.open 在 Windows 上默认允许删除共享,这里用 PowerShell 握住文件
+  // Exclusive open with share mode 0: Node's fs.open allows delete sharing by default on Windows;
+  // hold the file with PowerShell here
   const { spawn } = await import('node:child_process');
   const locked = path.join(dir, 'parts', 'part-0.mov');
   const ps = spawn('powershell.exe', ['-NoProfile', '-Command',
@@ -201,7 +205,7 @@ test('cannot delete when in use: returns a clear error (a file opened exclusivel
   }
 });
 
-// ── 路由 ──────────────────────────────────────────────────────────────
+// ── Routes ──────────────────────────────────────────────────────────────
 
 const require_ = createRequire(import.meta.url);
 const ts = require_('typescript');

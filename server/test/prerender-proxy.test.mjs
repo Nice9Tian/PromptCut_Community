@@ -1,10 +1,12 @@
 /*
- * T1a 审查 #14:编辑器进程的 `/api/cards/layout` 原样转给预渲染进程,转不过去回 `503 NO_AGENT_LANE`。
+ * T1a review #14: Editor process forwards `/api/cards/layout` as-is to prerender process,
+ * returns `503 NO_AGENT_LANE` if forwarding fails.
  *
- * 转发本身是 `prerender-client.mjs` 的 `proxyToPrerender`;这里架两个裸 http server
- * (一个当编辑器、一个当预渲染),验:body 和回应原样透传;预渲染没就绪 / 连不上时回的
- * 是调用方指定的状态码和错误码,不是通用的 `PRERENDER_UNAVAILABLE`。
- * 跑法:`node --test server/test/prerender-proxy.test.mjs`
+ * Forwarding itself is `proxyToPrerender` in `prerender-client.mjs`; set up two bare HTTP servers
+ * here (one as editor, one as prerender) to verify: body and response pass through as-is; when
+ * prerender is not ready / unreachable, it returns the status code and error code specified by
+ * the caller, not generic `PRERENDER_UNAVAILABLE`.
+ * Run: `node --test server/test/prerender-proxy.test.mjs`
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -61,7 +63,8 @@ test('prerender not ready: wait the full waitMs, then respond 503 NO_AGENT_LANE'
 });
 
 test('prerender reports ready but cannot be reached: also responds 503 NO_AGENT_LANE; old routes that do not pass unavailable still respond 502 PRERENDER_UNAVAILABLE', async () => {
-  // 连不上的地址由测试自己占着(连上就 RST);不用「关掉的端口」,并行时它可能被别的进程拿去
+  // Unreachable address is held by the test itself (RST on connect); do not use "closed ports",
+  // as another process might grab them in parallel
   const dead = await refusingPort();
   const deadUrl = `http://127.0.0.1:${dead.port}`;
   const editor = http.createServer((req, res) => req.url.startsWith('/api/cards/layout') ? proxyToPrerender(req, res, LAYOUT) : proxyToPrerender(req, res));

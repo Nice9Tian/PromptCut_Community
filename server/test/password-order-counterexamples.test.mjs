@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-// 可执行反例：断言的是错误方案确实违反尺子，不把这些桩当正确实现的证明。
+// Executable counterexamples: asserts that wrong approaches indeed violate the ruler, without
+// treating these stubs as proof of correct implementation.
 const evidence = (caseId, value) => console.log(JSON.stringify({ counterexample: caseId, ...value }));
 test('password-order counterexample: an independent UTC clock misattributes an acceptance after the password to before the password', () => {
   const password = { utc: 100, order: 1 };

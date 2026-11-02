@@ -1,38 +1,45 @@
 import type { Project } from "../kernel/project";
 import { changedClips, isEmptyPatch } from "../render/changedClips.mjs";
-// 显式 .ts 后缀:`stageEventRole` 是运行期的值,单测在 node 里直接 import 这个模块(见 stageBridge.test.mjs)
+// Explicit .ts suffix: `stageEventRole` is a runtime value, and the unit test imports this module directly in node (see stageBridge.test.mjs)
 import { stageEventRole, type HostCapabilities, type StageEvent, type StageRole, type StageRpcClient } from "../render/stageRpc.ts";
 
 /**
- * 主文档里「现在哪个 iframe 是舞台」的登记处(E0 / E1 / D4 页面侧)。
+ * The registry in the main document for "which iframe is the stage right now" (E0 / E1 / D4,
+ * page side).
  *
- * 以前是挂在主窗口上的一个 getter(取 iframe 里的舞台 api),右栏的定位工具
- * 靠它量 contentBox。现在舞台只经 postMessage RPC 说话,主文档手里只有 RPC 客户端;
- * Preview 每换一个 iframe 就在这里登记一个新客户端,右栏拿到的永远是最新那个。
+ * It used to be a getter on the main window (fetching the stage api inside the iframe), which the
+ * positioning tool in the right rail used to measure contentBox. Now the stage speaks only through
+ * postMessage RPC, and the main document holds only an RPC client. Each time Preview swaps in a
+ * different iframe it registers a new client here, and the right rail always gets the latest one.
  *
- * 两个位置(**是角色,不是实例**:iframe 的 `id=A` / `id=B` 只是实例名,角色由 `setRole` 定,
- * K5 的互换会让同一个 iframe 换到另一个位置上):
- *   - `front`:可见的播放器舞台(拖动 / 暂停 / 命中测试)。
- *   - `back`:后台舞台(探针 / 补跑 / 页面侧测量)。legacy 的单舞台没有它,`back` 为空时用
- *     `front` 代替(D4:「先对它测;E1 之后改走 back 与单飞队列」)。
+ * Two positions (**roles, not instances**: the iframe's `id=A` / `id=B` are only instance names,
+ * the role is set by `setRole`, and a K5 swap puts the same iframe into the other position):
+ *   - `front`: the visible player stage (drag / pause / hit testing).
+ *   - `back`: the background stage (probe / rerun / page-side measurement). The legacy single
+ *     stage does not have it; when `back` is empty, `front` stands in for it (D4: "measure on it
+ *     first; after E1 switch to back and the single-flight queue").
  *
- * 推项目只有两个口子,**都按 iframe 记一份「上次推过的项目」基线**(按客户端记,不按位置记;
- * K5 互换时同一个 iframe 换到另一个位置,基线跟着它走):
- *   - `syncProject(role, project)`:能做增量就发 changedClips 的两层 diff(舞台合并时保持
- *     未变片段的引用),没有基线就整份 + reset;和基线是同一个对象引用就什么都不发。
- *   - `pushProject(role, project, { reset })`:`reset` 时一律整份重灌。探针的缩水项目、
- *     K5 第二路的整场景补跑、D4 的页面侧测量都走它 —— **直接发 `setProject` 会绕过基线**,
- *     之后的 `syncProject(backRole(), …)` 因为「和基线比没变」静默不发,`back` 就一直
- *     留在缩水项目上(E0 点名的那个坑)。
- * 两个口子共用下面的 `send`,所以同一份项目不会被推两遍。
+ * There are only two ways to push a project, **and both keep a "last pushed project" baseline per
+ * iframe** (per client, not per position; when K5 swaps, the same iframe moves to the other
+ * position and the baseline follows it):
+ *   - `syncProject(role, project)`: when an incremental update is possible, send the two-level diff
+ *     of changedClips (the stage keeps references of unchanged clips when merging); with no
+ *     baseline, send the whole project + reset; if it is the same object reference as the
+ *     baseline, send nothing.
+ *   - `pushProject(role, project, { reset })`: with `reset`, always reload the whole project. The
+ *     probe's shrunken project, the whole-scene rerun on the K5 second path, and the D4 page-side
+ *     measurement all go through it. **Sending `setProject` directly bypasses the baseline**, so a
+ *     later `syncProject(backRole(), …)` silently sends nothing because it "is unchanged compared
+ *     with the baseline", and `back` stays stuck on the shrunken project (the pitfall named in E0).
+ * Both ways share the `send` below, so the same project is never pushed twice.
  */
 interface Slot {
   client: StageRpcClient | null;
-  /** 握手时舞台报的宿主能力表(J4)。K1 的 `device` 串要 `compact` / `offscreenGl` */
+  /** Host capability table reported by the stage at handshake (J4). The `device` string of K1 needs `compact` / `offscreenGl` */
   caps: HostCapabilities | null;
-  /** 这个位置上「有客户端了」的 Promise(whenStageReady);客户端换了就换一个新的 */
+  /** Promise that "a client now exists" at this position (whenStageReady); replaced by a new one when the client changes */
   ready: { promise: Promise<StageRpcClient>; resolve: (c: StageRpcClient) => void; settled: boolean };
-  /** 这个位置上的客户端发来的事件的退订函数 */
+  /** Unsubscribe function for events sent by the client at this position */
   off: (() => void) | null;
 }
 
@@ -47,13 +54,17 @@ const newSlot = (): Slot => ({ client: null, caps: null, ready: pendingReady(), 
 const slots: Record<StageRole, Slot> = { front: newSlot(), back: newSlot() };
 
 /**
- * 每个客户端(= 每个 iframe 的一次握手)各一份:上次成功推给它的项目(增量 diff 的基线),
- * 和推送的串行链(两次推送交错时,后一次等前一次落定再比)。
+ * One per client (= one handshake of one iframe): the project last pushed to it successfully (the
+ * baseline for incremental diffs), and the serial chain of pushes (when two pushes interleave, the
+ * later one waits for the earlier one to settle before diffing).
  *
- * **按客户端记,不按位置记**(根因 A):K5 第二路补跑时 `back` 收的是补跑开始那一刻的项目,
- * 补跑期间用户改了时间轴只推给了当时的 `front`。互换之后新 `front` 手里仍是旧项目 ——
- * 以前按位置记、互换时再用 `markPushed` 记成「此刻的最新项目」,之后 `syncProject` 因为基线相同不发,
- * 被删的片段永远留在舞台上。iframe 重载会换一个新客户端,这份自然作废。
+ * **Keyed by client, not by position** (root cause A): when the K5 second-path catch-up run starts,
+ * `back` receives the project as of that moment, and edits the user makes to the timeline during the
+ * run are pushed only to the `front` of the time. After the swap the new `front` still holds the old
+ * project. Previously the baseline was keyed by position and, on swap, recorded with `markPushed` as
+ * "the latest project right now"; after that `syncProject` sent nothing because the baselines were
+ * equal, and deleted clips stayed on the stage forever. An iframe reload creates a new client, so this
+ * record naturally becomes void.
  */
 interface Pushed {
   project: Project | null;
@@ -66,14 +77,16 @@ function pushedOf(client: StageRpcClient): Pushed {
   return p;
 }
 
-/** 事件订阅者(按角色过滤之后才喂给他们) */
+/** Event subscribers (fed only after filtering by role) */
 const eventListeners = new Set<(e: StageEvent, role: StageRole) => void>();
 
 /**
- * 登记 / 注销一个舞台客户端。换 iframe 时先登记新的再 dispose 旧的,基线随客户端一起换。
+ * Register / unregister a stage client. When replacing an iframe, register the new one first and then
+ * dispose the old one; the baseline is replaced together with the client.
  *
- * 事件转发也挂在这里:**只有这里同时知道「哪个客户端」和「它此刻是什么角色」**,
- * 而 `event.source` 的过滤两样都要(E0 末条)。`createStageRpc` 那一层只管住了前半个问题。
+ * Event forwarding is hooked up here too: **only here do we know both "which client" and "what role
+ * it has right now"**, and the `event.source` filter needs both (last item of E0). The `createStageRpc`
+ * layer only handles the first half of the problem.
  */
 export function setStageClient(role: StageRole, client: StageRpcClient | null, caps: HostCapabilities | null = null): void {
   const slot = slots[role];
@@ -83,43 +96,48 @@ export function setStageClient(role: StageRole, client: StageRpcClient | null, c
   slot.client = client;
   slot.caps = caps;
   if (!client) {
-    // 这个位置空了:下一次 whenStageReady 要等新的那个
+    // This position is now empty: the next whenStageReady has to wait for the new one
     if (slot.ready.settled) slot.ready = pendingReady();
     return;
   }
   slot.off = client.onEvent((e) => {
     /*
-     * 角色过滤:`frame` / `ended` / `settled` / `demote` 只认当前 `front` 发来的,
-     * `mediaReady` / `probe` / `probe-frame` 只认当前 `back` 的,其余丢弃。
-     * 互换那一拍两个舞台都可能 post(旧 front 走完本拍才停),不过滤就会重复 tick。
+     * Role filter: `frame` / `ended` / `settled` / `demote` are accepted only from the current `front`,
+     * `mediaReady` / `probe` / `probe-frame` only from the current `back`, and the rest are dropped.
+     * On the beat of a swap both stages may post (the old front stops only after finishing this beat);
+     * without the filter the tick would be duplicated.
      */
     if (stageEventRole(e.type) !== role && !(role === "front" && backRole() === "front")) return;
-    // 客户端在事件排队期间被换掉了:这一条是上一个 iframe 的,不算数
+    // The client was replaced while the event was queued: this one belongs to the previous iframe, so it doesn't count
     if (slots[role].client !== client) return;
     for (const l of eventListeners) l(e, role);
   });
-  // 已经 resolve 过的(上一个客户端)不能再 resolve:换一个新的 Promise,resolve 成新客户端
+  // One that has already resolved (the previous client) cannot resolve again: make a new Promise and resolve it with the new client
   if (slot.ready.settled) slot.ready = pendingReady();
   slot.ready.settled = true;
   slot.ready.resolve(client);
 }
 
 /**
- * iframe 卸掉了:它的客户端**不管此刻落在哪个位置上**都摘下来(K5 的互换之后,A 不一定还是 `front`)。
+ * The iframe was unloaded: detach its client **no matter which position it is in** (after a K5 swap,
+ * A is not necessarily still `front`).
  *
- * 不摘的后果实测过:`frontStage()` 只看 `disposed`,而卸掉的 iframe 的客户端没人 dispose,
- * 于是它一直被当成可见舞台交出去 —— 3D 页按播放,`play()` 发进一个已经关掉的窗口,永远不回包。
+ * The consequence of not detaching has been observed: `frontStage()` only looks at `disposed`, and
+ * nobody disposes the client of an unloaded iframe, so it keeps being handed out as the visible stage
+ * -- on the 3D tab, `play()` is sent into a window that is already closed and never gets a reply.
  */
 export function releaseStageClient(client: StageRpcClient): void {
   for (const role of ["front", "back"] as const) if (slots[role].client === client) setStageClient(role, null);
 }
 
 /**
- * 订阅舞台事件(七种,已按 `event.source` 的角色规矩过滤)。返回退订函数。
+ * Subscribe to stage events (seven kinds, already filtered by the `event.source` role rules). Returns
+ * an unsubscribe function.
  *
- * R2 只搭骨架:`play` / `pause` 还回 `unsupported`(K4 是 R5 的活),所以 `frame` / `ended` /
- * `settled` 这几种在这一步里根本不会来;`probe` / `probe-frame` / `demote` 的消费者是
- * R4 的探针和 K6 的降级。**协议面和过滤在这里就位,R5 / R4 往里填消费者时不用再动它。**
+ * R2 only builds the skeleton: `play` / `pause` still return `unsupported` (K4 is R5's job), so
+ * `frame` / `ended` / `settled` never arrive at this step; the consumers of `probe` / `probe-frame` /
+ * `demote` are R4's probe and K6's downgrade. **The protocol surface and the filter are in place
+ * here, so R5 / R4 don't need to touch them again when they plug in consumers.**
  */
 export function onStageEvent(listener: (e: StageEvent, role: StageRole) => void): () => void {
   eventListeners.add(listener);
@@ -131,13 +149,13 @@ export function frontStage(): StageRpcClient | null {
   return c && !c.disposed ? c : null;
 }
 
-/** 后台舞台此刻落在哪个位置上(legacy 的单舞台没有 back,就是 front);推项目要按它选基线 */
+/** Which position the background stage is in right now (the legacy single stage has no back, so it is front); pushing a project must pick the baseline by it */
 export function backRole(): StageRole {
   const b = slots.back.client;
   return b && !b.disposed ? "back" : "front";
 }
 
-/** 后台舞台;legacy 的单舞台没有,退回可见舞台 */
+/** The background stage; the legacy single stage has none, so fall back to the visible stage */
 export function backStage(): StageRpcClient | null {
   const b = slots.back.client;
   if (b && !b.disposed) return b;
@@ -145,39 +163,43 @@ export function backStage(): StageRpcClient | null {
 }
 
 /**
- * 等这个位置上有舞台客户端(E1)。**客户端换了就是一个新的 Promise** ——
- * 拿着旧 Promise 的调用方拿到的还是旧客户端,不会莫名其妙跳到新 iframe 上;
- * 新叫的那一次拿到的是新客户端。R4 的 `ProbeGate` 靠它知道后台舞台就绪。
+ * Wait until this position has a stage client (E1). **A replaced client means a new Promise** --
+ * a caller holding the old Promise still gets the old client and does not jump to the new iframe
+ * out of nowhere; a call made afterwards gets the new client. R4's `ProbeGate` relies on it to know
+ * that the background stage is ready.
  *
- * 只等「有客户端」,不等「角色已经设好」:角色由 Preview 在握手之后立刻发,
- * 而排到队里的活(stageJobs)每次开工前自己会发一遍 `setRole`。
+ * It waits only for "there is a client", not for "the role has been set": the role is sent by Preview
+ * right after the handshake, and each queued job (stageJobs) sends a `setRole` itself before it
+ * starts.
  */
 export function whenStageReady(role: StageRole): Promise<StageRpcClient> {
   return slots[role].ready.promise;
 }
 
 /**
- * 这个位置上的舞台握手时报的宿主能力表(J4)。
+ * The host capability table that the stage at this position reported in its handshake (J4).
  *
- * K1 的 `device` 串要 `compact` / `offscreenGl`,而它们必须和**舞台那一侧**探测到的一致 ——
- * 离线探针拿的就是舞台 `pc-stage-ready` 里的这一份。主文档自己再探一遍是第二份实现,
- * 会悄悄走偏(比如主文档和 iframe 的 `deviceMemory` 上报不同)。
- * 还没握手时回 `null`,调用方按保守值兜底。
+ * K1's `device` string needs `compact` / `offscreenGl`, and they must match what was detected on
+ * **the stage side** -- the offline probe takes exactly this copy from the stage's `pc-stage-ready`.
+ * If the main document probed again itself, that would be a second implementation and would quietly
+ * drift (for example, the main document and the iframe report different `deviceMemory`).
+ * Before the handshake it returns `null`, and callers fall back to conservative values.
  */
 export function stageCapabilities(role: StageRole): HostCapabilities | null {
   return slots[role].caps ?? slots.front.caps;
 }
 
 /**
- * K5 的角色互换:两个位置上的客户端对调,**基线跟着客户端走**(见上面 `pushedBy`)。
- * 互换之后调用方要对新 `front` 补推一次 `syncProject` —— 它手里是补跑开始时那一份,
- * 补跑期间的编辑按增量补上(`stageSwap.ts` 的 `swapAndDress`)。
+ * K5's role swap: the clients at the two positions are exchanged, and **the baseline follows the
+ * client** (see `pushedBy` above). After the swap the caller must push `syncProject` once more to the
+ * new `front` -- what it holds is the copy from when the catch-up run started, and the edits made
+ * during the run are applied incrementally (`swapAndDress` in `stageSwap.ts`).
  */
 export function swapStageClients(
   front: { client: StageRpcClient | null; caps?: HostCapabilities | null },
   back: { client: StageRpcClient | null; caps?: HostCapabilities | null },
 ): void {
-  // 先都摘下再登记:同一个客户端不会同一刻挂在两个位置上(事件过滤按「位置上的客户端」判)
+  // Detach both first, then register: one client is never attached at two positions at the same moment (the event filter judges by "the client at the position")
   setStageClient("front", null);
   setStageClient("back", null);
   setStageClient("front", front.client, front.caps ?? null);
@@ -185,8 +207,9 @@ export function swapStageClients(
 }
 
 /**
- * 两个推送口子共用的一段:串行化 + 基线维护,都挂在**发起这一刻**这个位置上的客户端身上。
- * 送到了就记在它身上,不管它之后被换到了哪个位置。
+ * The part shared by the two push entry points: serialization + baseline upkeep, both attached to the
+ * client at this position **at the moment of initiation**. Once delivered, it is recorded on that
+ * client, no matter which position it is moved to afterwards.
  */
 function send(role: StageRole, project: Project, force: boolean): Promise<void> {
   const targetRole = role === "back" && backRole() === "front" ? "front" : role;
@@ -211,22 +234,23 @@ function send(role: StageRole, project: Project, force: boolean): Promise<void> 
 }
 
 /**
- * 把项目同步到某个舞台。返回时舞台已经收到并应用。
- * 基线相同(同一个对象引用)就什么都不发。
+ * Sync the project to a stage. When it returns, the stage has received and applied it.
+ * If the baseline is the same (the same object reference), nothing is sent.
  */
 export function syncProject(role: StageRole, project: Project): Promise<void> {
   return send(role, project, false);
 }
 
 /**
- * 换项目并更新基线(E0 / E1)。`reset: true` 一律整份重灌(探针的缩水项目、
- * K5 第二路的整场景补跑、D4 的页面侧测量都这么用);不带 `reset` 时和 `syncProject` 一样走增量。
+ * Switch the project and update the baseline (E0 / E1). `reset: true` always reloads the whole copy
+ * (used for the probe's shrunken project, K5's second-path whole-scene catch-up run, and D4's
+ * page-side measurement); without `reset` it goes incremental, like `syncProject`.
  */
 export function pushProject(role: StageRole, project: Project, opts: { reset?: boolean } = {}): Promise<void> {
   return send(role, project, !!opts.reset);
 }
 
-/** 测试 / 调试用:哪个舞台推到了哪份项目 */
+/** For tests / debugging: which stage was pushed which project */
 export function pushedProject(role: StageRole): Project | null {
   const targetRole = role === "back" && backRole() === "front" ? "front" : role;
   const client = slots[targetRole].client;
@@ -234,9 +258,11 @@ export function pushedProject(role: StageRole): Project | null {
 }
 
 /**
- * 直接把某个位置上那个客户端的基线记成这一份项目。**只在确知舞台手里就是这一份时用。**
- * K5 的互换**不再**用它(根因 A:互换时新 `front` 手里是补跑开始那一份,不是此刻的最新项目),
- * 改走 `swapStageClients` —— 基线本来就跟着客户端走。
+ * Directly record the baseline of the client at a position as this project. **Use only when you know
+ * for sure that the stage holds exactly this copy.**
+ * K5's swap **no longer** uses it (root cause A: on swap the new `front` holds the copy from when the
+ * catch-up run started, not the latest project right now); it goes through `swapStageClients`
+ * instead -- the baseline follows the client anyway.
  */
 export function markPushed(role: StageRole, project: Project | null): void {
   const targetRole = role === "back" && backRole() === "front" ? "front" : role;
@@ -244,7 +270,7 @@ export function markPushed(role: StageRole, project: Project | null): void {
   if (client) pushedOf(client).project = project;
 }
 
-/** 测试用:把登记处恢复成刚加载的样子 */
+/** For tests: restore the registry to its just-loaded state */
 export function resetStageBridge(): void {
   for (const role of ["front", "back"] as StageRole[]) {
     slots[role].off?.();

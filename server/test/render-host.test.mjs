@@ -1,15 +1,24 @@
 /**
- * 独立渲染主机(M6b,契约 `docs/plan/render-host-contract.md` 第 5 节「单测」)。
- * 跑:npm test(全局 setup 占住本机的坏端口;单测一律用端口 0)。
+ * Standalone render host (M6b, contract `docs/plan/render-host-contract.md` section 5 "Unit Tests").
+ * Run: npm test (global setup occupies this machine's bad port; unit tests always use port 0).
  *
- *   RH1  配置解析:单项、数组、缺字段报错;maxConcurrent 缺省 1、上限 4、环境变量覆盖;render-host 的参数与子进程环境变量
- *   RH2  多项目开多条连接:真文档服务(托管端,凭证握手)上两个共享项目,每项一条 render 连接、一个 host 节点,
- *        node.hello 的 profile / codeVersions / capabilities 对;各自只见、只做自己项目的任务
- *   RH3  plan 跳过:host 节点见到 plan 不发认领(同一队列上的 pc 节点照常认领);细任务照常认领
- *   RH4  并发上限:两个项目共 6 个任务,maxConcurrent 为 1、2 时全部节点的持有 + 在飞任何一拍都不超过上限,且到达上限
- *   RH5  退出时让掉认领:shutdown 对每个持有发 task.release,队列立即放回 open(不等断线宽限),别的节点马上能认领;执行被中止
- *   RH6  代码版本过滤照旧:codeVersion 不同的 host 看得见任务、认领 0 次
- *   RH-fallback-ticket  素材回退按基址挑票据(集成时修的遗留):两台素材服务各认各的票据,读哪台用那台所属项目的票据
+ *   RH1  Config parsing: single item, array, error on missing fields; maxConcurrent defaults to 1,
+ *        max 4, env override; render-host arguments and child process env vars
+ *   RH2  Multiple projects open multiple connections: two shared projects on real document service
+ *        (hosted side, credential handshake), one render connection and one host node per item,
+ *        node.hello profile / codeVersions / capabilities correct; each only sees and works on
+ *        tasks for its own project
+ *   RH3  plan skipping: host node does not send claim when seeing plan (pc node on the same queue
+ *        claims normally); fine-grained tasks claimed normally
+ *   RH4  Concurrency limit: 6 tasks across two projects; when maxConcurrent is 1 or 2, held +
+ *        in-flight across all nodes never exceeds the limit at any tick, and reaches the limit
+ *   RH5  Yield claim on exit: shutdown sends task.release for each held task, queue immediately
+ *        releases back to open (without waiting for disconnect grace period), other nodes can claim
+ *        immediately; execution is aborted
+ *   RH6  Code version filtering as before: hosts with different codeVersion see tasks, claim 0 times
+ *   RH-fallback-ticket  Asset fallback picks ticket by base URL (legacy fix during integration):
+ *        two asset services recognize their own tickets, reading from either uses the ticket of its
+ *        owning project
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -37,7 +46,7 @@ const FP = 'fedcba9876543210';
 const CV = 'c0de-rh';
 const STEP_MS = 250;
 
-/* ------------------------------------------------------------------ 夹具 */
+/* ------------------------------------------------------------------ Fixtures */
 
 function fineTask(projectId, label, { cv = CV, from = 0, to = 29 } = {}) {
   const contentKey = sha256(`ck:${projectId}:${label}`);
@@ -53,7 +62,10 @@ function fineTask(projectId, label, { cv = CV, from = 0, to = 29 } = {}) {
   };
 }
 
-/** 执行器:`hang` 为真时 render 永不返回(只能被中止),否则立即完成。plan 不该被 host 调到 */
+/**
+ * Executor: when `hang` is true, render never returns (can only be aborted);
+ * otherwise completes immediately. plan should not be called by host
+ */
 function fakeExecutor({ hang = false } = {}) {
   const calls = { render: [], plan: [], aborted: [] };
   return {
@@ -74,8 +86,9 @@ function fakeSink() {
 }
 
 /**
- * 进程内拓扑:每个项目一个队列(相当于文档服务上的一个空间)、一条环回传输、一个页面发布方。
- * 主机的 `connect(entry)` 在对应项目的环回上开一条连接。
+ * In-process topology: one queue per project (equivalent to a space on document service),
+ * one loopback transport, one page publisher.
+ * Host `connect(entry)` opens a connection on the corresponding project's loopback.
  */
 function createSpaces(projectIds) {
   const clock = createTimerClock();
@@ -178,7 +191,8 @@ test('RH1 config parsing: single entry, array, missing fields throw an error; ma
   assert.deepEqual(array.entries.map((e) => e.projectId), [ENTRY.projectId, second.projectId], 'Array entries keep their order');
   assert.equal(array.maxConcurrent, 3, 'Takes the largest value given among the entries');
 
-  // 集成裁定(契约第 6 节):maxConcurrent 超过 4 是配置错误,不截断;0、负数、小数、字符串也是
+  // Integration ruling (contract section 6): maxConcurrent exceeding 4 is a configuration error,
+  // not clamped; so are 0, negative numbers, decimals, and strings
   assert.equal(loadHostConfig({ PROMPTCUT_SHARED_CONFIG: configFile([{ ...ENTRY, maxConcurrent: HOST_MAX_CONCURRENT }]) }).maxConcurrent, HOST_MAX_CONCURRENT, '4 itself is accepted');
   assert.throws(() => loadHostConfig({ PROMPTCUT_SHARED_CONFIG: configFile([{ ...ENTRY, maxConcurrent: 9 }]) }), { code: 'bad-host-config' }, 'Over 4 throws an error');
   assert.equal(parseHostConfig([ENTRY, { ...second, maxConcurrent: 2 }, { ...ENTRY, maxConcurrent: 4 }]).maxConcurrent, 4, 'Set on any one entry, the largest value is taken');
@@ -228,7 +242,7 @@ test('RH1 render-host: argument parsing and child process environment variables 
 /* ================================================================== RH2 */
 
 test('RH2 multiple projects open multiple connections: two shared projects get one render connection each and a host node, and each does only the tasks of its own project', async () => {
-  const svc = await startSharedService({ mode: 'hosted' });   // isLoopback 一律 false:只能凭证明进入
+  const svc = await startSharedService({ mode: 'hosted' });   // isLoopback is always false: can only enter with proof
   const pages = [];
   let host = null;
   const endpoints = [];
@@ -259,7 +273,7 @@ test('RH2 multiple projects open multiple connections: two shared projects get o
     assert.ok(host.nodes().every((n) => n.connected), `Both connections are connected: ${JSON.stringify(host.nodes())}`);
     assert.deepEqual(host.nodes().map((n) => n.projectId), [a.projectId, b.projectId]);
 
-    // 每个项目里一个成员页面发布一个细任务
+    // One member page in each project publishes a fine-grained task
     const tasks = new Map();
     for (const [project, pw] of [[a, 'pw-a'], [b, 'pw-b']]) {
       const page = await join(svc.base, { projectId: project.projectId, username: 'alice', deviceId: deviceId('page'), password: pw, role: 'page' });
@@ -274,7 +288,7 @@ test('RH2 multiple projects open multiple connections: two shared projects get o
     }
     const until = Date.now() + 20_000;
     while (Date.now() < until && !(sinks.get(a.projectId).puts.length && sinks.get(b.projectId).puts.length)) {
-      svc.service.tick();   // M6c X3：host 凭扫描周期的项目摘要发现有活的项目；这个服务 autoTick 关着，这里手动 tick
+      svc.service.tick();   // M6c X3: host discovers projects with work via scan-cycle project summaries; this service has autoTick off, manual tick here
       host.tick();
       await new Promise((r) => setTimeout(r, 30));
     }
@@ -283,7 +297,7 @@ test('RH2 multiple projects open multiple connections: two shared projects get o
     for (const n of host.nodes()) assert.equal(n.seen, 1, `Each node sees only 1 task of its own project: ${JSON.stringify(n)}`);
     assert.deepEqual(executors.get(a.projectId).calls.plan, [], 'Does not claim plan');
 
-    // node.hello:文档服务侧的记录(role.node)与各空间队列里的节点
+    // node.hello: records on document service side (role.node) and nodes in queues of each space
     const hellos = svc.logs.filter((l) => l.event === 'role.node');
     assert.equal(hellos.length, 2, `node.hello twice: ${JSON.stringify(hellos)}`);
     for (const h of hellos) {
@@ -330,7 +344,7 @@ test('RH3 plan skipping: when host sees a plan it sends no claim and claims only
   const host = hostOn(env, { projectIds: ['proj-a'], cap: 2, executors: new Map([['proj-a', executor]]) });
   host.start();
   const plan = planTaskOf({ projectId: 'proj-a', projectRev: 1, codeVersion: CV, envFingerprint: FP });
-  plan.priority = 100;   // 排在最前:host 若不跳过就一定先认领它
+  plan.priority = 100;   // Placed first: if host does not skip, it will definitely claim it first
   const fine = fineTask('proj-a', 'rh3');
   space.publish([plan, fine]);
   await drive(env, () => host.tick(), () => space.doneCount(fine.id) === 1);
@@ -342,7 +356,7 @@ test('RH3 plan skipping: when host sees a plan it sends no claim and claims only
   assert.equal(space.task(plan.id).state, 'open', 'plan stays in the queue');
   assert.ok(host.nodes()[0].seen >= 2, 'plan is visible, it is just not claimed');
 
-  // 对照:pc 节点在同一队列上认领 plan
+  // Control: pc node claims plan on the same queue
   const pcEndpoint = space.lb.connect('pc-0', { userId: 'alice@pc-device-000001', tenantId: 'proj-a' });
   const pc = createLocalNode({
     nodeId: 'pc-0', node: { profile: 'pc', envFingerprint: FP, codeVersions: [CV], capabilities: HOST_CAPABILITIES },
@@ -420,10 +434,10 @@ test('RH5 release claims on exit: each held claim sends task.release, the queue 
     assert.equal(env.spaces.get(p).task(tasks.get(p).id).state, 'open', `${p}: the queue puts it back to open immediately (no disconnect, no reliance on the grace period)`);
     assert.deepEqual(executors.get(p).calls.aborted, [tasks.get(p).id], `${p}: the running execution is aborted`);
   }
-  await host.settled();   // 卡住的执行器被中止后也能落定
+  await host.settled();   // Stuck executor can also settle after being aborted
   assert.equal(host.busy(), 0);
 
-  // 让出来的任务马上能被别的节点认领
+  // Yielded tasks can be immediately claimed by other nodes
   const space = env.spaces.get('proj-a');
   const other = createLocalNode({
     nodeId: 'other', node: { profile: 'host', envFingerprint: FP, codeVersions: [CV], capabilities: HOST_CAPABILITIES },
@@ -432,7 +446,7 @@ test('RH5 release claims on exit: each held claim sends task.release, the queue 
   });
   other.start();
   await drive(env, () => { host.tick(); other.tick(); }, () => space.doneCount(tasks.get('proj-a').id) === 1, 20);
-  // 停下来的 host 之后一条认领都不再发
+  // Stopped host will not send any more claims afterwards
   const claimsAfterStop = space.sent('host-0').filter((m) => m.type === 'task.claim').length;
   assert.equal(claimsAfterStop, 1, 'host no longer claims after it stops');
   env.hygiene();
@@ -448,7 +462,8 @@ test('RH6 code version filtering is unchanged: a host with a different codeVersi
   stale.start();
   const task = fineTask('proj-a', 'rh6');
   space.publish([task]);
-  // M6c X3：host 凭队列 tick 发的摘要才知道哪个项目有活，这里每拍也 tick 队列（原来只推时钟）
+  // M6c X3: host only knows which project has work via summaries sent by queue ticks;
+  // here the queue is also ticked on every tick (previously only advanced clock)
   for (let i = 0; i < 20; i++) { await env.settle(); stale.tick(); for (const s of env.all) s.queue.tick(); env.clock.advance(STEP_MS); }
   await env.settle();
   assert.equal(stale.nodes()[0].seen, 1, 'Can see it');
@@ -465,12 +480,13 @@ test('RH-fallback-ticket asset fallback picks the ticket by base URL: each of th
   const harness = createAssetHarness();
   t.after(() => harness.cleanup());
   const client = await import(harness.compileTs(path.join(ROOT, 'server', 'asset-client.ts')));
-  // 两台素材服务,各自的票据签发方(不同项目、不同密钥),都把来源当远端(要票据)
+  // Two asset services, their respective ticket issuers (different projects, different keys),
+  // both treat source as remote (requiring tickets)
   const kitA = await assetTicketKit();
   const kitB = await assetTicketKit();
   const svcA = await harness.serve({ chunkSize: 1024, isTrusted: () => false, tickets: kitA.tickets });
   const svcB = await harness.serve({ chunkSize: 1024, isTrusted: () => false, tickets: kitB.tickets });
-  // 素材只在 B 上
+  // Asset is only on B
   const buf = crypto.randomBytes(3000);
   const hash = crypto.createHash('sha256').update(buf).digest('hex');
   const rwB = kitB.issue('rw');
@@ -479,7 +495,7 @@ test('RH-fallback-ticket asset fallback picks the ticket by base URL: each of th
     assert.equal(r.status, 200);
   }
   assert.equal((await fetch(`${svcB.base}/media/${hash}/complete`, { method: 'POST', headers: { Authorization: `Bearer ${rwB}` } })).status, 200);
-  // 主源一律 404,走回退
+  // Primary source always returns 404, falls back
   const primary = http.createServer((req, res) => { res.statusCode = 404; res.end('nope'); });
   await new Promise((resolve) => primary.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise((resolve) => primary.close(() => resolve())));
@@ -492,12 +508,13 @@ test('RH-fallback-ticket asset fallback picks the ticket by base URL: each of th
   client.setMediaFallbackBases([svcA.base, `${svcB.base}/`]);
   t.after(() => { client.setMediaFallbackBases([]); client.setMediaFallbackTicket(null); });
 
-  // 修之前的做法:一律用第一个项目的票据 → A 回 404 后 B 拒 401
+  // Behavior before fix: always use first project's ticket → B rejects with 401 after A returns 404
   const asked = [];
   client.setMediaFallbackTicket(async () => kitA.issue('r'));
   assert.equal((await fetch(via)).status, 401, 'Control: with only the ticket of the first project, the second asset service returns 401');
 
-  // 按基址挑:A 用 A 的票据(合法、没有这份素材 → 404,改试下一个),B 用 B 的票据
+  // Pick by base URL: A uses A's ticket (valid, does not have this asset → 404, try next),
+  // B uses B's ticket
   const records = [
     { base: () => svcA.base, ticket: async () => { asked.push('A'); return kitA.issue('r'); } },
     { base: () => `${svcB.base}/`, ticket: async () => { asked.push('B'); return kitB.issue('r'); } },

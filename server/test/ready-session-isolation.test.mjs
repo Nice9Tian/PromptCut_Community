@@ -1,16 +1,22 @@
 /**
- * Item 4:预渲染进程的就绪索引按会话隔离、按版本收口(`docs/reports/REPORT-item4-session-isolation.md`)。
- * 跑:node --test server/test/ready-session-isolation.test.mjs
+ * Item 4: Prerender process ready index is isolated by session and closed by version
+ * (`docs/reports/REPORT-item4-session-isolation.md`).
+ * Run: node --test server/test/ready-session-isolation.test.mjs
  *
- * 覆盖三类并发场景:
- *   1. 旧批次晚到 —— 会话换到下一版之后,上一版还在跑的批次(整场景批、控件批、本地档、轨道流)交完;
- *   2. Agent / 导出混杂渲染 —— 别的版本的 `cardRender` / 落盘 / 发层不认领、不 reset、不污染页面会话;
- *   3. 多会话交替 —— 两个页面会话各自的版本交替前进,层不串到对方那里;preload 乱序到达时晚发出的赢。
- * 另有会话回收(断开的会话不常驻内存)。
+ * Covers three types of concurrency scenarios:
+ *   1. Late arrival of old batches: after a session switches to the next version, batches still
+ *      running from the previous version (whole scene batch, control batch, local tier, track
+ *      stream) finish delivering;
+ *   2. Agent / export mixed render: other versions' `cardRender` / flush to disk / publish layer
+ *      do not claim, do not reset, and do not pollute page sessions;
+ *   3. Alternating multiple sessions: two page sessions advance their versions alternately, layers
+ *      do not leak to each other; when preload arrives out of order, the later-issued one wins.
+ * Also includes session reclamation (disconnected sessions do not stay resident in memory).
  *
- * 真的:`ready-index.mjs` 的 hub、`FramePipeline.prototype` 上的 preload / adoptSession / adoptCardPlan /
- * recordCardPlan / cardRender / publishLayer / flushSnapshots / fillAnchorSnapshots 的收尾。
- * 假的:Chrome(`page.evaluate` 直接回 plan)、快照库的批,不碰盘。
+ * Real: `ready-index.mjs` hub, finalization of preload / adoptSession / adoptCardPlan /
+ * recordCardPlan / cardRender / publishLayer / flushSnapshots / fillAnchorSnapshots on
+ * `FramePipeline.prototype`.
+ * Mocked: Chrome (`page.evaluate` returns plan directly), snapshot store batches, no disk access.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,7 +26,7 @@ import { createReadyHub, DEFAULT_READY_SESSION } from '../ready-index.mjs';
 const control = (clipId, snapshotKey, tier = 'shared') => ({ clipId, snapshotKey, tier, capabilities: { frameMode: 'stateful', compositing: tier === 'shared' ? 'independent' : 'belowDependent' } });
 const fakeBatch = (clipId, key, frames = [[0, 9]], tier = 'shared') => ({ clipId, key, tier, written: true, close: async () => ({ frames }) });
 const entryOf = (key, plan = null) => ({ key, project: { fps: 30, duration: 1, tracks: [] }, ...(plan ? { cardPlan: plan } : {}),
-  // `cardRender` 只用到 plan / renderState 两样
+  // `cardRender` only uses two things: plan / renderState
   cardCache: { plan: browserPlan => browserPlan, renderState: async () => ({ frames: {}, missing: {} }) } });
 const fakeBakery = plan => ({ page: { evaluate: async () => plan } });
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -33,7 +39,8 @@ function pipeline(hub = createReadyHub()) {
   p.background = Promise.resolve();
   p.lanes = new Map();
   p.entries = new Map();
-  // 后台那一趟不开 Chrome:一借就当被取消,preload 只剩「设版本 + 排活」这一半
+  // That pass in the background does not start Chrome: treat as canceled once borrowed,
+  // preload only retains the "set version + schedule work" half
   p.acquire = async () => { throw Object.assign(new Error('no chrome in unit test'), { cancelled: true }); };
   return p;
 }
@@ -44,7 +51,7 @@ const watch = (p, session) => {
 };
 const layerKeys = list => list.map(l => `${l.clipId}:${l.kind}:${l.key}`).sort();
 
-/* ------------------------------------------------------------ 1. 旧批次晚到 */
+/* ------------------------------------------------------------ 1. Late arrival of old batches */
 
 test('late arrival of old batches: after the session switches to E2, E1\'s whole-scene batch, controls batch, local-tier batch and anchor-frame done are all rejected', async () => {
   const p = pipeline();
@@ -59,11 +66,11 @@ test('late arrival of old batches: after the session switches to E2, E1\'s whole
   p.publishLayer(E2, control('h', 'KB'), 'shared', [[0, 4]]);
   page.seen.length = 0;
 
-  // E1 还在跑的几条路此刻才交完
-  await p.flushSnapshots(E1);                                                   // 整场景批(疑点 F)
-  assert.equal(p.publishLayer(E1, control('h', 'KA'), 'shared', [[0, 30]]), 0);  // fillCardControls 的 4 帧批
+  // Several paths still running in E1 only finish delivering now
+  await p.flushSnapshots(E1);                                                   // Whole scene batch (suspect F)
+  assert.equal(p.publishLayer(E1, control('h', 'KA'), 'shared', [[0, 30]]), 0);  // 4-frame batch of fillCardControls
   assert.equal(p.publishLayer(E1, control('blur', 'BA'), 'local', [[0, 3]]), 0); // renderLocalSnapshots
-  p.ready.markDone(E1.key);                                                     // fillAnchorSnapshots 的收尾
+  p.ready.markDone(E1.key);                                                     // Finalization of fillAnchorSnapshots
 
   assert.deepEqual(page.seen, [], `not a single message from the old version should reach the page: ${JSON.stringify(page.seen)}`);
   assert.deepEqual(layerKeys(page.layers()), ['h:html:KB']);
@@ -76,7 +83,7 @@ test('late arrival of old batches: after the session switches from E2 back to E1
   const E1 = entryOf('E1', [control('h', 'KA')]), E2 = entryOf('E2', [control('h', 'KB')]);
   p.adoptSession('s', E1, 1);
   p.adoptSession('s', E2, 2);
-  p.adoptSession('s', E1, 3);                                    // 撤销:内容回到第一版,键也回到 E1
+  p.adoptSession('s', E1, 3);                                    // Undo: content reverts to the first version, key also reverts to E1
   assert.equal(p.publishLayer(E2, control('h', 'KB'), 'shared', [[0, 9]]), 0);
   assert.equal(p.publishLayer(E1, control('h', 'KA'), 'shared', [[0, 9]]), 1);
   assert.deepEqual(layerKeys(page.layers()), ['h:html:KA']);
@@ -88,18 +95,18 @@ test('late arrival of old batches: when a track stream segment is written to dis
   const page = watch(p, 's');
   p.adoptSession('s', entryOf('E2'), 2);
   page.seen.length = 0;
-  // 生产者 `publish(state)` 的形状:按 state.entryKey 过闸
+  // Shape of producer `publish(state)`: passes the gate by state.entryKey
   assert.equal(p.ready.publish('E1', { clipId: 'h', kind: 'stream', key: 'S1', ranges: [[0, 3]] }), 0);
   assert.equal(p.ready.publish('E2', { clipId: 'h', kind: 'stream', key: 'S2', ranges: [[0, 1]] }), 1);
   assert.deepEqual(page.seen.filter(m => m.type === 'layer').map(m => m.key), ['S2']);
   assert.deepEqual(page.seen.map(m => m.type), ['reset', 'layer'], 'the pending reset is added only when E2 is first written in, right next to the new layer');
 });
 
-/* ------------------------------------------------------------ 2. Agent / 导出混杂渲染 */
+/* ------------------------------------------------------------ 2. Agent / export mixed render */
 
 test('cardRender for Agent / export / interactive frames rendering another version: records the plan only on its own entry, does not reset, and does not claim the page session', async () => {
   const p = pipeline();
-  p.ready.stageByKey({ kind: 'html', key: 'KC', ranges: [[0, 99]] });   // 扫盘挂着 C 版的键
+  p.ready.stageByKey({ kind: 'html', key: 'KC', ranges: [[0, 99]] });   // Disk scan carries version C's key
   const page = watch(p, 's');
   const E1 = entryOf('E1', [control('h', 'KA')]);
   p.adoptSession('s', E1, 1);
@@ -116,7 +123,7 @@ test('cardRender for Agent / export / interactive frames rendering another versi
   assert.deepEqual(layerKeys(page.layers()), ['h:html:KA'], 'the page\'s layers are left as they were');
   assert.equal(p.ready.current('s'), 'E1');
 
-  // Agent 那一版落盘、交批:没有会话在 C 上,全丢
+  // Agent's version flushes to disk and delivers batches: no session is on C, drop all
   C.snapshotPending = new Map([['c', fakeBatch('h', 'KC')]]);
   await p.flushSnapshots(C);
   assert.deepEqual(page.seen, []);
@@ -141,7 +148,7 @@ test('when the page\'s preload arrives, this version\'s plan has already been co
   p.ready.stageByKey({ kind: 'html', key: 'KA', ranges: [[0, 40]] });
   const page = watch(p, 's');
   const E1 = entryOf('E1');
-  await p.cardRender(E1, fakeBakery([control('h', 'KA')]), [0], 'agent');   // Agent 先渲过这一版
+  await p.cardRender(E1, fakeBakery([control('h', 'KA')]), [0], 'agent');   // Agent rendered this version first
   assert.deepEqual(page.layers(), [], 'no claim was made while the Agent was rendering');
   p.entry = async () => E1;
   await p.preload({ id: 'p', duration: 1 }, { session: 's', localRev: 7 });
@@ -150,7 +157,7 @@ test('when the page\'s preload arrives, this version\'s plan has already been co
   await p.background;
 });
 
-/* ------------------------------------------------------------ 3. 多会话交替 */
+/* ------------------------------------------------------------ 3. Alternating multiple sessions */
 
 test('two sessions advance in alternation: each receives only layers of its own version, and nothing gets mixed up even when the shared keys are the same', () => {
   const p = pipeline();
@@ -158,18 +165,19 @@ test('two sessions advance in alternation: each receives only layers of its own 
   const A1 = entryOf('A1'), B1 = entryOf('B1'), A2 = entryOf('A2'), B2 = entryOf('B2');
   p.adoptSession('tab-a', A1, 1);
   p.adoptSession('tab-b', B1, 1);
-  // 两个版本里同一张卡的共享键一样(内容没变),各自发各自的
+  // The shared key for the same card across two versions is the same (content unchanged),
+  // each publishes its own
   p.publishLayer(A1, control('h', 'K'), 'shared', [[0, 3]]);
   p.publishLayer(B1, control('h', 'K'), 'shared', [[0, 9]]);
   assert.deepEqual(a.layers()[0].ranges, [[0, 3]]);
   assert.deepEqual(b.layers()[0].ranges, [[0, 9]]);
 
   p.adoptSession('tab-a', A2, 2);
-  p.publishLayer(B1, control('g', 'G'), 'shared', [[0, 1]]);      // B 那边继续长
-  p.publishLayer(A1, control('h', 'K'), 'shared', [[0, 30]]);     // A 的旧版本晚到
+  p.publishLayer(B1, control('g', 'G'), 'shared', [[0, 1]]);      // B continues to grow
+  p.publishLayer(A1, control('h', 'K'), 'shared', [[0, 30]]);     // A's old version arrives late
   p.adoptSession('tab-b', B2, 2);
   p.publishLayer(A2, control('h', 'K2'), 'shared', [[0, 2]]);
-  p.publishLayer(B1, control('g', 'G'), 'shared', [[0, 5]]);      // B 的旧版本晚到
+  p.publishLayer(B1, control('g', 'G'), 'shared', [[0, 5]]);      // B's old version arrives late
   p.publishLayer(B2, control('g', 'G2'), 'shared', [[0, 6]]);
 
   assert.deepEqual(layerKeys(a.layers()), ['h:html:K2']);
@@ -198,7 +206,7 @@ test('preloads of the same session complete out of order: the version issued lat
   const p = pipeline();
   const page = watch(p, 's');
   const E1 = entryOf('E1', [control('h', 'K1')]), E2 = entryOf('E2', [control('h', 'K2')]);
-  // 第一个请求算 entry 慢(素材打戳),第二个快
+  // First request computes entry slowly (asset timestamping), second is fast
   p.entry = async project => { await sleep(project.delay); return project.key === 'E1' ? E1 : E2; };
   const first = p.preload({ key: 'E1', delay: 40, duration: 1 }, { session: 's', localRev: 1 });
   const second = p.preload({ key: 'E2', delay: 1, duration: 1 }, { session: 's', localRev: 2 });
@@ -209,7 +217,7 @@ test('preloads of the same session complete out of order: the version issued lat
   assert.equal(generation?.key, 'E2', 'an invalidated request schedules no background work');
   assert.equal(generation.controller.signal.aborted, false, 'and does not cut off the newer version\'s background generation');
 
-  // 号对得上、但 localRev 比记着的旧:也不认
+  // ID matches, but localRev is older than the recorded one: reject as well
   const ticket = p.ready.request('s');
   assert.equal(p.ready.adopt('s', 'E1', 1, ticket), false);
   assert.equal(p.ready.current('s'), 'E2');
@@ -231,23 +239,23 @@ test('/ready subscribes by session: the backlog contains only the layers of its 
   assert.deepEqual(stranger, [{ type: 'reset', localRev: 0 }], 'a session that never sent a preload has an empty table');
 });
 
-/* ------------------------------------------------------------ 回收 */
+/* ------------------------------------------------------------ Reclamation */
 
 test('disconnected sessions do not stay resident: with no subscribers and past the idle time they are reclaimed; those with subscribers are never reclaimed', () => {
   let now = 0;
   const hub = createReadyHub({ now: () => now, idleMs: 1000, maxSessions: 100 });
   const offA = hub.subscribe('a', () => {});
   hub.subscribe('b', () => {});
-  hub.adopt('c', 'E', 1);                  // 只发过 preload、没订阅
+  hub.adopt('c', 'E', 1);                  // Only sent preload, did not subscribe
   now = 500;
-  offA();                                  // a 断开
+  offA();                                  // a disconnects
   now = 1400;
-  hub.request('d');                        // 任何新会话进来时顺带回收
+  hub.request('d');                        // Reclaim along the way whenever any new session enters
   assert.deepEqual(hub.describe().map(r => r.session).sort(), ['a', 'b', 'd'], 'c idle for 1400 > 1000, reclaimed');
   now = 1600;
   hub.subscribe('e', () => {})();
   assert.deepEqual(hub.describe().map(r => r.session).sort(), ['b', 'd', 'e'], 'a disconnected 1100 > 1000, reclaimed; b stays connected');
-  // 被回收的会话再来就是新的:没有版本,发布进不去
+  // A reclaimed session is treated as new upon returning: no version, publishing cannot enter
   assert.equal(hub.current('c'), undefined);
   assert.equal(hub.publish('E', { clipId: 'h', kind: 'html', key: 'K', ranges: [[0, 0]] }), 0);
 });
@@ -283,11 +291,11 @@ test('shared staged: one session calling clear does not wipe the ranges other se
   hub.adopt('b', 'E', 1);
   assert.equal(hub.claim('E', [{ clipId: 'h', kind: 'html', key: 'K' }]), 1);
   assert.deepEqual(hub.peek('b').index.list()[0].ranges, [[0, 9]]);
-  // 再认领一次不重复发(区间没变)
+  // Claiming again does not resend (interval unchanged)
   assert.equal(hub.claim('E', [{ clipId: 'h', kind: 'html', key: 'K' }]), 0);
 });
 
-/* ------------------------------------------------------------ 审查补的:真的调用点、保活、让路恢复 */
+/* ------------------------------------------------------------ Added from review: real call sites, keepalive, yield recovery */
 
 const fullIndex = { count: 3, frames: [[0, 2]], oversize: [] };
 const planned = (clipId, key, tier = 'shared') => ({ ...control(clipId, key, tier), count: 3, sampling: { firstFrame: 0 }, end: 1 });
@@ -301,11 +309,12 @@ test('the real call sites: when missingSnapshotFrames / fillAnchorSnapshots rend
   p.adoptSession('s', E1, 1);
   p.adoptSession('s', E2, 2);
   page.seen.length = 0;
-  // 旧版本的整场景那一趟在跑:它顺带把已有区间发成层、锚帧齐了发 done
+  // The old version's whole scene pass is running: it publishes existing intervals as layers
+  // along the way, and sends done once anchor frames are complete
   assert.deepEqual(await p.missingSnapshotFrames(E1, { tiers: ['shared', 'local'] }), []);
   await p.fillAnchorSnapshots(E1, null, null);
   assert.deepEqual(page.seen, [], `layers / done of the old version do not get in: ${JSON.stringify(page.seen)}`);
-  // 正向对照:新版本自己的这两步照常到
+  // Positive control: the new version's own two steps arrive as usual
   await p.missingSnapshotFrames(E2, { tiers: ['shared'] });
   await p.fillAnchorSnapshots(E2, null, null);
   assert.deepEqual(page.seen.map(m => m.type), ['layer', 'layer', 'done']);
@@ -321,7 +330,8 @@ test('two tabs keep the same ready version alive: the later session gets all lay
   let acquired = 0;
   p.acquire = async () => { acquired++; throw Object.assign(new Error('no chrome'), { cancelled: true }); };
   const a = watch(p, 'a');
-  // a 的那一趟在本进程里跑完了:层已经发过(也就挂进了 staged)、锚帧齐了
+  // a's pass finished running in this process: layers have already been published
+  // (thus attached into staged), anchor frames are complete
   await p.preload({ id: 'p', duration: 1 }, { session: 'a', localRev: 1 });
   await p.background;
   acquired = 0;
@@ -336,9 +346,9 @@ test('two tabs keep the same ready version alive: the later session gets all lay
   assert.equal(p.ready.peek('b').index.done, true, 'the anchor frames were complete long ago: done is also filled in');
   await p.background;
   assert.equal(acquired, 1, 'a new session re-runs one pass the first time it comes (mostly cache hits)');
-  E.status = 'ready';                    // 那一趟跑完了(单测里没有 Chrome,手动置回)
+  E.status = 'ready';                    // That pass finished running (no Chrome in unit tests, manually reset)
   acquired = 0;
-  // 30 秒保活一轮一轮地来(远超 PRELOAD_STALE_MS):谁都不重跑
+  // 30-second keepalives come round after round (far exceeding PRELOAD_STALE_MS): none reruns
   for (const at of [40000, 80000, 120000]) {
     p.generations.forEach(g => { g.seenAt -= at; });
     await p.preload({ id: 'p', duration: 1 }, { session: 'a', localRev: 1 });
@@ -354,9 +364,9 @@ test('yield resume: a version that no session sits on anymore after the yield is
   const p = pipeline();
   const E1 = entryOf('E1'), E2 = entryOf('E2'), E3 = entryOf('E3');
   p.adoptSession('s', E1, 1);
-  p.adoptSession('s', E2, 2);            // 让路期间会话 s 换到了 E2,没人停在 E1 了
+  p.adoptSession('s', E2, 2);            // During yield, session s switched to E2; no one is parked on E1 anymore
   p.adoptSession('t', E3, 1);
-  p.adoptSession(DEFAULT_READY_SESSION, E2, undefined);   // 脚本(缺省会话)也在 E2
+  p.adoptSession(DEFAULT_READY_SESSION, E2, undefined);   // The script (default session) is also on E2
   p.pausedPreloads = new Map([['session:s', E1], ['session:t', E3], ['proj', E2]]);
   p.backgroundLeaseOwner = 'o';
   p.backgroundLeaseVersion = 1;
@@ -372,7 +382,7 @@ test('a session that is reclaimed and recreated after taking a number: not count
   const hub = createReadyHub({ now: () => now, idleMs: 10 });
   const ticket = hub.request('s');
   now = 100;
-  hub.request('other');                  // 顺带把 s 回收掉
+  hub.request('other');                  // Also reclaim s
   assert.equal(hub.peek('s'), undefined);
   assert.equal(hub.stale('s', ticket, 1), false);
   assert.equal(hub.adopt('s', 'E', 1, ticket), true);
@@ -383,7 +393,7 @@ test('staged cap: when over the limit, drop the key untouched the longest', () =
   const hub = createReadyHub({ maxStaged: 2 });
   hub.stageByKey({ kind: 'html', key: 'A', ranges: [[0, 0]] });
   hub.stageByKey({ kind: 'html', key: 'B', ranges: [[0, 0]] });
-  hub.stageByKey({ kind: 'html', key: 'A', ranges: [[1, 1]] });   // A 刚用过
+  hub.stageByKey({ kind: 'html', key: 'A', ranges: [[1, 1]] });   // A was just used
   hub.stageByKey({ kind: 'html', key: 'C', ranges: [[0, 0]] });
   assert.deepEqual(hub.stagedKeys().map(s => s.key), ['A', 'C']);
 });
@@ -400,19 +410,19 @@ test('after recomputing with the new costs the set shrank: the old layer of the 
   const p = pipeline();
   const E = entryOf('E');
   const page = watch(p, 's');
-  // 第一次:两张都判重(没有成本记录,按声明兜底)
+  // First time: both are classified as heavy (no cost record, fallback by declaration)
   p.adoptSession('s', E, 1);
   p.adoptCardPlan(E, [planned('heavy', 'KH'), planned('light', 'KL')]);
   p.publishLayer(E, planned('heavy', 'KH'), 'shared', [[0, 2]]);
   p.publishLayer(E, planned('light', 'KL'), 'shared', [[0, 2]]);
   assert.deepEqual(layerKeys(page.layers()), ['heavy:html:KH', 'light:html:KL']);
-  // 新的成本记录让 light 判轻:下一趟的计划只挑 heavy
+  // New cost record classifies light as light: next pass plan only picks heavy
   p.recordCardPlan = function (entry, plan) { entry.cardPlan = plan; entry.prerenderSet = new Set(['heavy']); return plan; };
   page.seen.length = 0;
   p.adoptCardPlan(E, [planned('heavy', 'KH'), planned('light', 'KL')]);
   assert.deepEqual(layerKeys(page.layers()), ['heavy:html:KH'], 'the one classified as light is removed, the one classified as heavy is added back');
   assert.deepEqual(page.seen.map(m => m.type), ['reset', 'layer']);
-  // 集合没再缩:不再 reset
+  // Set did not shrink further: do not reset again
   page.seen.length = 0;
   p.adoptCardPlan(E, [planned('heavy', 'KH'), planned('light', 'KL')]);
   assert.deepEqual(page.seen, []);
@@ -426,12 +436,12 @@ test('switching to a new version whose plan is not computed yet: the old table h
   p.adoptSession('s', E1, 1);
   p.publishLayer(E1, control('h', 'KA'), 'shared', [[0, 9]]);
   page.seen.length = 0;
-  const E2 = entryOf('E2');                                    // 刚编辑完,计划还没算
+  const E2 = entryOf('E2');                                    // Editing just finished, plan not computed yet
   assert.equal(p.adoptSession('s', E2, 2), true);
   assert.deepEqual(page.seen, [], 'table not cleared');
   assert.deepEqual(layerKeys(page.layers()), ['h:html:KA'], 'the old layers hold');
   assert.equal(p.publishLayer(E1, control('h', 'KA'), 'shared', [[0, 20]]), 0, 'the gate has switched: the old version cannot get in');
   assert.equal(p.ready.describe().find(r => r.session === 's').pendingReset, true);
-  p.adoptCardPlan(E2, [control('h', 'KB')]);                    // 后台那一趟算出了计划
+  p.adoptCardPlan(E2, [control('h', 'KB')]);                    // That background pass computed the plan
   assert.deepEqual(page.seen, [{ type: 'reset', localRev: 2 }, { type: 'layer', clipId: 'h', kind: 'html', key: 'KB', ranges: [[0, 5]] }]);
 });

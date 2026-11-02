@@ -1,39 +1,59 @@
 /**
- * 两档素材的生成(C6.6,`docs/plan/c66-design.md` 第 2 节与第 8 节查资料结论;语义 `docs/semantics/product/asset-service.md`「两档素材」)。
+ * Generation of two asset tiers (C6.6, `docs/plan/c66-design.md` sections 2 and 8 research
+ * conclusions; semantics `docs/semantics/product/asset-service.md` "two asset tiers").
  *
- * 在**导入方本机的编辑器进程**里做,用 `findFfmpeg`;素材服务从不转码。只对视频做,图片、音频不生成素材小尺寸。
+ * Done in the **importer's local editor process**, using `findFfmpeg`; the asset service never
+ * transcodes. Only done for video; images and audio do not generate small-size assets.
  *
- * # 素材原尺寸:不转码,缺 faststart 才重封装
+ * # Original-size asset: no transcoding, remux only when faststart is missing
  *
- * - 只看普通 MP4 / MOV(扩展名 `mp4` / `m4v` / `mov`):按 ISO BMFF 顶层 box 逐个跳读(`scanTopLevelBoxes`),
- *   比较首个 `moov` 与 `mdat` 的位置;`mdat` 在前才算缺 faststart。有 `moof` 的分片 MP4、box 长度不合法、
- *   找不到 `moov` / `mdat` 的一律不动。MKV、WebM、AVI 没有 `moov`,不需要。
- * - 重封装:`ffmpeg -i <源> -map 0 -c copy -movflags +faststart -f <mp4|mov> <临时文件>`,同容器;
- *   写完先校验(box 顺序已是 faststart、各流的类型与编码逐一相同、时长相差不超过 0.05 s),通过了才按**输出文件**的
- *   哈希入库,算作新的素材原尺寸;任何一步失败都删掉临时文件、保留源文件当素材原尺寸,并记下原因。不转码、不删轨。
- * - 重封装前的那份文件是这次导入刚写进库的(不是去重命中的)就从库里删掉,免得库里留一份没人引用的;
- *   同时记下「源哈希 → 重封装后的哈希」,同一个文件再导入一次直接复用,不再跑一遍 ffmpeg。
+ * - Only checks regular MP4 / MOV (extensions `mp4` / `m4v` / `mov`): skip-reads top-level ISO BMFF
+ *   boxes one by one (`scanTopLevelBoxes`), comparing the positions of the first `moov` and `mdat`;
+ *   faststart is considered missing only when `mdat` comes first. Fragmented MP4s with `moof`,
+ *   invalid box lengths, or missing `moov` / `mdat` are left untouched. MKV, WebM, and AVI have no
+ *   `moov` and do not need this.
+ * - Remux: `ffmpeg -i <source> -map 0 -c copy -movflags +faststart -f <mp4|mov> <temp-file>`, same
+ *   container; after writing, verify first (box order is already faststart, stream types and codecs
+ *   match one by one, duration difference does not exceed 0.05 s); only after passing, store into the
+ *   library by the hash of the **output file**, treated as the new original-size asset; if any step
+ *   fails, delete the temporary file, keep the source file as the original-size asset, and record the
+ *   reason. No transcoding, no track deletion.
+ * - If the file before remuxing was just written into the library during this import (not a
+ *   deduplication hit), delete it from the library to avoid leaving an unreferenced copy; at the
+ *   same time, record "source hash → remuxed hash" so importing the same file again directly
+ *   reuses it without running ffmpeg again.
  *
- * # 素材小尺寸:本机转码
+ * # Small-size asset: local transcoding
  *
- * 照第 8 节的命令(`smallVideoArgs`):
- *   - 保留 VFR 时间戳,`select` 只丢间隔不足 1/60 s 的帧(留 0.2 ms 的容差:时间戳换算成秒有舍入,
- *     正好 1/60 s 的间隔按浮点比较会被误丢 —— 实测 120 fps 的源不加容差只剩 44.7 fps);
- *   - `scale` 不放大、保持显示比例、限 800×600、偶数尺寸、`reset_sar=1`;`format=yuv420p`;
- *   - `-map 0:v:0 -map 0:a:0?`:容忍没有音轨;`-autorotate` 是 ffmpeg 的缺省,旋转落进像素;
- *   - H.264 `-preset veryfast -crf 26`,AAC 64k,`-movflags +faststart`;
- *   - HDR:只对标签完整的 BT.2020 + PQ(`smpte2084`)源走 `zscale` + `tonemap` 分支,输出标 BT.709;
- *     其余(含 HLG、无标签)照 SDR 走〔裁〕。本机 ffmpeg 没有 `zscale` / `tonemap` 时 PQ 源不生成素材小尺寸(不拿普通
- *     8 bit 转换冒充 SDR 素材小尺寸),只有素材原尺寸一档。
- * - 转码在后台、一次一个、低于正常的进程优先级,不挡导入的回包,也不挡编辑。
+ * Following the command in section 8 (`smallVideoArgs`):
+ *   - Retains VFR timestamps; `select` drops only frames with intervals less than 1/60 s (leaving a
+ *     0.2 ms tolerance: converting timestamps to seconds has rounding, and an interval of exactly
+ *     1/60 s would be mistakenly dropped under floating-point comparison: in testing, a 120 fps
+ *     source without tolerance was reduced to only 44.7 fps);
+ *   - `scale` does not upscale, preserves aspect ratio, limits to 800×600, even dimensions,
+ *     `reset_sar=1`; `format=yuv420p`;
+ *   - `-map 0:v:0 -map 0:a:0?`: tolerates missing audio track; `-autorotate` is ffmpeg's default,
+ *     applying rotation into pixels;
+ *   - H.264 `-preset veryfast -crf 26`, AAC 64k, `-movflags +faststart`;
+ *   - HDR: runs the `zscale` + `tonemap` branch only for BT.2020 + PQ (`smpte2084`) sources with
+ *     complete tags, outputting marked BT.709; the rest (including HLG and untagged) follow SDR
+ *     [ruling]. When local ffmpeg lacks `zscale` / `tonemap`, PQ sources do not generate
+ *     small-size assets (no standard 8-bit conversion pretending to be SDR small-size assets),
+ *     leaving only the original-size asset tier.
+ * - Transcoding runs in the background, one at a time, at below-normal process priority, blocking
+ *   neither import responses nor editing.
  *
- * # 登记与上传
+ * # Registration and upload
  *
- * - 本机内容库里「素材原尺寸 → 素材小尺寸」的对应记在 `<素材目录>/tiers.json`(本机缓存,不进项目);项目里的记录
- *   `project.media[i].tiers = { small?, original }` 由页面写(导入回包带素材原尺寸哈希,素材小尺寸好了之后页面经
- *   `GET /api/media/tiers` 取到素材小尺寸哈希再写进去)。同步状态不进项目。
- * - 素材小尺寸好了(或确定没有素材小尺寸)就把这个素材的两档交给上传队列(`upload-queue.mjs`):先小后大。
- * - 进程重启:`tiers.json` 里还是 `pending` 的接着转。
+ * - The mapping of "original-size asset → small-size asset" in the local content store is recorded
+ *   in `<asset catalog>/tiers.json` (local cache, not saved into project); the record in the project
+ *   `project.media[i].tiers = { small?, original }` is written by the page (the import response
+ *   includes the original-size asset hash; once the small-size asset is ready, the page fetches
+ *   the small-size asset hash via `GET /api/media/tiers` and writes it in). Sync status is not saved
+ *   into the project.
+ * - Once the small-size asset is ready (or confirmed to have no small-size asset), both tiers of this
+ *   asset are handed to the upload queue (`upload-queue.mjs`): small first, then large.
+ * - Process restart: entries still `pending` in `tiers.json` resume transcoding.
  */
 import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
@@ -48,7 +68,7 @@ const tierJobContext = new AsyncLocalStorage();
 export const SMALL_MAX_WIDTH = 800;
 export const SMALL_MAX_HEIGHT = 600;
 export const SMALL_MAX_FPS = 60;
-/** 丢帧判据的容差(秒):见文件头 */
+/** Tolerance for frame-drop criterion (seconds): see file header */
 export const SMALL_FPS_EPSILON = 0.0002;
 export const VIDEO_EXTS = Object.freeze(['mp4', 'm4v', 'mov', 'webm', 'mkv', 'avi', 'mpg', 'mpeg', 'ts', 'mts', 'm2ts', 'wmv', 'flv', '3gp']);
 export const REMUX_EXTS = Object.freeze(['mp4', 'm4v', 'mov']);
@@ -59,12 +79,13 @@ const HASH = /^[0-9a-f]{64}$/;
 export const isVideoExt = (ext) => VIDEO_EXTS.includes(String(ext || '').toLowerCase());
 
 /* ------------------------------------------------------------------ *
- * ISO BMFF 顶层 box
+ * ISO BMFF top-level boxes
  * ------------------------------------------------------------------ */
 
 /**
- * 逐个跳读顶层 box 的头(只读头,不读 `mdat` 的内容)。处理 32 位长度、`size = 1` 的 64 位长度、
- * `size = 0`(延伸到文件尾,只能是最后一个)。长度不合法就停下,`ok: false`。
+ * Skip-reads top-level box headers one by one (reads headers only, not `mdat` content). Handles 32-bit
+ * length, 64-bit length with `size = 1`, and `size = 0` (extends to EOF, can only be the last box).
+ * Stops if length is invalid, returning `ok: false`.
  * @param {string} file
  * @returns {Promise<{ ok: boolean, size: number, boxes: { type: string, offset: number, size: number }[] }>}
  */
@@ -102,8 +123,8 @@ export async function scanTopLevelBoxes(file, { maxBoxes = 100_000 } = {}) {
 }
 
 /**
- * faststart 的判定:`'faststart'`(moov 在 mdat 前)、`'needs'`(mdat 在 moov 前)、
- * `'fragmented'`(有 moof,不动)、`'unknown'`(box 不合法或缺 moov / mdat,不动)。
+ * Faststart determination: `'faststart'` (moov before mdat), `'needs'` (mdat before moov),
+ * `'fragmented'` (has moof, left untouched), `'unknown'` (invalid box or missing moov / mdat, left untouched).
  */
 export async function faststartState(file) {
   let scan;
@@ -122,7 +143,7 @@ export async function faststartState(file) {
 
 export const ffprobeOf = (ffmpegCmd) => String(ffmpegCmd).replace(/ffmpeg(\.exe)?$/i, (m) => (m.toLowerCase() === 'ffmpeg.exe' ? 'ffprobe.exe' : 'ffprobe'));
 
-/** 跑一个子进程,收 stdout / stderr;`low` 时把它降到低于正常的优先级 */
+/** Runs a child process, collecting stdout / stderr; lowers it to below-normal priority when `low` */
 function run(cmd, args, { low = false, max = 16 * 1024 * 1024 } = {}) {
   return new Promise((resolve) => {
     let child;
@@ -130,7 +151,7 @@ function run(cmd, args, { low = false, max = 16 * 1024 * 1024 } = {}) {
     catch (error) { return resolve({ code: -1, stdout: '', stderr: String(error?.message ?? error) }); }
     tierJobContext.getStore()?.trackProcess(child);
     if (low && child.pid) {
-      try { os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch { /* 调不了就算了 */ }
+      try { os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch { /* Ignore if adjustment fails */ }
     }
     let stdout = '', stderr = '';
     child.stdout.on('data', (d) => { if (stdout.length < max) stdout += d; });
@@ -140,14 +161,14 @@ function run(cmd, args, { low = false, max = 16 * 1024 * 1024 } = {}) {
   });
 }
 
-/** ffprobe 一个文件:流与格式。读不了回 null */
+/** ffprobe a file: streams and format. Returns null if unreadable */
 export async function probeMedia(ffprobe, file) {
   const r = await run(ffprobe, ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', file]);
   if (r.code !== 0) return null;
   try {
     const data = JSON.parse(r.stdout);
     const streams = Array.isArray(data.streams) ? data.streams : [];
-    // 封面图(attached_pic)不算视频流
+    // Cover art (attached_pic) does not count as a video stream
     const video = streams.find((s) => s.codec_type === 'video' && !(s.disposition?.attached_pic)) ?? null;
     const audio = streams.find((s) => s.codec_type === 'audio') ?? null;
     const duration = Number(data.format?.duration);
@@ -155,12 +176,12 @@ export async function probeMedia(ffprobe, file) {
   } catch { return null; }
 }
 
-/** 标签完整的 BT.2020 + PQ 源才走 HDR 分支〔裁〕 */
+/** Only sources with complete BT.2020 + PQ tags follow the HDR branch [ruling] */
 export function isHdrPq(video) {
   return !!video && video.color_transfer === 'smpte2084' && video.color_primaries === 'bt2020';
 }
 
-/** 素材小尺寸的视频滤镜串(传给 spawn 的一个参数,不经 shell) */
+/** Video filter string for small-size assets (passed as a single spawn argument, not through shell) */
 export function smallVideoFilter({ hdr = false, video = null } = {}) {
   const select = `select='isnan(prev_selected_t)+gte(t-prev_selected_t\\,1/${SMALL_MAX_FPS}-${SMALL_FPS_EPSILON})'`;
   const scale = `scale=w='min(iw\\,${SMALL_MAX_WIDTH})':h='min(ih\\,${SMALL_MAX_HEIGHT})':force_original_aspect_ratio=decrease:force_divisible_by=2:reset_sar=1`;
@@ -171,7 +192,7 @@ export function smallVideoFilter({ hdr = false, video = null } = {}) {
     + `tonemap=tonemap=hable:desat=0,zscale=p=bt709:t=bt709:m=bt709:r=tv,${scale},format=yuv420p`;
 }
 
-/** 素材小尺寸的完整 ffmpeg 参数 */
+/** Full ffmpeg arguments for small-size assets */
 export function smallVideoArgs(input, output, { hdr = false, video = null } = {}) {
   const args = ['-y', '-hide_banner', '-v', 'error', '-i', input, '-map', '0:v:0', '-map', '0:a:0?',
     '-vf', smallVideoFilter({ hdr, video }), '-fps_mode:v', 'vfr',
@@ -181,7 +202,7 @@ export function smallVideoArgs(input, output, { hdr = false, video = null } = {}
   return args;
 }
 
-/** 重封装的 ffmpeg 参数:同容器、全部流、只拷贝 */
+/** ffmpeg arguments for remuxing: same container, all streams, copy only */
 export function remuxArgs(input, output, ext) {
   const format = String(ext).toLowerCase() === 'mov' ? 'mov' : 'mp4';
   return ['-y', '-hide_banner', '-v', 'error', '-i', input, '-map', '0', '-c', 'copy', '-movflags', '+faststart', '-f', format, output];
@@ -189,7 +210,7 @@ export function remuxArgs(input, output, ext) {
 
 const streamSignature = (probe) => (probe?.streams ?? []).map((s) => `${s.codec_type}:${s.codec_name ?? '?'}`).join(',');
 
-/** 本机 ffmpeg 有没有这几个滤镜(HDR 分支要 zscale、tonemap) */
+/** Whether local ffmpeg has these filters (HDR branch requires zscale and tonemap) */
 const filterCache = new Map();
 export async function hasFilters(ffmpeg, names) {
   let set = filterCache.get(ffmpeg);
@@ -206,9 +227,9 @@ export async function hasFilters(ffmpeg, names) {
 }
 
 /**
- * 缺 faststart 的普通 MP4 / MOV 做一次同容器重封装,写到 `output`(调用方给的临时路径)。
- * 回 `{ state: 'faststart' | 'skipped' | 'remuxed' | 'failed', reason? }`;`remuxed` 时 `output` 已写好并校验过,
- * 其余情况 `output` 不存在。
+ * Remuxes regular MP4 / MOV lacking faststart within the same container, writing to `output`
+ * (temporary path provided by caller). Returns `{ state: 'faststart' | 'skipped' | 'remuxed' | 'failed', reason? }`;
+ * on `remuxed`, `output` is written and verified, in all other cases `output` does not exist.
  */
 export async function remuxIfNeeded({ ffmpeg, ffprobe = ffprobeOf(ffmpeg), input, ext, output }) {
   const e = String(ext || '').toLowerCase();
@@ -228,7 +249,8 @@ export async function remuxIfNeeded({ ffmpeg, ffprobe = ffprobeOf(ffmpeg), input
 }
 
 /**
- * 生成素材小尺寸到 `output`。回 `{ ok: true, hdr, width, height }` 或 `{ ok: false, reason }`(`reason: 'no-video'` 表示没有视频流)。
+ * Generates small-size asset to `output`. Returns `{ ok: true, hdr, width, height }` or `{ ok: false, reason }`
+ * (`reason: 'no-video'` indicates no video stream).
  */
 export async function makeSmallVersion({ ffmpeg, ffprobe = ffprobeOf(ffmpeg), input, output, probe = null }) {
   const info = probe ?? await probeMedia(ffprobe, input);
@@ -244,7 +266,7 @@ export async function makeSmallVersion({ ffmpeg, ffprobe = ffprobeOf(ffmpeg), in
 }
 
 /* ------------------------------------------------------------------ *
- * 管理器:导入时的处理、后台转码、登记、交给上传队列
+ * Manager: import handling, background transcoding, registration, handoff to upload queue
  * ------------------------------------------------------------------ */
 
 async function atomicWrite(file, text) {
@@ -259,18 +281,18 @@ const exists = async (file) => { try { await fs.stat(file); return true; } catch
 
 /**
  * @param {object} options
- * @param {string} options.dir  本地内容库(素材目录)
+ * @param {string} options.dir  Local content store (asset catalog)
  * @param {{ hashFile(file: string): Promise<string>, writeIndex(hash: string, entry: object): Promise<void>, contentTypeForExt(ext: string): string, forget?: (hash: string) => Promise<void> }} options.lib
- * @param {() => Promise<string>} options.ffmpeg  取 ffmpeg 命令(惰性,`findFfmpeg`)
- * @param {any} [options.queue]  上传队列(`createUploadQueue`);不给就只生成、不上传
+ * @param {() => Promise<string>} options.ffmpeg  Gets ffmpeg command (lazy, `findFfmpeg`)
+ * @param {any} [options.queue]  Upload queue (`createUploadQueue`); if omitted, generates only without uploading
  * @param {(event: string, fields: object) => void} [options.log]
  */
 export function createTierManager({ dir, lib, ffmpeg, queue = null, log = () => {}, ownership = null }) {
   const file = path.join(dir, TIERS_FILE);
-  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志出错不影响 */ } };
-  /** 素材原尺寸哈希 → { state: 'pending' | 'ready' | 'failed' | 'none', small?, name?, ext?, reason? } */
+  const say = (event, fields = {}) => { try { log(event, fields); } catch { /* Logging errors do not affect execution */ } };
+  /** Original-size asset hash → { state: 'pending' | 'ready' | 'failed' | 'none', small?, name?, ext?, reason? } */
   let items = {};
-  /** 重封装前的哈希 → 重封装后的哈希 */
+  /** Pre-remux hash → post-remux hash */
   let remuxed = {};
   try {
     const saved = JSON.parse(fsSync.readFileSync(file, 'utf8'));
@@ -278,7 +300,7 @@ export function createTierManager({ dir, lib, ffmpeg, queue = null, log = () => 
       if (saved.items && typeof saved.items === 'object') items = saved.items;
       if (saved.remuxed && typeof saved.remuxed === 'object') remuxed = saved.remuxed;
     }
-  } catch { /* 没有就是空的 */ }
+  } catch { /* Empty if none */ }
 
   let chain = Promise.resolve();
   const persist = () => {
@@ -290,7 +312,7 @@ export function createTierManager({ dir, lib, ffmpeg, queue = null, log = () => 
   let cmd = null;
   const ffmpegCmd = async () => (cmd ??= await ffmpeg());
 
-  /** 把库外(同一卷上)的临时文件按内容哈希挪进库;库里已有就删掉临时文件 */
+  /** Moves a temporary file outside the store (on the same volume) into the store by content hash; deletes the temporary file if already in the store */
   async function adoptTemp(tmp, { ext, name }) {
     try {
     const hash = await lib.hashFile(tmp);
@@ -308,7 +330,7 @@ export function createTierManager({ dir, lib, ffmpeg, queue = null, log = () => 
     } finally { await fs.rm(tmp, { force: true }).catch(() => {}); }
   }
 
-  /* ---------- 后台转码:一次一个 ---------- */
+  /* ---------- Background transcoding: one at a time ---------- */
   const jobs = [];
   let busy = false;
   const idle = [];
@@ -384,7 +406,7 @@ export function createTierManager({ dir, lib, ffmpeg, queue = null, log = () => 
     catch (error) { say('tiers.enqueue-failed', { hash, message: String(error?.message ?? error) }); }
   }
 
-  /** 不是视频的素材(图片、音频):没有素材小尺寸,只把素材原尺寸交给上传队列;不登记进 items(那是两档的转码状态) */
+  /** Non-video assets (images, audio): no small-size asset, hands only original-size asset to upload queue; not registered into items (which tracks transcoding status of the two tiers) */
   async function handOriginalToQueue(stored) {
     if (!queue) return;
     const hash = String(stored.hash).toLowerCase();
@@ -396,9 +418,12 @@ export function createTierManager({ dir, lib, ffmpeg, queue = null, log = () => 
   return {
     get file() { return file; },
     /**
-     * 导入之后调(`stored` 是 `storeMediaStream` / `adoptMediaFile` 的结果)。视频:缺 faststart 就重封装(原地等它做完,
-     * 回包里的哈希就是重封装后的),再排素材小尺寸;不是视频(图片、音频)原样回,只把素材原尺寸交给上传队列(连远程素材服务时传过去,共享项目别的成员才取得到)。
-     * 回 `{ stored, tiers: { original, small } | null, small: 'pending' | 'ready' | 'failed' | 'none' | null, remux }`。
+     * Called after import (`stored` is the result of `storeMediaStream` / `adoptMediaFile`). Video: remuxes
+     * if faststart is missing (waits in place for completion, and the hash in the response is the remuxed one),
+     * then schedules small-size asset; non-video (images, audio) returns as is, handing only original-size
+     * asset to upload queue (transferred when connected to remote asset service so other members in shared
+     * projects can retrieve it).
+     * Returns `{ stored, tiers: { original, small } | null, small: 'pending' | 'ready' | 'failed' | 'none' | null, remux }`.
      */
     async prepareImport(stored, { remux = true } = {}) {
       const lease = await ownership?.acquire?.();
@@ -410,7 +435,9 @@ export function createTierManager({ dir, lib, ffmpeg, queue = null, log = () => 
       const ext = String(stored?.ext || '').toLowerCase();
       if (!stored || !HASH.test(String(stored.hash))) return { stored, tiers: null, small: null, remux: null };
       if (!isVideoExt(ext)) {
-        // 图片、音频只有素材原尺寸一档:照样交给上传队列(连远程素材服务时传过去,别的成员才取得到;连本机时队列是空操作)
+        // Images and audio have only the original-size asset tier: still handed to the upload queue
+        // (transferred when connected to remote asset service so other members can retrieve them;
+        // queue is a no-op when connected locally)
         await handOriginalToQueue(stored);
         return { stored, tiers: null, small: null, remux: null };
       }
@@ -420,7 +447,7 @@ export function createTierManager({ dir, lib, ffmpeg, queue = null, log = () => 
         const known = remuxed[stored.hash];
         const knownFile = known ? path.join(dir, `${known}.${ext}`) : null;
         if (known && knownFile && await exists(knownFile)) {
-          // 同一个源文件之前重封装过:直接用那一份
+          // The same source file was previously remuxed: reuse that copy directly
           if (!stored.deduped) { await fs.rm(stored.path, { force: true }); await lib.forget?.(stored.hash); }
           current = { ...stored, hash: known, path: knownFile, url: `/@media/${known}`, bytes: (await fs.stat(knownFile)).size, deduped: true };
           remuxInfo = { state: 'remuxed', from: stored.hash, reused: true };
@@ -455,7 +482,8 @@ export function createTierManager({ dir, lib, ffmpeg, queue = null, log = () => 
       } else if (rec.state === 'pending') {
         schedule(hash);
       } else {
-        // 素材小尺寸早就有了(或确定没有):照样交给上传队列,远端已有的它会跳过
+        // Small-size asset already exists (or confirmed absent): still handed to the upload queue;
+        // it will skip what the remote already has
         await handToQueue(hash);
       }
       return {
@@ -467,10 +495,14 @@ export function createTierManager({ dir, lib, ffmpeg, queue = null, log = () => 
       }
     },
     /**
-     * 打开项目时补转素材小尺寸(设计稿第 9 节第 2 条):项目里缺 `tiers.small`、本地内容库里有这份素材原尺寸的视频,
-     * 排进后台转码(不重封装 —— 哈希就是项目引用的那个,`.procp` 还原的素材同样)。
-     * 已有素材小尺寸(文件还在)或确定没有视频流的不动;上次失败的再试一次。转好之后照常交给上传队列。
-     * `ext` 是库里那份文件的扩展名。回 `{ state, small? }`,同 `status`。
+     * Catch-up transcoding for small-size assets when opening a project (design doc section 9 item 2):
+     * videos that lack `tiers.small` in the project but have their original-size asset in the local
+     * content store are scheduled for background transcoding (no remux: the hash is the one referenced
+     * by the project, same for assets restored from `.procp`).
+     * Leaves those with existing small-size assets (file still present) or confirmed to have no video
+     * stream untouched; retries previously failed ones. Once transcoded, hands off to the upload queue
+     * as usual.
+     * `ext` is the extension of the file in the store. Returns `{ state, small? }`, same as `status`.
      */
     async backfill({ hash, ext, name = '' }) {
       await ownership?.assert();
@@ -488,7 +520,7 @@ export function createTierManager({ dir, lib, ffmpeg, queue = null, log = () => 
       schedule(h);
       return { state: 'pending' };
     },
-    /** 这些素材原尺寸哈希的素材小尺寸情况:`{ [hash]: { state, small? } }`;没登记过的是 `state: 'unknown'` */
+    /** Small-size asset status for these original-size asset hashes: `{ [hash]: { state, small? } }`; unregistered ones have `state: 'unknown'` */
     status(hashes) {
       const out = {};
       for (const raw of hashes ?? []) {
@@ -499,11 +531,11 @@ export function createTierManager({ dir, lib, ffmpeg, queue = null, log = () => 
       }
       return out;
     },
-    /** 进程重启后:还是 pending 的接着转 */
+    /** After process restart: resume transcoding those still pending */
     resume() {
       for (const [hash, rec] of Object.entries(items)) if (rec?.state === 'pending') schedule(hash);
     },
-    /** 等转码队列空(测试、探针用) */
+    /** Waits for transcode queue to be empty (used by tests and probes) */
     idle() {
       if (!busy && !jobs.length) return Promise.resolve();
       return new Promise((resolve) => idle.push(resolve));

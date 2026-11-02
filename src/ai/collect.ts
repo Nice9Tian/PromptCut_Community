@@ -1,34 +1,37 @@
 /**
- * 素材收集的前端胶水：探拓展、装拓展、探链接、起下载作业、轮询。
+ * Frontend glue for media collection: probe extensions, install extensions, probe links, start
+ * download jobs, poll.
  *
- * 下载跑在服务端（python/promptcut_collect，yt-dlp 封装），文件先落服务端的临时目录、再经素材服务的入库接口进内容库，
- * 这边只负责等；等到 done 之后由调用方用 importVideoFromServer 按入库回来的标识把它登记成素材。
+ * Downloads run on the server (python/promptcut_collect, wrapping yt-dlp); files first land in the
+ * server's temp directory, then enter the content store via the asset service store API. The
+ * client only waits; once done, the caller uses importVideoFromServer to register it as an asset
+ * using the returned identifier.
  */
 import { readSseStream } from "../editor/io/stt";
 import type { UploadedMedia } from "../editor/io/mediaUpload";
 import { tr } from "../i18n/index.ts";
 
-/** 某个站点存盘的登录态 */
+/** Saved login state for a site */
 export interface SiteCookieStatus {
   name: string;
   loggedIn: boolean;
   expired: boolean;
   userId: string | null;
-  /** ISO 时间;会话 cookie 没有过期时间时为 null */
+  /** ISO time; null when session cookie has no expiration time */
   expiresAt: string | null;
   path: string | null;
 }
 
 export interface CollectStatus {
   ok: boolean;
-  /** 内置 Python 在不在 */
+  /** Whether built-in Python is present */
   python?: boolean;
-  /** yt-dlp 装了且 ffmpeg 找得到 */
+  /** yt-dlp is installed and ffmpeg is found */
   ready: boolean;
   ytdlp?: { installed: boolean; version: string | null; error: string | null };
   ffmpeg?: string | null;
   presets?: { name: string; notes: string }[];
-  /** 各站登录态,键是站点 id(bilibili) */
+  /** Login state for each site, keyed by site id (bilibili) */
   cookies?: Record<string, SiteCookieStatus>;
   reason?: string;
 }
@@ -37,13 +40,13 @@ export interface LoginResult {
   ok: boolean;
   error?: string;
   site?: string;
-  /** 已经登录且没过期,窗口没弹 */
+  /** Already logged in and not expired; window not popped up */
   alreadyLoggedIn?: boolean;
   userId?: string | null;
   expiresAt?: string | null;
-  /** 窗口已经挪到用户面前 */
+  /** Window has been moved in front of the user */
   visible?: boolean;
-  /** 桌面壳模式:浏览器是主窗口里的子 webview,要由前端 invoke 壳的命令摆到位 */
+  /** Desktop shell mode: browser is a child webview in main window, positioned by frontend invoking shell commands */
   shell?: boolean;
   message?: string;
 }
@@ -65,11 +68,11 @@ export interface LoginCheck {
 export interface QrStartResult {
   key: string;
   site: string;
-  /** 二维码里的内容 */
+  /** QR code content */
   url: string;
-  /** 有效期(秒) */
+  /** Validity period (seconds) */
   expiresIn: number;
-  /** 二维码图片的站内地址(SVG) */
+  /** In-site address of QR code image (SVG) */
   svgUrl: string;
 }
 
@@ -82,7 +85,7 @@ export interface QrPollResult {
   path?: string | null;
 }
 
-/** 扫码登录(接口版):拿一张二维码。图片用返回的 svgUrl 直接 <img> */
+/** QR code login (API version): fetch a QR code. Image renders directly via <img> with returned svgUrl */
 export async function qrStart(site = "bilibili"): Promise<QrStartResult> {
   const r = await fetch("/api/collect/qr/start", {
     method: "POST",
@@ -95,7 +98,7 @@ export async function qrStart(site = "bilibili"): Promise<QrStartResult> {
   return data as QrStartResult;
 }
 
-/** 扫码登录:问一次扫没扫。ok 时登录态已经存盘 */
+/** QR code login: poll once to check if scanned. On ok, login state is saved to disk */
 export async function qrPoll(key: string): Promise<QrPollResult> {
   const r = await fetch(`/api/collect/qr/poll?key=${encodeURIComponent(key)}`, { signal: AbortSignal.timeout(20_000) });
   const data = await r.json().catch(() => ({}));
@@ -103,7 +106,7 @@ export async function qrPoll(key: string): Promise<QrPollResult> {
   return data as QrPollResult;
 }
 
-/** 把站点登录页挪到用户面前。已登录且没过期时不弹窗,直接回 alreadyLoggedIn */
+/** Bring site login page to front. If logged in and not expired, skip dialog and return alreadyLoggedIn */
 export async function collectLogin(site = "bilibili", force = false): Promise<LoginResult> {
   const r = await fetch("/api/collect/login", {
     method: "POST",
@@ -116,7 +119,7 @@ export async function collectLogin(site = "bilibili", force = false): Promise<Lo
   return data as LoginResult;
 }
 
-/** 用户扫完码之后调:从浏览器取 cookie,登录了就存盘并把窗口藏回去 */
+/** Called after user scans QR code: fetch cookies from browser; if logged in, save to disk and hide window */
 export async function collectLoginCheck(site = "bilibili", hide = true): Promise<LoginCheck> {
   const r = await fetch("/api/collect/login/check", {
     method: "POST",
@@ -136,7 +139,7 @@ export async function cookieStatus(): Promise<Record<string, SiteCookieStatus>> 
   return data.cookies as Record<string, SiteCookieStatus>;
 }
 
-/** 退出登录:删掉存盘的 cookies.txt */
+/** Log out: delete saved cookies.txt */
 export async function collectLogout(site = "bilibili"): Promise<{ removed: boolean; cookies: Record<string, SiteCookieStatus> }> {
   const r = await fetch(`/api/collect/cookies?site=${encodeURIComponent(site)}`, { method: "DELETE" });
   const data = await r.json().catch(() => ({}));
@@ -157,9 +160,9 @@ export interface CollectProbe {
   webpage_url?: string;
   site?: string;
   url?: string;
-  /** 可选的清晰度（像素高度），从高到低 */
+  /** Available resolutions (pixel height), from high to low */
   heights?: number[];
-  /** 多 P 稿件的分 P 列表；单个视频为 null */
+  /** Part list for multi-part video; null for single video */
   parts?: { index: number; id: string; title: string; duration?: number }[] | null;
   subtitles?: string[];
   warnings?: string[];
@@ -169,11 +172,11 @@ export interface CollectItem {
   id?: string;
   title?: string;
   filename: string;
-  /** 入库后的地址 /@media/<hash> */
+  /** Address after storing: /@media/<hash> */
   url: string;
-  /** 内容哈希 */
+  /** Content hash */
   hash?: string;
-  /** 素材服务入库接口的回包(和用户导入拿到的是同一种) */
+  /** Response from asset service store API (same as what user import receives) */
   media?: UploadedMedia;
   bytes?: number;
   duration?: number;
@@ -193,7 +196,7 @@ export interface CollectJob {
   site?: string;
   quality: number;
   status: "running" | "done" | "error";
-  /** ingest:都下好了,正在送进素材库 */
+  /** ingest: all downloaded, currently sending into media library */
   stage: "starting" | "video" | "audio" | "merge" | "transcode" | "ingest" | "done";
   percent: number;
   stagePercent?: number;
@@ -230,7 +233,7 @@ export interface CollectSearchHit {
   upload_date?: string;
   description?: string;
   max_height?: number | null;
-  /** 单条探测失败时只有 url 和 error */
+  /** When single probe fails, only url and error are present */
   error?: string;
 }
 
@@ -246,7 +249,7 @@ export interface CollectSearch {
   warnings?: string[];
 }
 
-/** 站内搜索(B 站 / YouTube),给 agent 挑素材。每条要单独探测,limit 别超过 10 */
+/** In-site search (Bilibili / YouTube) for agent to pick media. Each item probed separately; keep limit <= 10 */
 export async function searchVideos(query: string, opts: { site?: string; limit?: number } = {}): Promise<CollectSearch> {
   const r = await fetch("/api/collect/search", {
     method: "POST",
@@ -265,7 +268,7 @@ export async function collectStatus(): Promise<CollectStatus> {
   return r.json();
 }
 
-/** 装 yt-dlp（纯 Python 轮子，约 3 MB）。流式读 pip 日志，和 installShots 一个路数。 */
+/** Install yt-dlp (pure Python wheel, ~3 MB). Streams pip logs, same pattern as installShots. */
 export async function installCollect(
   onLog?: (line: string) => void,
 ): Promise<{ ok: boolean; log: string[]; status?: CollectStatus }> {
@@ -330,7 +333,7 @@ export async function cancelDownload(jobId: string): Promise<void> {
   await fetch(`/api/collect/job/${jobId}`, { method: "DELETE" }).catch(() => {});
 }
 
-/** 等一个下载作业跑完。几十 MB 的视频通常几十秒，轮询间隔 1 秒。 */
+/** Wait for a download job to finish. Dozens of MB typically take tens of seconds; polling interval is 1s. */
 export async function waitForDownload(
   jobId: string,
   onProgress?: (job: CollectJob) => void,

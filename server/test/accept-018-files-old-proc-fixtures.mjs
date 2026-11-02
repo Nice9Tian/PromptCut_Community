@@ -1,22 +1,28 @@
 /**
- * 0.7.18 逐项验收 2.1-8「过期云端项目转本地」、2.1-19「清理后旧文件验收」用的合成旧文件矩阵(夹具,不是测试)。
+ * Synthetic legacy file matrix (fixtures, not tests) used by 0.7.18 itemized acceptance check
+ * 2.1-8 "Convert expired cloud project to local" and 2.1-19 "Acceptance check for legacy files
+ * after cleanup".
  *
- * 转换器(拿到文档服务签发的「已不存在」证明后把旧云端文件转成本地项目)在 main 上还没有,所以这里只造**旧文件样本**:
- * 与真实旧测试项目留下的 .proc / .procp 同形状(带 `collaboration` 关联、素材引用、卡片),将来转换器合入后拿它们当输入,
- * 真实旧文件复验(2.1-19)前也可以先拿它们把流程跑通。它们**不能**代替 2.1-19 要求的真实旧文件。
+ * The converter (which converts legacy cloud files to local projects after receiving the "no longer
+ * exists" certificate issued by the document service) is not on main yet, so only **legacy file
+ * samples** are created here: same shape as the .proc / .procp left by real legacy test projects
+ * (with `collaboration` associations, asset references, cards), to be used as input once the
+ * converter is merged in the future, and can also be used to verify the workflow before the
+ * re-verification of real legacy files (2.1-19). They **cannot** replace the real legacy files
+ * required by 2.1-19.
  *
- * 用法:
+ * Usage:
  *   import { buildOldProcMatrix } from './accept-018-files-old-proc-fixtures.mjs';
- *   const m = await buildOldProcMatrix(dir);   // m.files 是文件路径,m.expect 是每个样本应当满足的事实
+ *   const m = await buildOldProcMatrix(dir);   // m.files is file paths, m.expect is facts each sample should satisfy
  *
- * 样本(全是确定的内容,哈希固定,可重复):
- *   hostedAllMedia.procp     云端(hosted)房间关联 + 包里带齐 2 个素材
- *   hostedPartialMedia.procp 同上但包里只带 1 个(另一个不在包里)
- *   hostedNoMedia.procp      同上但包里一个素材都没有(只有编排)
- *   hostedPlain.proc         云端房间关联的普通 .proc(素材引用只有哈希和名字)
- *   lanPlain.proc            局域网(lan)房间关联的普通 .proc
- *   barePlain.proc           没有任何协作关联的旧 .proc
- *   bareLegacyJson.proc      更旧的裸 Project JSON(没有 format 外壳)
+ * Samples (all deterministic content, fixed hash, reproducible):
+ *   hostedAllMedia.procp     Cloud (hosted) room association + package has all 2 assets
+ *   hostedPartialMedia.procp Same as above, but package only has 1 (the other is not in package)
+ *   hostedNoMedia.procp      Same as above, but package has no assets at all (arrangement only)
+ *   hostedPlain.proc         Plain .proc with cloud room association (asset references have hash and name only)
+ *   lanPlain.proc            Plain .proc with LAN (lan) room association
+ *   barePlain.proc           Legacy .proc without any collaboration association
+ *   bareLegacyJson.proc      Older bare Project JSON (no format shell)
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -26,7 +32,7 @@ import { srcUrl } from '../../src/testing/registerTs.mjs';
 const proc = await import(srcUrl('editor/io/proc.ts'));
 const procp = await import(srcUrl('editor/io/procp.ts'));
 
-export const OLD_ROOM_ID = 'sp_abcdefghijklmnopqrstuvwxyz'; // sp_ + 26 位 base32 小写
+export const OLD_ROOM_ID = 'sp_abcdefghijklmnopqrstuvwxyz'; // sp_ + 26 lowercase base32 characters
 export const OLD_SERVICE = 'https://old-test-node.invalid';
 const sha = (buf) => createHash('sha256').update(buf).digest('hex');
 
@@ -71,7 +77,7 @@ export async function buildOldProcMatrix(dir) {
     media: MEDIA,
     roomId: OLD_ROOM_ID,
     service: OLD_SERVICE,
-    /** 每个样本应当满足的事实(转换器合入后,转换结果的「内容不丢」就拿这些比) */
+    /** Facts each sample should satisfy (compared for "no content lost" in conversion results once converter is merged) */
     expect: {
       hostedAllMedia: { association: 'hosted', packedHashes: MEDIA.map(m => m.hash) },
       hostedPartialMedia: { association: 'hosted', packedHashes: [MEDIA[0].hash], absentHashes: [MEDIA[1].hash] },

@@ -33,7 +33,8 @@ export const numberTickerCard: CardDef<Params> = {
   useWhen: "A single large full-screen centered number that scrolls with spring motion, with its own unit and a one-line caption, and thousands separators (12,480). For a mechanical flip-wheel feel use odometer; for the evidence-style layout with bilingual lead text and a data-source footnote use stat-proof.",
   tags: ["number","scroll"],
   source: "magicui",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: { value: 100, label: "已完成目标", unit: "%", accent: "" },
   controls: [

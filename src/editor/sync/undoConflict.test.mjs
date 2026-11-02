@@ -1,12 +1,17 @@
 /**
- * 按撤销按钮遇到冲突 → 「冲突合并」窗口(0.7.20 接上 0.7.19 留的口子)。跑:node --test src/editor/sync/undoConflict.test.mjs
+ * Clicking undo button encounters conflict → "Conflict merge" dialog (0.7.20 connects to opening
+ * left by 0.7.19). Run: node --test src/editor/sync/undoConflict.test.mjs
  *
- * UC-01 撤销按修改项细分:同一片段里没被别人改过的属性直接撤(不进撤销栈),别人改过的进待合并表(来源 undo),
- *       窗口里写「落地后 → 撤回后(云端现在是 …)」;点「合并」照撤回后的值写回去(安全论证 2、4)
- * UC-02 没有冲突:照旧直接撤,不给窗口材料
- * UC-03 AI 栏「撤销这一步」(撤 Agent 那一步)遇到冲突同样给材料、同样细分
- * UC-04 改密退出触发的撤回到达页面:只是一次远端修改,不产生撤销提示、不进窗口(两条路不混,安全论证 4);
- *       气泡的字是「〈用户名〉撤回了内容」(安全论证 5)
+ * UC-01 Undo subdivided by modified item: properties untouched by others in the same clip undone
+ *       directly (do not enter undo stack), properties modified by others enter pending merge
+ *       table (source undo), dialog displays "landed → after undo (cloud is currently ...)";
+ *       clicking "Merge" writes back value after undo (safety arguments 2, 4)
+ * UC-02 No conflict: undo directly as before, provide no dialog material
+ * UC-03 AI panel "Undo this step" (undoing that Agent step) encounters conflict: likewise provides
+ *       material and subdivides
+ * UC-04 Undo triggered by password change exit reaches page: merely a remote modification, generates
+ *       no undo notice, does not enter dialog (two paths not mixed, safety argument 4);
+ *       bubble text is "<username> revoked content" (safety argument 5)
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test from "node:test";
@@ -63,7 +68,7 @@ test("UC-01 Undo is broken down per changed item: items nobody else changed are 
   const rows = mergeRows(A.ds.project, plan.things);
   assert.equal(rows[0].props[0].text, "Opacity 0.8 → 0.4 (The cloud is now 0.6)");
   assert.equal(rows[0].conflict, true);
-  // 用户在窗口里勾上、点「合并」:照撤回后的值写
+  // User checks item in dialog and clicks "Merge": write according to value after undo
   const merged = applyMerge(A.ds.project, plan.things, new Map([["undo:clip:c1", new Set(["opacity"])]]));
   assert.equal(clip(merged.project, "c1").opacity, 0.4);
 });

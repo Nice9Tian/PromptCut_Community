@@ -6,36 +6,40 @@ import "./chat.css";
 import { tr } from "../../../i18n/index.ts";
 
 /**
- * 剧本页:rail 上独立的一项(原来是一个弹窗),默认在右侧,也可以拖到左侧。
+ * Script page: an independent item on the rail (it used to be a popup), on the right by default, and
+ * can also be dragged to the left.
  *
- * 编辑期间只改本地草稿,点保存才写进 store —— 中途改了一半就被 AI 读走是更糟的体验。
+ * While editing, only a local draft changes, and it is written into the store only when Save is clicked:
+ * having it half-edited and read by the AI midway would be a worse experience.
  *
- * 页面常驻挂载(不在前台时 display:none),所以没有「每次打开都从 store 取最新」那一刻,
- * 改成:手上没有没保存的修改时,store 一变(AI 在上一轮里改过剧本)草稿直接跟上;
- * 有没保存的修改就不动它,只提示一句,由用户决定保存覆盖还是撤销换成新的那一版。
+ * The page stays mounted (display:none when not in front), so there is no moment of "fetch the latest
+ * from the store on every open". Instead: when there are no unsaved changes, the draft follows the store
+ * as soon as it changes (the AI edited the script in the previous turn);
+ * when there are unsaved changes it is left alone and only a notice is shown, and the user decides
+ * whether to save and overwrite or to discard and switch to the new version.
  */
 export function ScriptPage(props: { active: boolean }) {
   const { active } = props;
   const side = useDockSide("right");
   const saved = useScript();
   const [draft, setDraft] = useState(saved);
-  /** 草稿是从哪一版改起的。和草稿相同 = 用户没动过 */
+  /** Which version the draft was edited from. Equal to the draft = the user hasn't touched it */
   const [base, setBase] = useState(saved);
   const [justSaved, setJustSaved] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const dirty = draft !== base;
-  /** 用户在改的这段时间里,store 里的剧本被别处(AI)换掉了 */
+  /** While the user was editing, the script in the store was replaced elsewhere (by the AI) */
   const stale = saved !== base;
 
   useEffect(() => {
     if (saved === base || dirty) return;
     setDraft(saved);
     setBase(saved);
-    // 只跟 store 走;dirty / base 在这一刻读到的就是最新值
+    // Follow only the store; dirty / base read at this moment are the latest values
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saved]);
 
-  // 从别的页切过来时把焦点放进编辑区。首次挂载不抢焦点:刷新回来正好停在剧本页时,焦点该留在原处
+  // Put focus into the editing area when switching in from another page. Don't steal focus on first mount: when a refresh happens to land on the script page, focus should stay where it was
   const wasActive = useRef(active);
   useEffect(() => {
     if (active && !wasActive.current) textRef.current?.focus();
@@ -60,8 +64,9 @@ export function ScriptPage(props: { active: boolean }) {
 
   return (
     <section className="pc-script-page" data-pc="script-page" aria-label={tr("Script")} style={{ display: active ? undefined : "none" }}>
-      {/* 顶栏和助手分页的 ChatHeader 同高、同内边距:切页时「收起面板」停在同一个位置。
-          收起钮跟着所在一侧走:在右侧放最左边,在左侧放最右边 */}
+      {/* The top bar and the assistant tab's ChatHeader have the same height and padding: "Collapse panel"
+          stays in the same position when switching tabs. The collapse button follows the side it is on:
+          placed on the far left on the right side, and on the far right on the left side */}
       <div className={`pc-script-head${side === "left" ? " is-left" : ""}`}>
         <CollapsePanelButton placement="start" />
         <span className="pc-section-title">{tr("Script")}</span>
@@ -85,7 +90,7 @@ export function ScriptPage(props: { active: boolean }) {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
-            // Ctrl/Cmd+Enter 保存,和别处的输入框一致
+            // Ctrl/Cmd+Enter saves, consistent with the input boxes elsewhere
             if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
               e.preventDefault();
               if (dirty) save();

@@ -8,14 +8,15 @@ import "./agent.css";
 import { tr } from "../../../i18n/index.ts";
 
 /**
- * 输入框上方的一条:这一页里正在跑的 Agent 此刻在做哪一步。
+ * A strip above the input box: what step the Agent running in this page is doing right now.
  *
- * 以前步骤在气泡里竖排成一串(StepStrip),几十步之后气泡被撑得很长,
- * 真正要看的「现在」沉在最底下,还跟着消息列表一起滚走。改成钉在输入框上方、只显示当前一步:
- * 不管滚到哪里都看得见它在忙什么、忙了多久。
+ * Previously the steps were stacked vertically in the bubble (StepStrip); after dozens of steps the
+ * bubble got stretched very long, and the "now" that really matters sank to the very bottom and
+ * scrolled away with the message list. Changed to be pinned above the input box and show only the
+ * current step: wherever you scroll, you can see what it is busy with and for how long.
  */
 
-/** 已用时间:一分钟以内「12s」,再长「3m05s」 */
+/** Elapsed time: within a minute "12s", longer "3m05s" */
 function fmtElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   if (s < 60) return `${s}s`;
@@ -23,8 +24,9 @@ function fmtElapsed(ms: number): string {
 }
 
 /**
- * 条带上的那句话。优先用思考里的步骤标题(模型自己报的进度,最贴近它在想什么);
- * 没有就看正在跑的工具;都没有就是还在想。
+ * The sentence on the strip. Prefer the step title from the thinking (the progress the model reports
+ * itself, closest to what it is thinking); if there is none, look at the tool that is running; if
+ * neither, it is still thinking.
  */
 export function stripText(m: ChatMessage): string {
   const p = m.progress as Record<string, any> | undefined;
@@ -45,7 +47,7 @@ export function stripText(m: ChatMessage): string {
 
 export function ThinkingStrip(props: { messages: ChatMessage[]; streaming: boolean }) {
   const { messages, streaming } = props;
-  // 只看最后一条还在跑的 Agent 消息。分工模式下可能好几条同时 pending,条带只有一行,跟最新的那条
+  // Look only at the last Agent message still running. In split-work mode several may be pending at once, the strip has only one line, so follow the latest one
   let m: ChatMessage | undefined;
   for (let i = messages.length - 1; i >= 0; i--) {
     const x = messages[i];
@@ -57,11 +59,11 @@ export function ThinkingStrip(props: { messages: ChatMessage[]; streaming: boole
   const active = !!m && (streaming || !!m.pending);
 
   const [now, setNow] = useState(() => Date.now());
-  // 开始时间优先用消息自带的 startedAt;老数据没有就记第一次看到这条消息的时刻
+  // For the start time, prefer the message's own startedAt; old data has none, so record the moment this message was first seen
   const seenAt = useRef<{ id: string; at: number } | null>(null);
   if (m && seenAt.current?.id !== m.id) seenAt.current = { id: m.id, at: m.startedAt ?? Date.now() };
 
-  // 已用时间每秒刷新;不在跑就停表,别让一个看不见的计时器一直唤醒整个面板
+  // Elapsed time refreshes every second; when not running, stop the clock, so an invisible timer doesn't keep waking the whole panel
   useEffect(() => {
     if (!active) return;
     setNow(Date.now());
@@ -77,7 +79,7 @@ export function ThinkingStrip(props: { messages: ChatMessage[]; streaming: boole
     <div className="ai-tstrip">
       <span className="ai-tstrip-dot" aria-hidden />
       <span className="ai-tstrip-textwrap" role="status" aria-live="polite">
-        {/* key 跟着文字走:换一步就重新挂载,淡入动画重放一次 */}
+        {/* key follows the text: changing a step remounts it and replays the fade-in animation once */}
         <span key={text} className="ai-tstrip-text" title={text}>
           {text}
         </span>

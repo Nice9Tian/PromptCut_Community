@@ -1,9 +1,10 @@
 /**
- * M6a 共享项目：素材票据（契约 `docs/plan/auth-contract.md` 第 8 节，用例 AU7）。
- * 跑：node --test server/test/auth-tickets.test.mjs
+ * M6a shared project: asset tickets (contract `docs/plan/auth-contract.md` section 8, test case AU7).
+ * Run: node --test server/test/auth-tickets.test.mjs
  *
- * 只照契约写，不看实现。素材服务与文档服务同一进程、共用凭证存储（`host.auth`），接法是测试方的假设，
- * 集中在 `auth-kit.mjs` 文件头。
+ * Written strictly against the contract, ignoring implementation. The asset service and document
+ * service are in the same process, sharing credential store (`host.auth`); wiring is a test
+ * assumption, centralized in the `auth-kit.mjs` file header.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -126,7 +127,7 @@ test('AU7 write: no ticket, read-only ticket, wrong signature, query string → 
 
   const ok = await remotePut(env, LAN, bearer(rw));
   assert.equal(ok.status, 200, `write with a read-write ticket: ${ok.buf.toString()}`);
-  // complete 也要票据
+  // complete also requires a ticket
   const hash = ok.json.hash;
   const c0 = await env.asset(`media/${hash}/complete`, { method: 'POST', remote: LAN });
   assert.equal(c0.status, 401, 'complete with no ticket');
@@ -146,7 +147,7 @@ test('AU7 project generation changed (set-password) → old ticket returns 401; 
   assert.equal(after.status, 401, 'old ticket returns 401 after set-password');
   assert.deepEqual(after.json, { ok: false, error: 'unauthorized' });
   assert.equal((await read(env, blob.hash, {}, `?t=${encodeURIComponent(old)}`)).status, 401, 'same for the query string');
-  // 在线连接不断，仍能要新票据
+  // While the online connection remains active, new tickets can still be requested
   const fresh = (await ticketOf(member, { kind: 'asset', access: 'r' })).ticket;
   assert.ok(parseTicket(fresh).body.g > parseTicket(old).body.g, 'new ticket carries the new project generation');
   assert.equal((await read(env, blob.hash, bearer(fresh))).status, 200);

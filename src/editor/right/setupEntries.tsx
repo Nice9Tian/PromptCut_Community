@@ -3,20 +3,22 @@ import type { AiProvider } from "../../ai/types";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 设置对话框第一级的五个入口。
+ * The five entries at the first level of the settings dialog.
  *
- * 前三个各对应一个 CLI;后两个都落到同一个 `api` 驱动上,区别只在**配置怎么进来**:
- * Router 是粘一段密文自动解出来,自定义 API 是自己一个个字段填。
- * 所以 `provider` 有重复,选了哪个「面孔」另外记在 localStorage 里(纯界面偏好)。
+ * The first three each correspond to a CLI; the last two both land on the same `api` driver, and
+ * differ only in **how the configuration comes in**: Router pastes a distribution string that is
+ * decoded automatically, custom API has you fill in the fields one by one.
+ * So `provider` has duplicates, and which "face" was chosen is recorded separately in localStorage
+ * (a pure UI preference).
  */
 export type SetupEntryId = "codex" | "claude" | "agy" | "router" | "custom";
 
 export interface SetupEntry {
   id: SetupEntryId;
-  /** 落到后端的哪个驱动 */
+  /** Which backend driver it lands on */
   provider: AiProvider;
   name: string;
-  /** 卡片上的一句话 */
+  /** One-line description on the card */
   tagline: string;
   icon: JSX.Element;
 }
@@ -33,7 +35,7 @@ const ICON_PROPS = {
   "aria-hidden": true,
 };
 
-/** 终端提示符:三个 CLI 共用的底,再各自叠一个记号 */
+/** Terminal prompt: a base shared by the three CLIs, each overlaid with its own mark */
 const IconCodex = (
   <svg {...ICON_PROPS}>
     <rect x="2.5" y="4" width="19" height="16" rx="2.5" />
@@ -42,7 +44,7 @@ const IconCodex = (
   </svg>
 );
 
-/** Claude:一个放射状的星芒 */
+/** Claude: a radial starburst */
 const IconClaude = (
   <svg {...ICON_PROPS}>
     <path d="M12 3v18M3 12h18" />
@@ -51,7 +53,7 @@ const IconClaude = (
   </svg>
 );
 
-/** Antigravity:一个向上脱离的箭头 */
+/** Antigravity: an arrow breaking away upward */
 const IconAntigravity = (
   <svg {...ICON_PROPS}>
     <path d="M12 20V5" />
@@ -61,7 +63,7 @@ const IconAntigravity = (
   </svg>
 );
 
-/** Router:一个中心节点分发到三处 */
+/** Router: a central node distributing to three places */
 const IconRouter = (
   <svg {...ICON_PROPS}>
     <circle cx="12" cy="12" r="3" />
@@ -72,7 +74,7 @@ const IconRouter = (
   </svg>
 );
 
-/** 自定义 API:一把钥匙 */
+/** Custom API: a key */
 const IconCustom = (
   <svg {...ICON_PROPS}>
     <circle cx="8" cy="8" r="4" />
@@ -82,7 +84,7 @@ const IconCustom = (
   </svg>
 );
 
-/** 顺序就是界面上的顺序 */
+/** The order is the order in the UI */
 export const SETUP_ENTRIES: SetupEntry[] = [
   { id: "codex", provider: "codex", name: "Codex CLI", tagline: tr("OpenAI's official CLI"), icon: IconCodex },
   { id: "claude", provider: "claude", name: "Claude Code CLI", tagline: tr("Anthropic's official CLI"), icon: IconClaude },
@@ -99,7 +101,7 @@ export function isCliEntry(id: SetupEntryId): boolean {
 
 const FACE_KEY = "aiSetupFace";
 
-/** 记住上次选的是 Router 还是自定义 API —— 两者后端是同一个驱动,分不出来 */
+/** Remember whether Router or custom API was chosen last time: both use the same driver on the backend, so they cannot be told apart */
 export function readFace(): SetupEntryId | null {
   try {
     const saved = localStorage.getItem(FACE_KEY);
@@ -113,6 +115,6 @@ export function writeFace(id: SetupEntryId): void {
   try {
     localStorage.setItem(FACE_KEY, id);
   } catch {
-    /* 无痕模式之类,记不住就算了,不影响功能 */
+    /* Incognito mode and the like: if it cannot be remembered, so be it, no functional impact */
   }
 }

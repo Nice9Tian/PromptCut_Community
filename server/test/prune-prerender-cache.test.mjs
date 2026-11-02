@@ -17,7 +17,7 @@ async function file(root, rel, when) {
   await fs.utimes(full, when, when);
   return full;
 }
-/** 把目录自身的 mtime 也拨回去(建文件会刷新它),从最里层往外 */
+/** Also dial back directory's own mtime (file creation refreshes it), innermost outward */
 async function age(root, rel, when) {
   const parts = rel.split('/');
   for (let i = parts.length; i > 0; i--) await fs.utimes(path.join(root, ...parts.slice(0, i)), when, when);
@@ -27,14 +27,14 @@ async function library() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-prune-'));
   await file(root, `controls-html/${key(1)}/0.html`, OLD); await age(root, `controls-html/${key(1)}`, OLD);
   await file(root, `controls-html/${key(2)}/0.html`, NEW);
-  // 旧目录里有一个新文件:整个目录保留
+  // One new file in an old directory: keep the entire directory
   await file(root, `controls/${key(3)}/mov/frames/000000.png`, OLD);
   await file(root, `controls/${key(3)}/mov/frames/000001.png`, NEW);
   await file(root, `controls-local/${key(4)}/${key(5)}/0.html`, OLD); await age(root, `controls-local/${key(4)}/${key(5)}`, OLD);
   await file(root, `streams/${key(6)}/stream.json`, OLD); await age(root, `streams/${key(6)}`, OLD);
   await file(root, `tracks/${key(7)}/000000.png`, OLD); await age(root, `tracks/${key(7)}`, OLD);
   await file(root, `${key(8)}/html-manifest.json`, OLD); await age(root, key(8), OLD);
-  // 不该碰的:锁目录、认不出的目录名、根下的普通文件
+  // What should not be touched: lock directories, unrecognized directory names, regular files under root
   await file(root, `controls-lock/${key(9)}.json`, OLD);
   await file(root, `controls-html/not-a-key/0.html`, OLD);
   await file(root, 'readme.txt', OLD);

@@ -1,7 +1,8 @@
-// 二维码编码器。跑法:node --test server/test/qr.test.mjs
+// QR code encoder. Run: node --test server/test/qr.test.mjs
 //
-// 三个指纹是 2026-09-08 用 Python 的 qrcode 库(96 组:版本 1~13、L/M、8 种掩码逐模块对拍
-// 全部一致)之后,再经 jsQR 实际解码确认过的产物。以后改了编码器,指纹变就得重新对拍。
+// The three fingerprints are artifacts confirmed on 2026-09-08 via actual decoding with jsQR after
+// module-by-module cross-checks against Python's qrcode library (96 sets: versions 1-13, L/M,
+// 8 masks, all matching). If the encoder changes later and fingerprints change, re-cross-check.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
@@ -26,7 +27,7 @@ test('fingerprint: three codes cross-checked against the reference library', () 
 test('byte mode header: mode 0100 + count (versions ≤9 use 8 bits, ≥10 use 16 bits)', () => {
   const s = encodeCodewords('hello 你好', { ec: 'M' });
   assert.equal(s.version, 1);
-  // "hello 你好" 是 12 字节:0100 0000_1100 → 0x40, 0xC6…
+  // "hello ni hao" is 12 bytes: 0100 0000_1100 → 0x40, 0xC6…
   assert.equal(s.data[0], 0x40);
   assert.equal(s.data[1], 0xc6);
   assert.equal(s.data.length, 16, 'version 1-M has 16 data codewords');
@@ -41,7 +42,7 @@ test('function patterns: three finder patterns, timing, fixed dark module', () =
   const q = encodeQr('abc');
   const m = q.modules;
   const n = q.size;
-  // 定位图案外圈 7×7 全暗,里面第二圈全亮
+  // Finder pattern outer 7×7 ring is all dark, inner second ring is all light
   for (const [cx, cy] of [[3, 3], [n - 4, 3], [3, n - 4]]) {
     for (let d = -3; d <= 3; d++) {
       assert.equal(m[cy - 3][cx + d], true);
@@ -52,7 +53,7 @@ test('function patterns: three finder patterns, timing, fixed dark module', () =
     assert.equal(m[cy - 2][cx], false);
     assert.equal(m[cy][cy === 3 && cx === 3 ? cx : cx], true, 'the center is dark');
   }
-  // 时序:第 6 行 / 列在两个定位图案之间明暗交替
+  // Timing: row / col 6 alternates between dark and light between the two finder patterns
   for (let i = 8; i < n - 8; i++) {
     assert.equal(m[6][i], i % 2 === 0);
     assert.equal(m[i][6], i % 2 === 0);
@@ -72,7 +73,7 @@ test('mask: when none is specified, pick the one with the lowest penalty; when o
   const auto = encodeQr(BILI);
   assert.ok(auto.mask >= 0 && auto.mask <= 7);
   for (let k = 0; k < 8; k++) assert.equal(encodeQr(BILI, { mask: k }).mask, k);
-  // 同一个输入两次结果一样
+  // Same input produces the same result twice
   assert.equal(fingerprint(encodeQr(BILI)), fingerprint(encodeQr(BILI)));
 });
 

@@ -1,16 +1,20 @@
 /**
- * 节点侧 WebSocket 端点与端点解析（契约 `docs/plan/render-queue-contract.md` G.7、G.11，用例 T1～T9）。
- * 跑：node --test server/test/render-node-ws.test.mjs
+ * Node-side WebSocket endpoint and endpoint resolution (contract
+ * `docs/plan/render-queue-contract.md` G.7, G.11, test cases T1-T9).
+ * Run: node --test server/test/render-node-ws.test.mjs
  *
- * 只照契约写，不看实现。对真文档服务（端口 0）跑；「服务端强行断开」「连不上」「换一台服务」
- * 用测试里的 TCP 代理（`fake-ws-kit.mjs` 的 createTcpProxy）做：cutAll 断开、mode = 'reject' 让新连接
- * 一接上就断、retarget 换目标。
+ * Written to the contract only, without looking at the implementation. Runs against a real
+ * document service (port 0); "server forcibly disconnects", "cannot connect", and
+ * "switch to another service" are handled via the test's TCP proxy (createTcpProxy in
+ * `fake-ws-kit.mjs`): cutAll disconnects, mode = 'reject' drops new connections as soon as
+ * they connect, retarget switches targets.
  *
- * 重连等待按 G.7 公式、G.11「抖动乘在封顶之后」核对：第 n 次（从 0 起）等
- * `min(maxMs, baseMs × factor^n) × (1 + jitter × (2·random() − 1))`。计时器注入：
- *   manualTimers  重连计时器攒着不跑，测试手动 fire（T2、T3、T7）；
- *   fastTimers    记下请求的毫秒数，实际只等几毫秒（T4、T5、T8）。
- * 毫秒数 ≤ 0 的计时器不当作重连等待，照常马上跑。
+ * Reconnect wait is verified against the G.7 formula and G.11 "jitter multiplied after capping":
+ * attempt n (0-based) waits `min(maxMs, baseMs × factor^n) × (1 + jitter × (2·random() − 1))`.
+ * Timer injection:
+ *   manualTimers  holds reconnect timers without running them; tests manually fire them (T2, T3, T7);
+ *   fastTimers    records requested milliseconds, actually waits only a few milliseconds (T4, T5, T8).
+ * Timers with milliseconds ≤ 0 are not treated as reconnect waits and run immediately as usual.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,7 +30,8 @@ import { startSharedService, createProject, deviceId as newDeviceId } from './fa
 import { buildAuthProtocols } from '../auth/client.mjs';
 
 const BACKOFF = { baseMs: 500, factor: 2, maxMs: 15_000, jitter: 0.2 };
-// M6c X3：host 的 watch 'all' 只收摘要（按扫描周期发现项目），T 系列测的是传输，节点改用 pc 照旧收全量（原为 host）
+// M6c X3: host watch 'all' receives only summaries (discovering projects by scan cycle);
+// T series tests transport, node switched to pc to receive full data as before (originally host)
 const NODE = Object.freeze({ profile: 'pc', envFingerprint: 'fp-ws-test', codeVersions: [], capabilities: {} });
 
 const loadTransport = () => import('../render-node/ws-transport.mjs');
@@ -35,7 +40,7 @@ const loadResolver = () => import('../render-node/endpoint.mjs');
 const approx = (actual, expected, what) => assert.ok(Math.abs(actual - expected) < 1e-6, `${what}: expected ${expected}, got ${actual}`);
 const expectedDelay = (n, r, b = BACKOFF) => Math.min(b.maxMs, b.baseMs * b.factor ** n) * (1 + b.jitter * (2 * r - 1));
 
-/** 起文档服务（端口 0）并挂真队列；token 给了就是令牌模式 */
+/** Start document service (port 0) with real queue attached; token mode if token is provided. */
 async function startQueueService({ token, modules } = {}) {
   const options = { log: () => {} };
   if (token !== undefined) {
@@ -51,7 +56,7 @@ async function startQueueService({ token, modules } = {}) {
   return { service, queue, port, url: `ws://127.0.0.1:${port}` };
 }
 
-/** 重连计时器攒着，测试手动 fire */
+/** Accumulate reconnect timers; test fires them manually. */
 function manualTimers() {
   const pending = [];
   const delays = [];
@@ -83,7 +88,7 @@ function manualTimers() {
   };
 }
 
-/** 记下请求的毫秒数，实际只等 realMs */
+/** Record requested milliseconds; actually wait only realMs. */
 function fastTimers(realMs = 5) {
   const delays = [];
   return {
@@ -96,7 +101,7 @@ function fastTimers(realMs = 5) {
   };
 }
 
-/** 建端点并记下事件 */
+/** Create endpoint and record events. */
 async function endpoint(options) {
   const { createWsEndpoint } = await loadTransport();
   const ep = createWsEndpoint({ log: () => {}, ...options });
@@ -107,7 +112,7 @@ async function endpoint(options) {
   return { ep, rec };
 }
 
-/** 本机节点接到端点上（G.7 的约定写法），并起节拍 */
+/** Connect local node to endpoint (contract convention in G.7) and start tick. */
 function attachNode(ep, { nodeId, executor = createSleepExecutor({ taskMs: 30 }), sink = createArtifactSink(), maxConcurrent = 1, tickMs = 10 }) {
   const events = [];
   const node = createLocalNode({
@@ -116,11 +121,11 @@ function attachNode(ep, { nodeId, executor = createSleepExecutor({ taskMs: 30 })
   });
   ep.onOpen(() => node.start(node.session.held().map(({ id, token }) => ({ id, token }))));
   if (ep.connected) node.start([]);
-  const timer = setInterval(() => { try { node.tick(); } catch { /* 断线时发送失败由端点吞掉 */ } }, tickMs);
+  const timer = setInterval(() => { try { node.tick(); } catch { /* Send failures upon disconnection are swallowed by endpoint */ } }, tickMs);
   return { node, events, executor, sink, stop() { clearInterval(timer); node.stop(); } };
 }
 
-/** 页面发布方：直连服务 */
+/** Page publisher: connect directly to service. */
 async function publisher(url, publisherId = 'page-1') {
   const c = wsClient(url);
   await c.opened;
@@ -131,8 +136,10 @@ async function publisher(url, publisherId = 'page-1') {
 
 // ------------------------------------------------------------------ T1
 
-// M6a：原来的「令牌模式」测的是「带凭证握手的端点也能连上、报到」。集群令牌退出数据面之后，改成凭共享项目的证明
-// 进入（`protocols()` 每次连之前现取挑战，auth-contract 第 11 节），角色 render；principal 是这个成员身份。
+// M6a: The original "token mode" tested that "endpoints with credential handshakes can also connect
+// and check in". After cluster tokens exited the data plane, changed to entering via shared project
+// proof (`protocols()` fetches challenge fresh before each connection, auth-contract Section 11),
+// role render; principal is this member identity.
 for (const mode of ['anonymous', 'shared']) {
   test(`T1 createWsEndpoint against the real document service (${mode === 'shared' ? 'shared project credentials' : 'Anonymous mode'}): onOpen fires and local-node receives node.welcome`, async (t) => {
     let env;
@@ -257,13 +264,14 @@ test('T3 while disconnected, send returns false and the stats().dropped count is
   assert.equal(after.dropped, before.dropped + 3);
   assert.equal(after.sent, before.sent, 'Dropped messages are not counted in sent');
 
-  // 重连后不重放断线期间的消息
+  // Do not replay messages from during disconnection after reconnecting
   proxy.mode = 'pass';
   const seen = rec.messages.length;
   timers.fire();
   await waitFor(() => rec.opens === 2, 3000, 'reconnect');
   await sleep(150);
-  // 断线期间丢的是没报到就发的 queue.watch：若被重放，队列会回 error { reason: 'not-registered' }
+  // Dropped during disconnection is queue.watch sent before check in: if replayed,
+  // queue returns error { reason: 'not-registered' }
   assert.deepEqual(rec.messages.slice(seen), [], 'Messages during a disconnect are always dropped, not cached for replay');
   assert.equal(ep.stats().sent, after.sent, 'Nothing is resent after reconnecting');
 });
@@ -386,11 +394,12 @@ test('T6 resolveDocservice: environment variable address available → remote; u
   const dead = deadServer.port;
   const dead2 = deadServer2.port;
   const ws = (p, path = '') => `ws://127.0.0.1:${p}${path}`;
-  // 能回响应的服务器放宽到 5000 ms：全量 npm test 时 CPU 被并行的测试文件占满，本机 /healthz 偶尔超过 1 s 才回。
-  // 只有专门测超时的 hang 一项（第 8 项）单独传较短的超时。
+  // Relax servers that can respond to 5000 ms: during full npm test, CPU is saturated by parallel test
+  // files, and local /healthz occasionally takes over 1 s to respond.
+  // Only the hang case specifically testing timeouts (item 8) passes a shorter timeout separately.
   const run = (env, extra = {}) => resolveDocservice({ env, timeoutMs: 5000, ...extra });
 
-  // 1. 环境变量地址可用
+  // 1. Environment variable address is available
   const r1 = await run({ PROMPTCUT_DOCSERVICE_URL: ws(good.port), PROMPTCUT_DOCSERVICE_PORT: String(good2.port) });
   assert.equal(r1.mode, 'remote');
   assert.equal(r1.url, ws(good.port));
@@ -398,45 +407,47 @@ test('T6 resolveDocservice: environment variable address available → remote; u
   assert.equal(r1.tried.length, 1, 'Stops trying once item 1 is available');
   assert.deepEqual([r1.tried[0].url, r1.tried[0].ok], [ws(good.port), true]);
 
-  // 2. 环境变量地址不可用、回环可用
+  // 2. Environment variable address unavailable, loopback available
   const r2 = await run({ PROMPTCUT_DOCSERVICE_URL: ws(dead), PROMPTCUT_DOCSERVICE_PORT: String(good2.port) });
   assert.equal(r2.mode, 'local');
   assert.equal(r2.url, `ws://127.0.0.1:${good2.port}`);
   assert.deepEqual(r2.tried.map((x) => x.ok), [false, true]);
   assert.equal(typeof r2.tried[0].reason, 'string');
 
-  // 3. 都不可用
+  // 3. Neither is available
   const r3 = await run({ PROMPTCUT_DOCSERVICE_URL: ws(dead), PROMPTCUT_DOCSERVICE_PORT: String(dead2) });
   assert.equal(r3.mode, 'offline');
   assert.equal(r3.url, undefined);
   assert.deepEqual(r3.tried.map((x) => x.ok), [false, false]);
 
-  // 4. protocol 不符 → 跳过并记 protocol-mismatch
+  // 4. protocol mismatch → skip and record protocol-mismatch
   const r4 = await run({ PROMPTCUT_DOCSERVICE_URL: ws(mismatch.port), PROMPTCUT_DOCSERVICE_PORT: String(good2.port) });
   assert.equal(r4.mode, 'local');
   assert.equal(r4.tried[0].ok, false);
   assert.equal(r4.tried[0].reason, 'protocol-mismatch');
 
-  // 5. ok 不是 true → 不可用
+  // 5. ok is not true → unavailable
   const r5 = await run({ PROMPTCUT_DOCSERVICE_URL: ws(notOk.port), PROMPTCUT_DOCSERVICE_PORT: String(dead) });
   assert.equal(r5.mode, 'offline');
 
-  // 6. 没设环境变量地址（包括空串，G.11）→ 只试回环
+  // 6. Environment variable address not set (including empty string, G.11) → try loopback only
   for (const env of [{ PROMPTCUT_DOCSERVICE_PORT: String(good2.port) }, { PROMPTCUT_DOCSERVICE_URL: '', PROMPTCUT_DOCSERVICE_PORT: String(good2.port) }]) {
     const r = await run(env);
     assert.equal(r.mode, 'local', JSON.stringify(env));
     assert.equal(r.tried.length, 1, JSON.stringify(r.tried));
   }
 
-  // 7. 不是 ws: / wss: → bad-url，继续试下一项（G.11）
+  // 7. Not ws: / wss: → bad-url, continue trying the next item (G.11)
   const r7 = await run({ PROMPTCUT_DOCSERVICE_URL: `http://127.0.0.1:${good.port}`, PROMPTCUT_DOCSERVICE_PORT: String(good2.port) });
   assert.equal(r7.mode, 'local');
   assert.deepEqual([r7.tried[0].ok, r7.tried[0].reason], [false, 'bad-url']);
 
-  // 8. 探活超时 → 不可用，继续下一项
-  // 慢的那个（hang）照旧用 1000 ms 超时、照旧要在 3 s 内判掉；只放宽「好的那个」（回环 good2）：机器忙时它的 /healthz
-  // 可能超过 1 s 才回（见上面 run 的注释），所以注入的 fetch 对 good2 不传探活的 abort 信号，让它不受 1 s 限制。
-  // hang 的请求原样带信号，计时只算 hang 这一次探活。
+  // 8. Health check timeout → unavailable, continue to the next item
+  // The slow one (hang) still uses the 1000 ms timeout as before and still must be failed within 3 s;
+  // only relax "the good one" (loopback good2): when the machine is busy, its /healthz may take more
+  // than 1 s to respond (see the run comment above), so the injected fetch does not pass the health
+  // check abort signal to good2, leaving it exempt from the 1 s limit.
+  // Requests for hang carry the signal as is, and timing only counts this health check for hang.
   let hangMs = null;
   const f8 = async (target, init = {}) => {
     const port = new URL(target).port;
@@ -453,7 +464,7 @@ test('T6 resolveDocservice: environment variable address available → remote; u
   assert.equal(r8.mode, 'local', 'Moves on to the next item after a timeout');
   assert.ok(hangMs !== null && hangMs < 3000, `The timeout must follow timeoutMs: the liveness check of the hang took ${hangMs} ms`);
 
-  // 9. /healthz 取在源站根上（G.11）
+  // 9. /healthz is fetched at the origin root (G.11)
   const r9 = await run({ PROMPTCUT_DOCSERVICE_URL: ws(good.port, '/some/path'), PROMPTCUT_DOCSERVICE_PORT: String(dead) });
   assert.equal(r9.mode, 'remote');
 });
@@ -537,7 +548,7 @@ test('T7 no reconnect after close(): connected becomes false immediately, and on
   assert.equal(timers.pending.length, 0, 'No reconnect is scheduled after close()');
   assert.equal(proxy.accepted, accepted, 'No new connections');
   assert.equal(ep.send({ type: 'x' }), false);
-  ep.close(); // 重复调用无害
+  ep.close(); // Repeated calls are harmless
 });
 
 test('T7 close() during a backoff wait: no connection is made even when the timer fires', async (t) => {
@@ -553,7 +564,7 @@ test('T7 close() during a backoff wait: no connection is made even when the time
   const accepted = proxy.accepted;
   ep.close();
   assert.equal(ep.closed, true);
-  if (timers.pending.length > 0) timers.fire(); // 实现没清计时器时，到点的回调也不能再连
+  if (timers.pending.length > 0) timers.fire(); // If the implementation fails to clear the timer, the callback upon firing must not reconnect either
   await sleep(200);
   assert.equal(proxy.accepted, accepted, 'No reconnect after close()');
   assert.equal(rec.opens, 1);
@@ -566,7 +577,7 @@ test('T8 token error: when connecting keeps failing, the backoff grows until cap
   const env = await startQueueService({ token });
   t.after(() => env.service.close());
 
-  // random 固定 0.5：抖动为 0，封顶恰好等于 maxMs
+  // random fixed at 0.5: jitter is 0, cap exactly equals maxMs
   const timers = fastTimers(2);
   const { ep, rec } = await endpoint({ url: env.url, token: randomToken(), setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout, random: () => 0.5 });
   t.after(() => ep.close());
@@ -578,7 +589,7 @@ test('T8 token error: when connecting keeps failing, the backoff grows until cap
   assert.equal(ep.stats().closes, 0, 'A handshake failure is not counted in closes (G.11)');
   assert.equal(rec.closes.filter((c) => c.reason !== 'closed').length, 0, 'A handshake failure does not call onClose (G.11)');
 
-  // random 取上界：单次等待的上限是 maxMs × (1 + jitter)（G.11）
+  // random takes the upper bound: upper limit for a single wait is maxMs × (1 + jitter) (G.11)
   const timers2 = fastTimers(2);
   const { ep: ep2 } = await endpoint({ url: env.url, token: randomToken(), setTimeout: timers2.setTimeout, clearTimeout: timers2.clearTimeout, random: () => 1 });
   t.after(() => ep2.close());

@@ -1,23 +1,23 @@
 /**
- * 后台舞台的后台活由编辑器页判空闲、经 RPC 发开始 / 停止(C10 契约第 2 节「后台舞台的摆放与节拍」〔裁:探针 P2〕)。
+ * The background stage's background work is judged idle by the editor page, and start / stop are sent over RPC (C10 contract section 2 "Placement and pacing of the background stage" [ruling: probe P2]).
  *
- * 后台舞台 `opacity: 0` 原位叠放:它自己的 `requestIdleCallback` 多半等到超时才回调(每秒只推进 1～4.7 帧),不能用来定节拍;
- * 页面隐藏时浏览器也不会替你停(无头切标签仍每秒 1.2～2 帧、有头最小化仍 24～27 帧)。所以由父页(不透明,rAF 与 rIC 正常)判:
+ * The background stage is stacked in place with `opacity: 0`: its own `requestIdleCallback` mostly fires only at timeout (advancing just 1-4.7 frames per second), so it cannot be used for pacing;
+ * the browser does not stop it for you when the page is hidden either (a headless tab switch still gives 1.2-2 frames per second, a headed minimize still 24-27 frames). So the parent page (opaque, rAF and rIC normal) decides:
  *
- *   开 ⇔ 页面可见 ∧ 父页的 rAF 间隔没有持续超过 `RAF_GAP_PAUSE_MS` ∧ 父页自己的 `requestIdleCallback` 在 `IDLE_STALE_MS` 之内回调过
+ *   on ⇔ page visible ∧ the parent's rAF gap has not stayed above `RAF_GAP_PAUSE_MS` ∧ the parent's own `requestIdleCallback` has fired within `IDLE_STALE_MS`
  *
- * 判出来变了就 `back.setBackWork(on)`;后台舞台换了人(K5 互换、iframe 重载)也重发一次。舞台里逐帧 `setTimeout(0)` 推进、
- * 帧与帧之间查这个标志(`StageView.tsx` 的 `backGate`)。
+ * When the decision changes, call `back.setBackWork(on)`; also resend once when the background stage changes hands (K5 swap, iframe reload). Inside the stage, frames advance one by one with `setTimeout(0)`,
+ * and this flag is checked between frames (`backGate` in `StageView.tsx`).
  *
- * 只在在线双舞台的双舞台上开(`Preview.tsx`);桌面运行环境照旧,不发这条 RPC。
+ * Only enabled on the dual stage of the online dual stage (`Preview.tsx`); the desktop runtime stays as is and does not send this RPC.
  */
 import type { StageRpcClient } from "../render/stageRpc";
 
-/** 父页 rAF 间隔持续超过这么久就暂停后台活(C10 契约第 2 节) */
+/** If the parent page's rAF gap stays above this long, pause background work (C10 contract section 2) */
 export const RAF_GAP_PAUSE_MS = 500;
-/** 父页的 rIC 这么久没回调过,就当父页不空闲 */
+/** If the parent page's rIC has not fired for this long, treat the parent page as not idle */
 export const IDLE_STALE_MS = 1000;
-/** 多久判一次(页面隐藏时 rAF 停了,靠这个定时器发现) */
+/** How often to decide (when the page is hidden rAF stops, and this timer is how that gets noticed) */
 export const BACK_WORK_CHECK_MS = 200;
 
 export interface BackWorkInput {
@@ -27,7 +27,7 @@ export interface BackWorkInput {
   lastIdleAt: number;
 }
 
-/** 纯判定:回开不开、不开的原因 */
+/** Pure decision: whether to turn on, and the reason when not */
 export function judgeBackWork({ visible, now, lastRafAt, lastIdleAt }: BackWorkInput): { on: boolean; reason: "hidden" | "raf-gap" | "busy" | null } {
   if (!visible) return { on: false, reason: "hidden" };
   if (now - lastRafAt > RAF_GAP_PAUSE_MS) return { on: false, reason: "raf-gap" };
@@ -36,7 +36,7 @@ export function judgeBackWork({ visible, now, lastRafAt, lastIdleAt }: BackWorkI
 }
 
 export interface BackWorkGateDeps {
-  /** 此刻的后台舞台(双舞台的 back);没有回 null */
+  /** The current background stage (the back of the dual stage); null if there is none */
   back: () => StageRpcClient | null;
   now?: () => number;
   visible?: () => boolean;
@@ -45,11 +45,11 @@ export interface BackWorkGateDeps {
 export interface BackWorkDiag {
   on: boolean;
   reason: string | null;
-  /** 判定变过几次 */
+  /** How many times the decision changed */
   changes: number;
-  /** 发过几次 setBackWork */
+  /** How many times setBackWork was sent */
   sent: number;
-  /** 暂停过几次,各原因各几次 */
+  /** How many times paused, and how many for each reason */
   pauses: Record<string, number>;
 }
 
@@ -59,7 +59,7 @@ export function backWorkDiag(): BackWorkDiag {
   return { ...diag, pauses: { ...diag.pauses } };
 }
 
-/** 开始判;回停止函数(停止时对后台舞台发一次「开」,把它交还给缺省状态) */
+/** Start deciding; returns a stop function (on stop, sends one "on" to the background stage, handing it back to the default state) */
 export function startBackWorkGate(deps: BackWorkGateDeps): () => void {
   const now = deps.now ?? (() => performance.now());
   const visible = deps.visible ?? (() => typeof document === "undefined" || document.visibilityState !== "hidden");
@@ -82,7 +82,7 @@ export function startBackWorkGate(deps: BackWorkGateDeps): () => void {
   const onIdle = () => {
     lastIdleAt = now();
     if (stopped) return;
-    // 每 100 ms 问一次就够:rIC 连着排会一直占着空闲时段
+    // Asking every 100 ms is enough: queueing rIC back to back would keep occupying the idle period
     idleTimer = setTimeout(() => { idleTimer = null; if (!stopped) scheduleIdle(); }, 100);
   };
   const scheduleIdle = () => {
@@ -115,7 +115,7 @@ export function startBackWorkGate(deps: BackWorkGateDeps): () => void {
   };
   const timer = setInterval(check, BACK_WORK_CHECK_MS);
   const onVisibility = () => {
-    // 回到前台:rAF 刚恢复,先当它刚来过一次,免得「隐藏期间没有 rAF」被判成间隔过长、多停一轮
+    // Back to the foreground: rAF has just resumed, so pretend it has just fired once, otherwise "no rAF while hidden" would be judged as an overlong gap and cost one extra paused round
     if (visible()) { lastRafAt = now(); lastIdleAt = now(); }
     check();
   };

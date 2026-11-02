@@ -1,11 +1,19 @@
 /**
- * 网站账号与成员接缝（`src/editor/sync/accountExtensions.ts` + `lanMemberSource.ts` + `cloud/account/manifest.ts`）单测。
+ * Unit tests for website account and member seams (`src/editor/sync/accountExtensions.ts` +
+ * `lanMemberSource.ts` + `cloud/account/manifest.ts`).
  *
- * 覆盖：
- * 1. 替换型「成员源」（`MemberSource`）：公开侧局域网默认实现（`createLanMemberSource`）能列出在线/离线成员、通过 `adminOp("kick")` 踢人、通过 `createInvite` 签发局域网邀请码；
- * 2. 替换型「加入源」（`JoinSource`）：公开侧局域网默认实现（`createLanJoinSource`）能解析 `#invite=<43位>&doc=<路径>` 链接、凭邀请码与用户名兑换并握手加入；
- * 3. 贯穿型接缝（`formatUploadRejectionReason`、`projectLink`、`createAccountClient`）：未装 `cloud/` 时走默认兜底，安装 `cloud/account/manifest.ts` 后走云端实现；
- * 4. 可选加载器（`loadAccountExtensions`）：`manifestUrl` 指向不存在模块时安静返回 `false`，不抛未捕获异常。
+ * Covers:
+ * 1. Replaceable "member source" (`MemberSource`): public-side LAN default implementation
+ *    (`createLanMemberSource`) can list online/offline members, kick members via `adminOp("kick")`,
+ *    and issue LAN invite codes via `createInvite`;
+ * 2. Replaceable "join source" (`JoinSource`): public-side LAN default implementation
+ *    (`createLanJoinSource`) can parse `#invite=<43 chars>&doc=<path>` links, redeem with invite
+ *    code and username, and join via handshake;
+ * 3. Pass-through seams (`formatUploadRejectionReason`, `projectLink`, `createAccountClient`):
+ *    uses default fallback when `cloud/` is not installed, and uses cloud implementation after
+ *    `cloud/account/manifest.ts` is installed;
+ * 4. Optional loader (`loadAccountExtensions`): quietly returns `false` without throwing unhandled
+ *    exceptions when `manifestUrl` points to a nonexistent module.
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -160,7 +168,7 @@ describe("accountExtensions & lanMemberSource seam", () => {
   });
 
   it("pass-through seams work both before and after cloud/account/manifest.ts registration", async () => {
-    // 社区版默认兜底（未注册云端扩展时）
+    // Community edition default fallback (when cloud extensions are not registered)
     assert.equal(
       formatUploadRejectionReason("guest-video-limit"),
       "Guests can upload at most 3 videos. To upload more, please sign up for an account.",
@@ -176,22 +184,26 @@ describe("accountExtensions & lanMemberSource seam", () => {
     });
     assert.deepEqual(await fallbackClient.thirdPartyProviders(), []);
 
-    // 经可选加载器加载云端 manifest（cloud/ 在位时返回 true 并注册云端实现，不在时安静返回 false 并保持公开侧默认兜底）
+    // Load cloud manifest via optional loader (returns true and registers cloud implementation when
+    // cloud/ is present; quietly returns false and keeps public-side default fallback when absent)
     const cloudManifest = new URL("../../../cloud/account/manifest.ts", import.meta.url);
     const hasCloudManifest = fs.existsSync(cloudManifest);
-    // 不给 manifestUrl 的那一支走 Vite 别名（`#promptcut-cloud-account`，见
-    // `server/vite-plugin-cloud-seams.ts`）。node --test 里没有别名表，所以必然是 false ——
-    // 那正是「没装云端扩展」，局域网默认实现继续生效。
+    // The branch without manifestUrl uses the Vite alias (`#promptcut-cloud-account`, see
+    // `server/vite-plugin-cloud-seams.ts`). node --test has no alias table, so it is always false:
+    // that is precisely "cloud extensions not installed", and the LAN default implementation
+    // remains in effect.
     assert.equal(await loadAccountExtensions({ includeUi: false }), false);
     assert.equal(getMemberSource(), getDefaultLanMemberSource(), "when the alias cannot be resolved, the member source is still the LAN one");
-    // 要验「装上之后」就显式给路径 —— 这是不变量 2 里「从调用方拿」的那种形式
+    // To test "after installation", explicitly provide the path: this is the "obtained from caller"
+    // form in invariant 2
     assert.equal(
       await loadAccountExtensions({ manifestUrl: cloudManifest.href, includeUi: false }),
       hasCloudManifest,
     );
     assert.equal(
       formatUploadRejectionReason("guest-file-too-large"),
-      // 装上云端扩展后文案由云端那份给(还是中文);没装就是公开侧内置的英文
+      // When cloud extension is installed, copy is provided by the cloud version (still Chinese);
+      // when not installed, it defaults to built-in English on the public side
       hasCloudManifest ? "Each source file uploaded by a guest cannot exceed 100 MB." : "Each source file uploaded by a guest cannot exceed 100 MB.",
     );
     assert.equal(
@@ -199,7 +211,7 @@ describe("accountExtensions & lanMemberSource seam", () => {
       "https://accounts.example/editor/s/prj_0123456789abcdef01234567/tok_abc",
     );
 
-    // 可选加载器对缺失路径返回 false
+    // Optional loader returns false for missing paths
     resetAccountExtensions();
     const missingLoaded = await loadAccountExtensions({
       manifestUrl: new URL("./non-existent-cloud-manifest.ts", import.meta.url).href,

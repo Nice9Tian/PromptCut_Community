@@ -29,7 +29,7 @@ test('segments are counted from this stream\'s own first frame: if the clip star
   assert.equal(streamSampleOf(114, origin), 14);
   assert.equal(streamSampleOf(115, origin), 0);
   assert.equal(streamSampleOf(122, origin), 7);
-  // 第一帧是 0 的流和原来按项目帧号分段是同一回事
+  // A stream whose first frame is 0 is the same as the original segmentation by project frame number
   for (const f of [0, 1, 14, 15, 29, 30, 449]) {
     assert.equal(streamSegmentOf(f, 0), Math.floor(f / 15));
     assert.equal(streamSampleOf(f, 0), f % 15);
@@ -41,7 +41,7 @@ test('a frame before the first frame has no segment (negative) and does not fall
   assert.equal(streamSegmentOf(85, 100), -1);
   assert.equal(streamSegmentOf(84, 100), -2);
   assert.equal(streamSegmentOf(0, 100), -7);
-  // 负数段里样本序号照样落在 0..14
+  // Sample indices in negative segments still fall in 0..14
   assert.equal(streamSampleOf(99, 100), 14);
   assert.equal(streamSampleOf(85, 100), 0);
 });
@@ -66,16 +66,16 @@ test('each frame lands on exactly one sample of one segment, and converting back
 });
 
 test('the last segment ends at this stream\'s own last frame and may have fewer than 15 frames; when the duration is an exact multiple of 15, the last segment is full', () => {
-  // 100～149:50 帧 → 4 段,末段 5 帧
+  // 100~149: 50 frames → 4 segments, last segment 5 frames
   assert.deepEqual(streamSegmentSpan(100, 149), { originFrame: 100, firstSegment: 0, lastSegment: 3 });
   assert.equal(streamSegmentLastFrame(3, 100, 149), 149);
   assert.equal(streamSegmentFrameCount(3, 100, 149), 5);
   assert.equal(streamSegmentFrameCount(2, 100, 149), 15);
   assert.equal(streamSegmentFrameCount(4, 100, 149), 0, 'the whole segment is after the last frame: there is no such segment');
-  // 100～144:45 帧 → 3 段,都是满的
+  // 100~144: 45 frames → 3 segments, all full
   assert.deepEqual(streamSegmentSpan(100, 144), { originFrame: 100, firstSegment: 0, lastSegment: 2 });
   assert.equal(streamSegmentFrameCount(2, 100, 144), 15);
-  // 只有一帧的流
+  // Stream with only one frame
   assert.deepEqual(streamSegmentSpan(100, 100), { originFrame: 100, firstSegment: 0, lastSegment: 0 });
   assert.equal(streamSegmentFrameCount(0, 100, 100), 1);
 });
@@ -110,15 +110,16 @@ test('gatekeeper: the segment frame count 15 may be defined only in streamSegmen
       if (item.isDirectory()) { walk(file); continue; }
       if (!/\.(mjs|ts|tsx)$/.test(item.name) || /\.test\.|\.d\.mts$/.test(item.name)) continue;
       const text = fs.readFileSync(file, 'utf8');
-      // 「某个名字里带 SEGMENT / STRIDE 的常量 = 15」
+      // "A constant with SEGMENT / STRIDE in its name = 15"
       if (/\b(?:const|let|var)\s+[A-Z_]*(?:SEGMENT|STRIDE)[A-Z_]*\s*=\s*15\b/.test(text)) hits.push(path.relative(ROOT, file).replaceAll('\\', '/'));
     }
   };
   walk(path.join(ROOT, 'src'));
   walk(path.join(ROOT, 'server'));
-  // A3 之后闭源的那几摊在 cloud/ 下（公开仓库里没有这个目录）；这道检查原来就管着它们，搬走以后也要接着管
+  // After A3, the closed-source parts live under cloud/ (this directory does not exist in the public
+  // repository); this check originally guarded them, and must continue guarding them after the move
   for (const d of ['cloud/src', 'cloud/server']) if (fs.existsSync(path.join(ROOT, d))) walk(path.join(ROOT, d));
   assert.deepEqual(hits.sort(), ['server/bakery/ffmpeg.mjs', 'src/render/streamSegments.mjs']);
-  // 已经删掉的快照网格不该再回来
+  // Deleted snapshot grids should not return
   assert.equal(fs.existsSync(path.join(ROOT, 'src/render/snapshotGrid.mjs')), false);
 });

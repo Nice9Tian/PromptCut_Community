@@ -1,12 +1,13 @@
 /**
- * 「用户正在编辑」页面侧的汇总与节流(计划 docs/plan/agent-workflow-plan.md A2)。用例 UE-P1～UE-P8。
- * 跑:node --test src/editor/userEditingCore.test.mjs
+ * Page-side aggregation and throttling for "user is editing" (plan
+ * docs/plan/agent-workflow-plan.md A2). Test cases UE-P1~UE-P8.
+ * Run: node --test src/editor/userEditingCore.test.mjs
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createEditingTracker, USER_EDITING_TIMING } from "./userEditingCore.ts";
 
-/** 手动时钟 + 手动定时器:测试里推进时间,到点的定时器按时刻顺序跑 */
+/** Manual clock + manual timer: advance time in tests, expired timers run in chronological order */
 function harness(opts = {}) {
   let t = 1_000_000;
   let seq = 0;
@@ -93,7 +94,7 @@ test("UE-P5 Throttle: send immediately when a drag starts; for continuous change
   h.tr.setActive("s", "c1", "drag");
   assert.equal(h.sent.length, 2, "The leading edge sends immediately");
   assert.deepEqual(kinds(h.sent[1].list), ["c1:drag"]);
-  // 拖动中每 16 ms(一帧)换一次片段,模拟状态抖动 1 秒
+  // Switch clips every 16 ms (one frame) during dragging, simulating state jitter for 1 second
   for (let i = 0; i < 60; i += 1) {
     h.advance(16);
     h.tr.setActive("s", i % 2 ? "c1" : "c2", "drag");

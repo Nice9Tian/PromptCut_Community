@@ -1,26 +1,38 @@
 /**
- * 测量的开工门(在线浏览器模式;C10 契约第 9 节「识别」的配套)。
+ * Start gate for measurement (online browser mode; companion to section 9, "Recognition", of the C10
+ * contract).
  *
- * 在线页面打开后,内容库里同步来的用户卡要等卡片源码第一次同步完(`sync/onlineCardSources.ts`)才认得出来。在那之前它们
- * 被当成未知 id,测量(`probeRunner.ts` 的常驻探针、单舞台的界限搜索)可能在后台舞台上把它测一次、记一条成本记录。
- * 所以在线页面的测量等这道门:卡片源码第一次同步完成(成功,或者回了失败)就开;一直没回音时最多等
- * `MEASURE_GATE_MAX_MS`,照常开始。
+ * After an online page opens, the user cards synced into the content store are only recognized once the
+ * card sources have finished their first sync (`sync/onlineCardSources.ts`). Before that they are
+ * treated as unknown ids, so measurement (the resident probe in `probeRunner.ts`, the single-stage bounds
+ * search) may measure one on a background stage and record a cost entry for it. So measurement on the online
+ * page waits on this gate: it opens once the first card source sync completes (success, or an error reply);
+ * if there is no reply at all, it waits at most `MEASURE_GATE_MAX_MS` and then starts as usual.
  *
- * **按连接算**:门是为某一条共享项目连接开的。连接换了(换项目、重连到另一个项目、离开再进 —— 同步表会清空重取),
- * 下一次问门时门重新关上,直到新连接的卡片源码第一次同步有了结果,最多同样等 `MEASURE_GATE_MAX_MS`。
- * 连接由 `setMeasureGateLink` 给(在线页面的 `Preview` 接到 `currentSharedLink()` 上);没连着(null)时不重新关。
+ * **Per connection**: the gate is opened for one specific shared project connection. When the connection
+ * changes (switching projects, reconnecting to another project, leaving and re-entering: the sync table is
+ * cleared and refetched), the gate closes again the next time it is queried, until the new connection's first
+ * card source sync has a result, again waiting at most `MEASURE_GATE_MAX_MS`. The connection is supplied by
+ * `setMeasureGateLink` (the online page's `Preview` wires it to `currentSharedLink()`); with no connection
+ * (null) the gate does not re-close.
  *
- * **再等同步来的卡第一次载入有结果**(`docs/plan/online-card-exec-contract.md` 第 6 节):本页能执行同步来的用户卡时,卡片源码同步完之后
- * 它们还要转译、交给舞台载入;在那之前运行状态是 `loading`,还没有成本身份。门等到没有 `loading` 的卡(成功或失败都算有结果)再开,
- * 免得第一轮测量排队时漏掉它们、界面先按「没测过」摆一遍。仍受同一个 `MEASURE_GATE_MAX_MS` 封顶;门开之后才载入成功的卡
- * 由运行状态的通知另排一轮补测(`ProbeGate.tsx`)。本页不能执行时没有 `loading` 的卡,这一条不起作用。
+ * **Then wait for the first load of synced cards to have a result** (section 6 of
+ * `docs/plan/online-card-exec-contract.md`): when this page can execute synced user cards, after the card
+ * sources finish syncing they still have to be transpiled and handed to the stage to load; until then their
+ * runtime state is `loading` and they have no cost identity yet. The gate waits until no card is `loading`
+ * (success or failure both count as a result) before opening, so the first round of measurement does not miss
+ * them when queued and the UI does not first lay out as "not measured". It is still capped by the same
+ * `MEASURE_GATE_MAX_MS`; cards that load successfully only after the gate has opened get a separate follow-up
+ * measurement round queued by the runtime state notification (`ProbeGate.tsx`). When this page cannot execute
+ * and no card is `loading`, this step has no effect.
  *
- * 桌面运行环境(不是在线页面)一开始就是开的,也不按连接关。Node 单测里 `onlinePage()` 恒为 false,同样是开的。
+ * The desktop runtime (not the online page) is open from the start and is not closed per connection. In Node
+ * unit tests `onlinePage()` is always false, so the gate is likewise open.
  */
 import { onlinePage } from "../online/pageFlag";
 import { anyCardLoading, onCardRunStatesChanged } from "../kernel/registry";
 
-/** 卡片源码第一次同步最多等这么久(毫秒),过了照常开始测量 */
+/** Maximum time (ms) to wait for the first card source sync; after that, measurement starts as usual */
 export const MEASURE_GATE_MAX_MS = 10_000;
 
 export type MeasureGateReason = "desktop" | "synced" | "failed" | "timeout";
@@ -29,18 +41,21 @@ type Timer = ReturnType<typeof setTimeout>;
 let state: "unset" | "held" | "open" = "unset";
 let timer: Timer | null = null;
 let waiters: Array<() => void> = [];
-/** 此刻的共享项目连接(`setMeasureGateLink`);没给 = 不按连接关 */
+/** The current shared project connection (`setMeasureGateLink`); not given = do not close per connection */
 let linkOf: (() => unknown) | null = null;
-/** 门是为哪条连接开的 / 正在为哪条连接等 */
+/** Which connection the gate was opened for / is currently waiting for */
 let openFor: unknown = null;
 let heldFor: unknown = null;
 let maxMs = MEASURE_GATE_MAX_MS;
-/** 卡片源码已经同步完、只差同步来的卡载入出结果:记下那一次的结论,等运行状态里没有 `loading` 了再开 */
+/**
+ * Card sources have finished syncing and only the first load of synced cards is pending: record that
+ * sync's outcome, and open once the runtime state has no `loading`
+ */
 let pendingRelease: { ok: boolean; link: unknown } | null = null;
 let offRunStates: (() => void) | null = null;
 let cardLoading: () => boolean = anyCardLoading;
 const diag = { heldAt: null as number | null, openedAt: null as number | null, reason: null as MeasureGateReason | null, holds: 0, links: 0, confirmedAt: null as number | null };
-/** 单测可以换掉计时与时钟 */
+/** Unit tests can replace the timer and the clock */
 let clock: { now: () => number; setTimer: (fn: () => void, ms: number) => Timer; clearTimer: (t: Timer) => void } = {
   now: () => Date.now(),
   setTimer: (fn, ms) => setTimeout(fn, ms),
@@ -65,7 +80,7 @@ function open(reason: MeasureGateReason, link: unknown = currentLink() ?? heldFo
   diag.reason = reason;
   const list = waiters;
   waiters = [];
-  for (const w of list) { try { w(); } catch { /* 等门的一方坏了不影响别人 */ } }
+  for (const w of list) { try { w(); } catch { /* A broken waiter does not affect the others */ } }
 }
 
 function hold(link: unknown, ms: number): void {
@@ -80,7 +95,7 @@ function hold(link: unknown, ms: number): void {
   timer = clock.setTimer(() => { timer = null; open("timeout"); }, Math.max(0, ms));
 }
 
-/** 问门之前:第一次按是不是在线页面定初值;在线页面的连接换了就重新关上 */
+/** Before querying the gate: on the first press, whether this is an online page sets the initial value; if an online page's connection changes, close the gate again */
 function check(): void {
   if (state === "unset") {
     if (onlinePage()) holdMeasureForCardSources();
@@ -93,14 +108,16 @@ function check(): void {
   }
 }
 
-/** 此刻的共享项目连接从哪取(在线页面的 `Preview` 接上;换了连接就按新连接重新关门) */
+/** Where to get the current shared project connection (wired up by the online page's `Preview`; when the connection changes, the gate re-closes for the new connection) */
 export function setMeasureGateLink(fn: (() => unknown) | null): void {
   linkOf = fn;
 }
 
 /**
- * 关门等卡片源码(在线页面的 `Preview` 在开始同步卡片源码时叫;门已经开过就什么都不做 —— 连接换了的重新关门由问门时判)。
- * 从这一刻起最多等 `ms`,过了自己开。
+ * Close the gate and wait for card sources (called by the online page's `Preview` when it starts syncing
+ * card sources; does nothing if the gate has already opened. Re-closing after a connection change is decided
+ * when the gate is queried).
+ * From this moment it waits at most `ms`, then opens by itself.
  */
 export function holdMeasureForCardSources(ms: number = MEASURE_GATE_MAX_MS): void {
   if (state !== "unset") return;
@@ -109,13 +126,16 @@ export function holdMeasureForCardSources(ms: number = MEASURE_GATE_MAX_MS): voi
 }
 
 /**
- * 卡片源码第一次同步有了结果:`ok` 为 true 是同步完了,false 是回了失败。两种都开门。
- * `link` 是这次同步用的连接:不是此刻的连接(同步回来时又换了)就不算;门已经开着时,记下它是为这条连接开的。
+ * The first card source sync has a result: `ok` true means the sync completed, false means it replied with
+ * a failure. Both open the gate.
+ * `link` is the connection used for this sync: if it is not the current connection (it changed again by the
+ * time the sync returned) it does not count; if the gate is already open, record that it was opened for this
+ * connection.
  */
 export function releaseMeasureGate(ok: boolean, link?: unknown): void {
   if (link !== undefined && linkOf && link !== currentLink()) return;
   if (state === "open") {
-    // 门开着时新连接的卡片源码先同步完了(还没人问门):记下为它开的,之后不再为它关
+    // The new connection's card sources finished syncing while the gate was open (nobody has queried yet): record that it was opened for this connection, and do not close for it afterwards
     if (link !== undefined && diag.reason !== "desktop") {
       if (link !== null && link !== openFor) diag.links++;
       openFor = link;
@@ -126,7 +146,8 @@ export function releaseMeasureGate(ok: boolean, link?: unknown): void {
   if (state === "unset") state = "held";
   const target = link !== undefined ? link : currentLink() ?? heldFor;
   if (cardLoading()) {
-    // 同步来的卡还在转译或载入:先不开,等它们有了结果(`settleCardLoading`);计时照走,到点照开
+    // Synced cards are still being transpiled or loaded: do not open yet, wait until they have a result
+    // (`settleCardLoading`); the timer keeps running and opens the gate when it fires
     pendingRelease = { ok, link: target };
     offRunStates ??= onCardRunStatesChanged(settleCardLoading);
     return;
@@ -134,7 +155,7 @@ export function releaseMeasureGate(ok: boolean, link?: unknown): void {
   open(ok ? "synced" : "failed", target);
 }
 
-/** 运行状态变了:卡片源码已同步完、又没有还在载入的卡了,就开门 */
+/** Runtime state changed: if card sources have finished syncing and no card is still loading, open the gate */
 function settleCardLoading(): void {
   if (!pendingRelease || state === "open" || cardLoading()) return;
   const { ok, link } = pendingRelease;
@@ -142,13 +163,13 @@ function settleCardLoading(): void {
   open(ok ? "synced" : "failed", link);
 }
 
-/** 门开了没有(第一次问时按是不是在线页面定初值;在线页面换了连接就重新关上) */
+/** Whether the gate is open (the first query sets the initial value by whether this is the online page; on the online page, re-close if the connection changed) */
 export function measureGateOpen(): boolean {
   check();
   return state === "open";
 }
 
-/** 等到门开(已经开着就马上回) */
+/** Wait until the gate opens (returns immediately if it is already open) */
 export function whenMeasureGateOpen(): Promise<void> {
   check();
   if (state === "open") return Promise.resolve();
@@ -156,15 +177,17 @@ export function whenMeasureGateOpen(): Promise<void> {
 }
 
 /**
- * 诊断、探针用。`holds`:关过几次门(换了连接、问门时新连接还没同步完,重新关一次加一);`links`:门为几条连接开过
- * (开门、或门开着时新连接先同步完,都算);`confirmedAt`:最近一次卡片源码同步有结果的时刻。
+ * For diagnostics and probes. `holds`: how many times the gate has closed (the connection changed and the new
+ * connection had not finished syncing when the gate was queried; each re-close adds one); `links`: for how
+ * many connections the gate has opened (opening the gate, or the new connection syncing first while the gate
+ * is open, both count); `confirmedAt`: the time of the latest card source sync that produced a result.
  */
 export function measureGateDiag() {
   return { state, heldAt: diag.heldAt, openedAt: diag.openedAt, reason: diag.reason, holds: diag.holds, links: diag.links, confirmedAt: diag.confirmedAt,
     waitedMs: diag.openedAt !== null && diag.heldAt !== null ? diag.openedAt - diag.heldAt : null };
 }
 
-/** 单测用:回到刚载入的样子,可换掉计时与时钟 */
+/** For unit tests: return to the freshly loaded state; the timer and the clock can be replaced */
 export function resetMeasureGate(next?: Partial<typeof clock> & { cardLoading?: () => boolean }): void {
   if (timer !== null) clock.clearTimer(timer);
   timer = null;

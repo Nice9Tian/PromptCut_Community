@@ -1,19 +1,37 @@
 /**
- * 项目设置里的「多用户协作」一段（C10a 契约 `docs/plan/c10a-contract.md` 第 6、7 节；文案照第 14 节表 B）。
+ * The "Multi-user collaboration" section in project settings (C10a contract
+ * `docs/plan/c10a-contract.md` sections 6 and 7; copy follows table B in section 14).
  *
- * - 没开启：勾选框。勾上后给出缺省（放本机、自由进入、创建者用户名取设备名、两样密码自动生成并存在本机），都能改；
- *   点对话框的「确定」才开始设置（语义「勾上并保存」），对话框留着显示进度与结果。
- * - 已开启（当前连着共享项目）：项目名与项目密码（自由进入，带复制）、邀请链接与二维码（放云端，只有创建者本机有）、
- *   邀请码状态、创建者操作（作废并重新生成邀请码，每次当场输入创建者密码；以及 C6.5 的改项目密码、改名单、踢人、删项目）。
- * - 取消勾选再「确定」：确认后放云端的先拉回本机再删云端项目，放本机的停本机托管；中途失败恢复为开启。
+ * - Not enabled: a checkbox. Once checked it offers defaults (hosted on this machine, open entry,
+ *   creator username taken from the device name, both passwords auto-generated and stored on this
+ *   machine), all editable; setup only starts when the dialog's "OK" is clicked (semantics: "check
+ *   and save"), and the dialog stays to show progress and results.
+ * - Enabled (currently connected to a shared project): project name and project password (open
+ *   entry, with copy), invite link and QR code (cloud hosting, only on the creator's machine), invite
+ *   code status, creator actions (revoke and regenerate the invite code, entering the creator
+ *   password on the spot each time; and C6.5's change project password, change list, kick, delete
+ *   project).
+ * - Uncheck and then "OK": after confirmation, a cloud-hosted project is pulled back to this
+ *   machine first and then the cloud project is deleted, while a locally hosted one stops local
+ *   hosting; if it fails midway it is restored to enabled.
  *
- * - 「放弃这次搬迁」（〔裁〕H04）：上一次搬到云端没做完、云端项目已经建好时出现（判据见 `accountMove.ts` 的 `pendingAttempt`）；
- *   点了先在这一段里给一次确认（删的是哪一个云端项目、删了不能恢复、本机项目不受影响），确认后删云端那个项目并清掉本机的搬迁记录。
- * - 「搬到云端」（桌面版）：目标是这台桌面版配置的账号云端时走账号办法（`accountMoveFlow.ts`）——云端新建一个属于登录账号的项目、
- *   内容与本机一致，编辑器接着就在云端项目里；本机协作房间搬完即关闭、旧邀请码作废。两个入口：没开协作时勾上并选「云端」点「确定」；
- *   已开本机协作时点「搬到云端」。没登录先在这里登录。目标是别的节点（用户自己填的地址）时照旧办法。
+ * - "Abandon this move" ([ruling] H04): appears when the previous move to the cloud was not finished
+ *   and the cloud project has already been created (criteria in `pendingAttempt` of
+ *   `accountMove.ts`); clicking it first asks for a confirmation in this section (which cloud
+ *   project is deleted, deletion cannot be undone, the local project is unaffected), and after
+ *   confirmation it deletes that cloud project and clears the local move record.
+ * - "Move to the cloud" (desktop app): when the target is the account cloud configured on this
+ *   desktop app, use the account method (`accountMoveFlow.ts`): a new project belonging to the
+ *   logged-in account is created in the cloud with content identical to the local one, and the editor
+ *   then continues inside the cloud project; the local collaboration room is closed once the move is
+ *   done and the old invite code is revoked. Two entry points: when collaboration is not enabled,
+ *   check it, choose "Cloud" and click "OK"; when local collaboration is already enabled, click
+ *   "Move to the cloud". If not logged in, log in here first. When the target is another node (an
+ *   address the user entered), the old method applies.
  *
- * 房间关联写进普通项目文件，凭证只在设备保护存储中；连接状态取自同步管理（`syncManager.ts`）与本机记录（`collab.ts`）。
+ * The room link is written into the ordinary project file, and credentials live only in the device
+ * protected store; connection state comes from the sync manager (`syncManager.ts`) and the local
+ * record (`collab.ts`).
  */
 import { forwardRef, useEffect, useImperativeHandle, useState, useSyncExternalStore } from "react";
 import { qrSvg } from "../../../server/qr.mjs";
@@ -38,7 +56,7 @@ import {
 import "./sync.css";
 import { tr } from "../../i18n/index.ts";
 
-/** 表 B（契约第 14 节）：原文照抄 */
+/** Table B (contract section 14): copied verbatim */
 export const COLLAB_TEXT = {
   enabling: tr("Setting up multi-user collaboration…"),
   enabled: tr("Multi-user collaboration is on."),
@@ -57,7 +75,7 @@ export const COLLAB_TEXT = {
 } as const;
 
 export interface CollabHandle {
-  /** 对话框「确定」时调：回 true 表示这一段有动作在做（对话框留着），false 表示没有要做的 */
+  /** Called when the dialog's "OK" is clicked: returns true if this section has an action in progress (the dialog stays), false if there is nothing to do */
   apply(projectName: string): Promise<boolean>;
 }
 
@@ -104,24 +122,24 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
   const [secondaryModalOpen, setSecondaryModalOpen] = useState(false);
   const [secondaryPw, setSecondaryPw] = useState("");
   const [secondaryBusy, setSecondaryBusy] = useState(false);
-  // 账号办法的「搬到云端」：这台桌面版配置的账号云端（没有账号桥是 null）、登录的账号（undefined = 还在查）
+  // The account method's "Move to the cloud": the account cloud configured on this desktop app (null if there is no account bridge), and the logged-in account (undefined = still checking)
   const [acct, setAcct] = useState<AccountCloud | null>(null);
   const [acctUser, setAcctUser] = useState<Account | null | undefined>(undefined);
-  /** 桌面外壳太老（0.2.8 以前打了补丁）没有账号桥：缺省云端的「搬到云端」说明要装完整安装包，不往下走 */
+  /** The desktop shell is too old (patched before 0.2.8) and has no account bridge: "Move to the cloud" for the default cloud explains that the full installer is needed, and does not go further */
   const [shellOld, setShellOld] = useState(false);
-  /** 要先登录：登录成功后接着搬（`name` 是那一次要用的云端项目名） */
+  /** Login is needed first: continue the move after a successful login (`name` is the cloud project name to use for that attempt) */
   const [loginFor, setLoginFor] = useState<{ name: string } | null>(null);
   const [loginName, setLoginName] = useState("");
   const [loginPw, setLoginPw] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
-  /** 协作房间搬到云端：云端项目名（重名时改）、创建者密码（本机没存时填） */
+  /** Move the collaboration room to the cloud: cloud project name (change it if it clashes), creator password (fill in if this machine did not store it) */
   const [cloudName, setCloudName] = useState("");
   const [askCloudName, setAskCloudName] = useState(false);
   const [movePw, setMovePw] = useState("");
   const [askMovePw, setAskMovePw] = useState(false);
-  /** 搬完（或云端项目已建好但没做完）时给的项目链接 */
+  /** The project link given when the move is done (or when the cloud project is created but the move is unfinished) */
   const [moveLink, setMoveLink] = useState<string | null>(null);
-  /** 放弃这次搬迁：点了按钮、正在等确认 */
+  /** Abandon this move: the button was clicked, waiting for confirmation */
   const [abandonAsk, setAbandonAsk] = useState(false);
 
   const local = shared ? localCollab(shared.projectId) : null;
@@ -138,7 +156,7 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
     }
   }, [movingLan, shared?.where]);
 
-  // 打开对话框时按当前状态重置；只有尚未开启协作的创建表单生成缺省密码，恢复原房间不生成新密码。
+  // Reset by current state when the dialog opens; only the creation form that has not yet enabled collaboration generates default passwords, restoring the original room does not generate new ones.
   useEffect(() => {
     if (!open) return;
     setChecked(isOn);
@@ -156,7 +174,7 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
     void defaultCreatorName().then(setCreator);
     setLoginFor(null); setLoginPw(""); setLoginBusy(false);
     setCloudName(""); setAskCloudName(false); setMovePw(""); setAskMovePw(false); setMoveLink(null); setAbandonAsk(false);
-    // 账号云端与登录状态：打开设置时查一次（没有账号桥就没有这一套，「云端」照旧办法）
+    // Account cloud and login state: checked once when settings open (without an account bridge there is none of this, and "Cloud" uses the old method)
     let live = true;
     setAcctUser(undefined); setShellOld(false);
     void accountCloud().then(async (c) => {
@@ -170,7 +188,7 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // 已开启：邀请链接取本机记下的；状态用本机记下的创建者密码现查（只读，没有就不查）
+  // Enabled: the invite link is the one recorded on this machine; the status is queried live with the creator password recorded on this machine (read-only, not queried if there is none)
   useEffect(() => {
     if (!open || !shared) {
       setInvite(null);
@@ -200,7 +218,7 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
     async apply(projectName: string) {
       if (busy) return true;
       if (checked && !isOn) {
-        // 放云端、目标是账号云端：把当前项目搬成账号的云端项目（不用创建者用户名和密码）
+        // Hosted in the cloud, target is the account cloud: turn the current project into the account's cloud project (no creator username and password needed)
         if (where === "hosted") {
           const c = acct ?? await accountCloud();
           if (targetsAccountCloud(hostedUrl, c)) {
@@ -268,7 +286,7 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
     },
   }), [busy, checked, isOn, creator, creatorPw, projectPw, mode, where, lanOk, hostedUrl, list, iAmCreator, local, cancelPw, acct, movePw, shared]);
 
-  /** 账号办法的搬到云端：查登录 → （协作房间）确认 → 逐步做，状态行跟着走；失败说清本机现在是什么样 */
+  /** The account method's move to the cloud: check login → (collaboration room) confirm → do it step by step, with the status line following along; on failure, say clearly what state this machine is in now */
   const startAccountMove = async (c: AccountCloud, name: string) => {
     if (busy) return;
     const room = !!shared;
@@ -294,11 +312,11 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
     if (r.error === "name-taken" || r.error === "invalid-name") setAskCloudName(true);
     if (r.error === "creator-password" || r.error === "bad-password") setAskMovePw(true);
     if (r.cloud && (r.localClosed || r.error === "enter-failed")) setMoveLink(projectLink(c.origin, r.cloud.projectId));
-    // 本机协作已经关掉才失败的:现在打开的是本地项目,表单直接停在「云端」上,再点「确定」就接着做
+    // It failed only after local collaboration was already shut down: what is open now is the local project, the form stays on "Cloud", and clicking "OK" again continues
     if (r.localClosed) setWhere("hosted");
     setStatus({ text: moveFailureText(r, r.kind), tone: r.error === "login-required" || r.error === "creator-password" ? "info" : "err" });
   };
-  /** 放弃这次搬迁：确认过才调；状态行跟着走，失败说清云端和本机现在是什么样 */
+  /** Abandon this move: called only after confirmation; the status line follows along, and on failure say clearly what state the cloud and this machine are in now */
   const abandon = async () => {
     if (!acct || busy) return;
     setAbandonAsk(false); setBusy(true); setMoveLink(null);
@@ -379,7 +397,7 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
     }
   };
   const moveHosted = async () => {
-    // 房间登记的云端就是账号云端：走账号办法（云端新建账号项目、搬完关本机协作）；别的节点照旧办法
+    // The cloud registered for the room is the account cloud: use the account method (create an account project in the cloud, close local collaboration after the move); other nodes use the old method
     const c = acct ?? await accountCloud();
     if (shared && oldShellBlocksAccountMove(association?.service)) { setStatus({ text: OLD_SHELL_ACCOUNT_TEXT, tone: "info" }); return; }
     if (shared && targetsAccountCloud(association?.service, c)) {
@@ -405,13 +423,13 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
   );
 
   const on = checked;
-  // 「云端」指的是不是账号云端（是：显示登录状态，不要创建者用户名和密码）
+  // Whether "Cloud" means the account cloud (if so: show login state, no creator username and password)
   const accountTarget = where === "hosted" && targetsAccountCloud(hostedUrl, acct);
-  /** 上一次没做完、云端项目已经建好的那次搬迁（再点「确定」接着做） */
+  /** The move from last time that was not finished and whose cloud project is already created (clicking "OK" again continues) */
   const resumable = accountTarget && acctUser && !isOn ? pendingMove(acctUser.id) : null;
-  /** 搬到云端没做完留下的云端项目（「放弃这次搬迁」只在有它时出现；正在打开云端项目时 `pendingMove` 是 null） */
+  /** The cloud project left behind by an unfinished move to the cloud ("Abandon this move" only appears when it exists; while a cloud project is open, `pendingMove` is null) */
   const pending = acct && acctUser ? pendingMove(acctUser.id) : null;
-  /** 登录状态一行；没登录是登录表单（字段与开始页「云端项目」的登录相同） */
+  /** The login state line; if not logged in, it is the login form (fields are the same as the login on the start page's "Cloud project") */
   const accountRow = !acct ? null : acctUser === undefined ? (
     <div className="pc-sync-hint" data-pc="collab-account-user">{ACCOUNT_MOVE_TEXT.checkingLogin}</div>
   ) : acctUser ? (
@@ -439,7 +457,7 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
         <input type="checkbox" data-pc="collab-toggle" checked={on} disabled={busy || (isOn && !iAmCreator) || (isOn && ONLINE)}
           onChange={(e) => {
             setChecked(e.target.checked); setStatus(null);
-            // 取消后仍留在同一设置窗口：再次明确创建时也保留默认密码生成能力。
+            // After cancelling we stay in the same settings window: explicitly creating again also keeps the ability to generate default passwords.
             if (e.target.checked && !isOn) {
               if (!creatorPw) setCreatorPw(generatePassword());
               if (!projectPw) setProjectPw(generatePassword());
@@ -524,11 +542,13 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
         <>
           <div className="pc-collab-row">
             <span className="pc-collab-key">{tr("Keep on")}</span>
-            {/* 账号云端项目只写「云端」:「自由进入 / 限定进入」是本地项目的说法,账号项目的 mode 恒为 free,原来这里总写「自由进入」,
-                取消下面「任何知道链接的人都可加入」后两处打架;进入方式只由那个勾选说明(〔裁〕主会话 2026-10-22,报告 AGENT-claude-join-requests.md) */}
+            {/* Account cloud projects only display "Cloud": "open entry / restricted entry" is terminology for
+                local projects; mode for account projects is always free. Previously this always said "open entry",
+                which clashed after unchecking "Anyone with the link can join" below; entry type is indicated solely
+                by that checkbox ([ruling] lead session 2026-10-22, report AGENT-claude-join-requests.md) */}
             <span data-pc="collab-where-text">{isAccount ? tr("Cloud") : <>{shared.where === "hosted" ? tr("Cloud") : tr("Local")} · {shared.mode === "free" ? tr("Open entry") : tr("Restricted entry")}</>}</span>
           </div>
-          {/* 账号办法的云端项目没有「搬回本机」（点了必然失败，用户 2026-10-13 定先收起来）；旧办法的房间照旧显示 */}
+          {/* A cloud project from the account method has no "Move back to this machine" (clicking it is bound to fail; user decision, 2026-10-13, to hide it for now); rooms from the old method are shown as before */}
           {shared.where === "hosted" && !ONLINE && !shared.accountId ? <button type="button" className="pc-dialog-opt" data-pc="collab-move-lan" disabled={busy} onClick={() => void moveLan()}>{tr("Move back to this machine")}</button> : null}
           <div className="pc-collab-row" data-pc="collab-project-name">
             <span className="pc-collab-key">{tr("Project name")}</span>
@@ -548,7 +568,7 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
               {copied$("pw")}
             </div>
           ) : null}
-          {/* 托管方的服务(渲染节点):放云端且这台托管端有它才出现;创建者能改(先验证创建者身份),其他成员只读 */}
+          {/* The host's service (render node): shown only when hosted in the cloud and this hosted side has it; the creator can change it (after verifying the creator's identity), other members read-only */}
           <HostedServiceRows where={shared.where} hosted={hostedServices} creator={iAmCreator} busy={busy}
             onToggle={(service, enabled) => setFlow({ kind: "hosted-service", service, enabled })}
             onToggleOption={(service, option, enabled) => setFlow({ kind: "hosted-option", service, option, enabled })} />
@@ -572,7 +592,7 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
               {loginFor ? accountRow : null}
             </>
           ) : null}
-          {/* 邀请链接与二维码:放云端、放本机都给(放本机是给局域网里的手机、平板扫的) */}
+          {/* Invite link and QR code: given for both cloud hosting and local hosting (for local hosting it is for phones and tablets on the LAN to scan) */}
           {(shared.where === "hosted" || shared.where === "lan") && iAmCreator ? (
             <>
               {isAccount ? (
@@ -630,7 +650,7 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
                   </div>
                 </div>
               ) : null}
-              {/* 「任何知道链接的人都可加入」:在上面两个按钮下面,只有创建者能改(2026-10-22 用户定;`src/account/AccountEntryOption.tsx`) */}
+              {/* "Anyone with the link can join": below the two buttons above, only the creator can change it (user decision, 2026-10-22; `src/account/AccountEntryOption.tsx`) */}
               {isAccount ? <AccountEntryOption disabled={busy} /> : null}
             </>
           ) : null}
@@ -655,7 +675,7 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
         </>
       ) : null}
 
-      {/* 正在搬或正在删的时候不显示（状态行在说进度）；搬成了记录就删了，自然也不显示 */}
+      {/* Not shown while moving or deleting (the status line is reporting progress); once the move succeeds the record is deleted, so naturally it is not shown either */}
       {pending && !busy ? (
         <div className="pc-collab-abandon" data-pc="collab-move-abandon-block">
           {resumable ? null : <div className="pc-sync-hint" data-pc="collab-move-pending-idle">{ACCOUNT_MOVE_TEXT.pendingIdle(pending.name, !!shared)}</div>}

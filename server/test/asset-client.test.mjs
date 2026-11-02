@@ -1,12 +1,14 @@
 /**
- * 素材服务客户端 `server/asset-store/client.mjs`（契约 `docs/plan/artifact-transfer-contract.md` 第 2 节，
- * 第 7 节用例 L1～L5）。
- * 跑：node --test server/test/asset-client.test.mjs
+ * Asset service client `server/asset-store/client.mjs` (contract
+ * `docs/plan/artifact-transfer-contract.md` section 2, section 7 test cases L1-L5).
+ * Run: node --test server/test/asset-client.test.mjs
  *
- * 只照契约写，不看实现。真 HTTP：素材服务（`fake-asset-service.mjs`，端口 0，三个命名空间都是 memory 实现）。
- * 客户端的 `fetch` 注入一层记录（必要时改写回包），用来数请求、看请求头、模拟 5xx / 网络错 / 篡改。
+ * Written strictly against the contract, ignoring implementation. Real HTTP: asset service
+ * (`fake-asset-service.mjs`, port 0, all three namespaces use memory implementations).
+ * Client `fetch` injects a logging layer (rewriting responses when necessary) to count
+ * requests, inspect request headers, and simulate 5xx / network errors / tampering.
  *
- * `client.mjs` 还不存在时每条用例各自失败、报原因。
+ * When `client.mjs` does not yet exist, each test case fails individually and reports the reason.
  */
 import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
@@ -34,8 +36,10 @@ const randomToken = () => crypto.randomBytes(24).toString('base64url');
 const { assetTicketKit } = await import('./fake-shared-env.mjs');
 
 /**
- * 记录每个请求的 fetch。`hook(info)` 可以返回一个 Response（或抛错）来代替真的请求；返回 undefined 就照常发。
- * 回的 `log` 每项 `{ method, url, path, headers }`，`headers` 的键小写。
+ * A fetch that logs each request. `hook(info)` can return a Response (or throw an error)
+ * instead of the real request; returning undefined sends as usual.
+ * Each entry in the returned `log` is `{ method, url, path, headers }`, with lowercased
+ * `headers` keys.
  */
 function recordingFetch(hook = () => undefined) {
   const log = [];
@@ -73,9 +77,9 @@ test('L1 after put, has is true and the bytes returned by get are identical; put
     const got = await client.get(ns, hash);
     assert.ok(Buffer.isBuffer(got), `${ns} get returns a Buffer`);
     assert.ok(got.equals(buf), `${ns} retrieved bytes are identical`);
-    // 扩展名随 X-Media-Ext 带上
+    // Extension is passed along with X-Media-Ext
     assert.equal((await srv.stores[ns].stat(hash))?.ext, ext, `${ns} extension`);
-    // 只进了这一个命名空间
+    // Only entered this one namespace
     for (const other of ['media', 'snap', 'px'].filter((x) => x !== ns)) {
       assert.equal(await srv.stores[other].stat(hash), null, `${ns}'s chunk must not appear in ${other}`);
     }
@@ -88,7 +92,7 @@ test('L1 after put, has is true and the bytes returned by get are identical; put
     assert.deepEqual(second.filter((i) => i.method === 'POST'), [], `${ns} second put sends no finalize`);
     assert.ok(second.some((i) => i.method === 'GET' && i.path.endsWith(`/${ns}/${hash}/chunks`)), `${ns} second put queried chunks first`);
   }
-  // 请求都落在 base 下、按 <ns>/<hash>… 寻址
+  // Requests all fall under base, addressed by <ns>/<hash>…
   for (const info of rec.log) assert.ok(info.url.startsWith(`${srv.base}/`), info.url);
 });
 
@@ -97,10 +101,10 @@ test('L1 after put, has is true and the bytes returned by get are identical; put
 test('L2 object larger than one chunk: re-upload only the missing chunks (pre-seed received to simulate an interrupted upload), every chunk carries X-Media-Size and X-Media-Ext', async () => {
   const CHUNK = 1024;
   const srv = await harness.serve({ chunkSize: CHUNK, isTrusted: () => true, token: null });
-  const size = CHUNK * 5 + 123; // 6 片
+  const size = CHUNK * 5 + 123; // 6 chunks
   const buf = bytesOf(size, 7);
   const hash = sha256(buf);
-  // 预置：第 0、2、5 片已经到了（直接打 HTTP）
+  // Preset: chunks 0, 2, 5 have already arrived (hit HTTP directly)
   for (const n of [0, 2, 5]) {
     const r = await fetch(`${srv.base}/px/${hash}/${n}`, { method: 'PUT', body: buf.subarray(n * CHUNK, Math.min(size, (n + 1) * CHUNK)), headers: { 'X-Media-Size': String(size), 'X-Media-Ext': 'm4s' } });
     assert.equal(r.status, 200);
@@ -125,14 +129,15 @@ test('L2 object larger than one chunk: re-upload only the missing chunks (pre-se
   const got = await client.get('px', hash);
   assert.ok(got.equals(buf));
 
-  // 一片都没有的大对象：全部分片都传一遍
+  // Large object with no chunks present: upload all chunks
   const b2 = bytesOf(CHUNK * 3, 8);
   const rec2 = recordingFetch();
   const c2 = createAssetClient({ base: srv.base, fetch: rec2.fetch, chunkSize: CHUNK });
   assert.equal((await c2.put('snap', b2, { ext: 'html' })).uploaded, true);
   assert.deepEqual(rec2.log.filter(isChunkPut).map(chunkNo).sort((a, b) => a - b), [0, 1, 2]);
 
-  // 契约第 10 节第 4 条：切片大小以服务端 chunks 回包的 chunkSize 为准，客户端的选项只作兜底
+  // Contract section 10 item 4: chunk size follows chunkSize in server chunks response;
+  // client option is only a fallback
   for (const clientChunk of [4096, 256, undefined]) {
     const b3 = bytesOf(CHUNK * 2 + 50, 30 + (clientChunk ?? 0));
     const rec3 = recordingFetch();
@@ -170,7 +175,7 @@ test('L3 a chunk returns 500 twice, then succeeds: succeeds after retries; netwo
   assert.ok(took >= 550, `intervals 200 ms, 400 ms: two retries wait at least about 600 ms, actual ${took} ms`);
   assert.ok((await client.get('snap', hash)).equals(buf));
 
-  // 网络错误（fetch 本身抛）：同样按片重试
+  // Network error (thrown by fetch itself): likewise retry per chunk
   const b2 = bytesOf(CHUNK + 1, 10);
   let dropped = 0;
   const rec2 = recordingFetch((info) => {
@@ -181,7 +186,7 @@ test('L3 a chunk returns 500 twice, then succeeds: succeeds after retries; netwo
   assert.equal((await c2.put('px', b2, { ext: 'm4s' })).uploaded, true, 'succeeds after one network error');
   assert.equal(rec2.log.filter((i) => isChunkPut(i) && chunkNo(i) === 0).length, 2);
 
-  // 契约第 10 节第 5 条：重试也用于 chunks、complete、get
+  // Contract section 10 item 5: retries also apply to chunks, complete, get
   const b6 = bytesOf(CHUNK + 40, 21);
   const h6 = sha256(b6);
   const hits = { chunks: 0, complete: 0, get: 0 };
@@ -199,7 +204,7 @@ test('L3 a chunk returns 500 twice, then succeeds: succeeds after retries; netwo
   assert.ok((await c6.get('snap', h6)).equals(b6), 'get succeeds after returning 502 once');
   assert.ok(hits.chunks >= 2 && hits.complete === 2 && hits.get === 2, `each retried once: ${JSON.stringify(hits)}`);
 
-  // 重试用完：抛出
+  // Retries exhausted: throw
   const b3 = bytesOf(100, 11);
   const rec3 = recordingFetch((info) => (isChunkPut(info)
     ? new Response(JSON.stringify({ ok: false, error: 'down' }), { status: 503, headers: { 'Content-Type': 'application/json' } })
@@ -208,13 +213,17 @@ test('L3 a chunk returns 500 twice, then succeeds: succeeds after retries; netwo
   await assert.rejects(c3.put('px', b3), '5xx persists: throws once retries are used up');
   assert.equal(rec3.log.filter(isChunkPut).length, 3, 'retries: 2 → first attempt + 2 retries');
 
-  // 4xx：不重试，直接抛，错误带 status 和回包（真服务：配了票据核对器、非本机、客户端不带票据 → 401）
-  // M6a：读也要票据，所以 401 出在第一个请求（对账 GET chunks）上，原来出在第一片 PUT 上；「只发一次、不重试」的断言不变
+  // 4xx: do not retry, throw directly, error includes status and response (real service:
+  // ticket verifier configured, non-local, client brings no ticket → 401)
+  // M6a: reads also require tickets, so 401 occurs on the first request (reconcile GET chunks);
+  // previously occurred on the first chunk PUT; the "send only once, do not retry" assertion is unchanged
   const lockKit = await assetTicketKit();
   const locked = await harness.serve({ chunkSize: CHUNK, isTrusted: () => false, tickets: lockKit.tickets });
   const rec4 = recordingFetch();
-  // 「不等重试间隔」只看客户端自己花的时间：总耗时减去花在 fetch（真 HTTP 往返、服务端核票）里的时间。
-  // 机器忙时往返本身会慢，但那不是重试间隔；客户端若睡了第一次重试间隔（200 ms），这段时间至少 200 ms，照样拦得住。
+  // "Not waiting for retry interval" only checks time spent by client itself: total elapsed time
+  // minus time spent in fetch (real HTTP round-trip, server ticket verification).
+  // When the machine is busy, round-trip itself is slow, but that is not the retry interval;
+  // if client slept for first retry interval (200 ms), this duration is at least 200 ms, still caught.
   let inFetchMs = 0;
   const timedFetch = async (...args) => {
     const s = Date.now();
@@ -230,7 +239,7 @@ test('L3 a chunk returns 500 twice, then succeeds: succeeds after retries; netwo
   assert.equal(rec4.log.length, 1, '4xx is not retried');
   const ownMs = Date.now() - t1 - inFetchMs;
   assert.ok(ownMs < 150, `4xx does not wait for the retry interval: the client itself spent ${ownMs} ms outside fetch (${inFetchMs} ms inside fetch)`);
-  // 只读票据写入：403 同样不重试（第一片 PUT 上）
+  // Write with read-only ticket: 403 likewise does not retry (on first chunk PUT)
   const rec4b = recordingFetch();
   const readOnly = lockKit.issue('r');
   const c4b = createAssetClient({ base: locked.base, fetch: rec4b.fetch, chunkSize: CHUNK, retries: 3, ticket: () => readOnly });
@@ -238,7 +247,7 @@ test('L3 a chunk returns 500 twice, then succeeds: succeeds after retries; netwo
   assert.equal(err4b?.status, 403);
   assert.equal(rec4b.log.filter(isChunkPut).length, 1, '403 is not retried');
 
-  // 服务端回的 4xx 不是 401 也一样（假回包 409）
+  // Same if 4xx returned by server is not 401 (fake response 409)
   const rec5 = recordingFetch((info) => (isChunkPut(info)
     ? new Response(JSON.stringify({ ok: false, error: 'size-mismatch', size: 1 }), { status: 409, headers: { 'Content-Type': 'application/json' } })
     : undefined));
@@ -259,7 +268,7 @@ test('L4 bytes returned by get are tampered with: throws; 404 returns null', asy
   assert.ok((await plain.get('snap', hash)).equals(buf));
 
   const isBlobGet = (info) => info.method === 'GET' && info.path.endsWith(`/${hash}`);
-  // 翻一个字节
+  // Flip one byte
   const flip = recordingFetch(async (info) => {
     if (!isBlobGet(info)) return undefined;
     const real = Buffer.from(await (await globalThis.fetch(info.url)).arrayBuffer());
@@ -267,7 +276,7 @@ test('L4 bytes returned by get are tampered with: throws; 404 returns null', asy
     return new Response(real, { status: 200, headers: { 'Content-Type': 'text/html', 'Content-Length': String(real.length) } });
   });
   await assert.rejects(createAssetClient({ base: srv.base, fetch: flip.fetch, chunkSize: 1024 }).get('snap', hash), 'bytes altered: throws when the sha256 check fails');
-  // 少一截
+  // Truncated
   const cut = recordingFetch(() => undefined);
   const cutFetch = async (url, init) => {
     const info = { method: String(init?.method || 'GET').toUpperCase(), path: new URL(url).pathname };
@@ -275,11 +284,11 @@ test('L4 bytes returned by get are tampered with: throws; 404 returns null', asy
     return cut.fetch(url, init);
   };
   await assert.rejects(createAssetClient({ base: srv.base, fetch: cutFetch, chunkSize: 1024 }).get('snap', hash), 'also throws when bytes are missing');
-  // 换成别的内容
+  // Replace with different content
   const other = recordingFetch((info) => (isBlobGet(info) ? new Response(bytesOf(1500, 15), { status: 200 }) : undefined));
   await assert.rejects(createAssetClient({ base: srv.base, fetch: other.fetch, chunkSize: 1024 }).get('snap', hash));
 
-  // 404：回 null，不抛
+  // 404: return null, do not throw
   const missing = sha256(Buffer.from('never uploaded'));
   assert.equal(await plain.get('snap', missing), null);
   assert.equal(await plain.get('px', hash), null, 'not present in the other namespace: null');
@@ -288,8 +297,11 @@ test('L4 bytes returned by get are tampered with: throws; 404 returns null', asy
 
 /* ------------------------------------------------------------------ L5 */
 
-// M6a（auth-contract 第 8、11 节）：集群令牌换成 `ticket()`。原来测「带令牌时每个写请求都有 Bearer、异常里没有令牌原文」；
-// 现在读写都要票据，所以测每个请求都带 Bearer <票据>；另测 401 时换票重试一次、给 token 选项就抛。异常里不带票据原文的断言不变。
+// M6a (auth-contract sections 8, 11): cluster token replaced with `ticket()`. Originally tested
+// "every write request has Bearer when token is passed, exceptions contain no raw token";
+// now both reads and writes require tickets, so test that every request has Bearer <ticket>;
+// also test retrying once with refreshed ticket on 401, and throwing if token option is passed.
+// Assertion that exceptions do not contain raw ticket is unchanged.
 test('L5 with a ticket, every request carries Authorization: Bearer <ticket>; on 401 it swaps in a new ticket and retries once; the error message contains no raw ticket', async () => {
   const kit = await assetTicketKit();
   const ticket = kit.issue('rw');
@@ -307,19 +319,20 @@ test('L5 with a ticket, every request carries Authorization: Bearer <ticket>; on
   for (const info of rec.log) assert.equal(info.headers.authorization, `Bearer ${ticket}`, `${info.method} ${info.path}`);
   assert.equal(asked, rec.log.length, 'one ticket fetched per request');
 
-  // 没给 ticket 的客户端：不发 Authorization（服务端回 401）
+  // Client without ticket: does not send Authorization (server returns 401)
   const rec0 = recordingFetch();
   const bare = createAssetClient({ base: srv.base, fetch: rec0.fetch, chunkSize: 1024 });
   const e0 = await bare.put('snap', bytesOf(10, 17)).then(() => null, (e) => e);
   assert.equal(e0?.status, 401);
   for (const info of rec0.log) assert.equal(info.headers.authorization, undefined);
-  // ticket() 回 null：同样不带
+  // ticket() returns null: likewise omitted
   const recNull = recordingFetch();
   const eNull = await createAssetClient({ base: srv.base, fetch: recNull.fetch, chunkSize: 1024, ticket: () => null }).put('snap', bytesOf(10, 17)).then(() => null, (e) => e);
   assert.equal(eNull?.status, 401);
   for (const info of recNull.log) assert.equal(info.headers.authorization, undefined);
 
-  // 401 → ticket({ refresh: true }) 换一张再试一次：旧票据作废（改口令，代数加一）之后换来的新票据能用
+  // 401 → ticket({ refresh: true }) to refresh and retry once: after old ticket is invalidated
+  // (passphrase changed, generation incremented by 1), the new ticket works
   const stale = kit.issue('rw');
   kit.bump((d) => { d.generation += 1; });
   const calls = [];
@@ -327,7 +340,7 @@ test('L5 with a ticket, every request carries Authorization: Bearer <ticket>; on
   const b2 = bytesOf(500, 21);
   assert.equal((await renew.put('snap', b2)).uploaded, true, 'succeeds after swapping the ticket');
   assert.ok(calls.includes(true), `a ticket swap is required after 401: ${JSON.stringify(calls)}`);
-  // 换了还是 401：只重试这一次就抛
+  // Still 401 after refresh: retry only once and then throw
   const recBad = recordingFetch();
   const wrong = `${kit.issue('rw')}x`;
   const bad = createAssetClient({ base: srv.base, ticket: () => wrong, fetch: recBad.fetch, chunkSize: 1024 });
@@ -335,12 +348,12 @@ test('L5 with a ticket, every request carries Authorization: Bearer <ticket>; on
   assert.equal(e1?.status, 401);
   assert.equal(recBad.log.length, 2, '401 swaps the ticket and retries only once');
 
-  // 5xx 重试用完：同样不带票据原文
+  // 5xx retries exhausted: likewise does not contain raw ticket
   const good = kit.issue('rw');
   const down = recordingFetch((info) => (isWrite(info) ? new Response('{"ok":false}', { status: 500, headers: { 'Content-Type': 'application/json' } }) : undefined));
   const e2 = await createAssetClient({ base: srv.base, ticket: () => good, fetch: down.fetch, chunkSize: 1024, retries: 1 }).put('snap', bytesOf(30, 19)).then(() => null, (e) => e);
   assert.ok(e2 instanceof Error, '5xx must throw once retries are used up');
-  // 网络错：同样
+  // Network errors: same
   const net = async () => { throw new TypeError(`fetch failed`); };
   const e3 = await createAssetClient({ base: srv.base, ticket: () => good, fetch: net, chunkSize: 1024, retries: 1 }).put('snap', bytesOf(40, 20)).then(() => null, (e) => e);
   assert.ok(e3 instanceof Error, 'network error must throw once retries are used up');
@@ -355,15 +368,15 @@ test('L5 with a ticket, every request carries Authorization: Bearer <ticket>; on
   assert.ok(!dump(e2).includes(good), 'the 5xx exception contains the raw ticket');
   assert.ok(!dump(e3).includes(good), 'the network error exception contains the raw ticket');
 
-  // 集群令牌不再用于素材服务：给 token 选项直接抛
+  // Cluster tokens are no longer used for asset service: passing token option throws directly
   assert.throws(() => createAssetClient({ base: srv.base, token: randomToken() }), TypeError);
 });
 
-/* ------------------------------------------------------------------ L6（契约第 10 节第 5 条） */
+/* ------------------------------------------------------------------ L6 (contract section 10 item 5) */
 
 test('L6 a fake fetch never returns: timeoutMs aborts on time and the request is retried as a network error; once retries are used up it throws code: timeout, sending retries + 1 requests in total', async () => {
   const srv = await harness.serve({ chunkSize: 1024, isTrusted: () => true, token: null });
-  /** 永不返回的 fetch：只在收到中止信号时拒绝（真 fetch 也是这样响应 AbortSignal 的） */
+  /** Never-returning fetch: rejects only on receiving abort signal (real fetch responds to AbortSignal this way) */
   const hanging = () => {
     const calls = [];
     const fn = (url, init = {}) => {
@@ -393,7 +406,7 @@ test('L6 a fake fetch never returns: timeoutMs aborts on time and the request is
     assert.ok(err instanceof Error, `${what}: throws`);
     assert.equal(err.code, 'timeout', `${what}: error carries code: 'timeout' (actual ${err.code} / ${err.message})`);
     assert.equal(h.calls.length, retries + 1, `${what}: sent retries + 1 requests`);
-    // 超时算网络错误，重试间隔照常（200 ms 起）
+    // Timeout counts as network error, retry interval as usual (starts at 200 ms)
     assert.ok(Date.now() - t0 >= 40 * (retries + 1) + 150, `${what}: took ${Date.now() - t0} ms`);
   }
 });

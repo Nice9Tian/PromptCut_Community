@@ -6,9 +6,9 @@ import "../../cards/native/hud.css";
 import { fitOr } from "../fit";
 
 /**
- * 数据证明。
- * 从 stat-proof 拆出来的文字部件，包含巨型滚动数字及中英注脚。
- * 进场: 引导字淡入下移，数值滚动，注脚稍后淡入。
+ * Stat proof.
+ * Text part extracted from stat-proof, containing giant rolling numbers and Chinese/English footnotes.
+ * Entrance: lead-in text fades in and shifts down, numbers roll, footnotes fade in shortly after.
  */
 interface Params {
   kicker: string;

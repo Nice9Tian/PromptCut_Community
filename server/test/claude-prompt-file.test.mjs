@@ -1,12 +1,15 @@
 /**
- * claude 这条路的系统提示词必须走文件,不能塞进命令行。
+ * The system prompt for the claude path must go through a file and cannot be stuffed into
+ * the command line.
  *
- * 跑法 —— **必须带这个 flag**:
+ * How to run: **must include this flag**:
  *   node --experimental-test-module-mocks --test server/test/claude-prompt-file.test.mjs
  *
- * 钉住的是一个真事故(诊断报告 对话诊断-20260910-204342):原来是 `--append-system-prompt <整段>`。
- * 原生工具一被拒就改走文本协议重试,工具清单拼进系统提示词后 48,000 字符,超过 Windows
- * 单条命令行 32767 的上限,当场 `spawn ENAMETOOLONG`。agy 那边同样的坑见 agy-stdin.test.mjs。
+ * Pins down a real incident (diagnostic report chat-diagnostic-20260910-204342): originally it was
+ * `--append-system-prompt <full-text>`. Once native tools were rejected, it retried via text
+ * protocol; appending the tool manifest into the system prompt reached 48,000 characters, exceeding
+ * the Windows single command-line limit of 32767 and triggering `spawn ENAMETOOLONG` on the spot.
+ * See agy-stdin.test.mjs for the same pitfall on the agy side.
  */
 import { test, mock, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,16 +19,16 @@ import { PassThrough, Writable } from 'node:stream';
 import * as realChildProcess from 'node:child_process';
 import { useFakeCliHome } from './fake-cli-home.mjs';
 
-// claude / agy 解析到临时目录里的假 .exe,断言 spawn 实参时不受本机装法(npm 垫片等)影响
+// claude / agy resolve to fake .exe in temp directory, so asserting spawn args is unaffected by local install (npm shims, etc.)
 const fakeCli = useFakeCliHome();
 after(() => fakeCli.dispose());
 
 const WINDOWS_CMDLINE_LIMIT = 32767;
 
 let spawned;
-/** 每次 spawn 时让假 CLI 往 stdout 吐的行 */
+/** Lines emitted to stdout by the mock CLI on each spawn */
 let script = [];
-/** 假 CLI 收尾那条 result 里额外带的字段(比如 permission_denials) */
+/** Extra fields included in the mock CLI finalization result (e.g. permission_denials) */
 let resultExtra = {};
 let spawnCount = 0;
 mock.module('node:child_process', { exports: { ...realChildProcess, spawn: (exe, args) => {
@@ -35,7 +38,7 @@ mock.module('node:child_process', { exports: { ...realChildProcess, spawn: (exe,
   child.stderr = new PassThrough();
   child.kill = () => {};
   const i = args.indexOf('--append-system-prompt-file');
-  // 文件要在 CLI 启动那一刻就在,内容就是系统提示词
+  // The file must already exist when the CLI starts, with the system prompt as its content
   const promptFile = i >= 0 ? args[i + 1] : null;
   spawned = { exe, args, promptFile, promptText: promptFile && fs.existsSync(promptFile) ? fs.readFileSync(promptFile, 'utf8') : null };
   child.stdin = new Writable({ write(_c, _e, done) { done(); } });
@@ -59,9 +62,11 @@ async function run(opts = {}) {
 }
 
 /*
- * 自带工具(Read / Grep / Bash / Write / Skill)在这里本来就一律被拒,不能拿它当「原生工具通道坏了」。
- * 以前任何一次被拒都触发文本协议重试:整轮已经做完、答复也写好了,又吞掉 done 从头重跑 ——
- * 诊断报告 对话诊断-20260910-234339 的 #7 #13 #15 都是这么在最后一步报错的。
+ * Built-in tools (Read / Grep / Bash / Write / Skill) are always rejected here anyway; this
+ * cannot be taken as "native tool channel broken". Previously, any rejection triggered a text
+ * protocol retry: after the full round finished and the reply was ready, it swallowed done and
+ * reran from scratch: #7, #13, and #15 in diagnostic report chat-diagnostic-20260910-234339 all
+ * threw errors at the final step this way.
  */
 test('Only the built-in tools were denied: finish normally, no rerun', async () => {
   script = [];
@@ -115,8 +120,10 @@ test('Delete the temp file after the run', async () => {
 });
 
 /*
- * 并行调用同名工具时,结果要按 tool_use_id 对回去。以前不带 callId,界面按名字配对,
- * 四个并行的 see_frames 结果全错位(诊断报告 7939–7979 行:传 A 的调用下面挂着 D 的结果)。
+ * When calling tools with the same name in parallel, results must be matched back by
+ * tool_use_id. Previously without callId, the UI matched by name, completely misaligning
+ * four parallel see_frames results (diagnostic report lines 7939-7979: the call passing A
+ * had D's result attached underneath).
  */
 test('tool_call / tool_result carry callId', async () => {
   script = [

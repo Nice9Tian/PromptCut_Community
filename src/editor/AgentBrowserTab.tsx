@@ -8,13 +8,16 @@ import "./AgentBrowserTab.css";
 import { tr } from "../i18n/index.ts";
 
 /**
- * 顶栏的「浏览器」页签(只在桌面壳里出现)。
+ * The "Browser" tab in the top bar (appears only in the desktop shell).
  *
- * agent 的浏览器是主窗口里的一块子 webview。它要人接手(登录、验证码)时**不弹窗**:
- * 这个页签开始闪,旁边冒一个「有待操作」的气泡,用户手上的活做完再点过来。
- * 点一下切到浏览器面板,再点一下切回编辑。
+ * The agent's browser is a child webview inside the main window. When it needs a human to take over
+ * (login, captcha) it **does not pop up a window**:
+ * this tab starts blinking, a "needs action" bubble appears next to it, and the user comes over
+ * after finishing what they are doing.
+ * One click switches to the browser panel, another click switches back to editing.
  *
- * 浏览器里跑 npm run dev 时没有壳,探一次拿不到 agent webview,页签整个不渲染。
+ * When running npm run dev in a browser there is no shell; one probe finds no agent webview, and
+ * the tab is not rendered at all.
  */
 export function AgentBrowserTab(): JSX.Element | null {
   const st = useAgentBrowserState();
@@ -32,7 +35,7 @@ export function AgentBrowserTab(): JSX.Element | null {
     ? tr("The AI is waiting for you to act{0}. Click to switch over", st.reason ? tr(": {0}", st.reason) : "")
     : st.open ? tr("Back to editing") : tr("Switch to the AI's browser");
 
-  // 自带一组(.pc-bar-group):没有壳时整个不渲染,顶栏上不会留一个空组的间距
+  // Brings its own group (.pc-bar-group): with no shell it is not rendered at all, so the top bar does not keep the spacing of an empty group
   return (
     <span className="pc-bar-group pc-agent-tab-wrap">
       <button type="button" className={cls} title={title} aria-pressed={st.open} onClick={toggleAgentBrowser}>

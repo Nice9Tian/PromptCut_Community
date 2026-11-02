@@ -2,16 +2,19 @@ import { memo } from "react";
 import type { CSSProperties } from "react";
 import type { PlaceholderPlaneProps } from "./contract";
 
-/** 倍数 1 时不写 transform(按舞台像素原样画,DOM 与以前相同) */
+/** Do not write transform when scale is 1 (drawn as-is in stage pixels, DOM is identical to before) */
 const scaled = (s: number | undefined): number => (typeof s === "number" && Number.isFinite(s) && s > 0 ? s : 1);
 
 /**
- * 占位平面。沙漏形态:solid 铺噪点、沙漏居中;badge 只有 28×28 的沙漏徽标。
- * 本机渲染不了的卡同样是沙漏(2026-10-21 起没有「本地 PC 辅助渲染」的图标)。
- * 沙漏是否静止由舞台给外面的槽位加 `data-pc-placeholder-static` 决定(contract 的 `PLACEHOLDER_STATIC_ATTR`)。
+ * Placeholder plane. Hourglass forms: solid fills noise with centered hourglass; badge has only
+ * the 28×28 hourglass badge. Cards that cannot be rendered locally also use the hourglass (starting
+ * 2026-10-21, there is no "Local PC assisted rendering" icon). Whether the hourglass is static is
+ * determined by the stage adding `data-pc-placeholder-static` to the outer slot (contract's
+ * `PLACEHOLDER_STATIC_ATTR`).
  *
- * `fit`(舞台一侧按预览缩放、这一层的缩放与框算好,`placeholderFit.ts`):沙漏按 `fit.scale` 放大(徽标的圆、铺满形态中间
- * 那个;噪点不缩放)。中心不动。
+ * `fit` (computed by stage side based on preview scale, this layer's scale, and box;
+ * `placeholderFit.ts`): hourglass scales by `fit.scale` (badge circle, the one in the middle of
+ * solid form; noise does not scale). Center remains fixed.
  */
 export const PlaceholderPlane = memo(function PlaceholderPlane({ clipId, geometry, reason, fit }: PlaceholderPlaneProps) {
   const solid = geometry.kind === "solid";

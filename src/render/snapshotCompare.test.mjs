@@ -13,7 +13,7 @@ const differ = (a, b, hint) => {
   return r;
 };
 
-/* ------------------------------------------------------------ 容差 */
+/* ------------------------------------------------------------ Tolerance */
 
 test('1 ulp difference in the last place counts as identical in inline styles', () => {
   const x = 0.1 + 0.2;                       // 0.30000000000000004
@@ -23,7 +23,7 @@ test('1 ulp difference in the last place counts as identical in inline styles', 
     `<div style="opacity: ${x};"></div>`,
     `<div style="opacity: ${y};"></div>`,
   );
-  // translateY:全局时钟累加 8 次 vs 一步乘 8,末位差一个 ulp
+  // translateY: global clock accumulated 8 times vs multiplied by 8 in one step, differs by 1 ulp in the last place
   const a = -8.6551513671875;
   const b = a * (1 + Number.EPSILON);
   assert.notEqual(a, b, 'Precondition: the two numbers really differ by one ulp');
@@ -41,7 +41,7 @@ test('1 ulp near 0 also counts as identical (absolute floor)', () => {
 test('Beyond 1e-6 relative error counts as different', () => {
   differ('<div style="opacity: 1;"></div>', '<div style="opacity: 1.00001;"></div>', '1e-5 relative error');
   differ('<div style="width: 100px;"></div>', '<div style="width: 100.001px;"></div>');
-  // 0 和一个真有意义的小数不算相同
+  // 0 and a truly meaningful decimal are not considered equal
   differ('<div style="opacity: 0;"></div>', '<div style="opacity: 0.0001;"></div>');
 });
 
@@ -64,14 +64,14 @@ test('A few direct cases for numbersClose / valuesCloseEnough', () => {
   assert.equal(valuesCloseEnough('10px', '10px 10px'), false, 'Different number of parts');
 });
 
-/* ------------------------------------------------------------ 属性 / 标签 / 文本 */
+/* ------------------------------------------------------------ Attributes / tags / text */
 
 test('Different attributes count as different', () => {
   differ('<div class="a"></div>', '<div class="b"></div>', 'Different value');
   differ('<div class="a"></div>', '<div data-x="a"></div>', 'Different name');
   differ('<div class="a"></div>', '<div class="a" id="x"></div>', 'One extra attribute');
   differ('<div class="a" id="x"></div>', '<div class="a"></div>', 'One attribute missing');
-  // 顺序不是画面:属性按名字比,不按序列化顺序
+  // Order is not visual output: compare attributes by name, not serialization order
   same('<div class="a" id="x"></div>', '<div id="x" class="a"></div>');
 });
 
@@ -95,7 +95,7 @@ test('Content of style / script is treated as raw text; a < inside is not a tag'
   const css = '<style>.a::after{content:"<";width:10.0px}</style>';
   same(css, css);
   differ(css, '<style>.a::after{content:"<";width:11px}</style>');
-  // 原始文本走的是 text 记号,不走 style 属性那条容差
+  // Raw text goes through the text token, not the style attribute tolerance
   differ('<style>.a{width:10.0px}</style>', '<style>.a{width:10.000000001px}</style>');
 });
 
@@ -108,7 +108,7 @@ test('A more realistic whole snapshot: only a last-place transform difference �
   differ(html(-8.65, 0.4), html(-8.65, 0.5));
 });
 
-/* ------------------------------------------------------------ 词法分析 */
+/* ------------------------------------------------------------ Lexical analysis */
 
 test('Tokens produced by tokenizeHtml', () => {
   const t = tokenizeHtml('<div class="a" style="x: 1;">hi<br/></div>');

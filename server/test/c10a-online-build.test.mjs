@@ -1,21 +1,39 @@
 /**
- * C10a 在线构建与 `/api` 静态检查（`docs/plan/c10a-contract.md` 第 2 节，第 12 节「`/api` 守卫：在线构建里没有 `/api/` 请求」）。
- * 跑：node --test server/test/c10a-online-build.test.mjs
+ * C10a online build and `/api` static check (`docs/plan/c10a-contract.md` Section 2, Section 12
+ * "`/api` guard: no `/api/` requests in online build").
+ * Run: node --test server/test/c10a-online-build.test.mjs
  *
- *   C10A-API-01 `src/online/mode.ts` 与契约第 2 节逐字节相同（两个实现分支各建一份，集成时不冲突）；
- *   C10A-API-02 `vite build --mode online` 成功：`base: '/editor/'`，index.html 只引 `/editor/assets/…`；
- *   C10A-API-03 产物里没有以 `/api/` 开头的地址字面量（守卫本身判前缀用的 `"/api/"` 不算：后面紧跟地址的才算请求）；
- *   C10A-API-04 桌面构建照旧（缺省 base `/`），不受在线模式影响；
- *   C10-MERGE-01 顶栏「⋯ → 合并 Skill 结果…」在线构建里置灰（C10 契约第 10 节〔裁〕，2026-09-28）：在线产物里这一项
- *                `disabled` 为真、悬停说明是「在线浏览器模式暂不支持合并 Skill 结果…」，桌面说明不在产物里；桌面产物照旧。
- *                这一项的开关是编译期常量（`TopBar.tsx` 的 `ONLINE_BUILD`），Node 里渲染不出在线态，所以就对产物核。
- *   C10-CATALOG-01/02 在线构建的 `catalog/` 与 `server/catalog/<kind>/index.json` 登记的 Lottie、粒子条目一一对应、逐字节相同；桌面构建不带。
- *   C10A-API-05 云端 Agent 服务（`docs/plan/cloud-agent-contract.md` 10.3 节）：在线产物里以 `/agent/` 开头的地址字面量只有 `/agent/v1` 一种，且确实有（AI 栏打它）；
- *   C10A-API-07 在线产物里没有桌面专用的标识：`/api/mcp/events`、`/api/ai/setup`、`/api/chats/`、`PROMPTCUT_AGENT`、`/api/ai/diagnostics`（03 已覆盖路径类，这一条补非路径的与点名的），且带云端对话的诊断报告；
- *   C10A-API-08 桌面产物里也带云端 AI 栏（桌面版项目放云端时多一项「云端」）：有 `/agent/v1` 以外的地址来自文档服务下发，产物里没有写死的云节点地址。
- * 运行期（真浏览器里的网络记录）见 `scripts/probes/c10a-online-probe.mjs`；守卫本身见 `src/online/c10a-api-guard.test.mjs`。
+ *   C10A-API-01 `src/online/mode.ts` is byte-for-byte identical to contract Section 2 (one copy
+ *                created in each of two implementation branches, no conflict during integration);
+ *   C10A-API-02 `vite build --mode online` succeeds: `base: '/editor/'`, index.html only references
+ *                `/editor/assets/…`;
+ *   C10A-API-03 No address literals starting with `/api/` in artifacts (`"/api/"` used by guard to
+ *                check prefixes does not count: only immediately followed by address counts as request);
+ *   C10A-API-04 Desktop build as before (default base `/`), unaffected by online mode;
+ *   C10-MERGE-01 Top bar "⋯ → Merge Skill results…" grayed out in online build (C10 contract
+ *                Section 10 [ruling], 2026-09-28): in online artifacts this item has `disabled`
+ *                true, hover description is "Online browser mode does not yet support merging Skill
+ *                results…", desktop description not in artifacts; desktop artifacts as before.
+ *                The toggle for this item is a compile-time constant (`ONLINE_BUILD` in `TopBar.tsx`);
+ *                Node cannot render online state, so check against artifacts directly.
+ *   C10-CATALOG-01/02 Online build `catalog/` corresponds one-to-one and byte-for-byte with Lottie
+ *                and particle entries registered in `server/catalog/<kind>/index.json`; desktop
+ *                build does not include them.
+ *   C10A-API-05 Cloud Agent service (`docs/plan/cloud-agent-contract.md` Section 10.3): address
+ *                literals in online artifacts starting with `/agent/` have only `/agent/v1`, and it
+ *                definitely exists (AI panel hits it);
+ *   C10A-API-07 Online artifacts contain no desktop-only identifiers: `/api/mcp/events`,
+ *                `/api/ai/setup`, `/api/chats/`, `PROMPTCUT_AGENT`, `/api/ai/diagnostics` (03 already
+ *                covered path types, this adds non-path and named ones), and include diagnostic report
+ *                for cloud chat;
+ *   C10A-API-08 Desktop artifacts also include cloud AI panel (desktop app adds "Cloud" option when
+ *                project is moved to the cloud): addresses other than `/agent/v1` come dispatched
+ *                from document service; no hardcoded cloud node addresses in artifacts.
+ * Runtime (network logs in real browser) see `scripts/probes/c10a-online-probe.mjs`; guard itself
+ * see `src/online/c10a-api-guard.test.mjs`.
  *
- * 构建用 vite 的 JS 接口，产物写进临时目录，不碰 `dist/`、`dist-online/`。`src/online/mode.ts` 不在时整组 skip。
+ * Build uses vite JS API, writes artifacts to temporary directory, without touching `dist/` or
+ * `dist-online/`. Skip entire suite when `src/online/mode.ts` is missing.
  */
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,7 +45,7 @@ const missing = !exists('src/online/mode.ts');
 const skip = skipIf(missing, 'src/online/mode.ts and the online build');
 const it = (name, opts, fn) => test(name, { skip, ...opts }, fn);
 
-/** 契约第 2 节「判定模块」的原文（两行） */
+/** Original text (two lines) of "Decision module" in Section 2 of the contract */
 const MODE_TS = [
   '/** 在线浏览器模式：由在线构建打开（c10a-contract.md 第 2 节）。桌面运行环境（桌面版、本机 dev server）恒为 false。 */', // i18n-allow
   'export const ONLINE: boolean = import.meta.env.VITE_PC_ONLINE === "1";',
@@ -67,10 +85,14 @@ it('C10A-API-02 vite build --mode online succeeds: base is /editor/, and index.h
 });
 
 /*
- * 〔裁，主会话 2026-09-27〕原断言「0 处」改成棘轮：集成时产物里已有的 `/api/` 路径进清单（`c10a-kit.mjs` 的
- * `ONLINE_API_RATCHET_FILE`），这里断言产物里的路径 ⊆ 清单，新出现的判红。这些路径在运行时都被守卫拦下
- * （`c10a-api-guard.test.mjs`、探针的网络记录 0 条）；逐个置灰或换在线替代归 C10 其余，做掉一个就从清单删一个。
- * M8 遗留 L24（2026-09-28）起清单与产物须逐条一致：产物里已经没有的路径留在清单里同样判红，清单不会悄悄变宽。
+ * [ruling, lead session 2026-09-27] Original assertion "0 occurrences" changed to ratchet: `/api/`
+ * paths already in artifacts during integration enter manifest (`ONLINE_API_RATCHET_FILE` in
+ * `c10a-kit.mjs`); here asserts paths in artifacts ⊆ manifest, flagging new ones red. These paths
+ * are all intercepted by the guard at runtime (`c10a-api-guard.test.mjs`, probe network log has
+ * 0 entries); graying out or replacing with online alternatives one by one belongs to the rest of
+ * C10; delete from manifest once resolved.
+ * From M8 legacy L24 (2026-09-28) onward, manifest and artifacts must match item by item: paths no
+ * longer in artifacts remaining in manifest are also flagged red, so manifest cannot silently widen.
  */
 it('C10A-API-03 the /api/ paths in the online build bundle match the ratchet manifest entry by entry (new ones and surplus manifest entries both fail)', { timeout: 240_000 }, async () => {
   await buildOnline();
@@ -80,8 +102,10 @@ it('C10A-API-03 the /api/ paths in the online build bundle match the ratchet man
   const fresh = found.filter((p) => !allowed.has(p));
   const hits = apiLiterals(onlineDir).filter((h) => fresh.some((p) => h.context.includes(p)));
   assert.deepEqual(fresh, [], `${fresh.length} new /api/ paths appeared in the online build (not in manifest ${ONLINE_API_RATCHET_FILE}): ${JSON.stringify(hits.slice(0, 10), null, 1)}`);
-  // /api/account/ 这一族只有闭源侧（cloud/src/account/client.ts、cloud/online/apiGuard.ts）会写进产物；
-  // 社区版没有 cloud/，构建里本来就没有它们，不算「清单里多余」。新出现的路径（上面那条）两边都照样判红
+  // The /api/account/ family is only written into artifacts by the closed-source side
+  // (cloud/src/account/client.ts, cloud/online/apiGuard.ts);
+  // community edition has no cloud/, so builds inherently lack them, not counted as
+  // "redundant in manifest". Newly appearing paths (rule above) are still flagged red on both sides.
   const hasCloud = fs.existsSync(path.join(ROOT, 'cloud'));
   const gone = ratchet.paths.filter((p) => !found.includes(p) && (hasCloud || !p.startsWith('/api/account/')));
   assert.deepEqual(gone, [], `the manifest has ${gone.length} paths that are no longer in the bundle, remove them from ${ONLINE_API_RATCHET_FILE}: ${gone.join(', ')}`);
@@ -113,18 +137,23 @@ it('C10-MERGE-01 "Merge Skill results…" is archived along with the SKILL three
 });
 
 /*
- * C10-TITLEBAR-01 在线构建里整条标题栏不画（2026-10-22 用户定，原话「浏览器版不需要『显示顶部菜单栏』和『放大缩小关闭』
- * 三个无用的按钮」「桌面版要有」）。这一条取代了 C10 契约第 10 节 2026-09-28 那条〔裁〕「在线标题栏菜单同顶栏、桌面项置灰」：
- * 菜单在在线页面上已经不存在，置灰无从谈起。在线产物里菜单行、窗口按钮（− □ ×）、桌面壳命令都应剪掉；
- * 菜单里在线还用得上的七项不许丢——五项在顶栏原有按钮上（导出视频、首页、撤销、重做、皮肤…），
- * 「快捷键」「关于 PromptCut」挪进顶栏「⋯」菜单（`TopBar.tsx`，`data-pc` 为 more-shortcuts / more-about）。
- * 桌面构建照旧：菜单项都在、不置灰、没有在线的悬停说明、桌面壳命令与窗口按钮还在，且不重复「⋯」里那两项。
- * 开关是编译期常量，就对产物核。
+ * C10-TITLEBAR-01 Entire title bar is not rendered in online build (user decision, 2026-10-22,
+ * exact words: "browser edition does not need the three useless buttons 'show top menu bar' and
+ * 'maximize minimize close'", "desktop app must have them"). This supersedes the 2026-09-28 [ruling]
+ * in Section 10 of C10 contract "online title bar menu matches top bar, desktop items grayed out":
+ * the menu no longer exists on the online page, so graying out is moot. In online artifacts, the
+ * menu row, window buttons (− □ ×), and desktop shell commands should all be trimmed; the seven menu
+ * items still needed online must not be lost: five are on existing top bar buttons ("Export video",
+ * "Home", "Undo", "Redo", "Skin"…), and "Shortcuts" and "About PromptCut" are moved into top bar "⋯"
+ * menu (`TopBar.tsx`, `data-pc` is more-shortcuts / more-about).
+ * Desktop build as before: menu items all present, not grayed out, no online hover descriptions,
+ * desktop shell commands and window buttons still present, and does not duplicate those two items in "⋯".
+ * The toggle is a compile-time constant, so check against artifacts directly.
  */
 const TITLEBAR_DESKTOP_ONLY = ['new-project', 'open-project', 'save-project', 'open-export', 'open-data', 'quit', 'open-voice', 'open-pylibs', 'open-models', 'reset-pylibs', 'open-logs'];
 const TITLEBAR_ALWAYS = ['export-video', 'go-home', 'undo', 'redo', 'open-skin', 'shortcuts', 'about'];
 
-/** 产物里标题栏菜单项按钮的属性段（`titlebar-${…}` 那个元素，到它的 children 为止） */
+/** Attribute section of title bar menu item button in artifacts (that `titlebar-${…}` element, up to its children) */
 function titlebarItemProps(dir) {
   for (const file of walkBundle(dir)) {
     const text = fs.readFileSync(file, 'utf8');
@@ -137,7 +166,7 @@ function titlebarItemProps(dir) {
 const menuEntry = (text, cmd) => text.match(new RegExp(`command:[\`"']${cmd}[\`"'][^}]*}`))?.[0] ?? null;
 const bundleText = (dir) => walkBundle(dir).map((f) => fs.readFileSync(f, 'utf8')).join('\n');
 
-/** 从标题栏菜单挪进顶栏「⋯」菜单的两项（只在在线构建里出现） */
+/** Two items moved from title bar menu into top bar "⋯" menu (only appear in online build) */
 const TITLEBAR_MOVED = ['more-shortcuts', 'more-about'];
 
 it('C10-TITLEBAR-01 the online build removes both the title bar menu row and the window buttons without losing any of the seven functions; the desktop build is unchanged', { timeout: 240_000 }, async () => {
@@ -165,10 +194,14 @@ it('C10-TITLEBAR-01 the online build removes both the title bar menu row and the
 });
 
 /*
- * C10-CATALOG-01 在线构建带上动效素材目录（`server/online-catalog.mjs`）：卡片参数里的 `/catalog/<kind>/<name>.json` 在桌面由开发服务器的
- * 中间件提供，在线由构建产出到 `dist-online/catalog/`、托管端 nginx 在 `/catalog/` 下提供。产物里的文件与 index.json 登记的条目一一对应
- * （不多不少、逐字节相同），登记的 url 就是产物里的路径；index.json 本身不产出（页面在构建时 import 它，运行时不读）。
- * 桌面构建照旧不带 catalog/（桌面由中间件按 index.json 放行）。
+ * C10-CATALOG-01 Online build includes motion graphics asset catalog (`server/online-catalog.mjs`):
+ * `/catalog/<kind>/<name>.json` in card parameters is served on desktop by dev server middleware,
+ * and online is output by build to `dist-online/catalog/`, served under `/catalog/` by hosted side nginx.
+ * Files in artifacts correspond one-to-one with entries registered in index.json (neither more nor
+ * less, byte-for-byte identical), registered url is path in artifacts; index.json itself is not output
+ * (page imports it at build time and does not read it at runtime).
+ * Desktop build does not include catalog/ as before (desktop allowed through by middleware according
+ * to index.json).
  */
 const CATALOG_KINDS = ['lottie', 'particles'];
 const catalogIndex = (kind) => JSON.parse(fs.readFileSync(repoPath(`server/catalog/${kind}/index.json`), 'utf8'));
@@ -200,8 +233,11 @@ it('C10-CATALOG-02 the desktop build still ships without catalog/ (the desktop g
 });
 
 /*
- * 云端 Agent 服务的通道（`docs/plan/cloud-agent-contract.md` 10.1～10.3 节）：在线页面的 AI 栏打同源的 `/agent/v1/*`，不是编辑器进程的 `/api/*`。
- * 守卫与棘轮清单一条不加（C10A-API-03 已守）；这里补「/agent/ 只有一种前缀」与「桌面专用的非路径标识不进在线产物」。
+ * Cloud Agent service channel (`docs/plan/cloud-agent-contract.md` Sections 10.1-10.3): AI panel on
+ * online pages hits same-origin `/agent/v1/*`, not editor process `/api/*`.
+ * Not a single entry added to guard and ratchet manifest (already guarded by C10A-API-03);
+ * here complements "/agent/ has only one prefix" and "desktop-only non-path identifiers do not enter
+ * online artifacts".
  */
 const agentLiterals = (text) => [...new Set([...text.matchAll(/["'`](\/agent\/[^"'`\s]*)["'`]/g)].map((m) => m[1]))];
 
@@ -215,7 +251,9 @@ it('C10A-API-07 the online bundle contains no desktop-only identifiers', { timeo
   await buildOnline();
   const text = bundleText(onlineDir);
   for (const id of ['/api/mcp/events', '/api/ai/setup', '/api/chats/', 'PROMPTCUT_AGENT', '/api/ai/diagnostics']) assert.equal(text.includes(id), false, `the online bundle should not contain ${id}`);
-  // 云端对话的诊断报告在页面里生成、浏览器下载(用户 2026-10-07 定):诊断报告的窗口在在线产物里,走本机编辑器写盘的那条路被剪掉
+  // Cloud chat diagnostic reports are generated in the page and downloaded by the browser
+  // (user decision, 2026-10-07): the diagnostic report window is in the online build artifacts,
+  // and the path writing to disk via the local editor was cut
   assert.ok(text.includes('Cloud chat diagnostic report'), 'the online bundle includes the cloud chat diagnostic report');
 });
 

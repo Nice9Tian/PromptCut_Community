@@ -1,8 +1,9 @@
 /**
- * 兼容旁路(`--media=ffmpeg`)遇到剪辑段里的视频 / 图片:改走缺省的完整整帧路线(`server/bakery/export.mjs` 的
- * `cutSegmentsHaveVisualMedia`,`mechanism/rendering.md`「剪辑段」兼容旁路一条)。
+ * Compatibility bypass (`--media=ffmpeg`) encountering video / images in cut segments: switches to
+ * default full-frame route (`cutSegmentsHaveVisualMedia` in `server/bakery/export.mjs`,
+ * `mechanism/rendering.md` "cut segment" compatibility bypass item).
  *
- * 跑:node --test server/test/cut-segment-export-mode.test.mjs
+ * Run: node --test server/test/cut-segment-export-mode.test.mjs
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';

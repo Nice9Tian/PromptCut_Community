@@ -1,16 +1,28 @@
 /**
- * 只有一个舞台时界限搜索的页面驱动(`costSearch.ts`,原 `lowMemorySearch.ts`):用例 LS-01～LS-08。舞台与文档服务连接都是假的。
+ * Page driver for bounds search when there is only one stage (`costSearch.ts`, formerly
+ * `lowMemorySearch.ts`): test cases LS-01 to LS-08. Stage and document service connections are mocked.
  *
- *   LS-01 取记录 → 在唯一那个舞台里测(临时切 back、只走计时趟、一次一个缩水项目)→ 切回 front、整份重灌、restore 一次
- *   LS-02 测量期间 costSearchMeasuring() 为真(父页据此不投快照、不拨时间),测完为假;遮罩状态带进度
- *   LS-03 本地复用:第二次打开全命中,一次都不测、不切角色、不 restore
- *   LS-04 本页跑不了的用户卡、素材效果卡不参加、按重卡;没有记录的卡逐张实测(2026-10-07 用户定);direct 卡按随机帧逐帧 setTime(probe)
- *   LS-05 取不到记录抛错(调用方稍后再试),舞台一下都不碰;项目重灌打断的那一张重来
- *   LS-06 测每张卡之前、之后各叫一次 beforeMeasure / afterMeasure(即时渲染闸门留崩溃记录);真测出来的写进文档服务(publish),本地复用命中的不写
- *   LS-07 搜完之后加了新卡:没有记录的补测那一张(measureNewCards),有记录的按已有的界限判、不测
- *   LS-08 两个舞台的界限搜索测完以后给判重的卡产稀疏版那一段:holdCostSearchMask 立起遮罩、带进度,releaseCostSearchMask 撤下
+ *   LS-01 Fetch records → measure in that only stage (temporarily switch to back, run timing passes
+ *          only, one reduced project at a time) → switch back to front, re-feed entirely, restore once
+ *   LS-02 During measurement, costSearchMeasuring() is true (parent page uses this to not deliver
+ *          snapshots or advance time), false after measurement completes; overlay state carries
+ *          progress
+ *   LS-03 Local reuse: all hit on second open, no measurement, no role switching, no restore
+ *   LS-04 User cards and media effect cards that cannot run on this page do not participate and are
+ *          treated as heavy cards; cards without records are measured individually (user decision,
+ *          2026-10-07); direct cards invoke setTime(probe) frame by frame on random frames
+ *   LS-05 Throw error when records cannot be fetched (caller retries later), stage is not touched at
+ *          all; card interrupted by project re-feed restarts
+ *   LS-06 Call beforeMeasure / afterMeasure before and after measuring each card (leaves crash records
+ *          for on-demand render gate); genuinely measured records are written to document service
+ *          (publish), hits from local reuse are not written
+ *   LS-07 New cards added after search completes: catch-up measure those without records
+ *          (measureNewCards); those with records are judged by existing bounds, not measured
+ *   LS-08 After bounds search completes for two stages, the section producing sparse versions for
+ *          cards classified as heavy: holdCostSearchMask raises overlay with progress,
+ *          releaseCostSearchMask dismisses it
  *
- * 跑:npm test -- src/editor/costSearch.test.mjs
+ * Run: npm test -- src/editor/costSearch.test.mjs
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import test from "node:test";
@@ -23,7 +35,7 @@ const FPS = 30;
 const B = 1000 / FPS * 0.7;
 const ENV = { platform: "iPhone", userAgent: "Mozilla/5.0 (iPhone) CriOS/152.0.0.0", renderer: "Apple GPU", vendor: "Apple Inc." };
 
-/** n 张卡 c00…,每张一个片段;identityKey = k<i> */
+/** n cards c00…, one clip each; identityKey = k<i> */
 function fixture(n, { extra = [] } = {}) {
   const clips = Array.from({ length: n }, (_, i) => ({ id: `c${String(i).padStart(2, "0")}`, cardId: `card${i}`, start: i * 0.1, end: i * 0.1 + 2, params: {} }));
   for (const c of extra) clips.push(c);
@@ -33,7 +45,7 @@ function fixture(n, { extra = [] } = {}) {
   return { project, identityKeys, capabilities };
 }
 
-/** 假舞台:按当前缩水项目里那张卡的「本机耗时」回计时趟 */
+/** Mock stage: returns timing pass based on the "local duration" of the card in current reduced project */
 function fakeStage(localMs, log) {
   let current = null;
   let role = "front";
@@ -96,7 +108,7 @@ const recordsFor = (n, rep = (i) => i + 1) => Array.from({ length: n }, (_, i) =
 
 test("LS-01 Fetch records → measure in the one and only stage (temporarily switching to back) → switch back to front, reload the whole project, restore once; the light ones follow the search result", async () => {
   L.resetCostSearch();
-  // 本机耗时 = 3 × 共享记录:i ≤ 6 跑得动(21 ms),7 起跑不动
+  // Local duration = 3 × shared record: i ≤ 6 can run (21 ms), starts failing to run from 7
   const local = (clipId) => 3 * (Number(clipId.slice(1)) + 1);
   const { d, log, pushed, restores, f } = deps({ n: 12, local, records: recordsFor(12) });
   const out = await L.runCostSearch(d);
@@ -169,7 +181,7 @@ test("LS-05 If records cannot be fetched it throws and the stage is not touched 
   const { d, log } = deps({ n: 3, local: () => 5, records: [], request: async () => ({ type: "error", reason: "forbidden" }) });
   await assert.rejects(L.runCostSearch(d), /forbidden/);
   assert.deepEqual(log, []);
-  // 打断:第一次计时趟回 'project',第二次照常
+  // Interruption: first timing pass returns 'project', second pass as usual
   const r = deps({ n: 2, local: () => 5, records: recordsFor(2) });
   const stage = r.d.stage();
   const orig = stage.render.bind(stage);
@@ -192,7 +204,7 @@ test("LS-06 Leave a crash record before measuring each card and clear it when fi
   const out = await L.runCostSearch(a.d);
   const measuredKeys = out.result.trace.filter((t) => !t.cached).map((t) => t.key);
   assert.ok(measuredKeys.length > 0);
-  // 每测一张:先 before、后 after,成对,按测的先后
+  // For each card measured: before first, then after, in pairs, ordered by measurement sequence
   assert.deepEqual(marks.filter((m) => m[0] === "before").map((m) => m[1]), measuredKeys);
   for (let i = 0; i < marks.length; i += 2) {
     assert.equal(marks[i][0], "before");
@@ -205,7 +217,7 @@ test("LS-06 Leave a crash record before measuring each card and clear it when fi
     assert.ok(r.samples >= 1);
     assert.equal(r.mode, "build");
   }
-  // 第二次打开:本地复用全命中,不测、不留崩溃记录、不写
+  // Second opening: local reuse all hit; no measurement, no crash records left, no writes
   marks.length = 0;
   published.length = 0;
   const b = deps({ n: 6, local: () => { throw new Error("Should not measure again"); }, records: recordsFor(6), store });
@@ -221,7 +233,7 @@ test("LS-07 A new card added after the search: the one without a record is measu
   const local = (clipId) => (clipId === "cfresh" ? 3 : 3 * (Number(clipId.slice(1)) + 1));
   const first = deps({ n: 8, local, records: recordsFor(8) });
   const out = await L.runCostSearch(first.d);
-  // 加两张卡:一张有记录(代表耗时 1,落在界限省的一侧),一张没有记录
+  // Add two cards: one has a record (duration 1, falls on economical side of the bound), one has no record
   const extra = [
     { id: "crec", cardId: "rec-card", start: 0, end: 2, params: {} },
     { id: "cfresh", cardId: "fresh-card", start: 0, end: 2, params: {} },
@@ -238,7 +250,7 @@ test("LS-07 A new card added after the search: the one without a record is measu
   assert.ok(next.light.has("kfresh"), "The supplementary measurement gives 3 ms, classified as light");
   assert.ok(next.light.has("krec"), "Has a record and the representative time falls on the cheap side of the bounds, classified as light");
   assert.equal(second.restores(), 1, "After the supplementary measurement it still switches back, reloads and restores");
-  // 没有要补测的:原样回、舞台不碰
+  // Nothing to catch-up measure: return as is, stage untouched
   const again = deps({ n: 8, extra, local: () => { throw new Error("Should not measure"); }, records: recordsFor(8) });
   again.f.identityKeys.crec = "krec";
   again.f.identityKeys.cfresh = "kfresh";

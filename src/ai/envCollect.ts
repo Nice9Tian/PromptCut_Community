@@ -5,17 +5,23 @@ import { getState } from "../store/project";
 import { tr } from "../i18n/index.ts";
 
 /**
- * 把散在各个 store 里的「当时的现场」凑齐,再问服务端要它那一半。
+ * Gathers the "state at that moment" scattered across the various stores, then asks the server
+ * for its half.
  *
- * 拼装逻辑在 envReport.ts(纯函数,能单测);这里只负责取值和那一次网络请求 ——
- * 取值本身没什么可测的,而它们各自的 store 在测试环境里都要 mock 一遍才跑得起来。
+ * The assembly logic lives in envReport.ts (a pure function, unit-testable); this file only does the
+ * value collection and that single network request. There is little to test in the collection itself,
+ * and each of those stores would have to be mocked in the test environment before it could run.
  *
- * **任何一步失败都不许挡住报告**。诊断报告是用户已经遇到问题之后才点的,
- * 这时候本地服务很可能正是坏掉的那个;为了多一段现场把整份报告导不出来,
- * 是把唯一的线索也一起弄丢。所以每一段都各自 try,失败就在原地留一句话。
+ * **No step may block the report when it fails**. The diagnostic report is clicked only after the
+ * user has already hit a problem, and by then the local service is quite likely the very thing that
+ * broke; failing to export the whole report for the sake of one more piece of context would also
+ * throw away the only clue. So each section has its own try, and a failure leaves one line in place.
  */
 
-/** 问服务端要环境信息的超时。它已经在本机了,五秒还不回就是它自己出事了 */
+/**
+ * Timeout for asking the server for environment info. It is already on this machine, so if it
+ * has not replied within five seconds, it is itself in trouble
+ */
 const SERVER_TIMEOUT_MS = 5000;
 
 function clientInput(): EnvInput {
@@ -47,17 +53,19 @@ function clientInput(): EnvInput {
   };
 }
 
-/** 服务端那一半:Node 进程状态、会话文件柜、装了哪些驱动 */
+/** The server's half: Node process state, the session file cabinet, which drivers are installed */
 async function serverPart(): Promise<unknown> {
   try {
-    // refresh=0:不要为了这份快照去给三个 CLI 各起一个子进程探活(单个超时 15 秒)。
-    // 那会让最有价值的 sessions 段被探活拖到超时丢掉 —— 而这个按钮正是机器出问题时才点的。
+    // refresh=0: do not spawn a subprocess for each of the three CLIs to check liveness for this
+    // snapshot (15-second timeout each). That would let the checks drag the most valuable section,
+    // sessions, into a timeout and lose it, and this button is clicked precisely when the machine is in
+    // trouble.
     const res = await fetch("/api/ai/diagnostics?refresh=0", { signal: AbortSignal.timeout(SERVER_TIMEOUT_MS) });
     const data = await res.json();
     if (!res.ok || !data?.ok) return { error: data?.error || `HTTP ${res.status}` };
     return data;
   } catch (e) {
-    // 服务没起来本身就是一条线索,别把它咽掉
+    // The service not being up is a clue in itself; do not swallow it
     return { error: e instanceof Error ? e.message : String(e), note: tr("Can't get server info: the local service may not be running, which may itself be the problem") };
   }
 }

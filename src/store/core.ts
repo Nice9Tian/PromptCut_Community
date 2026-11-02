@@ -1,7 +1,7 @@
-// 本文件导出的内部可变状态与写入原语(state、listeners、history、future、emit、set、
-// setProject 以及各个纯函数辅助)只给 src/store/actions 用,属于包内可见性;
-// 外部一律走 project.ts —— 它只转出 EditorState / planPlacement / getState /
-// subscribe / useStore / actions 这几个公开名字。
+// Internal mutable state and write primitives exported by this file (state, listeners, history,
+// future, emit, set, setProject, and pure function helpers) are only for src/store/actions, with
+// package-private visibility; external code always goes through project.ts: it only re-exports
+// the public names EditorState / planPlacement / getState / subscribe / useStore / actions.
 import { createContext, useContext, useRef, useSyncExternalStore } from "react";
 import { createEmptyProject, type Project, type Track, type TrackClip } from "../kernel/project";
 import { type Transition } from "../kernel/transitions";
@@ -9,44 +9,51 @@ import { cutEditView, foldCutEdit } from "../kernel/cuts";
 import { tr } from "../i18n/index.ts";
 
 /**
- * 编辑器状态存储(单例)。所有面板、时间轴、MCP 工具都通过这里读写,不直接改 Project 对象。
- * 用法:const project = useStore(s => s.project);  actions.addClip(...)
- * 每个 action 都是同步的、产生新对象(不可变更新),方便撤销和 React 重渲染。
+ * Editor state store (singleton). All panels, timeline, and MCP tools read and write through here,
+ * never modifying the Project object directly.
+ * Usage: const project = useStore(s => s.project);  actions.addClip(...)
+ * Every action is synchronous and produces a new object (immutable update), making undo and React
+ * re-renders straightforward.
  */
 
 export interface EditorState {
   /** Changes only when a project is opened/replaced; async jobs must not survive reopening. */
   projectLoadToken: number;
   project: Project;
-  /** 播放头(秒) */
+  /** Playhead (seconds) */
   t: number;
   playing: boolean;
-  /** 每次 seek/重播 +1,Stage 用它重新挂载卡片 */
+  /** Incremented by 1 on each seek/replay; Stage uses it to remount cards */
   playToken: number;
-  /** 选中的 clip id(可多选,第一个是主选) */
+  /** Selected clip ids (multi-selection allowed; first is primary) */
   selection: string[];
-  /** 项目文件路径(未保存为 null) */
+  /** Project file path (null if unsaved) */
   filePath: string | null;
   dirty: boolean;
-  /** 用户手动拖范围卡标设定的总时长，没设过就是 null */
+  /** Total duration manually set by user dragging the range marker, null if never set */
   durationManual: number | null;
   /**
-   * 上一次用过的三维视角。关掉三维(camera3dFov 被抹掉)时记在这儿,再打开就回到那个值。
+   * Last used 3D camera FOV. Recorded here when closing 3D (camera3dFov wiped), restoring that value
+   * when reopened.
    *
-   * **不落盘**:存盘结果要和从没开过三维一样。放在 store 而不是模块变量,是因为模块变量
-   * 跨项目存活 —— A 项目调过 60、关掉,再打开一个从没开过三维的 B 项目,B 会莫名其妙拿到 60。
-   * 挂在这儿,loadProject 顺手清掉就干净了。
+   * **Not persisted to disk**: saved file should look identical to never having opened 3D. Kept in
+   * store rather than a module variable because module variables persist across projects: if project
+   * A adjusted it to 60 and closed it, opening project B that never opened 3D would mysteriously get
+   * 60. Stored here, loadProject cleanly clears it.
    */
   lastCamera3dFov: number | null;
-  /** 预览总音量 0–1(只影响预览,不写进项目;导出由 ffmpeg 合成原音) */
+  /**
+   * Master preview volume 0–1 (affects preview only, not saved to project; export mixes original
+   * audio via ffmpeg)
+   */
   volume: number;
-  /** 预览静音开关,和 volume 分开记,取消静音能回到原音量 */
+  /** Preview mute toggle, tracked separately from volume so unmuting restores original volume */
   muted: boolean;
 }
 
 type Listener = () => void;
 
-/** 预览音量记在本机,跟项目无关 */
+/** Preview volume is stored locally, independent of the project */
 export const VOLUME_KEY = "pc.volume";
 export function readVolume(): number {
   try {
@@ -85,17 +92,23 @@ export function set(patch: Partial<EditorState>) {
 }
 
 /*
- * 就地改停放剪辑里的片段(Agent 的 update_clip 等,见 kernel/cuts.ts「就地改停放剪辑里的片段」)。
+ * Modifies clips in parked cuts in place (Agent's update_clip, etc.; see "Modify clips in parked
+ * cuts in place" in kernel/cuts.ts).
  *
- * `runInCutScope(cutId, fn)` 在 fn 执行期间把 `state.project` 换成「那条剪辑当激活」的视图,
- * 让现成的、按激活剪辑写的 actions(`findClip(state.project, …)` + `setProject`)原样工作;
- * 这期间 `setProject` 把动作产出的新项目折回真实形状再提交(撤销栈、文档服务同步看到的都是真实形状,
- * 只有那条剪辑条目里的内容变了,activeCutId 与激活剪辑原样不动),`set` 通知监听者时也先换回真实项目 ——
- * 所以任何监听者、同步层都看不到视图。fn 必须是同步的。
+ * `runInCutScope(cutId, fn)` replaces `state.project` during fn execution with a view where "that
+ * cut is active", allowing existing actions written for active cuts (`findClip(state.project, …)` +
+ * `setProject`) to work as-is; during this time, `setProject` folds the new project produced by the
+ * action back to its real shape before committing (the undo stack and document service sync both see
+ * the real shape, where only that cut's entry content changed, leaving activeCutId and the active
+ * cut untouched), and `set` also switches back to the real project before notifying listeners: so no
+ * listeners or sync layer ever see the view. fn must be synchronous.
  */
 let cutScope: { cutId: string; real: Project } | null = null;
 
-/** 在 scope 里要往外办事(提交、通知监听者)时:先换回真实项目、办完把视图按办完后的真实项目重建 */
+/**
+ * When doing external work in scope (commit, notify listeners): switch back to real project
+ * first, then rebuild view based on the post-work real project when done
+ */
 function outsideCutScope<T>(fn: () => T): T {
   const sc = cutScope!;
   cutScope = null;
@@ -119,7 +132,7 @@ export function runInCutScope<T>(cutId: string, fn: () => T): T {
   }
   const real = state.project;
   const view = cutEditView(real, cutId);
-  if (!view) return fn(); // 就是激活那条、或找不到:照常做
+  if (!view) return fn(); // Already the active one, or not found: proceed as normal
   cutScope = { cutId, real };
   state = { ...state, project: view };
   let out: T;
@@ -137,32 +150,44 @@ export function runInCutScope<T>(cutId: string, fn: () => T): T {
 }
 
 export interface SetProjectOptions {
-  /** false:不进撤销栈 */
+  /** false: does not enter undo stack */
   undoable?: boolean;
   /**
-   * 同一个 key、合并窗口内的连续修改合并成撤销栈上的一步(滑块一次拖动、数字框连续步进)。
-   * 不传就和以前一样,每次一步。没传时取 `withMerge` 圈出的那一个。
+   * Consecutive edits with the same key within the merge window are merged into a single step
+   * on the undo stack (a single slider drag, continuous number input stepping). If omitted, behaves
+   * as before with one step per edit. When not passed, uses the one enclosed by `withMerge`.
    */
   mergeKey?: string;
-  /** 合并窗口(毫秒,以上一次合并为准往后滚);不传取 `MERGE_WINDOW_MS`。`Infinity` = 只认 key、不看时间(一次拖动的 key 是独一份的) */
+  /**
+   * Merge window (in milliseconds, rolling forward from the last merge); defaults to
+   * `MERGE_WINDOW_MS` if omitted. `Infinity` = key only, ignoring time (key for a single drag
+   * is unique)
+   */
   mergeWindowMs?: number;
 }
 
 /**
- * 连上文档服务时接管项目写入与撤销的一方(docsync.ts 的 bindStore 装上)。
- * 没装时(缺省)一切照旧:整份替换 + history / future 快照栈。
- * 两种模式对 actions 与界面的接口一样:setProject / undo / redo / canUndo / canRedo。
+ * Party that takes over project writes and undo when connected to document service (attached
+ * by bindStore in docsync.ts). When not attached (default), behaves as before: whole replacement
+ * + history / future snapshot stack. Both modes share the same interface for actions and UI:
+ * setProject / undo / redo / canUndo / canRedo.
  */
 export interface ProjectSyncHooks {
-  /** 本地改成 next;返回真正落地的那一份(键的顺序可能与 next 不同,内容相同) */
+  /**
+   * Changes locally to next; returns the copy actually committed (key order may differ from next,
+   * contents identical)
+   */
   commit(prev: Project, next: Project, opts: SetProjectOptions): Project;
-  /** 整份换成另一份内容(打开 .proc 等);返回落地的那一份 */
+  /** Replaces entirely with another copy of content (opening .proc, etc.); returns the committed copy */
   load(project: Project): Project;
   undo(): void;
   redo(): void;
   canUndo(): boolean;
   canRedo(): boolean;
-  /** 等所有本地修改都拿到文档服务的确认(.proc 保存前等它);没接文档服务时没有这一项 */
+  /**
+   * Waits until all local edits receive confirmation from the document service (waited on before
+   * saving .proc); absent when not connected to document service
+   */
   whenSettled?(opts?: { timeoutMs?: number }): Promise<{ rev: number; project: Project }>;
 }
 
@@ -176,13 +201,17 @@ export function getProjectSync(): ProjectSyncHooks | null {
   return projectSync;
 }
 
-/** 快照栈模式下的合并判据:上一次带 mergeKey 的修改,以及它落地后的那一份项目 */
+/**
+ * Merge criteria in snapshot stack mode: last edit with mergeKey, and the committed copy of
+ * project from it
+ */
 let lastMerge: { key: string; at: number; project: Project } | null = null;
 export const MERGE_WINDOW_MS = 300;
 
 /**
- * 把 `fn` 里发生的项目修改都归到同一个 mergeKey 下:界面上的滑块拖动、数字框步进靠它,
- * 不必给每个 action 都多长一个参数。同步执行;嵌套时里层覆盖外层,出来后还原。
+ * Attributes project edits occurring in `fn` to the same mergeKey: relied on by UI slider drags
+ * and number input stepping, without adding an extra parameter to every action. Runs synchronously;
+ * inner scopes override outer scopes when nested, and restore upon exit.
  */
 let ambientMerge: { key: string; windowMs?: number } | null = null;
 export function withMerge<T>(merge: { key: string; windowMs?: number }, fn: () => T): T {
@@ -192,8 +221,9 @@ export function withMerge<T>(merge: { key: string; windowMs?: number }, fn: () =
 }
 
 /**
- * 本页面自己的修改(经 setProject 落地的;远端来的改动、撤销 / 重做不经这里)。
- * 「用户正在编辑」(src/editor/userEditing.ts)据此判「选中的片段刚被用户动过」。
+ * Local edits from this page (committed via setProject; remote changes and undo / redo do not
+ * pass through here). "User is editing" (src/editor/userEditing.ts) uses this to determine
+ * whether "the selected clip was just touched by the user".
  */
 type LocalCommitListener = (prev: Project, next: Project) => void;
 const localCommitListeners = new Set<LocalCommitListener>();
@@ -206,14 +236,14 @@ export function onLocalCommit(fn: LocalCommitListener): () => void {
 function noteLocalCommit(prev: Project, next: Project) {
   if (prev === next) return;
   for (const fn of localCommitListeners) {
-    try { fn(prev, next); } catch { /* 旁听的出错不影响修改 */ }
+    try { fn(prev, next); } catch { /* Errors in listeners do not affect mutations */ }
   }
 }
 
-/** 改项目文档(会进撤销栈) */
+/** Modifies project document (enters undo stack) */
 export function setProject(next: Project, opts: SetProjectOptions = {}) {
   if (cutScope) {
-    if (next === state.project) return; // 视图原样提交 = 没改,不凭空产出一份新项目
+    if (next === state.project) return; // View committed as-is = no changes, avoids producing a new project out of thin air
     const folded = foldCutEdit(cutScope.real, next, cutScope.cutId);
     outsideCutScope(() => setProject(folded, opts));
     return;
@@ -228,7 +258,8 @@ export function setProject(next: Project, opts: SetProjectOptions = {}) {
   }
   if (opts.undoable !== false) {
     const now = Date.now();
-    // 同一个数字框的连续输入:上一步就是它、中间没有别的修改、300 ms 内 → 不另起一步
+    // Continuous input in the same number input: previous step was this, no intermediate edits,
+    // within 300 ms → do not start a new step
     const merge = !!opts.mergeKey && lastMerge !== null && lastMerge.key === opts.mergeKey && lastMerge.project === state.project && now - lastMerge.at <= (opts.mergeWindowMs ?? MERGE_WINDOW_MS) && history.length > 0;
     if (!merge) {
       history.push(state.project);
@@ -241,7 +272,7 @@ export function setProject(next: Project, opts: SetProjectOptions = {}) {
   noteLocalCommit(prev, next);
 }
 
-/** 把一条转场写下的淡化擦掉(片段可能已经不在了,擦不到就跳过) */
+/** Clears fades written by a transition (clips may no longer exist; skipped if not found) */
 export function clearTransitionFades(p: Project, tr: Transition): Project {
   const clear = (clipId: string | undefined, side: "fadeIn" | "fadeOut") => {
     if (!clipId) return;
@@ -267,12 +298,14 @@ export function updateTrack(p: Project, trackId: string, fn: (t: Track) => Track
 }
 
 /**
- * 删片段 / 删序列之后剔掉没人要的素材效果卡节点。
+ * Prunes unneeded media effect card nodes after deleting clips / tracks.
  *
- * cardNodes 的写入方只有 cardAuthoring,片段是它唯一的入口,所以判据就是
- * 「从还在的片段出发走不走得到」。走不到的、以及输入指着已删片段那个合成源
- * (`@clip/<id>/source`)的,连同它的下游一起剔掉 —— 留着的话 projectCardGraph
- * 每次都要靠丢边规则兜,而那条规则是留给「图已经存盘」的旧项目的。
+ * The only writer for cardNodes is cardAuthoring, and clips are its sole entry point, so the
+ * criterion is "whether it is reachable starting from remaining clips". Unreachable nodes, as well
+ * as those whose inputs point to that composite source (`@clip/<id>/source`) of a deleted clip,
+ * are pruned along with their downstream nodes: leaving them would require projectCardGraph to fall
+ * back on the edge-dropping rule every time, which is reserved for legacy projects where "the graph
+ * is already saved to disk".
  */
 export function pruneCardNodes(p: Project): Project {
   const nodes = p.cardNodes;
@@ -305,7 +338,8 @@ export function pruneCardNodes(p: Project): Project {
   if (keep.size === nodes.length) return p;
   const next: Project = { ...p, cardNodes: nodes.filter((n) => keep.has(n.id)) };
   if (!clips.some((c) => c.nodeId && !keep.has(c.nodeId))) return next;
-  // 节点没了的片段把 nodeId 一并擦掉:留着就是一个指向不存在节点的引用
+  // Clips whose nodes are gone have their nodeId cleared: keeping it would be a reference
+  // to a nonexistent node
   return { ...next, tracks: p.tracks.map((t) => ({ ...t, clips: t.clips.map((c) => {
     if (!c.nodeId || keep.has(c.nodeId)) return c;
     const { nodeId: _gone, ...rest } = c;
@@ -314,8 +348,10 @@ export function pruneCardNodes(p: Project): Project {
 }
 
 /**
- * 把一组片段整体平移 dt 秒。轨内不能重叠、不能被推到 0 之前 —— 有一处放不下就整组不动
- * (返回 null),不做「挪一半」这种半吊子结果。组内的相对关系原样保留,所以转场不会散。
+ * Translates a group of clips as a whole by dt seconds. Clips cannot overlap within a track
+ * and cannot be pushed before 0: if any clip cannot fit, the entire group remains untouched
+ * (returns null), avoiding half-baked results like "moving halfway". Relative relationships
+ * within the group are preserved intact, so transitions will not break.
  */
 export function shiftClipsBy(p: Project, ids: string[], dt: number): Project | null {
   const set = new Set(ids);
@@ -345,8 +381,9 @@ export function sortClips(clips: TrackClip[]): TrackClip[] {
 }
 
 /**
- * 轨内不重叠:把 clip 夹到相邻 clip 之间,时长不变。
- * 空档放不下整段时返回 null(调用方拒绝这次移动),不再把 clip 压扁。
+ * No overlapping within tracks: clamps clip between adjacent clips, keeping duration unchanged.
+ * Returns null when the gap cannot fit the entire segment (caller rejects this move), instead of
+ * crushing the clip.
  */
 export function resolveOverlap(track: Track, clip: TrackClip): TrackClip | null {
   const others = track.clips.filter((c) => c.id !== clip.id);
@@ -363,7 +400,7 @@ export function resolveOverlap(track: Track, clip: TrackClip): TrackClip | null 
   return { ...clip, start: Math.max(0, start), end };
 }
 
-/** 新增用:原位放不下就往后找第一个放得下的空档(时长不变)。 */
+/** For additions: if it cannot fit in place, find the first gap after it that fits (duration unchanged). */
 export function placeOrShift(track: Track, clip: TrackClip): TrackClip {
   const fit = resolveOverlap(track, clip);
   if (fit) return fit;
@@ -379,9 +416,11 @@ export function placeOrShift(track: Track, clip: TrackClip): TrackClip {
 }
 
 /**
- * 落点预演:用和落卡完全相同的规则算一遍新片段会落在哪,但不改文档。
- * 时间轴的落点预览用它,保证「拖动时看到的位置」和松手后真正落下的位置一致。
- * shifted = 原位放不下、被顺延到了后面的空档。
+ * Drop target dry run: calculates where the new clip will land using the exact same rules as card
+ * placement, but does not modify the document.
+ * Used by the timeline drop target preview to ensure the "position seen while dragging" matches
+ * the position where it actually lands after release.
+ * shifted = could not fit in place and was shifted to a later gap.
  */
 export function planPlacement(track: Track, start: number, dur: number): { start: number; end: number; shifted: boolean } {
   const from = Math.max(0, start);
@@ -391,8 +430,9 @@ export function planPlacement(track: Track, start: number, dur: number): { start
 }
 
 /**
- * 不指定序列时该落在哪条:挑第一条这个时间段空着的序列(序列不分种类了,所以只看占没占)。
- * 都放不下就用第一条没锁的,由 placeOrShift 往后顺延。
+ * Which track to land on when no track is specified: pick the first track that is free during this
+ * time range (tracks no longer have types, so only check whether it is occupied).
+ * If none can fit, use the first unlocked track and let placeOrShift shift it later.
  */
 export function pickTrack(p: Project, start: number, dur: number): Track | undefined {
   const free = p.tracks.find(
@@ -414,14 +454,18 @@ export function subscribe(l: Listener): () => void {
 }
 
 /**
- * 「这棵子树此刻看不见,先别跟 store 的更新」。停靠栏里没选中、或所在一侧收起着的分区页
- * (`DockPages` 给每个分区包一层)在 `true` 下:`useStore` 不订阅、一直回上一次看得见时读到的值,
- * 项目每变一次(挪片段、改参数)也不重渲;重新露出来的那一次提交里按当时的 store 重读,
- * 和一直跟着的结果一样。
+ * "This subtree is currently invisible, do not follow store updates for now". Under `true`, for
+ * section tabs in the dock that are unselected or on a collapsed side (`DockPages` wraps each
+ * section): `useStore` does not subscribe and keeps returning the value read when it was last
+ * visible, without re-rendering on every project change (moving clips, changing parameters);
+ * in the commit where it is exposed again, it re-reads from the store at that time, giving
+ * the same result as following along the whole time.
  *
- * 为什么要有它(tiers-probe T4,docs/archive/agent-reports/AGENT-perf-t4.md):分区页常驻挂载、只是 display:none,
- * 以前每次编辑都把看不见的特效库、节点图、字幕列表整棵重渲一遍,和看得见的时间轴、预览挤在同一个
- * 同步任务里(useSyncExternalStore 的更新不能切片),后台转码、上传一抢 CPU 就超过 50 ms。
+ * Why this exists (tiers-probe T4,docs/archive/agent-reports/AGENT-perf-t4.md): section tabs
+ * are permanently mounted and merely display:none; previously, every edit re-rendered the entire
+ * tree of the invisible effects library, node graph, and captions list, crowding into the same
+ * synchronous task with the visible timeline and preview (useSyncExternalStore updates cannot be
+ * sliced), and exceeding 50 ms as soon as background transcoding or uploading competed for CPU.
  */
 const StoreHoldContext = createContext(false);
 export const StoreHold = StoreHoldContext.Provider;
@@ -430,7 +474,8 @@ const holdSubscribe = () => () => {};
 export function useStore<T>(selector: (s: EditorState) => T): T {
   const held = useContext(StoreHoldContext);
   const last = useRef<{ value: T } | null>(null);
-  // 刚挂上就是看不见的(last 还没有值)照常读一次;之后看不见期间一直回上一次的值
+  // If it is invisible when first mounted (last has no value yet), read once as normal;
+  // afterwards, keep returning the previous value while invisible
   const read = () => (held && last.current ? last.current.value : selector(state));
   const value = useSyncExternalStore(held ? holdSubscribe : subscribe, read, read);
   last.current = { value };

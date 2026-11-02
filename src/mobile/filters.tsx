@@ -1,8 +1,12 @@
 /**
- * 手机版的滤镜入口(`docs/plan/mobile-online-task.md` 待用户项第 4 条,用户 2026-10-21 定「先补滤镜」):
- * - 卡片库「滤镜」分类:项目的滤镜库,挂到 / 摘掉选中的视频、图片段,删除(同桌面「特效 → 滤镜」组 `filtersGroup.tsx`);
- * - 调整面板里素材段的「滤镜」一栏:挑一个挂上、逐段调它声明的参数(同桌面编辑页 `ClipFilterForm.tsx`)。
- * 校验与门槛和桌面、Agent 的 apply_filter / remove_filter 是同一份(`createFilterTools`),这里只画手机版的控件。
+ * Filter entry of the mobile app (`docs/plan/mobile-online-task.md` item 4 of the pending user items,
+ * user decision 2026-10-21: "do filters first"):
+ * - Card library "Filter" category: the project's filter library, attach to / detach from the selected
+ *   video and image clips, delete (same as the desktop "Effects → Filter" group `filtersGroup.tsx`);
+ * - The "Filter" row of the media clip in the adjustment panel: pick one to attach, tune the
+ *   parameters it declares per clip (same as the desktop editor `ClipFilterForm.tsx`).
+ * Validation and gates are the same as desktop and the Agent's apply_filter / remove_filter
+ * (`createFilterTools`); this file only draws the mobile app controls.
  */
 import { useState } from "react";
 import { actions, getState, useStore } from "../store/project";
@@ -15,11 +19,11 @@ import { tr } from "../i18n/index.ts";
 
 const tools = createFilterTools({ getState, actions });
 
-/** 滤镜库是空的时的提示:口径同桌面(`ClipFilterForm.tsx`、`filtersGroup.tsx`),位置换成手机版的「卡片库 → 滤镜」 */
+/** Hint when the filter library is empty: same wording as desktop (`ClipFilterForm.tsx`, `filtersGroup.tsx`), with the location changed to the mobile app "Card library → Filter" */
 export const FILTERS_EMPTY_SHORT = tr("The filter library is empty: ask the Agent to create one, and it will appear in the \"Filters\" category of the card library");
 export const FILTERS_EMPTY_LONG = tr("No filters yet. Ask the Agent to create one (for example, \"give those night-scene clips a cool tone\"). It will appear here and can then be attached to any video / image clip for reuse.");
 
-/** 能不能挂滤镜:视频 / 图片段(不是卡片、不是声音、不是剪辑段) */
+/** Whether a filter can be attached: video / image clips (not cards, not audio, not cut segments) */
 export function filterableClip(p: Project, c: TrackClip | null | undefined): c is TrackClip {
   if (!c || !c.mediaId || c.cardId) return false;
   const m = p.media.find((x) => x.id === c.mediaId);
@@ -31,7 +35,7 @@ const stepOf = (spec: FilterParamSpec) => {
   return span <= 2 ? 0.01 : span <= 20 ? 0.1 : 1;
 };
 
-/** 一块彩色样片套上滤镜(片段 1 秒处的样子),同桌面滤镜组的样片 */
+/** A colored sample swatch with the filter applied (how the clip looks at 1 second), same as the sample of the desktop filter group */
 export function FilterSwatch({ def }: { def: FilterDef }) {
   const css = cssFilter(resolveOps(def, undefined, 1, 2), 0.25);
   return <div className="fx-swatch" aria-hidden="true" style={{ filter: css || undefined }} />;
@@ -41,7 +45,7 @@ const run = (fn: () => unknown): string | null => {
   try { fn(); return null; } catch (e) { return e instanceof Error ? e.message : String(e); }
 };
 
-/** 卡片库「滤镜」分类 */
+/** Card library "Filter" category */
 export function FiltersGrid() {
   const project = useStore((s) => s.project);
   const selection = useStore((s) => s.selection);
@@ -84,7 +88,7 @@ export function FiltersGrid() {
   );
 }
 
-/** 调整面板里素材段的「滤镜」一栏 */
+/** The "Filter" row of the media clip in the adjustment panel */
 export function ClipFilterFields({ clip }: { clip: TrackClip }) {
   const filters = useStore((s) => s.project.filters) ?? [];
   const [err, setErr] = useState<string | null>(null);
@@ -105,7 +109,7 @@ export function ClipFilterFields({ clip }: { clip: TrackClip }) {
         const commit = (n: unknown) => {
           const x = Number(n);
           if (!Number.isFinite(x)) return;
-          // 只带声明过的键:删掉过的参数还留在片段上的话,整栏都会被「没有参数 X」卡住(同桌面)
+          // Only carry the declared keys: if a deleted parameter is still left on the clip, the whole row gets blocked by "no parameter X" (same as desktop)
           const kept = Object.fromEntries(Object.entries(clip.filter?.params ?? {}).filter(([key]) => cur.params && key in cur.params));
           apply(cur.id, { ...kept, [k]: x });
         };

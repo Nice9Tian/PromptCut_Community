@@ -5,8 +5,8 @@ import "../../cards/native/hud.css";
 import { fitOr } from "../fit";
 
 /**
- * 术语卡:带拼音或英文小注的名词解释。从 term-card 拆出。
- * 英文小注强制大写，定义文本逐字淡入。
+ * Term card: noun explanation with pinyin or English annotations. Extracted from term-card.
+ * English annotations are forced uppercase, and definition text fades in character by character.
  */
 interface Params {
   en: string;

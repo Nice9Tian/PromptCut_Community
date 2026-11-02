@@ -1,6 +1,8 @@
 /**
- * `server/lan-open.mjs` 的单测：「在手机上打开」要的那点信息（语义 `mechanism/platforms.md`「局域网里的第二块屏」）。
- * 纯函数，不起进程、不碰网络。跨设备进项目走的是邀请链接那条路，链接由页面自己拼，本模块只答「绑没绑局域网、地址是哪几个」。
+ * Unit test for `server/lan-open.mjs`: the bits of info needed by "open on mobile" (semantics
+ * `mechanism/platforms.md` "second screen on LAN"). Pure function, spawns no processes, touches no
+ * network. Entering projects across devices goes through invite links, which the page constructs
+ * itself; this module only answers "whether bound to LAN, and which addresses".
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,7 +15,7 @@ test('LO1 Whether it is bound to the LAN is judged by the actual listening addre
   for (const a of ['127.0.0.1', '127.0.0.53', '::1', '[::1]', 'localhost', '::ffff:127.0.0.1']) {
     assert.equal(boundToLan(a), false, `${a} should count as bound to loopback only`);
   }
-  // 判不出来按不可达算
+  // If cannot determine, treat as unreachable
   assert.equal(boundToLan(undefined), false);
   assert.equal(boundToLan(null), false);
   assert.equal(boundToLan(5190), false);

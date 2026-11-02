@@ -1,6 +1,11 @@
-// M8「异地接入」探针公共件 scripts/probes/m8/no-lan.mjs 的纯逻辑：netstat 行解析与按对端地址计数（Windows、Linux 两种格式）。
-// 基线排除（REPORT-render-queue-m8.md 第 13.5 节的弱点之一）：开始时已有的、对端是这个地址的连接（上一项留下的 TIME_WAIT 等）不算；
-// 之后新出现的不论状态都算——两次采样之间建立又关掉的短连接，下一次采样时只剩 TIME_WAIT，也要抓到。
+// M8 "remote connection" probe shared utility scripts/probes/m8/no-lan.mjs pure logic: netstat line
+// parsing and counting by peer address (Windows and Linux formats).
+// Baseline exclusion (one of the weaknesses in Section 13.5 of REPORT-render-queue-m8.md):
+// pre-existing connections with this peer address at start (such as TIME_WAIT left by previous test)
+// do not count;
+// Newly appeared connections afterwards count regardless of state: short connections established
+// and closed between two samples that only have TIME_WAIT remaining by next sampling must also be
+// captured.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseNetstatLine, foreignIs, countTcpTo, countNewTcpTo, pairKey, judgeNoLanTcp, startNoLanWatch } from '../../scripts/probes/m8/no-lan.mjs';
@@ -61,7 +66,10 @@ test('Refuse to start if the address is not IPv4', () => {
 const PC = '192.168.50.96';
 const HEAD = '  Proto  Local Address          Foreign Address        State';
 const row = (local, foreign, state) => `  TCP    ${local.padEnd(22)} ${foreign.padEnd(22)} ${state}`;
-/** 上一项刚跑完：到 PC 的连接全在 TIME_WAIT / CLOSE_WAIT / FIN_WAIT_2；另有一条到阿里云的 */
+/**
+ * Previous item just finished: connections to PC are all in TIME_WAIT / CLOSE_WAIT / FIN_WAIT_2;
+ * another connection to Alibaba Cloud
+ */
 const LEFTOVER = [
   HEAD,
   row('192.168.50.79:52010', `${PC}:5780`, 'TIME_WAIT'),
@@ -94,7 +102,7 @@ test('judgeNoLanTcp: no pass if no baseline was obtained or nothing was sampled 
   assert.equal(judgeNoLanTcp({ baselineOk: false, samples: 0, maxTcp: 0 }), false, 'netstat never ran successfully');
 });
 
-/** 按顺序回给 startNoLanWatch 的假 netstat（单测不跑真的 netstat、不做局域网发现） */
+/** Fake netstat returned in sequence to startNoLanWatch (unit test runs no real netstat, does no LAN discovery) */
 function fakeNetstat(outputs) {
   let i = 0;
   return () => {

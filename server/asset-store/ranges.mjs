@@ -1,4 +1,7 @@
-/** 闭区间合并:接受帧号和区间混排,排序、去重、相邻(b + 1 === a)也并掉。 */
+/**
+ * Closed interval merge: accepts mixed frame numbers and intervals; sorts, deduplicates, and
+ * merges adjacent entries (b + 1 === a).
+ */
 export function mergeRanges(ranges) {
   const parts = [];
   for (const value of ranges ?? []) {

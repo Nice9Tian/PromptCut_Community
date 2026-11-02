@@ -1,15 +1,18 @@
-// 守门：含非 ASCII 字节的 .ps1 必须以 UTF-8 BOM（EF BB BF）开头。
+// Gatekeeper: .ps1 containing non-ASCII bytes must begin with UTF-8 BOM (EF BB BF).
 //
-// 为什么：Windows PowerShell 5.1 读「不带 BOM 的 .ps1」按系统 ANSI 代码页解码，不看 chcp。
-// 中文 Windows 的 ANSI 代码页是 GBK，UTF-8 的中文字节被当成 GBK 读，碎成乱码，
-// 字符串里的引号、括号会被吃掉，整份脚本解析失败（实测：apply-patch.ps1 报 5 个错，
-// apply-extension.ps1 13 个，report.ps1 4 个；前面加上 BOM 后都是 0 个）。
-// 这几份脚本随安装包 / 补丁 / 扩展包发给用户，不是只在开发机上跑。
+// Why: Windows PowerShell 5.1 reads ".ps1 without BOM" by decoding with system ANSI code page,
+// ignoring chcp. On Chinese Windows, the ANSI code page is GBK; UTF-8 Chinese bytes are read
+// as GBK and scrambled into mojibake, quotes and parentheses in strings are swallowed, and the
+// entire script fails to parse (measured: apply-patch.ps1 reported 5 errors, apply-extension.ps1 13,
+// report.ps1 4; after prepending BOM, all reported 0).
+// These scripts are distributed to users with installer packages / patches / extension packages,
+// not just run on dev machines.
 //
-// 带 BOM 的 .ps1 在 PowerShell 5.1 和 7 上都能正常读，所以规则一刀切：有非 ASCII 就要 BOM。
-// 纯 ASCII 的不要求（加了也行，不加也不会出事）。
+// .ps1 with BOM reads cleanly on both PowerShell 5.1 and 7, so the rule is across the board:
+// if non-ASCII, require BOM. Pure ASCII is not required (adding it is fine, omitting it will not
+// cause issues).
 //
-// 跑法：node --test desktop/test/ps1-bom.test.mjs
+// How to run: node --test desktop/test/ps1-bom.test.mjs
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
@@ -22,14 +25,14 @@ const BOM = [0xef, 0xbb, 0xbf];
 
 const hasBom = (buf) => buf.length >= 3 && BOM.every((b, i) => buf[i] === b);
 const hasNonAscii = (buf) => buf.some((b) => b > 0x7f);
-/** 违规：含非 ASCII，却没有 BOM */
+/** Violation: contains non-ASCII, but has no BOM */
 const violates = (buf) => hasNonAscii(buf) && !hasBom(buf);
 
 function listPs1() {
   const ls = (args) => spawnSync('git', ['ls-files', '-z', ...args, '--', '*.ps1'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   const tracked = ls([]);
   assert.equal(tracked.status, 0, tracked.stderr);
-  // 还没 git add 的新脚本也要拦
+  // New scripts not yet added with git add must also be blocked
   const untracked = ls(['--others', '--exclude-standard']);
   assert.equal(untracked.status, 0, untracked.stderr);
   return [...new Set([...tracked.stdout.split('\0'), ...untracked.stdout.split('\0')].filter(Boolean))];

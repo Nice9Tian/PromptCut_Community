@@ -1,12 +1,15 @@
 /**
- * 卡片源码解析(`cardSourceParse.mjs`,C10 契约第 9 节「识别」)的单测。跑:
- *   node --test src/kernel/cardSourceParse.test.mjs
+ * Unit tests for card source parsing (`cardSourceParse.mjs`, C10 contract Section 9 "Recognition").
+ * Run: node --test src/kernel/cardSourceParse.test.mjs
  *
- * 夹具:
- *   1. 仓库里**每一个** `src/cards/user/*.tsx`:解析结果与注册表里那个文件的卡(`userCards` / `userCardFileOf`,经 vite 真的载入)逐个相同;
- *   2. 更宽的语料:`src/cards/` 下全部 `.tsx`(内置卡与用户卡同一种写法),解析结果与模块的具名导出里长得像 CardDef 的逐个相同;
- *   3. 手写的边角:注释 / 字符串 / 模板里写着的「卡」、JSX 文字里的撇号、正则、泛型、`export { a as b }`、默认导出、常量 id、
- *      展开、缺字段的对象、方法写法。
+ * Fixtures:
+ *   1. **Every** `src/cards/user/*.tsx` in repository: parse results match cards for that
+ *   file in registry (`userCards` / `userCardFileOf`, actually loaded via vite) one by one;
+ *   2. Broader corpus: all `.tsx` under `src/cards/` (built-in cards and user cards share the
+ *   same syntax), parse results match items resembling CardDef in module named exports one by one;
+ *   3. Handwritten edge cases: "cards" written in comments / strings / templates, apostrophes in
+ *   JSX text, regexes, generics, `export { a as b }`, default exports, constant id, spreads,
+ *   objects missing fields, method syntax.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -18,7 +21,7 @@ import { parseCardSource, isUserCardEntryKey } from "./cardSourceParse.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const byId = (a) => [...a].sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
-/** 只比 id 与名字(识别那一层;默认值与控件另有专门的用例) */
+/** Only compare id and name (identification layer; default values and controls have dedicated tests) */
 const idName = (a) => a.map(({ id, name }) => ({ id, name }));
 const isCardDef = (c) => !!c && typeof c === "object" && typeof c.id === "string" && typeof c.name === "string" && typeof c.defaults === "object"
   && Array.isArray(c.controls) && (typeof c.Component === "function" || typeof c.card === "function" || typeof c.audio === "function");
@@ -40,7 +43,8 @@ test("Every src/cards/user/*.tsx in the repository: the parse result matches, ca
     const want = user.userCards.filter((c) => user.userCardFileOf[c.id] === base).map((c) => ({ id: c.id, name: c.name }));
     const got = parseCardSource(fs.readFileSync(path.join(dir, f), "utf8"));
     assert.deepEqual(byId(idName(got)), byId(want), `Parse result of ${f} does not match the registry`);
-    // 用户卡的默认值、控件、说明:逐字相同(仓库里的用户卡都写成字面量)
+    // Default values, controls, descriptions of user cards: verbatim identical (user cards in
+    // repository are all written as literals)
     for (const g of got) {
       const real = user.userCards.find((c) => c.id === g.id);
       assert.deepEqual(g.defaults, real.defaults, `defaults of ${f} ${g.id}`);
@@ -70,7 +74,8 @@ test("Wider corpus: the parse result of every .tsx under src/cards matches, one 
     const got = parseCardSource(fs.readFileSync(f, "utf8"));
     assert.deepEqual(byId(idName(got)), byId(want), rel);
     cards += want.length;
-    // 默认值与控件:认出来的与模块里的一致;没认出来的控件一定标了 controlsIncomplete
+    // Default values and controls: recognized ones match those in module; unrecognized controls
+    // must be marked controlsIncomplete
     for (const g of got) {
       const real = Object.values(mod).find((v) => isCardDef(v) && v.id === g.id);
       for (const [k, v] of Object.entries(g.defaults)) assert.deepEqual(v, real.defaults[k], `${rel} ${g.id} defaults.${k}`);
@@ -78,7 +83,7 @@ test("Wider corpus: the parse result of every .tsx under src/cards matches, one 
         const rc = real.controls.find((x) => x.key === c.key);
         assert.ok(rc, `${rel} ${g.id} has an extra control ${c.key}`);
         for (const [field, v] of Object.entries(c)) {
-          if (field === "options" && c.type === "asset" && v.length === 0) continue; // asset 的选项认不出时按空表
+          if (field === "options" && c.type === "asset" && v.length === 0) continue; // When asset options are not recognized, treat as an empty list
           assert.deepEqual(v, rc[field], `${rel} ${g.id} controls.${c.key}.${field}`);
         }
       }
@@ -92,8 +97,10 @@ test("Wider corpus: the parse result of every .tsx under src/cards matches, one 
   }
   assert.ok(cards >= 20, `Too few cards in the corpus: ${cards}`);
   /*
-   * 防止解析器悄悄退化成什么都认不出。内置卡很多展开了从别的文件引进来的 `hudControls`(不是同文件的字面量,按规矩认不出,
-   * 标 controlsIncomplete),所以这里只要求大头认得出(2026-09-29 实测:39 张卡、17 张全认出,166 个控件认出 125 个)。
+   * Prevent parser from silently degrading into recognizing nothing. Many built-in cards spread
+   * `hudControls` imported from other files (not literals in same file, unrecognized by rule,
+   * marked controlsIncomplete), so here we only require majority to be recognized (measured
+   * 2026-09-29: 39 cards, 17 fully recognized; 125 of 166 controls recognized).
    */
   assert.ok(stats.complete >= 10, `Too few cards with all controls recognized: ${JSON.stringify(stats)}`);
   assert.ok(stats.parsed >= stats.controls * 0.6, `Too few controls recognized: ${JSON.stringify(stats)}`);
@@ -249,10 +256,10 @@ export const fourth = { id: "fourth", name: "Fourth card", defaults: { a: "x" },
   assert.deepEqual({ defaults: third.defaults, controls: third.controls, controlsIncomplete: third.controlsIncomplete }, { defaults: {}, controls: [], controlsIncomplete: false }, "Really no controls");
   assert.deepEqual(fourth.controls, [{ key: "a", label: "A", type: "text" }, { key: "b", label: "B", type: "color" }], "Spread a same-file constant inside an array");
   assert.equal(fourth.controlsIncomplete, false);
-  // 常量互相引用成环:不死循环,当认不出
+  // Constants mutually referencing into a cycle: no infinite loop, treated as unrecognized
   const loop = parseCardSource(`const A = B; const B = A; export const c = { id: "c", name: "Cycle", defaults: { a: A, ok: 1 }, controls: [], Component: V };`);
   assert.deepEqual(loop[0].defaults, { ok: 1 });
-  // 简写属性引用同名常量
+  // Shorthand properties referencing constants of the same name
   const short = parseCardSource(`const defaults = { k: 1 }; const controls = [{ key: "k", label: "k", type: "number" }]; export const c = { id: "c", name: "Shorthand", defaults, controls, Component: V };`);
   assert.deepEqual({ d: short[0].defaults, c: short[0].controls }, { d: { k: 1 }, c: [{ key: "k", label: "k", type: "number" }] });
 });

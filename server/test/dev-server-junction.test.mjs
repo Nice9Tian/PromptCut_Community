@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createJunction, removeJunction, removeMarkedJunction, sweepStaleJunctions, portTriple, startDevServer } from '../../scripts/lib/dev-server.mjs';
 
-/** 每个用例一套:假素材目录(带文件和子目录)+ 一个放链接的工作目录 */
+/** One set per test case: fake asset catalog (with files and subdirectories) + a working directory for links */
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-junction-'));
   const target = path.join(root, 'media-src');
@@ -30,7 +30,7 @@ test('Removing a junction removes only the link, and no file in the target is lo
   assert.equal(fs.existsSync(f.link), false);
   assert.equal(fs.existsSync(path.join(f.work, '.media-junction.json')), false);
   assert.deepEqual(files(f.target), before);
-  // 再拆一次:已经没有了,不报错
+  // Dismantle once more: already gone, does not throw
   assert.equal(removeJunction(f.link), false);
 });
 
@@ -41,7 +41,7 @@ test('A real directory that is not a link, and a link pointing elsewhere, are bo
   fs.writeFileSync(path.join(f.link, 'keep.txt'), 'x');
   assert.throws(() => removeJunction(f.link), /not a link/);
   assert.ok(fs.existsSync(path.join(f.link, 'keep.txt')));
-  // 已存在的路径上不建链接
+  // Do not create links on existing paths
   assert.throws(() => createJunction(f.link, f.target), /already exists/);
 
   const other = path.join(f.work, 'other');
@@ -59,12 +59,12 @@ test('Link left behind after a forced kill: cleaned up if the process that creat
   const marker = path.join(f.work, '.media-junction.json');
   const info = JSON.parse(fs.readFileSync(marker, 'utf8'));
 
-  // 标记里的 pid 是一个活着的别的进程(父进程):不动
+  // pid in the marker is another living process (parent process): leave untouched
   fs.writeFileSync(marker, JSON.stringify({ ...info, pid: process.ppid }));
   assert.deepEqual(sweepStaleJunctions(path.dirname(f.work)), []);
   assert.ok(fs.lstatSync(f.link).isSymbolicLink());
 
-  // 换成一个不存在的 pid:清掉
+  // Replace with a non-existent pid: clean up
   fs.writeFileSync(marker, JSON.stringify({ ...info, pid: 2 ** 31 - 1 }));
   assert.deepEqual(sweepStaleJunctions(path.dirname(f.work)), [path.resolve(f.link)]);
   assert.equal(fs.existsSync(f.link), false);

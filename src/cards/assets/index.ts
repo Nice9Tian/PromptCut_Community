@@ -6,17 +6,21 @@ import { ParticlesView } from "../native/particles";
 import { translateParticlesConfig } from "./particlesKnobs";
 
 /**
- * 素材封装卡:动效素材 → 函数翻译 → 约定封装。
+ * Media wrapper cards: motion graphics assets → function translation → card contract.
  *
- * 素材目录(server/catalog)里的每个 Lottie 动画、每份粒子配置在这里各自变成一张 CardDef:
- *   - 原始文件留在目录里,卡片只记 URL;组件复用 LottieView / ParticlesView 这两个「函数」;
- *   - 对外只有翻译出来的旋钮(Lottie:速度 / 到头后 / 适配;粒子:配置里真有的数量 / 速度 /
- *     大小 / 颜色 / 不透明度 / 连线),parts 和 lifecycle 一并声明;
- *   - Agent 和左栏看到的就是这些卡:add_clip({ cardId: "lottie-adrock" }) 即可,不用知道 URL,
- *     更不用读素材文件。
+ * Every Lottie animation and every particle config in the asset catalog (server/catalog) becomes a
+ * CardDef of its own here:
+ *   - The original files stay in the catalog and the card records only the URL; the components reuse
+ *     the two "functions" LottieView / ParticlesView;
+ *   - Only the translated knobs are exposed (Lottie: speed / after the end / fit; particles: the
+ *     count / speed / size / color / opacity / links that the config really has), with parts and
+ *     lifecycle declared as well;
+ *   - These cards are what the Agent and the left rail see: add_clip({ cardId: "lottie-adrock" }) is
+ *     enough, with no need to know the URL, let alone read the asset file.
  *
- * 构建时生成(catalog 的 index.json 和粒子配置都是 import 进来的),打进包里的和开发机上的一样。
- * id 前缀 lottie- / particles- 是保留命名空间,create_card 不许占。
+ * Generated at build time (the catalog's index.json and the particle configs are both imported in),
+ * so what is packed into the bundle is the same as on the dev machine.
+ * The id prefixes lottie- / particles- are a reserved namespace that create_card may not occupy.
  */
 
 const particleConfigs = import.meta.glob<Record<string, any>>("../../../server/catalog/particles/*.json", { eager: true, import: "default" });
@@ -42,9 +46,12 @@ function lottieCardOf(a: CatalogAsset): CardDef<any> {
     useWhen: `${whenToUse(a)}The animation itself runs ${a.seconds ?? "?"}s (${a.w}×${a.h}); if the clip is given this duration it plays through once in full, and if longer it holds on the last frame or loops.`,
     tags: ["lottie", "media", ...a.tags],
     source: "asset",
-    // 帧模式:remotion 式(渲染重构「癸」)。LottieView 不让播放器自己走,每一帧把 t 换算成帧号直接跳过去;
-    // 随机数和属性值留旧数那几处在 loadLottie 里固定住了(见 native/lottie.tsx 文件头),任何参数下都是 direct。
-    // 本文件里素材封装卡的源码版本只取声明里的几项:这一行改掉的那一次,5 张 Lottie 封装卡的键才变。
+    // Frame mode: remotion-style (render refactor "Gui"). LottieView does not let the player run by
+    // itself; each frame it converts t into a frame number and jumps straight there;
+    // the places involving random numbers and stale property values are pinned in loadLottie (see the
+    // header of native/lottie.tsx), so it is direct under any parameters.
+    // The source version of the media wrapper cards in this file takes only a few items of the
+    // declaration: only when this line was changed did the keys of the 5 Lottie wrapper cards change.
     frameMode: "direct",
     defaults: { speed: 1, loop: "no", fit: "contain" },
     controls: [
@@ -54,7 +61,8 @@ function lottieCardOf(a: CatalogAsset): CardDef<any> {
     ],
     parts: [{ id: "animation", label: a.name, role: "media", params: ["speed", "loop", "fit"], enterMs: 0, ...(settleMs ? { settleMs } : {}) }],
     lifecycle: { ...(settleMs ? { settleMs } : {}), after: "hold", exit: ["fade"] },
-    // 动画本身多长是定的,但 speed 拉快就早落定;loop 打开就不是「停住」而是「循环」
+    // The animation's own length is fixed, but raising speed makes it settle earlier; with loop on it
+    // is not "stopped" but "looping"
     timing: (p) => {
       const speed = Number(p.speed) > 0 ? Number(p.speed) : 1;
       const settle = settleMs ? settleMs / speed : undefined;
@@ -84,7 +92,8 @@ function particlesCardOf(a: CatalogAsset): CardDef<any> | null {
     useWhen: `${whenToUse(a)}It is a background, usually placed on the bottom track and covering the whole duration; particle positions are determined by seed, and the same seed gives the same result on every export.`,
     tags: ["particles", "background", "media", ...a.tags],
     source: "asset",
-    // 帧模式:审计固化(A0.1)。tsParticles 逐帧积分位置,任何参数下都是 stateful。
+    // Frame mode: fixed by the audit (A0.1). tsParticles integrates positions frame by frame, so it is
+    // stateful under any parameters.
     frameMode: "stateful",
     defaults: { ...knobs.defaults, seed: 1 },
     controls: [
@@ -102,11 +111,14 @@ export const assetCards: CardDef<any>[] = [
   ...particleAssets.map(particlesCardOf).filter((c): c is CardDef<any> => !!c),
 ];
 
-/** 左栏分组用:素材卡按种类分开 */
+/** For left rail grouping: media cards are separated by kind */
 export function assetCardKind(card: CardDef<any>): "lottie" | "particles" | null {
   if (card.source !== "asset") return null;
   return card.id.startsWith("lottie-") ? "lottie" : "particles";
 }
 
-/** 粒子素材里目录标了 featured 的那些:左栏默认只显示这些,免得 50 多张把列表挤满 */
+/**
+ * The particle assets the catalog marks as featured: the left rail shows only these by default, so
+ * that 50-odd cards do not fill up the list
+ */
 export const featuredParticleIds = new Set(particleAssets.filter((a) => a.featured).map((a) => `particles-${a.name}`));

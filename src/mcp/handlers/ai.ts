@@ -27,7 +27,7 @@ import {
 
 export const aiHandlers = {
 
-  // 镜头识别:5 分钟素材约 36 秒,同样立刻返回 jobId,结果用 list_shots 轮询。
+  // Shot detection: ~36 seconds for 5 minutes of media, likewise returns jobId immediately; results are polled with list_shots.
   detectShots: async (args) => {
     const media = getState().project.media.find((m) => m.id === args.mediaId);
     if (!media) throw new Error(`Asset ${args.mediaId} not found`);
@@ -68,15 +68,17 @@ export const aiHandlers = {
       if (pending) return { running: true, percent: pending.percent, engine: pending.engine };
       return null;
     }
-    // 每个镜头带上这段区间里的主体情况。**这是「别遮住人脸」那条路的落点**:
-    // 模型拿到 suggestedPosition 就能直接填进卡片的 position,不用靠看图猜。
-    // 没检测过就是 null,并在返回里给一句 hint 指向 detect_subjects ——
-    // 不给这句的话模型只会看到一堆 subject: null,以为「这素材里没有人」。
+    // Each shot includes subject status in this interval. **This is the drop target for
+    // the "do not occlude faces" path**: once the model gets suggestedPosition, it can
+    // directly fill it into the card's position without guessing from images. If not detected
+    // yet, it is null, with a hint in the response pointing to detect_subjects: without this
+    // hint, the model would only see a bunch of subject: null and assume "there are no
+    // people in this media".
     const subjectPending = subjectJobs.get(args.mediaId);
     return {
       running: false,
       engine: media.shots.engine,
-      // 没装拓展时只有硬切,这一句要让模型看见,免得它以为片子里真的没有溶解
+      // When extensions are not installed, there are only hard cuts; this note must be visible to the model to keep it from assuming there really are no dissolves in the video
       engineNote: media.shots.engine === "scdet"
         ? "Currently using the ffmpeg scdet fallback, which only detects hard cuts and cannot detect gradual transitions such as dissolves"
         : "TransNetV2, recognizes both hard cuts and dissolves",
@@ -85,14 +87,18 @@ export const aiHandlers = {
         subject: subjectDigest(subjectForRange(media.subjects, s.start, s.end)),
       })),
       transitions: media.shots.transitions.map(({ thumbs, ...rest }) => rest),
-      // 顺序有讲究(复查实测):
-      //   1. 上次作业失败 —— 不管手里有没有旧结果都先说。失败的作业留在表里,以前会一直回
-      //      「正在跑(0%)」,模型照着无限轮询一个死掉的作业;有旧结果时以前还会回成功那套话,
-      //      和 list_subjects 抛错的口径对不上。
-      //   2. 作业在跑 —— 有旧结果时下面的 subject 是旧批次的,要说明。
-      //   3. 没检测过。
-      //   4. 有结果但每个镜头都是 null —— 整批采样全抽帧失败,这不是「画面里没有人」。
-      //   5. 有结果。
+      // Order matters (measured during review):
+      //   1. Last job failed: state this first regardless of whether old results exist.
+      //      Failed jobs stay in the table; previously it kept returning "running (0%)", leading
+      //      the model to poll a dead job indefinitely; when old results were present, it
+      //      previously still returned success messages, inconsistent with the error policy
+      //      of list_subjects.
+      //   2. Job is running: when old results exist, clarify that the subject below is from
+      //      an older batch.
+      //   3. Not detected yet.
+      //   4. Has results but every shot is null: frame extraction failed for the entire sample
+      //      batch; this does not mean "there are no people in the frame".
+      //   5. Has results.
       ...(subjectPending?.error
         ? {
             subjectHint: `Last subject detection failed: ${subjectPending.error}.`
@@ -141,9 +147,11 @@ export const aiHandlers = {
     };
   },
 
-  // 运动追踪:250 帧约 26 秒,同样立刻返回 jobId,结果用 get_track 轮询。
-  // 结果不写进项目文档——查询点是每次现指的,同一段素材能追很多组,
-  // 塞进 project 只会让工程文件无限膨胀,所以只留在内存里。
+  // Motion tracking: ~26 seconds for 250 frames, likewise returns jobId immediately;
+  // results are polled with get_track.
+  // Results are not written to the project document: query points are specified ad hoc
+  // each time, and the same media clip can be tracked for many groups; stuffing them into
+  // project would only bloat the project file indefinitely, so they are kept only in memory.
   trackPoints: async (args) => {
     const media = getState().project.media.find((m) => m.id === args.mediaId);
     if (!media) throw new Error(`Asset ${args.mediaId} not found`);
@@ -170,19 +178,22 @@ export const aiHandlers = {
     return {
       jobId, started: true, mediaId: args.mediaId, points: args.points.length,
       hint: "Motion tracking has started in the background, poll this mediaId with get_track",
-      // 装没装拓展决定用哪一档,也决定要等多久:同样 250 帧,
-      // 神经网络档约 26 秒,模板匹配约 1 秒。
+      // Whether the extension is installed determines which tier is used, and also
+      // determines how long to wait: for the same 250 frames, the neural network tier
+      // takes ~26 seconds, while template matching takes ~1 second.
       engineHint: "Which tier is running is only known once the result is out, see engine returned by get_track",
     };
   },
 
   /**
-   * 默认只回摘要,不回逐帧坐标。
+   * By default only returns a summary, not frame-by-frame coordinates.
    *
-   * 一段 30 秒 30fps 的片子,每个点是 900 组坐标 —— 原样吐给模型是好几万
-   * token,而模型通常根本不需要它们:要让卡片跟着走就调 attach_clip_motion,
-   * 数据在应用内部直接流转,不必绕模型一圈。full:true 是留给「模型真的要
-   * 自己算点什么」的口子,不是默认路径。
+   * For a 30-second 30fps video, each point has 900 sets of coordinates: emitting them raw
+   * to the model costs tens of thousands of tokens, and the model typically does not need
+   * them at all: to make a card follow along, call attach_clip_motion; data flows directly
+   * within the application without needing to round-trip through the model. full:true is
+   * an escape hatch reserved for when "the model really needs to compute something itself",
+   * not the default path.
    */
   getTrack: (args) => {
     const media = getState().project.media.find((m) => m.id === args.mediaId);
@@ -197,7 +208,7 @@ export const aiHandlers = {
     const head = {
       running: false,
       engine: result.engine,
-      // 降级档要让模型看见,否则它会拿模板匹配的粗结果当准数据下判断
+      // The downgraded tier must be visible to the model; otherwise it will make judgments using coarse template matching results as exact data
       engineNote: result.engine === "bootstapir"
         ? "BootsTAPIR, arbitrary point tracking; visible being false means the point is occluded or out of frame in that frame"
         : "Currently using the template matching fallback (motion tracking extension not installed). Rigid targets with clear texture that don't turn can be tracked very accurately,"
@@ -218,7 +229,7 @@ export const aiHandlers = {
           query: p.query,
           visibleFrames: vis,
           totalFrames: p.visible.length,
-          // 位移范围:接近 0 说明目标基本没动,绑上去也看不出效果
+          // Displacement range: close to 0 indicates the target barely moved, so attaching it will not produce visible effects
           movedX: Math.round(Math.max(...xs) - Math.min(...xs)),
           movedY: Math.round(Math.max(...ys) - Math.min(...ys)),
           from: p.xy[0]?.map((v) => Math.round(v)),
@@ -244,7 +255,7 @@ export const aiHandlers = {
     };
   },
 
-  // 400 MB 的下载,远超 MCP 桥的调用超时,所以立刻返回 jobId。
+  // A 400 MB download far exceeds the MCP bridge call timeout, so jobId is returned immediately.
   trackInstall: async () => {
     const jobId = `track-${Date.now().toString(36)}`;
     trackInstallJobs.set(jobId, { done: false, ok: false, logTail: [] });
@@ -271,16 +282,19 @@ export const aiHandlers = {
     };
   },
 
-  // ── 主体检测 ────────────────────────────────────────────────
-  // 「别让卡片遮住人物的脸」这类要求的正路:抽几帧看人在哪、哪边是空的,
-  // 结果按镜头折进 list_shots 的 suggestedPosition。
+  // ── Subject detection ────────────────────────────────────────────────
+  // The standard approach for requirements like "Don't let cards cover people's faces": sample a few
+  // frames to see where people are and which side is empty, and fold the results by shot into
+  // suggestedPosition in list_shots.
 
   /**
-   * 抽帧检测。采样时刻默认按镜头算(每镜头 20%/50%/80%,短镜头只取中点),
-   * 没做过镜头识别就每 2 秒一点 —— 见 sampleTimesFor。
+   * Frame-sampling detection. Sampling times are calculated by shot by default (20%/50%/80% per
+   * shot, midpoint only for short shots); if shot detection has not been run, sample every 2 seconds:
+   * see sampleTimesFor.
    *
-   * 结果写进项目文档,同一素材默认复用,要重测才传 force:true。
-   * 换了 prompt 也当成要重测:提示词变了,上一批结果里根本没有那个类别。
+   * Results are written to the project document and reused by default for the same asset; pass
+   * force:true to re-test. A changed prompt is also treated as requiring a re-test: the prompt
+   * changed, and the previous batch of results did not include that category at all.
    */
   detectSubjects: async (args) => {
     const media = getState().project.media.find((m) => m.id === args.mediaId);
@@ -290,14 +304,17 @@ export const aiHandlers = {
 
     const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
     const promptChanged = !!media.subjects && prompt !== (media.subjects.prompt ?? "");
-    // 复用不能只比 prompt 字符串,还要看已存结果**有没有能力**回答这个 prompt。
-    // light 档带 prompt 跑出来的结果 label 只可能是 person/face;用户之后装上
-    // full 拓展包再问同一句,只比字符串的话仍然 reused:true + engine light,
-    // 模型于是继续拿一份根本没找过猫的结果回答「画面里没有猫」。
-    // 但还要看**这台机器现在**能不能跑到 full。只装了 light 的机器上,已存结果是 light、
-    // 现在也只能跑出 light,重测毫无意义 —— 只看已存结果的档位的话,同一句 prompt 每问
-    // 一次全量重测一次,模型会「重测→还是 light→再重测」地绕圈(复查实测)。
-    // 所以 subjectStatus 提前到这里查:复用判据和后面算 ETA 共用这一次。
+    // Reuse cannot just compare prompt strings; it must also check whether stored results
+    // **are capable of** answering this prompt. Results run with a prompt on the light tier can only
+    // have person/face labels; if the user later installs the full extension package and asks the same
+    // prompt again, comparing only strings still gives reused:true + engine light, and the model then
+    // continues using a result that never looked for cats to answer "there is no cat in the frame".
+    // However, it also depends on **whether this machine can currently** run full. On a machine with
+    // only light installed, stored results are light and it can currently only run light, making
+    // re-tests pointless: if we only checked the stored result's tier, each query with the same prompt
+    // would trigger a full re-test every time, and the model would loop in "re-test → still light →
+    // re-test again" (verified in testing). Therefore subjectStatus is checked ahead of time here:
+    // the reuse criteria and the subsequent ETA calculation share this single check.
     const st = await subjectStatus().catch(() => null);
     const staleEngine = !!media.subjects && !!prompt
       && media.subjects.engine !== "full" && st?.engine === "full";
@@ -316,9 +333,10 @@ export const aiHandlers = {
       };
     }
 
-    // 上限夹在 kernel 里(MAX_SUBJECT_TIMES,和服务端同一个常数)。
-    // 拿「不设限时会排出多少点」一比,就知道这次降没降精度 —— 降过要说出来,
-    // 不然模型会拿一份被抽稀过的结论当满精度用。
+    // The upper limit is clamped in the kernel (MAX_SUBJECT_TIMES, the same constant as the server).
+    // Comparing against "how many points would be scheduled without limits" shows whether precision
+    // was degraded this time: if degraded, state it explicitly, otherwise the model will treat a
+    // thinned-out conclusion as full precision.
     const autoRaw = subjectSampleTimes(media, Number.MAX_SAFE_INTEGER).length;
     const times = Array.isArray(args.times) && args.times.length > 0
       ? args.times.map(Number).filter((t) => Number.isFinite(t) && t >= 0)
@@ -329,16 +347,19 @@ export const aiHandlers = {
         + `(limit ${MAX_SUBJECT_TIMES}); shot-level conclusions will be coarser, and more shots will have approximate set to true.`
       : undefined;
 
-    // engine 用上面复用判据查到的那一次:轮询之前就让模型知道跑的是哪一档,以及大概要等多久。
-    // 两档差一个数量级(实测 light 约 0.5 s/帧、full 约 3 s/帧),按同一个节奏
-    // 轮询的话不是白问几十次就是等得莫名其妙。查不到不算错,给 undefined。
+    // Use the engine found by the reuse criteria check above: let the model know which tier is running
+    // and roughly how long to wait before polling. The two tiers differ by an order of magnitude
+    // (measured light ~0.5 s/frame, full ~3 s/frame); polling at the same pace either asks dozens of
+    // times for nothing or leaves it waiting with no clue. Not finding it is not an error; pass
+    // undefined.
     const engine = st?.engine ?? null;
     const msPerFrame = engine === "full" ? 3000 : engine === "light" ? 500 : 0;
     const etaSeconds = engine ? Math.ceil((times.length * msPerFrame) / 1000) + 5 : undefined;
 
     const jobId = await startSubjectDetection(perceptionMediaRef(media), times, prompt || undefined);
-    // 旧的 error 记录要先清掉:不清的话新作业和上一次的失败状态串味,
-    // list_shots 会拿着一条陈年错误报「上次主体检测失败」。
+    // Old error records must be cleared first: if not cleared, the new job gets contaminated with the
+    // previous failure state, and list_shots will hold onto an old error and report "previous subject
+    // detection failed".
     subjectJobs.delete(args.mediaId);
     subjectJobs.set(args.mediaId, { jobId, percent: 0 });
     waitForSubjects(jobId, (percent, engine) =>
@@ -377,8 +398,10 @@ export const aiHandlers = {
     if (!media) throw new Error(`Asset ${args.mediaId} not found`);
     const pending = subjectJobs.get(args.mediaId);
     if (pending?.error) throw new Error(pending.error);
-    // 有作业在跑就先报在跑 —— 哪怕手里还有上一批结果。以前是「有旧结果就直接回旧结果」,
-    // 换了 prompt 重测期间模型读到的是旧 prompt 的样本,还以为新的已经跑完了(复查实测)。
+    // If a job is running, report that it is running first: even if the previous batch of results is
+    // still on hand. Previously it was "return old results directly if available", so during a re-test
+    // with a changed prompt the model read samples from the old prompt and assumed the new one had
+    // already finished (verified in testing).
     if (pending) {
       return {
         running: true, percent: pending.percent, engine: pending.engine,
@@ -392,8 +415,8 @@ export const aiHandlers = {
     return {
       running: false,
       engine: s.engine,
-      // 哪一档决定了 label 里能出现什么。不说清楚的话,模型会把 light 档
-      // 「只有 person/face」读成「画面里没有猫」。
+      // Which tier it is determines what can appear in labels. If not stated clearly, the model will
+      // interpret the light tier's "only person/face" as "there is no cat in the frame".
       engineNote: s.engine === "full"
         ? "Grounding DINO. The label is the noun in the prompt; when the prompt is empty it searches for person . face ."
         : "The light tier of YuNet + RT-DETR. It only recognizes person and face; the prompt has no effect (it is echoed back unchanged in prompt)",
@@ -407,8 +430,9 @@ export const aiHandlers = {
       prompt: s.prompt,
       width: s.width,
       height: s.height,
-      // 抽帧失败的采样单独报个数。它们在 JSON 里和「这一帧真的没有人」逐字段相同
-      // (boxes 空、occupancy 四个 0),不点出来的话模型会把「没抽到」读成「没有人」。
+      // Report the count of frame-sampling failures separately. In JSON, they are field-by-field
+      // identical to "there is really no person in this frame" (empty boxes, four 0s in occupancy);
+      // if not pointed out, the model will interpret "failed to sample" as "no person".
       failedCount: s.failedCount ?? s.samples.filter((sm) => sm.failed).length,
       samples: s.samples.map((sm) => ({
         t: sm.t,
@@ -439,15 +463,17 @@ export const aiHandlers = {
         : s.engine === "light"
           ? "light tier: YuNet (face) + RT-DETR (body), only recognizes person and face, prompt has no effect."
             + " To find targets by arbitrary words (cat, phone, red car), you need to install the full tier extension pack."
-          // 这里没有兜底档,和运动追踪不一样 —— 不能让模型以为还有个降级引擎在跑。
+          // There is no fallback tier here, unlike motion tracking: the model must not be led to believe a
+          // downgraded engine is running.
           : "Neither tier is usable, so subject detection is not possible on this machine."
             + " For position and occlusion judgments, fall back to looking at the images with see_frames; don't guess \"the person is on the left\" out of thin air."
             + " If the user wants it, install the light tier with subject_install (about 30 MB).",
     };
   },
 
-  // 在线装的是 light 档(onnxruntime,约 30 MB)。full 档是 torch + transformers
-  // 加 690 MB 权重,只随拓展库包发,在线装中断一次就得从头来。
+  // What is installed online is the light tier (onnxruntime, ~30 MB). The full tier is torch +
+  // transformers plus 690 MB weights and is only distributed with the extension library package; if
+  // an online install is interrupted once, it has to start over from scratch.
   subjectInstall: async () => {
     const jobId = `subject-${Date.now().toString(36)}`;
     subjectInstallJobs.set(jobId, { done: false, ok: false, logTail: [] });
@@ -476,14 +502,15 @@ export const aiHandlers = {
   },
 
   /**
-   * 把一张卡绑到一条轨迹上,让它跟着画面里的目标走。
+   * Bind a card to a track trajectory so it follows a target in the video.
    *
-   * 这是追踪功能真正的落点 —— 在此之前,追出来的坐标只是一串数字,
-   * 没有任何东西消费它。
+   * This is the true drop target of tracking: before this, tracked coordinates were just a string
+   * of numbers with nothing consuming them.
    *
-   * 数据不经过模型:模型只说「clip X 跟 point 0」,逐帧坐标在应用内部
-   * 从 trackResults 直接写进 clip。让模型把 900 组坐标读进来再写回去,
-   * 既烧上下文又必然出错。
+   * Data does not pass through the model: the model only says "clip X follows point 0", and
+   * frame-by-frame coordinates are written directly from trackResults into clip inside the
+   * application. Having the model read in 900 sets of coordinates and write them back would burn
+   * context and inevitably produce errors.
    */
   attachClipMotion: (args) => {
     const p = getState().project;
@@ -505,8 +532,8 @@ export const aiHandlers = {
     if (!point) throw new Error(`This tracking has only ${result.points.length} points, no point number ${idx}`);
     if (point.note) throw new Error(`Point ${idx} failed to track: ${point.note}`);
 
-    // 画面来自哪一段素材:必须和卡片在时间上真的重叠,否则卡片会跟着
-    // 一个当时根本没在播的画面走。
+    // Which asset clip the visuals come from: it must genuinely overlap in time with the card,
+    // otherwise the card will follow video that was not even playing at that point.
     const source = p.tracks
       .flatMap((t) => t.clips)
       .filter((c) => c.mediaId === args.mediaId)
@@ -548,7 +575,8 @@ export const aiHandlers = {
       movedX: rangeX,
       movedY: rangeY,
       whenHidden: built.motion.whenHidden,
-      // 两种「绑了等于没绑」要当场说破,不能让用户自己去预览里发现
+      // The two cases of "bound but does nothing" must be called out on the spot, rather than letting the
+      // user discover them in preview
       ...(rangeX < 2 && rangeY < 2
         ? { warning: "This point barely moves (displacement under 2 pixels), so binding to it would show no visible follow effect" }
         : {}),
@@ -571,11 +599,13 @@ export const aiHandlers = {
 
   sttStatus: () => sttStatus(),
 
-  // 安装可能远超 MCP 桥的 60 秒调用超时,所以立刻返回 jobId,
-  // 让 AI 用 stt_status 轮询 engines.<engine>.installed 判断是否装完。
+  // Installation may far exceed the MCP bridge's 60-second call timeout, so return jobId immediately
+  // and let AI poll engines.<engine>.installed via stt_status to determine whether installation is
+  // complete.
   sttInstall: async (args) => {
-    // 和启动时那个缺依赖提示走同一条路径(含「同时只许一个安装」的互斥),
-    // 所以不管谁发起的,界面上的进度控件表现完全一致。
+    // Follows the same path as the missing-dependency prompt at startup (including mutex for "only one
+    // installation allowed at a time"), so regardless of who initiated it, the progress control on the
+    // UI behaves completely consistently.
     const { jobId, engine, finished } = runSttInstall(args.engine || "faster-whisper");
     sttJobs.set(jobId, { done: false, ok: false, logTail: [] });
     finished.then(({ ok, error }) => {
@@ -588,7 +618,8 @@ export const aiHandlers = {
     };
   },
 
-  // 同理:转写通常超过 60 秒,立刻返回 jobId,结果用 get_transcript 轮询。
+  // Likewise: transcription typically exceeds 60 seconds; return jobId immediately and poll for
+  // results using get_transcript.
   transcribeMedia: async (args) => {
     const jobId = `stt-${args.mediaId}-${Date.now().toString(36)}`;
     transcribeMedia(args.mediaId, { engine: args.engine, model: args.model, language: args.language })
@@ -605,18 +636,19 @@ export const aiHandlers = {
     if (!media) throw new Error(`Asset ${args.mediaId} not found`);
     const t = media.transcript;
     if (!t) return null;
-    // 契约:超过 200 段时只返回前 200 段 + 总数
+    // Contract: when exceeding 200 segments, return only the first 200 segments + total count
     if (t.segments.length > 200) {
       return { ...t, segments: t.segments.slice(0, 200), total: t.segments.length, truncated: true };
     }
     return { ...t, total: t.segments.length, truncated: false };
   },
   /**
-   * 把素材文字稿直接灌进一张字幕卡。
+   * Feed the asset transcript directly into a caption card.
    *
-   * 字幕内容是纯搬运,让模型把几十上百条 `起|止|文字` 一条条重打一遍
-   * 既贵又容易错行、错时间、漏段。这里在本地一次算完,模型只需要说
-   * "给这段配字幕",拿到的是已经填好的结果。
+   * Caption content is pure transfer; having the model retype dozens or hundreds of
+   * `start|end|text` entries one by one is expensive and prone to mismatched lines, wrong
+   * timestamps, and missed segments. Here it is computed locally in one pass: the model only needs
+   * to say "caption this segment", and it receives already-filled results.
    */
   fillCaptions: (args) => {
     const project = getState().project;
@@ -627,7 +659,8 @@ export const aiHandlers = {
     const segments = media.transcript?.segments;
     if (!segments || segments.length === 0) throw new Error(`Media "${media.name}" has no transcript yet. Transcribe it with transcribe_media first.`);
 
-    // 没指定 clip 就找时间轴上唯一那张字幕卡;有多张时要求说清楚是哪一张
+    // If no clip is specified, find the sole caption card on the timeline; when there are multiple,
+    // require clarifying which one
     let clipId = args.clipId;
     if (!clipId) {
       const hits = project.tracks.flatMap((t) => t.clips.filter((c) => (c as { cardId?: string }).cardId === "caption-track"));
@@ -641,10 +674,12 @@ export const aiHandlers = {
     if (clip.cardId !== "caption-track") throw new Error(`clip ${clipId} is ${clip.cardId}, not a captions card.`);
 
     /*
-     * 文字稿的秒数是**素材内**的,得先按这份素材在时间轴上的位置换算过去
-     * (素材被挪到第 30 秒、或者修掉了开头,不换算字幕就整体错位),
-     * 再减去字幕卡起点变成相对秒。跨出卡片的段落裁到边界内,
-     * 免得字幕在卡片外提前亮或不消失。
+     * Seconds in the transcript are **within the asset**; they must first be converted based on this
+     * asset's position on the timeline (if the asset was moved to second 30, or the beginning was
+     * trimmed, captions will be misaligned overall without conversion), then subtract the caption
+     * card's start point to become relative seconds. Segments extending beyond the card are cropped
+     * within bounds, preventing captions from lighting up early or failing to disappear outside
+     * the card.
      */
     const placed = project.tracks.flatMap((t) => t.clips);
     const plan = captionsFromTranscript(placed, media.id, segments, { from: clip.start, to: clip.end });
@@ -664,8 +699,9 @@ export const aiHandlers = {
     return { clipId, mediaId: media.id, lines: kept.length, from: clip.start, to: clip.end };
   },
   /**
-   * 字幕卡里到底有哪几条:下标 + 相对秒 + 绝对秒 + 文字。
-   * 改字幕前先看这个,index 以它为准(按时间排,和时间轴上画出来的顺序一致)。
+   * Exactly which entries are in the caption card: index + relative seconds + absolute seconds
+   * + text. Check this before editing captions; index is based on this (sorted by time, matching
+   * the order drawn on the timeline).
    */
   listCaptions: (args) => {
     const hit = findCaptionClip(args.clipId);
@@ -680,7 +716,7 @@ export const aiHandlers = {
         index,
         start: l.start,
         end: l.end,
-        // 相对秒容易和时间轴上的秒搞混,两个都给
+        // Relative seconds are easily confused with timeline seconds, so both are provided
         absStart: clip.start + l.start,
         absEnd: clip.start + l.end,
         text: l.zh,
@@ -689,10 +725,12 @@ export const aiHandlers = {
     };
   },
   /**
-   * 单条字幕的增删改。整份重灌走 fill_captions,这里是给「第 3 条说错了」用的。
+   * Add, delete, and edit individual captions. Refilling the entire set goes through fill_captions;
+   * this is for cases like "item 3 is wrong".
    *
-   * 时间由 kernel/captions 夹在左右邻居之间,所以 Agent 写一个越界的秒数不会
-   * 弄出两条抢同一秒的字幕 —— 会贴到边上,并在返回里告诉它实际落在哪。
+   * Timing is clamped between left and right neighbors by kernel/captions, so an out-of-bounds
+   * second written by the Agent will not create two captions contending for the same second: it will
+   * snap to the edge, and the response tells it where it actually landed.
    */
   editCaption: (args) => {
     const hit = findCaptionClip(args.clipId);

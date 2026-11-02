@@ -57,7 +57,8 @@ export const termCard: CardDef<Params> = {
   useWhen: "When the narration gives a definition or explains a term (\"so-called\", \"is called\", \"refers to\", \"means\"), turn the term and its explanation into a card. **The en note is forced to uppercase**, so it only suits English, not pinyin.",
   tags: ["term","definition","noun","explanation"],
   source: "native",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: {
     ...hudDefaults,

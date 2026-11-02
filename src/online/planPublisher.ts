@@ -1,50 +1,93 @@
 /**
- * 在线页面自己发布 `plan` 任务(C10 契约第 7 节、第 18 节第 9 条〔裁〕)。
+ * The online page publishes the `plan` task itself (C10 contract section 7, section 18 item 9
+ * [ruling]).
  *
- * 在线页面没有编辑器进程。页面经文档服务连接发布一个「清单计划」—— 带片段清单的 `plan`,清单是页面自己判重的片段,normal 档:
+ * The online page has no editor process. The page publishes a "manifest plan" via the document
+ * service connection: a `plan` with a clip manifest, where the manifest consists of clips
+ * classified as heavy by the page itself, normal tier:
  *
- *   `plan:<projectId>@<projectRev>#clips:<sig>`   `input.clips` = 清单(升序去重)   `priority: 'normal'`
+ *   `plan:<projectId>@<projectRev>#clips:<sig>`   `input.clips` = manifest (ascending, deduplicated)   `priority: 'normal'`
  *
- * - `requires` 里**不写** `envFingerprint`、**不写** `preferNode`:在线页面没有预渲染进程、也没有自己的环境,它发的 plan 要让任何能切分的
- *   节点(桌面版、独立渲染主机)都认领得了,由认领的节点用自己的指纹切分(主会话 2026-09-28 的补充约束;队列侧见 M6c X4 的修改)。
- * - `requires.codeVersion`:在线构建在构建时用渲染节点同一套算法(`server/frame-code.mjs` 的 `frameCode`,换行统一成 LF)算出代码版本、
- *   嵌进页面(`vite.config.ts` 的在线构建),给了就写,版本不同的节点不认领;算不出(开发构建)就不写,靠第 5 节「层表对不上当没有」兜底。
- * - 时机(沿用 C6.6 的时机修复):测量落定之后才发;项目每次改动(文档服务确认的版本变了)防抖后重发;清单变了也重发。
- *   同一个结果键队列不另起任务,重复发只合并。
- * - `source.userId` 由文档服务按页面连接的凭证填,发布方自报的不作数(现状)。
- * - 没有节点认领时 plan 等着,页面不报错(重层播放占位、暂停活渲)。
- * - 页面订阅 `task.done`(发布方自动订阅自己发布的 plan 与它切出的细任务),并入层表与就绪:宿主收到就让在线来源立刻重取层表。
- * - 本页同时当纯浏览器节点时(M7 契约第 3.3 节,主会话 2026-09-28 裁定):这一版的清单计划等节点报到完、拿到 `node.welcome` 的指纹再发,
- *   最多等 `BROWSER_NODE_WAIT_MS`(3 s,三级数字),超时照发。切分方认领计划时,队列按此刻在线、同一用户、watch 着本项目的浏览器节点
- *   给指纹(`claude/rq-m7-queue`),先发计划就轮不到本页。计划本身不写浏览器意向(页面自报的不作数)。由 `nodeReady()` 判;
- *   节点报到完时宿主调 `nodeChanged()`,等着的那一版马上发。
- * - 用户卡、素材效果卡(块 N,`docs/plan/online-card-exec-contract.md` 第 7 节第 3 条):本页能执行同步来的卡、且节点已报到拿到了
- *   `cardEnvFingerprint` 时,`input.browser` 带 `{ cardEnvFingerprint, userCards, graphCards, cardSources }`(`cardSources`:本页已载入成功、
- *   代码身份已定下来的卡片 id → 身份),切分方据此给浏览器出这几类卡的那一份。登记变了(转译好一张、换代、能力变了)就是另一个计划
- *   (签名里带它的摘要),马上重发;没有这类卡时不带这一项,计划与原来逐字相同。登记在 `nodeCardInfo.ts`,由 `deps.browser` 注入或缺省读它。
- * - 托管方渲染节点的「生成轨道流」(任务书 `render-refactor-task.md`「甲三」):本页看到这一项开着(`deps.streams()`)时,计划带 `input.streams: true`、
- *   签名里多一段 —— 同一版项目、同一份清单,这一项开着是另一个计划。创建者刚打开时宿主调 `streamsOn()`,马上重发:关着时发的那一份已经做完,
- *   同一个结果键队列不会重切;换了键,渲染节点才会再切一次、出它自己的那一份流任务。这一项关着(或旧文档服务不报)时计划与原来逐字相同。
- *   从开变关不用重发(渲染节点的认领闸当场生效);几个成员同时在线时各自重发的是同一个结果键,队列只留一个任务。
- * - 本页产流(任务书「甲二」,`pageStreams.ts`)要知道「线上有没有能切分的节点接这份计划」:`current()` 给最近发成的那一版(任务 id、版本、清单、
- *   发成的时刻),`probe()` 把同一个任务再发布一次、读回包里它此刻的状态(`open` 没人认领、`claimed` / `done` 有节点接了、`failed`)。
- *   同一个结果键队列只合并,再发布不另起任务、不改它的状态。
- * - 每发一版之前调 `onPublish(version)`:宿主据此把这一版的已确认项目留在内存(M7 D6:执行细任务用任务的 `projectRev` 那一版)。
+ * - Do **not write** `envFingerprint` and do **not write** `preferNode` in `requires`: the online
+ *   page has no prerender process and no environment of its own; the plan it publishes must be
+ *   claimable by any node capable of splitting (desktop app, standalone render host), with the
+ *   claiming node splitting using its own fingerprint (supplementary constraint from lead session
+ *   2026-09-28; see M6c X4 modifications on the queue side).
+ * - `requires.codeVersion`: the online build computes the code version at build time using the same
+ *   algorithm as the render node (`frameCode` in `server/frame-code.mjs`, newlines normalized to
+ *   LF) and embeds it into the page (online build in `vite.config.ts`); writes it if provided, and
+ *   nodes with differing versions will not claim it; if uncomputable (dev build), omit it and rely
+ *   on Section 5 "treat mismatched layer table as absent" fallback.
+ * - Timing (following C6.6 timing fix): published only after measurement settles; republished after
+ *   debounce on each project change (confirmed revision from document service changed); republished
+ *   if manifest changes. The queue does not create a new task for the same result key; duplicate
+ *   publishes only merge.
+ * - `source.userId` is populated by document service based on page connection credentials;
+ *   publisher self-reporting does not count (current behavior).
+ * - When no node claims it, the plan waits and the page reports no error (heavy layer playback
+ *   placeholders, pauses live render).
+ * - Page subscribes to `task.done` (publisher automatically subscribes to self-published plan and
+ *   fine-grained tasks split from it), merging into layer table and ready index: on receipt, host
+ *   tells online source to refetch layer table immediately.
+ * - When this page also acts as a pure browser node (M7 contract section 3.3, ruled in lead session
+ *   2026-09-28): the manifest plan for this revision waits until node check-in finishes and
+ *   receives `node.welcome` fingerprint before publishing, waiting at most `BROWSER_NODE_WAIT_MS`
+ *   (3 s, tier-3 number), publishing anyway on timeout. When splitter claims plan, queue assigns
+ *   fingerprint based on browser nodes currently online, same user, watching this project
+ *   (`claude/rq-m7-queue`); publishing plan earlier means this page would miss out. The plan itself
+ *   does not specify browser intent (page self-reporting does not count). Determined by
+ *   `nodeReady()`; when node check-in completes, host calls `nodeChanged()`, immediately publishing
+ *   waiting revision.
+ * - User cards, media effect cards (Block N, `docs/plan/online-card-exec-contract.md` section 7
+ *   item 3): when this page can execute synced cards and node has checked in and obtained
+ *   `cardEnvFingerprint`, `input.browser` includes `{ cardEnvFingerprint, userCards, graphCards, cardSources }`
+ *   (`cardSources`: card id → identity for cards successfully loaded by this page whose code identity
+ *   has settled); splitter generates portions for these card types for browser accordingly. If registry
+ *   changes (a card transpiled, generation change, capability changed), it becomes another plan
+ *   (signature includes its digest) and is republished immediately; omitted if no such cards exist,
+ *   leaving plan verbatim identical to original. Registered in `nodeCardInfo.ts`, injected via
+ *   `deps.browser` or read from it by default.
+ * - Host render node "generate track streams" (task brief `render-refactor-task.md` "Jia-3"): when
+ *   this page sees this enabled (`deps.streams()`), the plan includes `input.streams: true` and an
+ *   extra segment in signature: for the same project revision and same manifest, having this
+ *   enabled represents another plan. When creator first enables it, host calls `streamsOn()` and
+ *   republishes immediately: the portion published while disabled is already done, and queue will
+ *   not re-split for same result key; with a changed key, render node will split again and produce
+ *   its own stream tasks. When disabled (or old document service does not report it), plan is
+ *   verbatim identical to original. No need to republish when transitioning from enabled to
+ *   disabled (render node claim gate takes effect immediately); when multiple members are online
+ *   concurrently, their republishes share the same result key, and queue keeps only one task.
+ * - Stream production on this page (task brief "Jia-2", `pageStreams.ts`) needs to know "whether an
+ *   online node capable of splitting has claimed this plan": `current()` returns latest
+ *   successfully published revision (task id, revision, manifest, publish timestamp); `probe()`
+ *   republishes the same task and reads its current status in response (`open` unclaimed, `claimed`
+ *   / `done` accepted by a node, `failed`). Queue only merges for same result key; republishing
+ *   does not create a new task or change its status.
+ * - Before publishing each revision, calls `onPublish(version)`: host keeps confirmed project for
+ *   this revision in memory accordingly (M7 D6: executing fine-grained tasks uses the task's
+ *   `projectRev` revision).
  *
- * 任务形状与队列侧 `server/render-queue/messages.mjs` 的 `clipsPlanTaskOf` 逐字段相同(单测对拍);这里照抄,页面构建不带服务端模块。
- * 本模块属于 render 这一层(`src/online/`):不引 editor。
+ * Task shape is field-by-field identical to `clipsPlanTaskOf` in `server/render-queue/messages.mjs`
+ * on the queue side (verified against unit tests); duplicated here so page build does not bundle
+ * server modules. This module belongs to the render layer (`src/online/`): does not import editor.
  */
 
-/** 清单计划结果键的标记(同 `messages.mjs` 的 `CLIPS_KEY_MARK`) */
+/** Marker for manifest plan result key (same as `CLIPS_KEY_MARK` in `messages.mjs`). */
 export const CLIPS_KEY_MARK = "#clips:";
-/** 防抖:连着改项目时只发最后一版 */
+/** Debounce: only publish latest revision when project is modified continuously. */
 export const PLAN_DEBOUNCE_MS = 800;
-/** 本页当纯浏览器节点时,清单计划等节点报到完(拿到指纹)最多这么久(M7 契约第 3.3 节;三级数字) */
+/**
+ * When this page acts as a pure browser node, manifest plan waits at most this long for node
+ * check-in to finish (receive fingerprint) (M7 contract section 3.3; tier-3 number).
+ */
 export const BROWSER_NODE_WAIT_MS = 3000;
-/** 等节点报到时多久再看一眼 */
+/** How often to check again while waiting for node check-in. */
 const NODE_WAIT_POLL_MS = 250;
 
-/** 片段清单的签名:与 `server/render-queue/messages.mjs` 的 `backfillSig` 同一个算法(FNV-1a 两轮,base36) */
+/**
+ * Clip manifest signature: same algorithm as `backfillSig` in `server/render-queue/messages.mjs`
+ * (FNV-1a two rounds, base36).
+ */
 export function clipsSig(clips: readonly string[], extra?: string): string {
   const text = [...new Set(clips)].map(String).sort().join("\n") + (extra ? `\n\u0000${extra}` : "");
   const fnv = (seed: number) => {
@@ -58,21 +101,30 @@ export function clipsSig(clips: readonly string[], extra?: string): string {
   return fnv(0x811c9dc5).toString(36) + fnv(0x2f4a7c15).toString(36);
 }
 
-/** 签名里「本页看到『生成轨道流』开着」的那一段,与几段附加内容之间的分隔(同 `messages.mjs` 的 `LIST_STREAMS_SIG`、`SIG_EXTRA_SEP`) */
+/**
+ * Portion in signature for "this page sees 'generate track streams' enabled", and separator between
+ * additional content sections (same as `LIST_STREAMS_SIG` and `SIG_EXTRA_SEP` in `messages.mjs`).
+ */
 export const LIST_STREAMS_SIG = "streams=1";
 const SIG_EXTRA_SEP = "\u0001";
 
-/** 清单计划的 `input.browser`(与 `server/render-queue/messages.mjs` 的 `browserCardsOf` 的结果同形) */
+/**
+ * Manifest plan `input.browser` (same shape as result of `browserCardsOf` in
+ * `server/render-queue/messages.mjs`).
+ */
 export interface BrowserCards {
   cardEnvFingerprint: string;
   userCards: boolean;
   graphCards: boolean;
-  /** 卡片 id → 代码身份 */
+  /** Card id → code identity */
   cardSources: Record<string, string>;
 }
 
 const HEX16 = /^[0-9a-f]{16}$/;
-/** 规整:与 `messages.mjs` 的 `browserCardsOf` 逐条相同(指纹 16 位小写十六进制;卡片 id 升序、各有长度上限、最多 500 张);不合格回 null */
+/**
+ * Normalize: item-by-item identical to `browserCardsOf` in `messages.mjs` (fingerprint 16 lowercase
+ * hex chars; card ids ascending, each with length limit, max 500 cards); returns null if invalid.
+ */
 export function browserCardsOf(v: unknown): BrowserCards | null {
   const o = v as Record<string, unknown> | null | undefined;
   if (!o || typeof o !== "object" || Array.isArray(o) || typeof o.cardEnvFingerprint !== "string" || !HEX16.test(o.cardEnvFingerprint)) return null;
@@ -87,7 +139,7 @@ export function browserCardsOf(v: unknown): BrowserCards | null {
   }
   return { cardEnvFingerprint: o.cardEnvFingerprint, userCards: o.userCards === true, graphCards: o.graphCards === true, cardSources };
 }
-/** 同 `messages.mjs` 的 `browserCardsSig` */
+/** Same as `browserCardsSig` in `messages.mjs`. */
 export function browserCardsSig(cards: BrowserCards): string {
   return [cards.cardEnvFingerprint, cards.userCards ? 1 : 0, cards.graphCards ? 1 : 0, ...Object.keys(cards.cardSources).sort().map((id) => `${id}=${cards.cardSources[id]}`)].join("|");
 }
@@ -124,48 +176,53 @@ import { tr } from "../i18n/index.ts";
 const LINK_DOWN = ["Not connected to the document service", "The document service did not respond", "Connection lost"];
 
 type Request = (msg: Record<string, unknown>, timeoutMs?: number) => Promise<Record<string, unknown>>;
-/** `createWsEndpoint` 的形状(只用这两样) */
+/** Shape of `createWsEndpoint` (only uses these two). */
 export interface EndpointLike {
   send(msg: Record<string, unknown>): boolean;
   onMessage(handler: (msg: Record<string, unknown>) => void): void | (() => void);
 }
 
 export interface PlanPublisherDeps {
-  /** 文档服务上的一次请求(回同一 reqId 的回包);与 `endpoint` 二选一 */
+  /**
+   * A request on document service (returns response with matching reqId); mutually exclusive with
+   * `endpoint`.
+   */
   request?: Request;
   endpoint?: EndpointLike;
   publisherId?: string;
-  /** 此刻页面自己判重的片段(清单);空就不发 */
+  /** Clips classified as heavy by the page itself at this moment (manifest); not published if empty. */
   clips?: () => readonly string[];
   codeVersion?: string | null;
   debounceMs?: number;
-  /** 收到队列推来的 `task.done` / `task.failed`(只在 `endpoint` 模式里由这里转;`request` 模式由宿主自己接) */
+  /** Receives `task.done` / `task.failed` from the queue (forwarded here only in `endpoint` mode; host handles directly in `request` mode) */
   onTaskEvent?: (msg: Record<string, unknown>) => void;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (t: unknown) => void;
   now?: () => number;
   /**
-   * 本页的纯浏览器节点报到了没有(M7):`"none"` 本页不当节点(照旧发)、`"pending"` 正在报到(等,最多 `BROWSER_NODE_WAIT_MS`)、
-   * `"ready"` 拿到指纹了(发)。不给等于 `"none"`。
+   * Whether this page's pure browser node has checked in (M7): `"none"` this page does not act as
+   * a node (publish as usual); `"pending"` checking in (wait, at most `BROWSER_NODE_WAIT_MS`);
+   * `"ready"` fingerprint obtained (publish). Omitting equals `"none"`.
    */
   nodeReady?: () => "none" | "pending" | "ready";
-  /** 发这一版之前调(M7 D6:宿主留存这一版的已确认项目) */
+  /** Called before publishing this version (M7 D6: host retains confirmed project for this version) */
   onPublish?: (v: Version) => void;
   /**
-   * 本页能运行的用户卡、素材效果卡(块 N):回 `input.browser` 要的内容,本页不能执行或节点还没拿到 `cardEnvFingerprint` 回 null。
-   * 缺省读 `nodeCardInfo.ts` 的登记处。
+   * User cards and media effect cards runnable on this page (block N): returns content required
+   * by `input.browser`, or null if this page cannot execute them or node has not yet obtained
+   * `cardEnvFingerprint`. Defaults to reading the registry in `nodeCardInfo.ts`.
    */
   browser?: () => unknown | null;
-  /** 上面那份登记变了的通知(订阅,回退订);缺省订阅 `nodeCardInfo.ts` 的登记处。变了就重发(清单计划的签名带它的摘要) */
+  /** Notification when above registry changes (subscribes, returns unsubscribe); defaults to subscribing to registry in `nodeCardInfo.ts`. Republishes on change (manifest plan signature includes its digest). */
   subscribeBrowser?: (cb: () => void) => () => void;
-  /** 本页此刻看到这个项目的「生成轨道流」是不是开着(托管方的渲染节点开着并且这一项开着);不给等于一直关着 */
+  /** Whether "generate track stream" for this project is currently seen as enabled on this page (both host render node and this setting are enabled); omitting equals always off */
   streams?: () => boolean;
 }
 
-/** 登记处的内容 → `input.browser`:本页能执行(有运行时版本)、节点拿到了 cardEnvFingerprint、至少声明了一种能力才给 */
+/** Registry content → `input.browser`: provided only if executable on this page (has runtime version), node obtained cardEnvFingerprint, and at least one capability is declared */
 export function browserCardsFromInfo(info: NodeCardInfo): BrowserCards | null {
   if (!info.cardRuntime || !info.cardEnvFingerprint || !(info.userCards || info.graphCards)) return null;
-  // 本页一张能运行的卡也没有:不带这一项(计划与没有这个功能时逐字相同,不为空登记换签名)
+  // No runnable cards on this page: omit this entry (plan is verbatim identical to having no such feature; does not change signature for an empty registry)
   if (Object.keys(info.cardSources).length === 0) return null;
   return browserCardsOf({ cardEnvFingerprint: info.cardEnvFingerprint, userCards: info.userCards, graphCards: info.graphCards, cardSources: info.cardSources });
 }
@@ -173,28 +230,30 @@ export function browserCardsFromInfo(info: NodeCardInfo): BrowserCards | null {
 export interface Version { projectId: string | null; projectRev: number | null }
 
 export interface PlanPublisher {
-  /** 测量落定(打开项目那一轮测完、或之后补测完):此后才发 */
+  /** Measurement settled (measured when opening project, or catch-up measurement completed): published only after this */
   measured(v: Version): void;
-  /** 项目改了(文档服务确认的版本变了)、或清单变了:防抖后重发 */
+  /** Project modified (version confirmed by document service changed) or manifest changed: republish after debounce */
   changed(v: Version): void;
-  /** 连接换了(重连、换项目):重新报到,下一次照常发(队列只在内存里,重启后要重新发布) */
+  /** Connection changed (reconnect, switch project): re-checks in, publishes as usual next time (queue is in memory only, republish after restart) */
   reset(): void;
-  /** 本页的纯浏览器节点报到状态变了(M7):等着的那一版马上发 */
+  /** Check-in status of this page's pure browser node changed (M7): immediately publish the waiting version */
   nodeChanged(): void;
-  /** 「生成轨道流」从关变开了:马上重发这一版(结果键带这一项,是另一个计划;不防抖,创建者正等着)。从开变关不用调 */
+  /** "generate track stream" changed from off to on: immediately republish this version (result key includes this item, making it a different plan; no debounce, creator is waiting). No need to call when changing from on to off */
   streamsOn(): void;
-  /** 最近发成的那一版清单计划(本页产流用);还没发成、连接换了之后为 null */
+  /** Latest successfully published manifest plan (used by this page to generate streams); null before first successful publish or after connection change */
   current(): { id: string; projectId: string; projectRev: number; clips: string[]; at: number } | null;
   /**
-   * 问队列最近发成的那一版计划此刻的状态:把同一个任务再发布一次,读回包里的 `state`(`open` / `claimed` / `done` / `failed`)。
-   * 问不到(没发成过、正在发、连接断着、回包不对)回 null。
+   * Queries the queue for the current status of the latest successfully published plan: republishes
+   * the same task and reads `state` (`open` / `claimed` / `done` / `failed`) in the response.
+   * Returns null if unavailable (never successfully published, currently publishing, connection
+   * disconnected, or invalid response).
    */
   probe(): Promise<string | null>;
   dispose(): void;
   debug(): { measured: boolean; want: Version | null; last: string | null; lastClips: string[]; helloOk: boolean; nodeWaitMs: number | null; log: { at: number; id: string; clips: number; ok: boolean; error?: string; state?: string; waitedMs?: number; node?: string }[] };
 }
 
-/** endpoint → request:按 reqId 等回包 */
+/** endpoint → request: wait for response by reqId */
 function requestOver(endpoint: EndpointLike, prefix: string, onOther?: (m: Record<string, unknown>) => void): { request: Request; stop: () => void } {
   const waiting = new Map<string, (m: Record<string, unknown>) => void>();
   let seq = 0;
@@ -226,9 +285,9 @@ export function createPlanPublisher(deps: PlanPublisherDeps): PlanPublisher {
   let measuredOk = false;
   let want: Version | null = null;
   let last: string | null = null;
-  /** 上一次发成的那一份清单(探针核「清单含哪些片段」;任务 id 里只有签名) */
+  /** Last successfully published manifest (probe checks "which clips the manifest contains"; task id only contains signature) */
   let lastClips: string[] = [];
-  /** 上一次发成的那一个任务与发成的时刻(`current()`、`probe()` 用);连接换了就清掉 */
+  /** Last successfully published task and publish timestamp (used by `current()` and `probe()`); cleared when connection changes */
   let lastTask: ClipsPlanTask | null = null;
   let lastAt = 0;
   let helloOk = false;
@@ -236,9 +295,9 @@ export function createPlanPublisher(deps: PlanPublisherDeps): PlanPublisher {
   let busy = false;
   let again = false;
   let disposed = false;
-  /** 从哪一刻起在等本页的节点报到(这一版还没发出去);null = 没在等 */
+  /** Timestamp since when this page's node check-in has been awaited (this version not yet published); null = not waiting */
   let waitSince: number | null = null;
-  // 本页能运行的卡变了:同一份清单也是另一个计划(签名带它的摘要),防抖后重发
+  // Runnable cards on this page changed: same manifest becomes a different plan (signature includes its digest); republish after debounce
   const offBrowser = (deps.subscribeBrowser ?? subscribeNodeCardInfo)(() => { if (!disposed && measuredOk && want) schedule(); });
   const log: ReturnType<PlanPublisher["debug"]>["log"] = [];
   const note = (e: (typeof log)[number]) => { log.push(e); if (log.length > 20) log.splice(0, log.length - 20); };
@@ -257,7 +316,7 @@ export function createPlanPublisher(deps: PlanPublisherDeps): PlanPublisher {
     try { streams = deps.streams?.() === true; } catch { streams = false; }
     const task = clipsPlanTask({ projectId, projectRev: projectRev as number, clips, codeVersion: deps.codeVersion ?? null, browser, streams });
     if (task.id === last) return;
-    // M7:本页当纯浏览器节点时先等它报到完(拿到指纹),最多 BROWSER_NODE_WAIT_MS,超时照发
+    // M7: When this page acts as a pure browser node, wait for it to check in (obtain fingerprint), up to BROWSER_NODE_WAIT_MS; publish as usual on timeout
     const node = deps.nodeReady?.() ?? "none";
     let waitedMs: number | undefined;
     if (node === "pending") {
@@ -277,7 +336,7 @@ export function createPlanPublisher(deps: PlanPublisherDeps): PlanPublisher {
         if (hello?.type !== "publisher.welcome") throw new Error(`publisher.hello:${String(hello?.reason ?? hello?.type ?? "no-reply")}`);
         helloOk = true;
       }
-      try { deps.onPublish?.({ projectId, projectRev }); } catch { /* 宿主坏了不影响发布 */ }
+      try { deps.onPublish?.({ projectId, projectRev }); } catch { /* Host failure does not affect publishing */ }
       const reply = await request({ type: "task.publish", tasks: [task] });
       if (reply?.type !== "task.published") {
         helloOk = false;
@@ -294,11 +353,11 @@ export function createPlanPublisher(deps: PlanPublisherDeps): PlanPublisher {
     } catch (e) {
       const error = String((e as Error)?.message ?? e);
       if (LINK_DOWN.some((m) => error.includes(m) || error.includes(tr(m)))) helloOk = false;
-      // 没人认领、发不出去都不报错(C10 契约第 7 节):记下来,下一次改动或下一轮再发
+      // Unclaimed or failed publish is not an error (C10 contract section 7): record it, republish on next change or next round
       note({ at: now(), id: task.id, clips: clips.length, ok: false, error });
     } finally {
       busy = false;
-      // 等回包期间防抖已到期的那一版(again):防抖已经等过了,马上发,不再多等一轮防抖
+      // Version whose debounce expired while awaiting response (again): debounce has already elapsed, publish immediately without waiting for another debounce cycle
       if (again && !disposed) { again = false; void publish(); }
     }
   };
@@ -314,7 +373,7 @@ export function createPlanPublisher(deps: PlanPublisherDeps): PlanPublisher {
     changed(v) { want = { ...v }; if (measuredOk) schedule(); },
     reset() { helloOk = false; last = null; lastTask = null; if (measuredOk && want) schedule(); },
     nodeChanged() {
-      // 在等节点报到的那一版:马上再判一次(报到完就发)
+      // Version waiting for node check-in: re-evaluate immediately (publish once check-in finishes)
       if (disposed || waitSince === null || busy) return;
       if (timer !== null) clearTimer(timer);
       timer = null;
@@ -345,7 +404,7 @@ export function createPlanPublisher(deps: PlanPublisherDeps): PlanPublisher {
     },
     dispose() {
       disposed = true;
-      try { offBrowser(); } catch { /* 订阅方坏了 */ }
+      try { offBrowser(); } catch { /* The subscriber is broken */ }
       if (timer !== null) clearTimer(timer);
       timer = null;
       over?.stop();

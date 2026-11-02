@@ -1,8 +1,12 @@
 /**
- * 在线页面读轨道流(`snapshotSource.ts` 的 `OnlineSnapshotSource`;`docs/plan/browser-stream-task.md` 第六处):
- * 读层表的 `streams` 表 → 按播放头附近的分段取流清单(`render-manifest`)→ 清单里的块按哈希从素材服务取到本页 →
- * 字节到了的分段合成就绪区间,照 C3 的 `layer` 消息(`kind: 'stream'`)交给订阅方;`streamPlane` 给父页发流平面时带的清单与字节。
- * 跑:node --test src/render/onlineStreams.test.mjs
+ * Online page reads track streams (`OnlineSnapshotSource` in `snapshotSource.ts`;
+ * `docs/plan/browser-stream-task.md` item 6):
+ * Read layer table's `streams` table → fetch stream manifests (`render-manifest`) by segments
+ * near the playhead → fetch chunks in manifest by hash from asset service to this page →
+ * Segments whose bytes arrived assemble ready intervals, delivered to subscribers per C3's
+ * `layer` message (`kind: 'stream'`); manifests and bytes carried when `streamPlane` sends
+ * stream plane to parent page.
+ * Run: node --test src/render/onlineStreams.test.mjs
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,7 +23,7 @@ const sha = (b) => createHash('sha256').update(b).digest('hex');
 const RK = (n) => n.toString(16).padStart(64, '0');
 const bytesOf = (text) => new TextEncoder().encode(text);
 
-/** 一台假内容库 + 假素材服务(带一个可以走的钟、一张可以换的票据) */
+/** A fake content store + fake asset service (with an advancing clock and a renewable ticket) */
 function world() {
   const w = {
     content: new Map(), requests: [], fetches: [], bytes: new Map(), now: 1_000_000, ticket: 'T1', accepts: () => true,
@@ -47,9 +51,9 @@ function world() {
     setTimer: () => 0,
     clearTimer: () => {},
   };
-  /** 往素材服务放一块,回它的哈希 */
+  /** Put a chunk into asset service, return its hash */
   w.block = (text) => { const b = bytesOf(text); const h = sha(b); w.bytes.set(h, b); return h; };
-  /** 往内容库放一份流清单;`segs` 是这份清单里有的分段号(缺省全有) */
+  /** Put a stream manifest into content store; `segs` are segment numbers in this manifest (defaults to all) */
   w.putStream = (rk, from, to, { segs = null, stride = 1, tag = 'v1', clipIds = ['c1'], kind = 'card', upload = true } = {}) => {
     const initBytes = bytesOf(`init ${rk.slice(-4)} ${tag}`);
     const initHash = sha(initBytes);
@@ -83,14 +87,16 @@ function world() {
     src.setProject('p1');
     return { src, messages, streamMessages: () => messages.filter((m) => m.type === 'layer' && m.kind === 'stream') };
   };
-  /** 走一轮:取层表、清单、块,等落定 */
+  /** Run one round: fetch layer table, manifests, and chunks, wait to settle */
   w.settle = async (src) => { await src.tickNow(); await src.idle(); await src.tickNow(); await src.idle(); };
   return w;
 }
 
 /**
- * 层表的一行:这条流从项目的第 30 帧开始(`originFrame`),分段从它自己的第一帧起数,0～18(第 30～314 帧)。
- * 行里不写 `firstSegment`(恒为 0);清单按「从 0 起每 8 段一份」分:`0-7`、`8-15`、`16-18`。
+ * A row in layer table: this stream starts from project frame 30 (`originFrame`), segments are
+ * counted from its own first frame, 0-18 (frames 30-314).
+ * Row does not specify `firstSegment` (always 0); manifests are split by "every 8 segments from 0":
+ * `0-7`, `8-15`, `16-18`.
  */
 const row = (over = {}) => ({ topClipId: 'c1', clipIds: ['c1'], kind: 'card', plane: 'local', contentKey: 'sk-1',
   candidates: [{ envFingerprint: 'fp-a', resultKey: RK(0xa) }], originFrame: 30, lastSegment: 18, segmentsPerTask: 8, ...over });
@@ -108,7 +114,8 @@ test('How manifests are split: starting from firstSegment, one part per segments
 
 test('Parse the streams table: rows with a wrong shape are skipped; layer maps below v 2 do not read this table', () => {
   const good = row();
-  // 改分段规则之前的节点写的行:带 `firstSegment`、没有 `originFrame`(分段按项目帧号数)。照现在的换算贴上去会错位,不认
+  // Row written by a node before segment rule change: has `firstSegment`, no `originFrame`
+  // (segments counted by project frame numbers). Pasting per current conversion will misalign, reject it
   const { originFrame: _origin, ...oldShape } = good;
   const parsed = parseLayerStreams([good, null, { ...good, clipIds: [] }, { ...good, kind: 'x' }, { ...good, candidates: [] }, { ...good, candidates: [{ envFingerprint: 'f' }] },
     { ...good, lastSegment: -1 }, { ...good, segmentsPerTask: 0 }, { ...good, contentKey: '' }, { ...good, topClipId: undefined, inputSig: 's1-abc' },
@@ -151,7 +158,8 @@ test('Segment number → ready range: only manifests and chunks near the playhea
   w.putMap([row()]);
   const { src, streamMessages } = w.source();
   await w.settle(src);
-  // 播放头在 0:窗口是项目的第 0～60 帧(往前 2 秒)。这条流从第 30 帧开始,落在窗口里的是它的第 0～2 段(第 30～74 帧),都在第一份清单里
+  // Playhead at 0: window is project frames 0-60 (2s ahead). This stream starts from frame 30;
+  // segments 0-2 (frames 30-74) fall into the window, all in the first manifest
   const asked = w.requests.filter((r) => r.kind === 'render-manifest').map((r) => r.key);
   assert.deepEqual(asked, [`${rk}:0-7`], 'Only the one manifest part the window falls in was fetched');
   assert.deepEqual(last(streamMessages()), { type: 'layer', clipId: 'c1', kind: 'stream', key: rk, ranges: [[0, 2]], originFrame: 30 }, 'The ready message carries the first frame of this stream');
@@ -160,18 +168,20 @@ test('Segment number → ready range: only manifests and chunks near the playhea
   assert.deepEqual(new Set(fetched.map((u) => u.split('/').pop())), new Set([a.initHash, a.hashes[0], a.hashes[1], a.hashes[2]]), 'Init file + the three segments in the window, each fetched once');
   assert.equal(fetched.length, 4);
   assert.ok(w.fetches.every((f) => f.auth === 'Bearer T1'), 'Carries the read-only ticket');
-  // 播放头挪到 3 秒(第 90 帧,这条流的第 4 段):窗口是它的第 3～8 段,跨到第二份清单
+  // Playhead moved to 3s (frame 90, segment 4 of this stream): window is its segments 3-8,
+  // crossing into the second manifest
   src.focus(3, 30);
   await w.settle(src);
   assert.deepEqual(last(streamMessages()).ranges, [[0, 8]], '0..2 fetched earlier is still on this page, joined with the newly fetched 3..8');
   assert.ok(w.requests.some((r) => r.kind === 'render-manifest' && r.key === `${rk}:8-15`));
   assert.equal(w.requests.some((r) => r.key === `${rk}:16-18`), false, 'segment the window has not reached is not fetched');
-  // 满的清单不再取
+  // Full manifests are no longer fetched
   const before = w.requests.length;
   w.now += MANIFEST_POLL_MS * 3;
   await w.settle(src);
   assert.equal(w.requests.filter((r, i) => i >= before && r.kind === 'render-manifest' && r.key === `${rk}:0-7`).length, 0);
-  // 就绪消息进了就绪索引,父页的纯算就能合成流平面(snapshotFeed 一行不改)
+  // Ready message entered ready index; pure computation on parent page can assemble stream plane
+  // (without changing a single line of snapshotFeed)
   const index = new Map();
   for (const m of streamMessages()) applyReadyMessage(index, m);
   const layers = [...index].map(([clipId, byKind]) => ({ clipId, ...byKind.get('stream') }));
@@ -197,7 +207,7 @@ test('refetch when the manifest is not full: the range grows once the missing se
   const n0 = count();
   await w.settle(src);
   assert.equal(count(), n0, `no refetch before ${MANIFEST_POLL_MS} ms`);
-  // 节点又产了第 2 段(稀疏的)
+  // Node produced segment 2 again (sparse)
   const sparse = w.putStream(rk, 0, 7, { segs: [0, 1, 2], tag: 'v1' });
   const body = w.content.get(`${rk}:0-7`);
   const sparseBytes = bytesOf('seg sparse 2');
@@ -210,7 +220,8 @@ test('refetch when the manifest is not full: the range grows once the missing se
   assert.equal(src.streamPlane(rk).manifest.segments['2'].stride, 3);
   assert.equal(src.streamPlane(rk).manifest.segments['2'].file, sha(sparseBytes));
   const revSparse = src.streamRev;
-  // 稀疏段被满密度的换掉:就绪区间一个字不变,文件换了,streamRev 跟着变(父页据此重发流平面)
+  // Sparse segment replaced by full density: ready interval does not change by a word, file changed,
+  // streamRev changes accordingly (parent page resends stream plane based on this)
   w.putStream(rk, 0, 7, { segs: [0, 1, 2] });
   w.now += MANIFEST_POLL_MS;
   await w.settle(src);
@@ -231,7 +242,7 @@ test('candidate switching: the copy that task.done marks as live comes first; th
   await w.settle(src);
   assert.equal(last(streamMessages()).key, rkA, 'take the first candidate when none is marked');
   assert.deepEqual(last(streamMessages()).ranges, [[0, 0]]);
-  // 浏览器节点那一份报完成(细任务 id:stream:<结果键>:<起>-<止>)
+  // Browser node copy reports completion (fine-grained task id: stream:<result key>:<start>-<end>)
   src.noteQueueEvent({ type: 'task.done', id: `stream:${rkB}:0-7` });
   await w.settle(src);
   assert.equal(last(streamMessages()).key, rkB, 'switch the whole stream to the live candidate');
@@ -240,13 +251,13 @@ test('candidate switching: the copy that task.done marks as live comes first; th
   assert.equal(src.streamPlane(rkA), null, 'unselected candidate gets no stage');
   src.stop();
 
-  // 另一台页面:只收到「A 那一份作废了」
+  // Another page: only received "A's copy was invalidated"
   const w2 = world();
   w2.putStream(rkA, 0, 7, { segs: [0] });
   w2.putStream(rkB, 0, 7, { segs: [0, 1], tag: 'browser' });
   w2.putMap([row({ candidates: [{ envFingerprint: 'fp-a', resultKey: rkA }, { envFingerprint: 'fp-b', resultKey: rkB }] })]);
   const two = w2.source();
-  // 稀疏流任务的 id 末尾多一段 `:sparse`,同样认得出结果键
+  // Sparse stream task ID has an extra `:sparse` at the end, but still recognizes the result key
   two.src.noteQueueEvent({ type: 'task.failed', id: `stream:${rkA}:0-7:sparse`, error: 'superseded' });
   await w2.settle(two.src);
   assert.equal(last(two.streamMessages()).key, rkB);
@@ -257,14 +268,14 @@ test('stale signature: the row\'s inputSig does not match what the page computes
   const w = world();
   const rk = RK(0xa);
   const project = (text) => ({ id: 'p1', width: 1920, height: 1080, fps: 30, duration: 10, tracks: [{ id: 't', clips: [{ id: 'c1', cardId: 'punch-pill', start: 1, end: 9, params: { text } }] }] });
-  const v1 = project('one');   // 片段从第 1 秒(第 30 帧)开始,正是这一行的 originFrame
+  const v1 = project('one');   // Clip starts at 1s (frame 30), which is exactly this row's originFrame
   w.putStream(rk, 0, 7);
   w.putMap([row({ inputSig: streamInputSig(v1, { clipIds: ['c1'], kind: 'card' }) })]);
   const { src, streamMessages } = w.source();
   src.setInputs(v1);
   await w.settle(src);
   assert.deepEqual(last(streamMessages()).ranges, [[0, 2]]);
-  // 页面改了参数:旧流马上撤(发空层)
+  // Page changed parameters: old stream retracted immediately (sends empty layer)
   src.setInputs(project('two'));
   assert.deepEqual(last(streamMessages()), { type: 'layer', clipId: 'c1', kind: 'stream', key: rk, ranges: [] });
   assert.equal(src.streamPlane(rk), null);
@@ -274,14 +285,15 @@ test('stale signature: the row\'s inputSig does not match what the page computes
   await w.settle(src);
   assert.equal(w.requests.filter((r, i) => i >= asked && r.kind === 'render-manifest').length, 0, 'stale stream no longer fetches the manifest');
   assert.equal(w.fetches.length, got, 'nor fetches chunks');
-  // 片段整帧平移同样算过期:片段在时间轴上的位置仍在输入签名里(「挪动以后流不失效」记了待办,这次不做)
+  // Translating clip by whole frames also counts as expired: clip position on timeline is still in
+  // input signature ("streams do not expire after moving" recorded as TODO, not done this time)
   src.setInputs({ ...v1, tracks: [{ id: 't', clips: [{ ...v1.tracks[0].clips[0], start: 2, end: 10 }] }] });
   assert.equal(src.streamPlane(rk), null);
-  // 改回原来的:照发
+  // Changed back to original: send as usual
   src.setInputs(project('one'));
   assert.equal(last(streamMessages()).key, rk);
   assert.ok(last(streamMessages()).ranges.length > 0);
-  // 没带签名的行(算不出签名的节点写的):照播
+  // Row without signature (written by node that cannot calculate signature): play as usual
   w.putMap([row()]);
   w.now += LAYER_MAP_POLL_MS;
   src.setInputs(project('three'));
@@ -332,12 +344,12 @@ test('ticket expired: after the chunk fetch is rejected, refetch with the new ti
   const rk = RK(0xa);
   w.putStream(rk, 0, 7, { segs: [0] });
   w.putMap([row()]);
-  w.accepts = (auth) => auth === 'Bearer T2';   // 素材服务只认新票据,页面手里还是旧的
+  w.accepts = (auth) => auth === 'Bearer T2';   // Asset service only accepts new ticket, page still holds the old one
   const { src, streamMessages } = w.source();
   await w.settle(src);
   assert.deepEqual(streamMessages(), []);
   assert.ok(w.fetches.length >= 2 && w.fetches.every((f) => f.auth === 'Bearer T1'));
-  w.ticket = 'T2';   // 票据续上了(页面里是 `assetAuthHeaders` 自己续)
+  w.ticket = 'T2';   // Ticket renewed (in the page, `assetAuthHeaders` renews itself)
   w.now += STREAM_RETRY_MS;
   await w.settle(src);
   assert.deepEqual(last(streamMessages()).ranges, [[0, 0]]);
@@ -393,7 +405,7 @@ test('group stream: the ready message carries groupClipIds, attached to the topm
   assert.deepEqual(last(streamMessages()), { type: 'layer', clipId: 'c2', kind: 'stream', key: rk, ranges: [[0, 4]], originFrame: 0, groupClipIds: ['c1', 'c2'] });
   assert.equal(src.streamPlane(rk).manifest.kind, 'group');
   assert.equal(src.streamPlane(rk).manifest.plane, 'stage');
-  // 父页的纯算:两个成员都被抑制才有这条平面
+  // Pure computation on parent page: this plane exists only when both members are suppressed
   const index = new Map();
   for (const m of streamMessages()) applyReadyMessage(index, m);
   const layers = [...index].map(([clipId, byKind]) => ({ clipId, ...byKind.get('stream') }));
@@ -412,7 +424,7 @@ test('new subscriber: reset first, then send in full the layers of all streams h
   const late = [];
   src.subscribeReady('online', 0, (m) => late.push(m));
   assert.deepEqual(late, [{ type: 'reset', localRev: 0 }, { type: 'layer', clipId: 'c1', kind: 'stream', key: rk, ranges: [[0, 2]], originFrame: 30 }]);
-  // 渲染节点重写了层表,不再有这条流(这张卡改判轻了)
+  // Render node rewrote layer table, this stream no longer exists (this card reclassified as light)
   w.putMap([]);
   w.now += LAYER_MAP_POLL_MS;
   await w.settle(src);
@@ -426,7 +438,8 @@ test('lowest tier, browser has no VideoDecoder: streams are not consumed. Even w
   const rk = RK(0xa);
   w.putStream(rk, 0, 7);
   w.putMap([row()]);
-  // Node 里没有 VideoDecoder,缺省的 `browserDecodeSupport` 回「没有」;再显式注入一次同样的
+  // Node has no VideoDecoder, default `browserDecodeSupport` returns "none"; explicitly inject
+  // the same once again
   assert.equal(browserDecodeSupport.available(), false);
   assert.equal(await browserDecodeSupport.supports({ codec: 'avc1.640028', codedWidth: 704, codedHeight: 864 }), false);
   for (const opts of [{ tier: 'small' }, { tier: 'small', decodeSupport: { available: () => false, supports: async () => true } }]) {
@@ -449,7 +462,7 @@ test('lowest tier, browser can decode: fetch streams the same way as other tiers
   const asked = [];
   const decodeSupport = { available: () => true, supports: async (c) => { asked.push(c); return true; } };
   const low = w.source({ tier: 'small', decodeSupport });
-  low.src.focus(1, 30);   // 播放头在第 30 帧 = 这条流的第 0 段
+  low.src.focus(1, 30);   // Playhead at frame 30 = segment 0 of this stream
   await w.settle(low.src);
   await w.settle(low.src);
   const msg = last(low.streamMessages());
@@ -460,7 +473,7 @@ test('lowest tier, browser can decode: fetch streams the same way as other tiers
   const plane = low.src.streamPlane(rk);
   assert.ok(plane && plane.blocks.has(put.initHash) && plane.blocks.has(put.hashes[0]));
   assert.equal(plane.manifest.segments['0'].file, put.hashes[0], 'segments are fetched whole (chunks stored and read by hash)');
-  // 和别的档取到的是同一批东西
+  // Fetched the same items as other tiers
   const w2 = world();
   w2.putStream(rk, 0, 7);
   w2.putMap([row()]);
@@ -508,7 +521,7 @@ test('BlockLru: counts by bytes, evicts the least recently used, returns the evi
 test('which segments to fetch is computed from each stream\'s own first frame: not fetched while the playhead has not reached the stream; two streams under the same playhead each fetch their own segments', async () => {
   const w = world();
   const far = RK(0xf1), near = RK(0xf2);
-  // far 从第 400 帧开始(不是 15 的倍数),near 从第 7 帧开始
+  // far starts at frame 400 (not a multiple of 15), near starts at frame 7
   w.putStream(far, 0, 7, { clipIds: ['c1'] });
   w.putStream(near, 0, 7, { clipIds: ['c2'] });
   w.putMap([
@@ -518,11 +531,13 @@ test('which segments to fetch is computed from each stream\'s own first frame: n
   const { src, streamMessages } = w.source();
   await w.settle(src);
   const lastOf = (key) => last(streamMessages().filter((m) => m.key === key));
-  // 播放头在第 0 帧:窗口是第 0～60 帧。near(第 7 帧起)落进它的第 0～3 段(第 7～66 帧);far 还远,一段都不取
+  // Playhead at frame 0: window is frames 0-60. near (from frame 7) falls into its segments 0-3
+  // (frames 7-66); far is still distant, do not fetch any segment
   assert.deepEqual(lastOf(near), { type: 'layer', clipId: 'c2', kind: 'stream', key: near, ranges: [[0, 3]], originFrame: 7 });
   assert.equal(lastOf(far), undefined, 'even 2 seconds ahead of the playhead cannot reach frame 400: not fetched, not sent');
   assert.equal(w.requests.some((r) => r.key === `${far}:0-7`), false);
-  // 播放头到第 405 帧:far 的第 0 段(第 400～414 帧)第 5 个样本;窗口是它的第 0～4 段(到第 465 帧)。near 早就播完了
+  // Playhead at frame 405: 5th sample of segment 0 of far (frames 400-414); window is its
+  // segments 0-4 (up to frame 465). near finished playing long ago
   src.focus(405 / 30, 30);
   await w.settle(src);
   assert.deepEqual(lastOf(far), { type: 'layer', clipId: 'c1', kind: 'stream', key: far, ranges: [[0, 4]], originFrame: 400 });
@@ -535,9 +550,9 @@ test('which segments to fetch is computed from each stream\'s own first frame: n
   src.stop();
 });
 
-/* ---------------- 依赖下层的流(`kind: 'below'`;任务书 `render-refactor-task.md`「戊二」的「下层四」) ---------------- */
+/* ---------------- Below-dependent stream (`kind: 'below'`; task brief `render-refactor-task.md` "Wu-2" "Lower layer 4") ---------------- */
 
-/** 三条序列(第一条在最上面):标题、毛玻璃卡 `glass`(第 30 帧起)、下面一张会动的卡 */
+/** Three tracks (first on top): title, frosted-glass card `glass` (from frame 30), animated card below */
 const belowProject = (edit = (p) => p) => edit({ id: 'p1', width: 1920, height: 1080, fps: 30, duration: 20, media: [], tracks: [
   { id: 'top', clips: [{ id: 'title', cardId: 'c', start: 0, end: 10, params: { text: 'Title' } }] },
   { id: 'mid', clips: [{ id: 'glass', cardId: 'c', start: 1, end: 9, params: {}, frame: { x: 100, y: 100, w: 600, h: 300 } }] },
@@ -568,14 +583,16 @@ test('BO-ready depends on the stream below: the ready message carries streamKind
   const { src, streamMessages } = w.source();
   src.setInputs(p);
   await w.settle(src);
-  // 和桌面预渲染进程发的那一层同一个形状(`server/frame-stream.mjs` 的 `belowLayerMark`;`src/editor/snapshotFeedBelow.test.mjs` 喂给父页的就是它)
+  // Same shape as the layer sent by desktop prerender process (`belowLayerMark` in
+  // `server/frame-stream.mjs`; fed to parent page by `src/editor/snapshotFeedBelow.test.mjs`)
   assert.deepEqual(last(streamMessages()), { type: 'layer', clipId: 'glass', kind: 'stream', key: rk, ranges: [[0, 2]], originFrame: 30, streamKind: 'below', inputSig: sig });
   const plane = src.streamPlane(rk);
   assert.equal(plane.manifest.kind, 'below');
   assert.equal(plane.manifest.plane, 'stage');
   assert.deepEqual(plane.manifest.clipIds, ['glass']);
   assert.equal(plane.manifest.originFrame, 30);
-  // 父页的纯算:就绪索引里那一层带着 streamKind,合成的流平面带 plane: stage(舞台把画布挂在舞台根下)
+  // Pure computation on parent page: that layer in ready index carries streamKind, assembled
+  // stream plane carries plane: stage (stage mounts canvas under stage root)
   const index = new Map();
   for (const m of streamMessages()) applyReadyMessage(index, m);
   const layer = index.get('glass').get('stream');
@@ -584,7 +601,7 @@ test('BO-ready depends on the stream below: the ready message carries streamKind
   const planes = streamPlanesFor([{ clipId: 'glass', ...layer, plane: 'stage' }], new Set(['glass']), 40);
   assert.deepEqual(planes, [{ clipIds: ['glass'], key: rk, ranges: [[0, 2]], originFrame: 30, plane: 'stage' }]);
   assert.equal(src.debug().streams[0].kind, 'below');
-  // 没带签名的行:消息里不带 inputSig(父页不比,照贴)
+  // Row without signature: message does not carry inputSig (parent page does not compare, pastes as usual)
   const w2 = world();
   w2.putStream(rk, 0, 7, { clipIds: ['glass'], kind: 'below' });
   w2.putMap([belowRow(null, { candidates: [{ envFingerprint: 'fp-a', resultKey: rk }] })]);
@@ -621,7 +638,7 @@ test('BO-stale: the stream that depends on the lower layer goes stale: when the 
     assert.deepEqual(last(streamMessages()).ranges, [[0, 2]], `${what}: re-sent after changing back`);
     assert.equal(last(streamMessages()).streamKind, 'below');
   }
-  // 过期的这段时间里不取清单、不取块
+  // Do not fetch manifests or chunks during this expired period
   src.setInputs(belowProject(stale['lower layer changed one parameter']));
   const asked = w.requests.length, got = w.fetches.length;
   src.focus(3, 30);
@@ -629,7 +646,7 @@ test('BO-stale: the stream that depends on the lower layer goes stale: when the 
   assert.equal(w.requests.filter((r, i) => i >= asked && r.kind === 'render-manifest').length, 0);
   assert.equal(w.fetches.length, got);
   src.setInputs(belowProject());
-  // 上面的层怎么改都不算过期
+  // Any changes to layers above do not count as expired
   const before = streamMessages().length;
   src.setInputs(belowProject((q) => { q.tracks[0].clips[0].params = { text: 'Other' }; q.tracks[0].clips[0].frame = { x: 5, y: 5, w: 100, h: 100 }; return q; }));
   src.setInputs(belowProject((q) => { q.tracks.shift(); return q; }));

@@ -1,11 +1,15 @@
-// 剪辑段的摊平视图(`cutFlatten.mjs`):剪辑段里的卡逐张进计划一侧。跑:node --test src/kernel/cutFlatten.test.mjs
+// Flattened view of cut segments (`cutFlatten.mjs`): cards in cut segments enter the plan side one
+// by one. Run: node --test src/kernel/cutFlatten.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { FLAT_SEP, flatPlanProject, flatInfoOf, isFlatClipId, isolatedFlatProject, withFlatNodes } from './cutFlatten.mjs';
 
 const card = (id, start, end, extra = {}) => ({ id, cardId: 'punch-pill', params: { text: id }, start, end, ...extra });
 
-/** 激活剪辑 A 上:一张顶层卡 T、剪辑段 S(2～6 秒,偏移 1)引用 B;B 里一张重卡 H(0～10)、一张轻卡 L(3～4)、剪辑段 S2 引用 C;C 里一张卡 X */
+/**
+ * On active cut A: top-level card T, cut segment S (2~6s, offset 1) references B; inside B,
+ * heavy card H (0~10), light card L (3~4), cut segment S2 references C; inside C, card X
+ */
 function fixture() {
   return {
     id: 'p', width: 1920, height: 1080, fps: 30, duration: 10, activeCutId: 'A',
@@ -40,7 +44,7 @@ test('A cut segment is replaced by the cards inside it: shifted, cropped to the 
   const clips = new Map(flat.tracks.flatMap((t) => t.clips.map((c) => [c.id, { c, t }])));
   assert.ok(!clips.has('S'), 'The segment itself is not in the flattened view');
   assert.ok(clips.has('T'));
-  // shift = 2 − 1 = 1:H 在父时间 [1, 11),露出窗口 [2, 6)
+  // shift = 2 − 1 = 1: H in parent time [1, 11), visible window [2, 6)
   const H = clips.get(`S${FLAT_SEP}H`).c;
   assert.deepEqual([H.start, H.end], [2, 6]);
   assert.equal(flatInfoOf(H).lead, 1);
@@ -49,13 +53,14 @@ test('A cut segment is replaced by the cards inside it: shifted, cropped to the 
   assert.deepEqual(flatInfoOf(H).chain.map((s) => s.id), ['S']);
   const L = clips.get(`S${FLAT_SEP}L`).c;
   assert.deepEqual([L.start, L.end, flatInfoOf(L).lead], [4, 5, 0]);
-  // S2 在父时间 [5, 6),C 的 X 在那里露出 [5, 6)
+  // S2 in parent time [5, 6), C's X is visible there [5, 6)
   const X = clips.get(`S${FLAT_SEP}S2${FLAT_SEP}X`).c;
   assert.deepEqual([X.start, X.end, flatInfoOf(X).lead], [5, 6, 0]);
   assert.deepEqual(flatInfoOf(X).chain.map((s) => s.id), ['S', 'S2']);
   assert.ok(isFlatClipId(X.id) && !isFlatClipId('T'));
   assert.ok(!clips.has(`S${FLAT_SEP}Z`), 'Hidden tracks are not flattened');
-  // 画家顺序:虚拟序列插在段所在序列的位置(t1 之下、t2 剩下的片段之上)
+  // Painter's order: virtual track inserted at segment track's position (below t1, above remaining
+  // clips of t2)
   const order = flat.tracks.map((t) => t.id);
   assert.equal(order[0], 't1');
   assert.equal(order[order.length - 1], 't2');
@@ -63,7 +68,7 @@ test('A cut segment is replaced by the cards inside it: shifted, cropped to the 
 
 test('A referenced cut gets shorter: the part beyond the total duration is not exposed', () => {
   const p = fixture();
-  p.cuts[1].duration = 3; // shift 1:剪辑时间 3 → 父时间 4
+  p.cuts[1].duration = 3; // shift 1: cut time 3 → parent time 4
   const H = flatPlanProject(p).tracks.flatMap((t) => t.clips).find((c) => c.id === `S${FLAT_SEP}H`);
   assert.deepEqual([H.start, H.end], [2, 4]);
 });

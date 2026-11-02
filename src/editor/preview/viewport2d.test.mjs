@@ -1,9 +1,10 @@
 /**
- * 2D 预览缩放平移的单测。跑:node --test src/editor/preview/viewport2d.test.mjs
+ * Unit tests for 2D preview zoom and pan. Run: node --test src/editor/preview/viewport2d.test.mjs
  *
- * 这里最要紧的一条是**光标锚点**:缩放之后光标底下还得是同一个画面像素。
- * 错了不会报错,只会「点不准」——点在卡片上选中的是旁边那张,而这种偏差
- * 在截图里看不出来,只有手上才觉得别扭。所以逐条钉死。
+ * The most critical item here is the **cursor anchor**: after zooming, the pixel under the cursor
+ * must remain the same video pixel. Getting it wrong throws no error, but clicks become inaccurate:
+ * clicking on a card selects the adjacent one, and this deviation cannot be seen in screenshots,
+ * only felt by hand. So each case is pinned down.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -17,9 +18,9 @@ const PROJECT = { width: 1920, height: 1080 };
 const BOX = { width: 800, height: 600 };
 
 test("Fit to window: the long side touches first, leaving a little margin all around", () => {
-  // 宽高比 16:9 的画面放进 800x600,先顶到宽:(800-16)/1920
+  // A 16:9 aspect ratio video placed into 800x600 hits width first: (800-16)/1920
   assert.equal(fitScale(PROJECT, BOX), (800 - 16) / 1920);
-  // 窄窗口里先顶到高
+  // Hits height first in a narrow window
   assert.equal(fitScale(PROJECT, { width: 4000, height: 300 }), (300 - 16) / 1080);
   const v = fitView(PROJECT, BOX);
   assert.equal(v.tx, 0);
@@ -32,7 +33,7 @@ test("With no panning the picture is exactly centered, pixel-identical to before
   const o = frameOrigin(v, PROJECT, BOX);
   assert.equal(o.x, (800 - 1920 * 0.25) / 2);
   assert.equal(o.y, (600 - 1080 * 0.25) / 2);
-  // 画框中心就是窗口中心
+  // The frame center is the window center
   assert.equal(o.x + (1920 * 0.25) / 2, 400);
   assert.equal(o.y + (1080 * 0.25) / 2, 300);
 });
@@ -42,7 +43,7 @@ test("Window coordinates and picture coordinates convert back and forth", () => 
   for (const pt of [{ x: 0, y: 0 }, { x: 400, y: 300 }, { x: 799, y: 42 }]) {
     const p = toStagePoint(v, PROJECT, BOX, pt);
     const o = frameOrigin(v, PROJECT, BOX);
-    // 反着算回去要回到原点
+    // Calculating backwards must return to the origin
     assert.ok(Math.abs(o.x + p.x * v.scale - pt.x) < 1e-9);
     assert.ok(Math.abs(o.y + p.y * v.scale - pt.y) < 1e-9);
   }
@@ -93,9 +94,9 @@ test("Scrolling again at the limit leaves the view completely still (it must not
 
 test("When scrolling changes nothing, it must not also turn off \"auto fit\" as a side effect", () => {
   /*
-   * 窗口小到适应比例本身就顶在下限:这时候再往下滚,什么都没发生 ——
-   * 那就不该因此退出自动适应。「我滚了一下,结果画面没变,但窗口一改大小
-   * 画面也不自己适应了」是最难查的那种手感 bug。
+   * Window is so small that fit scale itself hits the lower limit: scrolling down further changes
+   * nothing: it should not exit auto-fit because of this. "I scrolled, nothing changed on screen,
+   * but resizing the window no longer auto-adapts" is the hardest kind of feel/UX bug to debug.
    */
   const tiny = { width: 30, height: 30 };
   const fit = fitView(PROJECT, tiny);
@@ -109,11 +110,11 @@ test("Dragging: at least one piece stays in view, it cannot be dragged out", () 
   const v = { scale: 0.4, tx: 0, ty: 0, auto: false };
   const far = panBy(v, PROJECT, BOX, 100000, 100000);
   const fw = 1920 * 0.4;
-  // 画面左边缘不该越过窗口右边缘再往里 48px
+  // Left edge of the video should not cross 48px inward past the right edge of the window
   const o = frameOrigin(far, PROJECT, BOX);
   assert.ok(o.x <= BOX.width - 48 + 1e-6, `Dragged too far, left edge is at ${o.x}`);
   assert.ok(o.x + fw >= 48 - 1e-6);
-  // 反方向同理
+  // Same for the opposite direction
   const back = panBy(v, PROJECT, BOX, -100000, -100000);
   const o2 = frameOrigin(back, PROJECT, BOX);
   assert.ok(o2.x + fw >= 48 - 1e-6, `Dragged too far in the opposite direction, right edge is at ${o2.x + fw}`);
@@ -144,15 +145,15 @@ test("Wheel: up zooms in, down zooms out, and one up plus one down returns to 1"
 });
 
 test("Wheel: devices that report in lines must be converted to pixels, otherwise the speed differs by a factor of ten or more", () => {
-  // deltaMode 1 = 按行,一行算 16 像素
+  // deltaMode 1 = by line, 16 pixels per line
   assert.ok(Math.abs(wheelZoomFactor(-7.5, 1) - wheelZoomFactor(-120, 0)) < 1e-12);
-  // 触控板一次甩出很大的值也不能一步缩到底
+  // Even if the trackpad flings a huge value at once, it must not zoom all the way in one step
   assert.ok(wheelZoomFactor(-100000) <= Math.pow(1.2, 4) + 1e-12);
   assert.ok(wheelZoomFactor(100000) >= Math.pow(1.2, -4) - 1e-12);
 });
 
 test("The picture can be dragged even when it is smaller than the window, but not out of sight", () => {
-  const v = { scale: 0.1, tx: 0, ty: 0, auto: false };  // 192x108,远小于 800x600
+  const v = { scale: 0.1, tx: 0, ty: 0, auto: false };  // 192x108, far smaller than 800x600
   const moved = panBy(v, PROJECT, BOX, 1000, 0);
   const o = frameOrigin(moved, PROJECT, BOX);
   assert.ok(o.x < BOX.width, "It must still be visible");

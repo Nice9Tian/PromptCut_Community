@@ -11,16 +11,18 @@ import { RangeField } from "../fields/RangeField";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 编辑分区里剪辑段的属性(`product/project-model.md`「片段」的剪辑段一条):从被引用剪辑的第几秒开始,
- * 以及和素材段相同的起止、框、不透明度、淡入淡出、音量与静音。引用哪条剪辑不能改(2026-10-21 用户定,
- * `workflow/editing.md`「剪辑段的属性」),所以这里没有换引用的下拉框;要换就删掉这段,从素材库重新拖一条。
+ * Properties of a cut segment in the editing section (the cut segment entry under "Clip" in `product/project-model.md`): which second
+ * of the referenced cut to start from, plus the same start/end, frame, opacity, fade in/out, volume and mute as a media clip. Which cut
+ * is referenced cannot be changed (user decision, 2026-10-21, `workflow/editing.md`, "Properties of a cut segment"), so there is no
+ * dropdown here for swapping the reference; to change it, delete this segment and drag in a new one from the media library.
  *
- * 每一项都走现有的 store 动作(`setCutSegment`、`moveClip`、`setClipFrame`、`updateClip`、`setClipVolume`、`setClipMuted`),
- * 它们换新对象写回项目、进撤销栈;偏移超出被引用剪辑总长这类拒绝原样显示在表单底下。
- * 「打开被引用剪辑」和双击时间轴上的剪辑段同效(`openCutInTimeline`)。
+ * Every item goes through an existing store action (`setCutSegment`, `moveClip`, `setClipFrame`, `updateClip`, `setClipVolume`, `setClipMuted`),
+ * which write a new object back into the project and push onto the undo stack; rejections such as an offset exceeding the total length of
+ * the referenced cut are shown as-is under the form.
+ * "Open referenced cut" has the same effect as double-clicking the cut segment on the timeline (`openCutInTimeline`).
  *
- * 数字框与滑块是 `../fields/` 里共用的 NumberField / RangeField:数字框敲字只改草稿,回车或失焦才提交一步;
- * 滑块一次拖动只记一步撤销(2026-10-20 用户定,`docs/semantics/workflow/editing.md`「撤销、重做」)。
+ * The number field and slider are the shared NumberField / RangeField in `../fields/`: typing in the number field only changes the draft,
+ * and Enter or blur commits one step; one slider drag records only one undo step (user decision, 2026-10-20, `docs/semantics/workflow/editing.md`, "Undo and redo").
  */
 export function CutSegmentForm({ clip }: { clip: TrackClip }) {
   const project = useStore((s) => s.project);
@@ -35,7 +37,7 @@ export function CutSegmentForm({ clip }: { clip: TrackClip }) {
   const track = project.tracks.find((t) => t.clips.some((c) => c.id === clip.id));
   const locked = !!track?.locked;
 
-  /** 跑一个 store 动作:抛的错、回 { ok: false, error } 的都显示出来 */
+  /** Run a store action: both thrown errors and returned { ok: false, error } are shown */
   const run = (fn: () => unknown) => {
     try {
       const r = fn() as { ok?: boolean; error?: string; blocked?: string[] } | undefined;

@@ -1,10 +1,10 @@
-// node --test server/test/think-tags.test.mjs —— 内联 <think> 的流式拆分
+// node --test server/test/think-tags.test.mjs: streaming split of inline <think>
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const { createThinkSplitter, splitThinkTags } = await import('../harness/think-tags.mjs');
 
-/** 把整段按 size 切碎喂进去,模拟流式;返回拼好的两条通道 */
+/** Slice the whole text by size and feed it in to simulate streaming; return both assembled channels */
 function feed(text, size) {
   const sp = createThinkSplitter();
   const events = [];
@@ -19,7 +19,7 @@ function feed(text, size) {
   return { text: out, think };
 }
 
-// 用户诊断报告里的真实形状(对话诊断-20260908-114215)
+// Real shape from a user diagnostic report (chat-diagnostic-20260908-114215)
 const REAL = '<think>**Clarifying article link and scope**\n\n</think>\n\nFirst I will check the media collection environment; there is no WeChat article link in the messages so far.';
 
 test('Real sample: think goes to the thinking channel, and not a single tag remains in the body', () => {

@@ -5,9 +5,9 @@ import { easeExpoOut, accentOf } from "../../cards/native/hud";
 import { fitOr } from "../fit";
 
 /**
- * 柱状排名条:若干项排名数据以横向条形图加跳动数字展示。
- * 从 rank-bars 拆出,不含标题与外壳。
- * 进场:条形从左向右长出,最大值条将以主题色高亮。
+ * Bar ranking bars: multiple ranking data items displayed as horizontal bar charts with animated numbers.
+ * Extracted from rank-bars, without titles and shell.
+ * Entrance: bars grow from left to right, and the maximum bar is highlighted in the theme color.
  */
 interface Params {
   rows: string;

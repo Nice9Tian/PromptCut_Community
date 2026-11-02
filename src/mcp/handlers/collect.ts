@@ -10,20 +10,23 @@ import { collectInstallJobs, collectJobs } from "../common";
 
 export const collectHandlers = {
   /**
-   * 把用户用「+」发进来的附件装进素材库。
+   * Load attachments sent in by the user using "+" into the media library.
    *
-   * 附件落在对话的工作目录(.pc-work)里,那和项目素材库是两回事 ——
-   * 模型能在提示词里看到附件的地址和磁盘路径,却没有任何工具能把它搬过去,
-   * 于是 list_media 一直是空的,只能回一句「请你先手动导入」。这个工具补上那一步。
+   * Attachments land in the chat working directory (.pc-work), which is completely separate from
+   * the project media library: the model can see the attachment's address and disk path in the
+   * prompt, but had no tool to move it over, so list_media remained empty and could only reply
+   * "Please import manually first". This tool fills in that step.
    *
-   * 实现上取回文件再走 importVideoFiles,也就是用户拖拽导入走的同一条路:
-   * 同样探测时长宽高、同样登记 MediaAsset、同样落到视频轨、同样上传拿到磁盘路径。
-   * 多一次取回的开销,换的是「AI 导入」和「人工导入」结果完全一致。
+   * Implementation-wise, it retrieves the file and routes through importVideoFiles, which is the
+   * exact same path taken by user drag-and-drop imports: probe duration and dimensions, register
+   * MediaAsset, place onto the video track, and upload to obtain a disk path. The overhead of an
+   * extra retrieval ensures results of "AI import" and "manual import" are completely identical.
    */
-  // ── 素材收集:从网页链接抓视频 ──────────────────────────────────
+  // ── Media collection: grab video from web links ──────────────────────────────────
   collectStatus: () => collectStatus(),
 
-  // 站内搜索:给「从 B 站找素材」用。每条要单独探测,limit 封顶 10
+  // Site search: used for "finding media on Bilibili". Each item must be probed individually, limit
+  // capped at 10
   collectSearch: async (args) => {
     if (!args.query) throw new Error("query (keywords) is required");
     const r = await searchVideos(args.query, { site: args.site, limit: args.limit });
@@ -43,7 +46,8 @@ export const collectHandlers = {
     };
   },
 
-  // 安装是 pip 装 yt-dlp,几十秒,立刻回 jobId,和 subject_install 一个路数
+  // Installation runs pip to install yt-dlp, takes tens of seconds, returns jobId immediately,
+  // following the same pattern as subject_install
   collectInstall: async () => {
     const jobId = `collect-${Date.now().toString(36)}`;
     collectInstallJobs.set(jobId, { done: false, ok: false, logTail: [] });
@@ -87,7 +91,8 @@ export const collectHandlers = {
     };
   },
 
-  // 下载几十秒到几分钟,立刻回 jobId,结果用 collect_job 轮询;下完自动登记进素材库
+  // Downloading takes tens of seconds to several minutes, returns jobId immediately, and results are
+  // polled using collect_job; automatically registered into the media library upon completion
   collectDownload: async (args) => {
     if (!args.url) throw new Error("url is required (video page link, BV id or short link)");
     const { jobId, reused } = await startDownload(args.url, {
@@ -107,7 +112,8 @@ export const collectHandlers = {
           rec.job = job;
           for (const item of job.items) {
             try {
-              // 服务端已经经素材服务的入库接口把文件送进内容库(server/vite-plugin-collect.ts),按回来的标识登记
+              // The server has already sent the file into the content store via the asset service store API
+              // (server/vite-plugin-collect.ts); register it using the returned identifier
               rec.mediaIds.push(await importVideoFromServer({ url: item.url, name: item.filename, uploaded: item.media ?? null }));
             } catch (e: unknown) {
               rec.error = `Downloaded, but registering the asset failed: ${e instanceof Error ? e.message : String(e)}`;
@@ -159,8 +165,10 @@ export const collectHandlers = {
     };
   },
 
-  // ── 登录:把站点登录页挪到用户面前扫码,扫完取 cookie 存盘,之后下载自动带上 ──
-  // 登录框弹在编辑台里:扫码(二维码就画在框里)或浏览器(站点自己的登录页,账号密码也行)
+  // ── Login: bring the site login page to the user for QR code scanning, save cookies to disk upon
+  // scanning, and attach them automatically to subsequent downloads ──
+  // The login dialog pops up in the editor: QR code scan (QR code rendered directly in the dialog)
+  // or browser (site's own login page, username/password also works)
   collectLogin: async (args) => {
     const site = args.site || "bilibili";
     const method = args.method === "browser" ? "browser" : "qr";

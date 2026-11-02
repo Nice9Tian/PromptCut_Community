@@ -1,14 +1,20 @@
 /**
- * GL Worker(R9 M2):持**唯一的** WebGL2 上下文(一张 `OffscreenCanvas`)和图集。
+ * GL Worker (R9 M2): holds the **sole** WebGL2 context (one `OffscreenCanvas`) and atlas.
  *
- * 两种来路收同一套消息(`init` / `layout` / `beat` / `release` / `diag`):
- *   - 路线 1(`perDocument`)和导出页:舞台 / 导出页的 `glHost` 自己 `new Worker`,消息直接进 `onmessage`;
- *   - 路线 2(`shared`):父页(编辑器文档)建这一个 Worker,每个舞台一条 `MessageChannel`,
- *     父页发 `{ type: 'connect', stageId, port }` 把 `port2` 交进来,舞台的 `glHost` 在 `port1` 上收发。
- *     一个端口绑死一个 `stageId`:端口上来的消息一律按它的 `stageId` 处理,舞台自报的不作数。
+ * Receives the same set of messages (`init` / `layout` / `beat` / `release` / `diag`) from
+ * two sources:
+ *   - Route 1 (`perDocument`) and export page: `glHost` of the stage / export page creates
+ *     `new Worker` itself, and messages go directly into `onmessage`;
+ *   - Route 2 (`shared`): parent page (editor document) creates this single Worker, with one
+ *     `MessageChannel` per stage; the parent page sends `{ type: 'connect', stageId, port }` to pass
+ *     `port2` in, and the stage's `glHost` sends and receives on `port1`.
+ *     One port is hard-bound to one `stageId`: messages coming from a port are always processed by
+ *     its `stageId`; what the stage self-reports does not count.
  *
- * **时间只由主线程给**:这里不读 rAF、`performance.now`(只有 `measure` 量 GPU 耗时时读)、`Date.now`。
- * 活都在同一个上下文上,`renderer.beat` 内部串行 —— 路线 2 下两个 `stageId` 的 blit 也是串行的。
+ * **Time is provided only by the main thread**: do not read rAF, `performance.now` (read only when
+ * `measure` measures GPU duration), or `Date.now` here.
+ * All work is on the same context, and `renderer.beat` is serialized internally: under Route 2,
+ * blits across the two `stageId` values are also serialized.
  */
 
 import { createGlRenderer, type GlRenderer } from "./renderer";
@@ -26,7 +32,7 @@ const scope = self as unknown as {
 let renderer: GlRenderer | null = null;
 const ensure = (compact: boolean): GlRenderer => (renderer ??= createGlRenderer({ compact, programOf }));
 
-/** 路线 2:端口 → 它绑的 stageId(同一个 stageId 重连 = 舞台重载了,旧的那份图集先放掉) */
+/** Route 2: port → bound stageId (same stageId reconnecting = stage reloaded, release old atlas first) */
 const ports = new Map<string, MessagePort>();
 
 function handle(msg: GlToWorker, reply: Reply, boundStageId: string | null): void {
@@ -76,5 +82,5 @@ function handle(msg: GlToWorker, reply: Reply, boundStageId: string | null): voi
 }
 
 scope.onmessage = (e: MessageEvent) => handle(e.data as GlToWorker, (m, t) => scope.postMessage(m, t ?? []), null);
-// 探针经 CDP 直接在 Worker 里读(验收:这个 Worker 里恰好一个上下文)
+// Probe reads directly in Worker via CDP (acceptance check: exactly one context in this Worker)
 scope.__pcGlDiag = () => renderer?.diag() ?? null;

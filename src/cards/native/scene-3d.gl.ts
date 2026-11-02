@@ -1,13 +1,15 @@
 /**
- * `scene-3d` 的函数那一半(R9 M1 / M5):进共享 WebGL 渲染器的 `three` 契约。
+ * The function half of `scene-3d` (R9 M1 / M5): the `three` contract entering the shared WebGL renderer.
  *
- * **不 import React、不碰 DOM** —— 这个文件在 GL Worker 里跑(能力退路时在舞台主线程上跑同一份)。
- * 渲染器不在这里建:共享上下文上的那一个 `THREE.WebGLRenderer` 由 `render/gl/renderer.ts` 建一次,
- * 这里只造 scene 和相机,每拍按 `t` 摆姿势。几何、材质、灯光、姿势仍然只有 `scene3dObject.ts` 那一份
- * (3D 检视视图也从那儿取),所以成片里和检视里是同一个东西。
+ * **Does not import React, does not touch the DOM**: this file runs in the GL Worker (runs the same
+ * copy on the stage main thread during capability fallback). The renderer is not created here: the
+ * single `THREE.WebGLRenderer` on the shared context is created once by `render/gl/renderer.ts`;
+ * here we only create the scene and camera, and pose them each tick according to `t`. Geometry,
+ * materials, lighting, and poses still come solely from `scene3dObject.ts` (which the 3D inspection
+ * view also pulls from), so it is the exact same object in the final video and the inspection view.
  *
- * 画面仍是 t 的纯函数(`rotation.y = t · spinY · 2π`),没有 rAF、没有 delta:
- * `reset` 对这张卡没有意义(没有要清的内部状态),忽略它。
+ * The visual output remains a pure function of t (`rotation.y = t · spinY · 2π`), with no rAF and
+ * no delta: `reset` has no meaning for this card (no internal state to clear), so ignore it.
  */
 import { cameraFor, DEFAULT_FOV_DEG } from "../../kernel/space3d";
 import type { ThreeProgram } from "../../render/gl/CanvasCardProgram";
@@ -17,7 +19,8 @@ export const program: ThreeProgram = {
   kind: "three",
   build(THREE, raw, { width, height, stage, textures }) {
     const params = raw as unknown as Scene3DParams;
-    // fov:0(默认)= 跟着项目的相机走;项目没开三维时退回默认 40°(理由见 scene-3d.tsx)
+    // fov: 0 (default) = follows the project camera; falls back to default 40° when project has 3D
+    // disabled (see scene-3d.tsx for rationale)
     const fov = params.fov > 0 ? params.fov : (stage.camera3dFov ?? DEFAULT_FOV_DEG);
     const w = Math.max(1, width);
     const h = Math.max(1, height);
@@ -32,7 +35,8 @@ export const program: ThreeProgram = {
     const material = materialOf(THREE, params);
     const map = textures.map;
     if (map) {
-      // 和原来 applyTexture 一致:预渲染出来的卡是透明底,不开 transparent 四周会变成黑块
+      // Consistent with original applyTexture: prerendered cards have transparent backgrounds;
+      // without transparent, edges become black blocks
       material.map = map;
       material.transparent = true;
       material.needsUpdate = true;
@@ -43,7 +47,7 @@ export const program: ThreeProgram = {
       scene,
       camera,
       update(t) { poseMesh(mesh, params, t); },
-      // 纹理是渲染器缓存里共用的那一个,不归这张卡释放
+      // The texture is shared in the renderer cache and is not disposed by this card
       dispose() { geometry.dispose(); material.dispose(); },
     };
   },

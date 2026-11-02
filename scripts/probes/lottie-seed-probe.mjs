@@ -1,75 +1,155 @@
 /**
- * 探针:Lottie「覆盖随机数种子」——直接跳到第 N 帧和从头顺着推到第 N 帧,画面相同不相同。
- * 出处:`docs/plan/render-refactor-task.md`「癸:Lottie 改成 remotion 式」的「要留意的一处」;用户 2026-10-12:「我觉得可以覆盖随机数种子。」
- * 同日用户又提了另一种做法:「能不能用替换方式直接覆盖,比如替换 random 为 random_in_card()」,即下面的开关三。
- * 做法在 `src/cards/native/lottie.tsx`(`loadLottie`)和 `src/kernel/pinEntropy.ts`(`withSeededRandom`)。
- * 渲染重构「癸」合入以后,正式的一组(开关三、外面那一层、开关二)缺省开着,开关一缺省关;本探针照旧五种开法各做一遍,
- * 开法由探针显式指定(直接调 `loadLottie` 的传 mode,挂真卡片的在页面地址上写 `lottieExpr=0` 之类),不靠缺省。
- * **升级播放库(lottie-web)之前先跑本探针和 `lottie-seed-extra-probe.mjs`**:版本和下面核对过的不一样时本探针直接判失败,
- * 重跑通过以后把 `LOTTIE_WEB_VERIFIED` 改成新版本号。
+ * Probe: Lottie "override random seed": whether jumping directly to frame N produces the same
+ * frame as advancing sequentially from the beginning to frame N.
+ * Source: `docs/plan/render-refactor-task.md` "Gui: convert Lottie to remotion-style", "A point to
+ * note"; (user on 2026-10-12: "I think we can override the random seed.").
+ * On the same day, user suggested another approach: "Can we override directly by replacement, such
+ * as replacing random with random_in_card()?", which is switch 3 below.
+ * Implementation in `src/cards/native/lottie.tsx` (`loadLottie`) and
+ * `src/kernel/pinEntropy.ts` (`withSeededRandom`).
+ * After render refactor "Gui" is merged, the official set (switch 3, outer layer, switch 2) is
+ * enabled by default, and switch 1 is disabled by default; this probe still tests all five
+ * configuration modes, with configuration mode explicitly specified by the probe (passing mode
+ * when calling `loadLottie` directly, appending `lottieExpr=0` etc. to the page URL when mounting
+ * real cards), not relying on defaults.
+ * **Run this probe and `lottie-seed-extra-probe.mjs` before upgrading player library
+ * (lottie-web)**: if the version differs from the verified one below, this probe fails
+ * immediately; update `LOTTIE_WEB_VERIFIED` to the new version number after the rerun passes.
  *
  *   node scripts/probes/lottie-seed-probe.mjs [--port 27601] [--assets fixture,fixtureasync,fixtureip,exprcases,textrandom,adrock,bodymovin,gatin,happy2016,navidad]
- *        [--out <目录>]       存结果 result.json,以及对不上的那几帧的 SVG 文本(缺省放系统临时目录)
- *        [--before 7e7ae968]  「开关关着和改之前一样」拿哪个提交的 lottie.tsx 当改之前
- *        [--skip-sweep]       不跑「全长逐帧,开和关比」那一项(最慢)
+ *        [--out <dir>]        Save result.json and SVG text of mismatched frames (defaults to system temp dir)
+ *        [--before 7e7ae968]  Which commit's lottie.tsx to use as pre-change for "switches off matches pre-change"
+ *        [--skip-sweep]       Skip the "full length frame-by-frame, compare on vs off" check (slowest)
  *
- * 做法:起一个只服务本探针的 vite(根是本工作区,不读项目的 vite 配置,只占 --port 这一个端口),真 Chrome 里装上和产品一样的
- * 随机数钉子(`installPinnedEntropy`),用卡片自己的 `loadLottie` 建实例。每份画面比三样:
- *   原文      SVG 序列化后的文本,只把播放库按全页计数器发的节点 id(`__lottie_element_N`)按出现顺序重新编号。
- *             它连**看不见的图层**上留着的旧属性也比:播放库藏起一个图层只是加 `display: none`,上次显示时的位置、透明度原样留着,
- *             从没显示过的图层则什么属性都没有。所以原文相同不相同和推帧路径有关,这一项只报告。
- *   看得见的  同一份文本去掉 `display: none` 的节点里面的内容和它身上的其它属性,去掉 `<defs>` 里已经没人引用的东西
- *             (图层的蒙版路径放在 `<defs>` 里,图层藏起来以后留着旧路径),属性按名字排序。逐字节比。
- *   像素      原文不同的两份各变成 1920×1080 的像素,数不同的像素。
- * 「相同」指看得见的文本逐字节相同、并且像素逐个相同。
+ * Method: Start a Vite instance serving only this probe (root is this workspace, does not read
+ * project Vite config, occupies only the single port --port), install the same PRNG pin
+ * (`installPinnedEntropy`) in real Chrome as in production, and create instances using the card's
+ * own `loadLottie`. Each frame is compared on three aspects:
+ *   Raw text         SVG serialized text, renumbering node IDs issued by the player page-wide
+ *                    counter (`__lottie_element_N`) by order of appearance. It even compares stale
+ *                    attributes on **invisible layers**: the player hides a layer simply by adding
+ *                    `display: none`, retaining its position and opacity from its last visible
+ *                    frame, while never-displayed layers have no attributes at all. Therefore,
+ *                    whether raw text matches depends on the frame advance path; this item is
+ *                    reported only.
+ *   Visible          Same text with contents and attributes of `display: none` nodes stripped,
+ *                    unreferenced items in `<defs>` removed (layer mask paths live in `<defs>` and
+ *                    leave stale paths after layer is hidden), and attributes sorted by name.
+ *                    Compared byte by byte.
+ *   Pixels           Two copies with different raw text are converted to 1920×1080 pixels; count
+ *                    differing pixels.
+ * "Identical" means visible text is byte-for-byte identical, and pixels are identical one by one.
  *
- * 素材:`fixture` 是 `scripts/probes/fixtures/lottie-seed/expr-layers.json`——手写的测试 Lottie,图层入点 0、10、20、25、30、40,
- * 分别用 random()、只有 wiggle()、seedRandom()+random() 驱动位置、透明度、旋转、缩放,其中两层在嵌套合成里。
- * `fixtureasync` 是同一份再挂一个外部数据素材(探针现造,不落盘):播放库要等它取回来才建图层,走的是「装载完成在定时器回调里」那条路。
- * `fixtureip` 是同一份把起点改到第 22 帧(探针现造):卡片的第 0 帧落在合成的第 22 帧,这时两个只有 wiggle() 的图层已经在场、
- * 带 random 的那个嵌套图层还没进来——播放库装载完成那一下自己画的第 0 帧,和之后跳回第 0 帧重画的,要是同一个画面。
- * `exprcases` 是 `scripts/probes/fixtures/lottie-seed/expr-cases.json`——另一份手写的,一层一个表达式用例:一个表达式里连调两次
- * random()、表达式里写 Math.random()、表达式里自己声明同名变量和函数、只有 wiggle()、seedRandom(7, true)、seedRandom(7)、
- * random 的另两种调用形式、两层用来核对「wiggle 用的 this.pv 和表达式拿到的 value 是不是同一个东西」,
- * 以及一个带随机表达式、放了两份的嵌套合成(两份应当各动各的)。
- * `textrandom` 是 `scripts/probes/fixtures/lottie-seed/text-random.json`——三个文字图层,都用了「随机顺序」的动画器(播放库在这里
- * 直接调全页的 `Math.random()`,不经过表达式)。字形是自己画的方块,不用字体文件。两层的文字内容带关键帧(第 30、40 帧各换一次),
- * 一层不带。它另外多做两种只为对照的开法:「替换、不包外层」和「替换、外层按帧播种但不单独固定文字」。
- * 其余是自带的 5 个。
+ * Assets: `fixture` is `scripts/probes/fixtures/lottie-seed/expr-layers.json`: handwritten test
+ * Lottie with layer in points at 0, 10, 20, 25, 30, and 40, using random(), wiggle() only, and
+ * seedRandom()+random() respectively to drive position, opacity, rotation, and scale, two of which
+ * are inside nested compositions.
+ * `fixtureasync` is the same asset with an external data asset attached (created on the fly by the
+ * probe, not saved to disk): the player library waits for it to be retrieved before creating
+ * layers, following the path where "loading finishes in a timer callback".
+ * `fixtureip` is the same asset with start point changed to frame 22 (created on the fly by the
+ * probe): the card's frame 0 falls on frame 22 of the composition, where the two wiggle()-only
+ * layers are already present and the nested layer with random has not entered yet: frame 0 drawn
+ * by the player library upon loading completion must match the frame redrawn when jumping back to
+ * frame 0 later.
+ * `exprcases` is `scripts/probes/fixtures/lottie-seed/expr-cases.json`: another handwritten asset
+ * with one expression test case per layer: calling random() twice in one expression, writing
+ * Math.random() in an expression, declaring local variables and functions with matching names in an
+ * expression, wiggle() only, seedRandom(7, true), seedRandom(7), two other calling forms of
+ * random, two layers to check "whether this.pv used by wiggle and value received by expression are
+ * the same thing", and a nested composition with random expressions instantiated twice (the two
+ * copies should animate independently).
+ * `textrandom` is `scripts/probes/fixtures/lottie-seed/text-random.json`: three text layers, all
+ * using "random order" animators (where player library calls page-wide `Math.random()` directly,
+ * without going through expressions). Glyphs are self-drawn rectangles without font files. Text
+ * contents on two layers have keyframes (changed at frames 30 and 40), and one does not. It also
+ * runs two additional configuration modes for control only: "replace without outer wrapper" and
+ * "replace with outer wrapper seeded per frame but without fixing text separately".
+ * The rest are the 5 built-in assets.
  *
- * 五种开法各做一遍:「关」三个开关都关(现状);「种子」只开开关一(给播放库内部那一串播种);「种子+不留旧数」开关一加开关二;
- * 「替换」只开开关三(改写表达式,把随机函数换成卡片自己的);「替换+不留旧数」开关三加开关二。每个 N 取这几份画面:
- *   顺推              新开页面,建一份,从第 0 帧一帧一帧推到第 N 帧
- *   回跳              同一份实例推完全长后,回到第 0 帧再直接跳到第 N 帧
- *   同页新建          同一个页面里再建一份,直接跳到第 N 帧
- *   新页新建          新开页面,建一份,直接跳到第 N 帧
- *   别的卡在前        新开页面,先调 13 次 Math.random,再建一份直接跳(只取 3 个 N)
- *   别的 Lottie 在前  新开页面,先建一份带随机表达式的 Lottie 推几帧,再建一份直接跳(只取 3 个 N)
- *   连建两次          同一个页面里连建两份,都直接跳到同一帧(只取 1 个 N)
- * 另外:
- *   全长逐帧      开着的四种开法各顺推全长,和「关」逐帧比,列出变了的帧,取最多 3 帧数不同的像素
- *   全页那一串    建一份 Lottie 并推几帧之后,全页共用的那一串随机数被它吃掉几个
- *   和现在的直接跳比  不带随机表达式的素材,「种子+不留旧数」的画面是不是就是「关」下新页新建直接跳的那一份(只报告)
- *   图层          建好后是不是所有图层(含嵌套合成里的)都已经建了
- *   耗时          建一份、跳一帧各要多久(只记录)
- *   为什么还差一点  happy2016 不带表达式,「关」和「种子」下顺推和直接跳仍差几十个像素:分别试清插值缓存、开开关二,看哪个管用(只报告)
- *   真卡片        用 React 挂真的 LottieView:开着时和上面直接跳的那一份相同;关着时和 --before 那个提交的卡片逐帧原文相同
- *   表达式用例    exprcases 在「关」「种子」「替换」下第 28～42 帧各图层的数:连调两次 random 的两个数、Math.random、同名变量、
- *                 wiggle 相邻帧差多少、seedRandom 两种写法随不随时间变、同一个合成的两份是不是各动各的;另核 this.pv 和 value、
- *                 表达式里用 gaussRandom(播放库没有这个函数)开着和关着是不是同样地失败、开关一和开关三叠着开。
- *                 「替换」要守的是用户 2026-10-12 定的原则:固定随机数只为每次结果一致,不改变原来的观感。
- *                 卡片这边和播放库一样是「同一帧里各表达式共用一串、按求值先后接着取」,只把每一帧的起点固定住
- *   交替画帧      同一页里三份开着的实例(其中两份是同一个素材)加一份关着的,轮流各跳一帧:每份的画面要和它单独画时相同
- *   绕过去        不走 loadLottie 给的 goTo、直接调播放库的 goToAndStop:表达式退回各用各的一串,两个新页面读到的仍相同(只报告和正常画差几帧)
- *   图            --out 目录里存几张缩到 960×540 的 PNG,给人看一眼画面不是空的:fixture 第 21 帧(关、种子各取顺推和新页新建两份)、happy2016 最后一帧
+ * Run each of the five configuration modes once: "off" has all three switches off (status quo);
+ * "seed" enables switch 1 only (seeds the player's internal sequence); "seed + no stale values"
+ * enables switch 1 plus switch 2; "replace" enables switch 3 only (rewrites expressions, replacing
+ * random functions with the card's own); "replace + no stale values" enables switch 3 plus
+ * switch 2. For each N, capture these frames:
+ *   Sequential advance   Open new page, create instance, advance frame by frame from frame 0 to
+ *                        frame N
+ *   Jump back            After advancing instance through full length, return to frame 0 and jump
+ *                        directly to frame N
+ *   New on same page     Create another instance on the same page, jump directly to frame N
+ *   New on new page      Open new page, create instance, jump directly to frame N
+ *   Other card first     Open new page, call Math.random 13 times first, create instance and jump
+ *                        directly (sampled for 3 Ns only)
+ *   Other Lottie first   Open new page, create Lottie with random expressions, advance a few
+ *                        frames, then create instance and jump directly (sampled for 3 Ns only)
+ *   Two in succession    Create two instances consecutively on the same page, both jumping
+ *                        directly to the same frame (sampled for 1 N only)
  *
- * 判定(不满足进 `fails`,退出码 1):
- *   - 「种子+不留旧数」「替换+不留旧数」:所有素材、所有 N 的各份画面相同;连建两次相同。
- *   - 「种子」「替换」:五份测试素材所有 N 的各份画面相同;各素材连建两次相同;不带随机表达式、也没有随机顺序文字的素材全长逐帧和「关」相同(不该动它们)。
- *   - 「替换」:改写的表达式处数不少于素材里的表达式个数(放了几份的合成每份各算);「表达式用例」各条成立(见那一段的注释)。
- *   - fixtureasync 建实例那一下确实还没装载完(否则这一项没测到它要测的)。
- *   - 开着时全页那一串被吃掉 0 个;建好后图层全建了;「真卡片」各条成立;页面没有报错和警告。
- *   「关」下各份画面相同不相同是现状,只报告;自带素材在「种子」「替换」下顺推和直接跳相同不相同也只报告(差的那一点归开关二)。耗时只记录。
+ * Additionally:
+ *   Full-length frame-by-frame  Sequentially advance through full length under the four enabled
+ *                               modes, compare frame by frame with "off", list changed frames, and
+ *                               count differing pixels for up to 3 frames
+ *   Page-wide sequence          After creating a Lottie instance and advancing several frames, how
+ *                               many numbers from the page-wide shared PRNG sequence were consumed
+ *                               by it
+ *   Comparison with current direct jump  For assets without random expressions, whether "seed + no
+ *                                        stale values" produces the exact frame from "new on new
+ *                                        page direct jump" under "off" (report only)
+ *   Layers                      Whether all layers (including those in nested compositions) are
+ *                               created after initialization
+ *   Duration                    How long it takes to create an instance and to jump one frame
+ *                               (record only)
+ *   Why there is still a slight difference  happy2016 has no expressions, but under "off" and
+ *                                           "seed", sequential advance and direct jump still differ
+ *                                           by dozens of pixels: test clearing interpolation cache
+ *                                           and enabling switch 2 respectively to see which one
+ *                                           works (report only)
+ *   Real card                   Mount real LottieView with React: when enabled, identical to the
+ *                               direct jump frame above; when disabled, raw text identical frame
+ *                               by frame to the card at the commit specified by --before
+ *   Expression test cases       Values on each layer for frames 28-42 in exprcases under "off",
+ *                               "seed", and "replace": the two values from calling random twice in
+ *                               succession, Math.random, variables with identical names, difference
+ *                               between adjacent frames in wiggle, whether the two seedRandom
+ *                               syntaxes vary over time, whether two copies of the same composition
+ *                               animate independently; also verify this.pv vs value, whether using
+ *                               gaussRandom (function not present in player library) in expressions
+ *                               fails identically when enabled and disabled, and stacking switch 1
+ *                               and switch 3 together. "Replace" must adhere to the principle set
+ *                               by user on 2026-10-12: pinning random numbers is only for
+ *                               consistent results each time, without altering original visual
+ *                               appearance. The card side, like the player library, follows "all
+ *                               expressions in the same frame share one sequence and draw
+ *                               sequentially by evaluation order", only fixing the starting point
+ *                               of each frame
+ *   Alternating frame rendering Three enabled instances (two of which share the same asset) plus
+ *                               one disabled instance on the same page, each jumping one frame in
+ *                               turn: each instance's frame must match what it renders individually
+ *   Bypass                      Call player library's goToAndStop directly without going through
+ *                               loadLottie's goTo: expressions fall back to separate sequences, yet
+ *                               frames read by two new pages remain identical (only report how many
+ *                               frames differ from normal rendering)
+ *   Images                      Save several PNGs scaled to 960×540 in --out directory for visual
+ *                               confirmation that rendering is not blank: fixture frame 21 (two
+ *                               copies each of sequential advance and new page for off and seed),
+ *                               and happy2016 last frame
+ *
+ * Criteria (added to `fails` on failure, exit code 1):
+ *   - "seed + no stale values", "replace + no stale values": all frames identical across all assets
+ *     and all Ns; two in succession identical.
+ *   - "seed", "replace": all frames identical across five test assets and all Ns; each asset
+ *     identical when created twice in succession; assets without random expressions or
+ *     random-order text match "off" frame-by-frame across full length (they should not be touched).
+ *   - "replace": rewritten expression sites no fewer than the count of expressions in the asset
+ *     (each copy counted in multi-instantiated compositions); "expression test cases" all hold (see
+ *     comments in that section).
+ *   - fixtureasync has indeed not finished loading when instance is created (otherwise this check
+ *     did not test what it intended to test).
+ *   - 0 values consumed from the page-wide sequence when enabled; all layers created after
+ *     initialization; "real card" checks all hold; page has no errors or warnings.
+ *   Whether frames match under "off" represents the status quo, reported only; whether built-in
+ *   assets match between sequential advance and direct jump under "seed" and "replace" is also
+ *   reported only (the remaining difference is attributed to switch 2). Duration is recorded only.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -86,7 +166,7 @@ const arg = (name, dflt) => { const i = process.argv.indexOf(name); return i >= 
 const flag = (name) => process.argv.includes(name);
 const PORT = Number(arg('--port', '27601'));
 if (!Number.isInteger(PORT) || PORT < 20000 || PORT > 65000) throw new Error('--port needs a port of 20000 or above (this machine\'s ephemeral port range is below 15000, and lower ports can get taken by chance)');
-/** 核对过的播放库版本。升级以后重跑本探针和 lottie-seed-extra-probe.mjs,通过了再改这个数 */
+/** Verified player library version. After upgrading, rerun this probe and lottie-seed-extra-probe.mjs, and update this number only after passing */
 const LOTTIE_WEB_VERIFIED = '5.13.0';
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 const BEFORE = arg('--before', '7e7ae968');
@@ -103,7 +183,8 @@ const ASSETS = arg('--assets', [...FIXTURES, ...BUNDLED].join(',')).split(',').f
 const FIXTURE_PICKS = {
   fixture: [0, 5, 9, 10, 11, 12.5, 19, 20, 21, 24, 25, 26, 29, 30, 31, 39, 40, 41, 50, 59],
   fixtureasync: [0, 5, 9, 10, 11, 12.5, 19, 20, 21, 24, 25, 26, 29, 30, 31, 39, 40, 41, 50, 59],
-  // 起点在合成第 22 帧:卡片第 3 帧 = 合成第 25 帧(带 random 的嵌套图层入),第 8 帧 = 第 30 帧,第 18 帧 = 第 40 帧
+  // Start point is at composition frame 22: card frame 3 = composition frame 25
+  // (nested layer with random enters), frame 8 = frame 30, frame 18 = frame 40
   fixtureip: [0, 1, 2, 3, 4, 7, 8, 9, 17, 18, 19, 28, 37],
   exprcases: [0, 1, 5, 17, 18, 29, 30, 35, 36, 37, 59],
   textrandom: [0, 1, 15, 29, 30, 31, 39, 40, 41, 45, 59],
@@ -113,10 +194,10 @@ const FIXTURE_LAYERS = ['random-pos', 'wiggle-pos', 'seeded-opacity', 'wiggle-op
   'text-keyed-30', 'text-keyed-40', 'text-static', 'twin-a', 'twin-b', 'twin-random', 'twin-wiggle', 'seeded-wiggle'];
 const MODES = ['off', 'seed', 'both', 'expr', 'exprboth'];
 const MODE_NAME = { off: 'off', seed: 'seed', both: 'seed+no stale values', expr: 'replace', exprboth: 'replace+no stale values', exprbare: 'replace, no outer wrapper', exprframe: 'replace, outer layer does not pin text separately' };
-/** 只为对照的开法:只有带随机顺序文字的那份测试素材做,只报告 */
+/** Configuration mode for control only: run only for the test asset with random-order text, report only */
 const CONTRAST = ['exprbare', 'exprframe'];
 const isExpr = (mode) => mode === 'expr' || mode === 'exprboth';
-/** 素材的 JSON 文本。fixtureasync = fixture 再挂一个外部数据素材(t: 3),地址指向探针自己服务的 /lottie-data/footage.json */
+/** Asset JSON text. fixtureasync = fixture with an external data asset (t: 3) attached, pointing to /lottie-data/footage.json served by the probe itself */
 function dataText(name) {
   if (name === 'fixture') return fs.readFileSync(FIXTURE, 'utf8');
   if (name === 'fixtureasync') { const d = JSON.parse(fs.readFileSync(FIXTURE, 'utf8')); d.nm = 'lottie-seed-fixture-async'; d.assets.push({ id: 'data_0', nm: 'footage', t: 3, u: '/lottie-data/', p: 'footage.json', e: 0 }); return JSON.stringify(d); }
@@ -126,7 +207,7 @@ function dataText(name) {
   return fs.readFileSync(path.join(CATALOG, `${name}.json`), 'utf8');
 }
 
-// ── 页面里跑的那一半 ──
+// ── In-page execution half ──
 const HARNESS = String.raw`<!doctype html><meta charset="utf-8">
 <style>html,body{margin:0;background:#111;overflow:hidden}.box{position:absolute;left:0;top:0;width:1920px;height:1080px}.absolute{position:absolute}.inset-0{inset:0}#card{position:absolute;left:0;top:0;width:1920px;height:1080px}</style>
 <div id="card"></div>
@@ -332,7 +413,7 @@ const plugin = {
 };
 
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex').slice(0, 16);
-/** 两份文本哪里不同:第一处的位置和上下文;fixture 再按图层名归到层上 */
+/** Where two texts differ: position and context of first difference; fixture is further grouped by layer name */
 function describeDiff(a, b, layerNames) {
   let i = 0; const n = Math.min(a.length, b.length);
   while (i < n && a[i] === b[i]) i++;
@@ -349,7 +430,7 @@ function describeDiff(a, b, layerNames) {
   }
   return out;
 }
-/** 素材里的表达式:一共几个,其中用到随机(random、wiggle)的几个;另数「随机顺序」的文字动画器 */
+/** Expressions in asset: total count, count using random (random, wiggle); also counts "random order" text animators */
 function expressionsOf(data) {
   let all = 0, random = 0, textOrder = 0;
   const walk = (o) => { if (Array.isArray(o)) { o.forEach(walk); return; } if (o && typeof o === 'object') { if (typeof o.x === 'string' && 'k' in o) { all++; if (/random|wiggle/i.test(o.x)) random++; } if (o.rn === 1) textOrder++; for (const k in o) walk(o[k]); } };
@@ -373,10 +454,13 @@ try {
   report.chrome = await browser.version();
   report.lottieWeb = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.resolve('lottie-web'))), '..', '..', 'package.json'), 'utf8')).version;
   if (report.lottieWeb !== LOTTIE_WEB_VERIFIED) fail(`The playback library is ${report.lottieWeb}, the verified one is ${LOTTIE_WEB_VERIFIED}: once every item below passes, change LOTTIE_WEB_VERIFIED to the new version number`);
-  // 跳帧一律走 loadLottie 给的入口:src/ 里除了卡片自己,不许别处引播放库或直接调它的跳帧
+  // Frame jumps must go through the entry point provided by loadLottie: outside the card itself,
+  // nothing in src/ may import the player library or call its frame jump directly
   {
-    // 这两个不是在放 Lottie:前一个把播放库交给在线页面里用户自己写的卡(用户卡直接引播放库的只能声明成 motion 式,见建卡指南第 3 节),
-    // 后一个只在注释里举例。再有别的文件出现,先想清楚它为什么不走 LottieView
+    // These two are not playing Lottie: the former passes the player library to user cards written on
+    // online pages (user cards directly importing the player library can only be declared as
+    // motion-style, see Card Authoring Guide section 3); the latter is only an example in comments.
+    // If any other file appears, think through first why it does not use LottieView
     const ALLOWED_IMPORTERS = ['src/online/cardRuntime/hostModules.ts', 'src/online/cardRuntime/soundStub.ts'];
     const offenders = [];
     const walk = (dir) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { const full = path.join(dir, e.name); if (e.isDirectory()) { if (e.name !== 'node_modules') walk(full); continue; } if (!/\.(ts|tsx|mjs|js|jsx)$/.test(e.name) || /\.test\./.test(e.name)) continue; const rel = path.relative(ROOT, full).split(path.sep).join('/'); if (rel === 'src/cards/native/lottie.tsx' || ALLOWED_IMPORTERS.includes(rel)) continue; const text = fs.readFileSync(full, 'utf8'); if (/from\s+["']lottie-web["']|import\(\s*["']lottie-web["']\s*\)|\.goToAndStop\s*\(|\.goToAndPlay\s*\(/.test(text)) offenders.push(rel); } };
@@ -386,7 +470,7 @@ try {
     console.log(`Frame-jump entry / files in src/ other than the card itself that import the playback library or call the frame jump directly: ${offenders.length}`);
   }
 
-  /** 每个用例一个新页面:全页那一串随机数、播放库内部那一串、节点 id 计数器都从头来 */
+  /** Fresh page per test case: page-wide PRNG sequence, player internal sequence, and node ID counters all start from scratch */
   const open = async (query = '') => {
     const page = await browser.newPage();
     await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
@@ -398,12 +482,12 @@ try {
   };
   const call = (page, fn, ...args) => page.evaluate((f, a) => window.api[f](...a), fn, args);
 
-  // 全页那一串的前 4000 个数:用来数「被吃掉几个」
+  // First 4000 numbers in the page-wide sequence: used to count "how many were consumed"
   const refPage = await open();
   const reference = await call(refPage, 'peek', 4000);
   await refPage.close();
   const drawsBefore = (next) => reference.indexOf(next);
-  const tool = await open(); // 只用来把 SVG 文本变成像素
+  const tool = await open(); // Used only to turn SVG text into pixels
   const pixelDiff = (a, b) => call(tool, 'pixelDiff', a, b);
 
   for (const name of ASSETS) {
@@ -427,15 +511,16 @@ try {
     for (const mode of [...MODES, ...(expressions.textOrder ? CONTRAST : [])]) {
       const contrast = CONTRAST.includes(mode);
       const started = Date.now();
-      const shots = {}; // 画面名 → { N: { r, v } }
-      // 全页那一串被吃掉几个:单开一页数,不搅进下面的比较
+      const shots = {}; // Visual name → { N: { r, v } }
+      // How many in the page-wide sequence were consumed: count in a separate page, not mixing into
+      // the comparisons below
       const p0 = await open();
       const before0 = drawsBefore((await call(p0, 'peek', 1))[0]);
       const counted = await call(p0, 'make', name, mode); await call(p0, 'seq', counted.id, frames, []);
       const afterSeq = drawsBefore((await call(p0, 'peek', 1))[0]);
       const frameMs = await call(p0, 'timeSeq', counted.id, all);
       await p0.close();
-      // 顺推、回跳、同页新建、连建两次
+      // Sequential advance, jump back, create on the same page, create twice in succession
       const p1 = await open();
       const first = await call(p1, 'make', name, mode);
       shots['sequential'] = await call(p1, 'seq', first.id, frames, picks);
@@ -449,10 +534,10 @@ try {
       const twice = [];
       for (let k = 0; k < 2; k++) { const m = await call(p1, 'make', name, mode); twice.push(await call(p1, 'jump', m.id, twiceN)); await call(p1, 'hide', m.id); }
       await p1.close();
-      // 新页新建
+      // Create on a new page
       shots['new in new page'] = {};
       for (const n of picks) { const p = await open(); const m = await call(p, 'make', name, mode); shots['new in new page'][n] = await call(p, 'jump', m.id, n); await p.close(); }
-      // 别的卡在前、别的 Lottie 在前
+      // Other cards in front, other Lottie instances in front
       shots['other card first'] = {}; shots['other Lottie first'] = {};
       for (const n of few) {
         let p = await open(); await call(p, 'burn', 13);
@@ -462,7 +547,7 @@ try {
         m = await call(p, 'make', name, mode); shots['other Lottie first'][n] = await call(p, 'jump', m.id, n); await p.close();
       }
 
-      // 逐个 N 判:以「顺推」为准,别的各份和它比
+      // Evaluate for each N: take "sequential advance" as the baseline, compare other copies against it
       const perN = {}; const kinds = Object.keys(shots).filter((k) => k !== 'sequential');
       const tally = { rawSame: 0, same: 0 };
       for (const n of picks) {
@@ -480,7 +565,7 @@ try {
         if (row.rawSame) tally.rawSame++; if (row.same) tally.same++;
         perN[n] = row;
       }
-      // 给人看的图
+      // Images for human inspection
       const showN = name === 'fixture' && ['off', 'seed', 'expr'].includes(mode) ? 21 : name === 'textrandom' && ['off', 'exprframe', 'expr'].includes(mode) ? 45 : name === 'happy2016' && mode === 'both' ? picks[picks.length - 1] : null;
       if (showN !== null) for (const kind of ['sequential', 'new in new page']) fs.writeFileSync(path.join(OUT, `view-${name}-${MODE_NAME[mode]}-frame${showN}-${kind}.png`), Buffer.from(await call(tool, 'png', shots[kind][showN].r), 'base64'));
       let twiceSame = twice[0].r === twice[1].r;
@@ -488,7 +573,8 @@ try {
       const result = {
         seed: first.seed, exact: first.exact, rewritten: first.rewritten, asyncLoad: first.asyncLoad, layers: first.layers, built: first.built, buildMs: first.buildMs, frameMs,
         allSame: tally.same === picks.length, rawSameCount: tally.rawSame, sameCount: tally.same, twice: { n: twiceN, same: twiceSame }, perN,
-        // 建一份并顺推到最大的 N,全页那一串被吃掉几个(-1:超出参照的 4000 个)
+        // Create an instance and advance sequentially to the maximum N; how many in the page-wide sequence
+        // were consumed (-1: exceeded the 4000 reference entries)
         globalDraws: before0 < 0 || afterSeq < 0 ? -1 : afterSeq - before0 - 1,
         ms: Date.now() - started,
       };
@@ -512,7 +598,8 @@ try {
       for (const n of bad) console.log(`     frame ${n} differs (image name: share of differing pixels/max diff (which layers)) ${worst(n)}`);
     }
 
-    // 不带随机表达式的素材:加上开关二以后的画面,是不是就是现在(关着)新开页面直接跳拿到的那一份
+    // Assets without random expressions: whether the visual after enabling switch 2 is identical to
+    // the copy obtained currently (disabled) by jumping directly in a newly opened page
     if (noRandom) {
       entry.equalsOffJump = {};
       for (const mode of ['both', 'exprboth']) {
@@ -522,7 +609,7 @@ try {
       }
     }
 
-    // 全长逐帧:开着的各种开法各和「关」比
+    // Full length frame-by-frame: compare each enabled configuration with "off"
     if (!SKIP_SWEEP) {
       const hashes = {};
       for (const mode of MODES) { const p = await open(); const m = await call(p, 'make', name, mode); hashes[mode] = await call(p, 'seqHashes', m.id, all); await p.close(); }
@@ -544,7 +631,9 @@ try {
     }
   }
 
-  // ── 不带随机表达式的素材顺推和直接跳为什么还会差一点(只报告;清插值缓存那一项是实验,不是原型的一部分)──
+  // -- Why assets without random expressions still differ slightly between sequential advance and
+  // direct jump (report only; clearing the interpolation cache is experimental, not part of the
+  // prototype) --
   if (ASSETS.includes('happy2016')) {
     const name = 'happy2016'; const { picks } = report.assets[name];
     const frames = Array.from({ length: Math.max(...picks) + 1 }, (_, i) => i);
@@ -567,17 +656,18 @@ try {
     report.floatExperiment = rows;
   }
 
-  // ── 表达式用例(exprcases):「关」「种子」「替换」下各图层的数 ──
+  // -- Expression test cases (exprcases): layer values under "off", "seed", and "replace" --
   if (ASSETS.includes('exprcases')) {
     const frames = Array.from({ length: 15 }, (_, i) => 28 + i);
-    const AMP = 160; // wiggle-only 那一层写的是 wiggle(5, 160)
+    const AMP = 160; // The wiggle-only layer contains wiggle(5, 160)
     const section = { frames, modes: {} };
     const X = 4, Y = 5, O = 6;
     const col = (rows, layer, k) => frames.map((f) => rows[f][layer][k]);
     const varies = (xs) => new Set(xs).size > 1;
     const maxStep = (xs) => Math.max(...xs.slice(1).map((x, i) => Math.abs(x - xs[i])));
     for (const mode of ['off', 'seed', 'expr']) {
-      // 各读两遍(两个新页面):同一种开法下两遍应当一样
+      // Read twice each (two new pages): both passes should be identical under the same enabled
+      // configuration
       const reads = [];
       let pv = null, runtime = null, gauss = null;
       for (let k = 0; k < 2; k++) { const p = await open(); const m = await call(p, 'make', 'exprcases', mode); reads.push(await call(p, 'readLayers', m.id, frames)); pv = await call(p, 'pvCheck'); runtime = await call(p, 'runtime'); gauss = await call(p, 'gaussFails', mode); await p.close(); }
@@ -589,10 +679,10 @@ try {
         mathRandom: col(a, 'math-random', X),
         shadowed: col(a, 'shadowed', X),
         wiggle: { x: wx, y: wy, maxStep: +Math.max(maxStep(wx), maxStep(wy)).toFixed(4) },
-        // 同一个表达式里先 seedRandom(3, true) 再 wiggle(5, 100)
+        // In the same expression, run seedRandom(3, true) first, then wiggle(5, 100)
         seededWiggle: { x: col(a, 'seeded-wiggle', X), maxStep: +Math.max(maxStep(col(a, 'seeded-wiggle', X)), maxStep(col(a, 'seeded-wiggle', Y))).toFixed(4) },
         seedTimeless: col(a, 'seed-timeless', O), seedTimed: col(a, 'seed-timed', O),
-        // 同一个合成放的两份:里面那两层各自的 x
+        // Two instances placed in the same composition: respective x values of those two inner layers
         twin: { random: [col(a, 'twin-random', X), col(a, 'twin-random#2', X)], wiggle: [col(a, 'twin-wiggle', X), col(a, 'twin-wiggle#2', X)] },
         pv, runtime, gauss,
       };
@@ -604,32 +694,38 @@ try {
       console.log(`${label}: the two numbers from calling random twice in a row (frame 30) ${row.twice.x[2].toFixed(2)} / ${row.twice.y[2].toFixed(2)}; x of Math.random at frames 30-32 ${row.mathRandom.slice(2, 5).map((x) => x.toFixed(2)).join(' ')}; x of the layer with same-named variables is ${[...new Set(row.shadowed)].join(',')} throughout`);
       console.log(`${label}: opacity of seedRandom(7, true): ${varies(row.seedTimeless) ? 'varies over time' : 'does not vary over time'} (frame 30: ${row.seedTimeless[2].toFixed(4)}); opacity of seedRandom(7): ${varies(row.seedTimed) ? 'varies over time' : 'does not vary over time'} (frames 30-32: ${row.seedTimed.slice(2, 5).map((x) => x.toFixed(4)).join(' ')})`);
       console.log(`${label}: the same composition placed in two copies; across ${frames.length} frames the two copies differ in: random layer ${twinApart(row.twin.random)}, wiggle layer ${twinApart(row.twin.wiggle)} (frame 30 random ${row.twin.random[0][2].toFixed(1)} / ${row.twin.random[1][2].toFixed(1)}); gaussRandom in an expression: ${gauss ?? 'no error'}`);
-      // 三种开法下都该成立的
+      // Should hold true under all three enabled configurations
       if (!row.shadowed.every((x) => x === 600)) fail(`${label}: the expression declares its own random and wiggle with the same names, x should stay 600, got ${[...new Set(row.shadowed)].join(',')}`);
       if (!pv.static || pv.static.maxDiff !== 0 || pv.static.same !== false) fail(`${label}: for a multi-dimensional property without keyframes, this.pv should be value at single precision (and not the same object), got ${JSON.stringify(pv.static)}`);
       if (!pv.keyed || pv.keyed.same !== true) fail(`${label}: for a property with keyframes, this.pv and value should be the same object, got ${JSON.stringify(pv.keyed)}`);
       if (runtime.installed !== (mode === 'expr')) fail(`${label}: the card's own random function is ${runtime.installed ? 'installed' : 'not installed'}, the opposite of what was expected`);
       if (!gauss || !/gaussRandom/.test(gauss)) fail(`${label}: using gaussRandom in an expression should fail the way the playback library does (reporting it as undefined), got ${gauss}`);
       if (mode === 'off') continue;
-      // 开着时:两遍相同
+      // When enabled: both passes are identical
       if (!row.repeat) fail(`${label}: the two new pages read different numbers`);
       if (mode !== 'expr') continue;
-      // 「替换」要守的:数固定,观感和播放库现在的一样
+      // What "replace" must preserve: fixed values, visual appearance matches current player library
       if (gauss !== section.modes.off.gauss) fail(`${label}: gaussRandom in an expression reports "${gauss}" with the switches on and "${section.modes.off.gauss}" with them off, should be the same`);
       if (!frames.every((f, i) => row.twice.x[i] !== row.twice.y[i])) fail(`${label}: calling random twice in a row in one expression gives the same two numbers on some frames`);
       if (!varies(row.twice.x) || !varies(row.mathRandom)) fail(`${label}: the numbers from random / Math.random do not vary with the frame`);
       if (!row.mathRandom.every((x) => x >= 300 && x < 1300)) fail(`${label}: x of Math.random went outside 300-1300`);
-      // wiggle 照旧逐帧跳:相邻帧的差应当远超过「连续」时的上限(幅度的六分之一),和关着时一个量级
+      // wiggle jumps frame by frame as before: the difference between adjacent frames should far exceed
+      // the upper bound when "continuous" (one-sixth of amplitude), on the same order of magnitude as
+      // when off
       if (!(row.wiggle.maxStep > AMP)) fail(`${label}: wiggle differs by at most ${row.wiggle.maxStep} between adjacent frames, not like picking independently on each frame (with the switches off: ${section.modes.off.wiggle.maxStep})`);
-      // 同一个表达式里先 seedRandom 再 wiggle:照播放库现在的,接着不带时间的那一串取,随时间连续(每帧最多走幅度的六分之一)
+      // In the same expression, seedRandom first then wiggle: matching current player library behavior,
+      // continue fetching from the sequence without time, continuous over time (moving at most one-sixth
+      // of amplitude per frame)
       if (!(row.seededWiggle.maxStep <= 100 / 6 + 0.001)) fail(`${label}: for the layer with seedRandom before wiggle(5, 100), the difference between adjacent frames is ${row.seededWiggle.maxStep}, above ${(100 / 6).toFixed(2)}; the playback library is continuous now (with the switches off: ${section.modes.off.seededWiggle.maxStep})`);
       if (varies(row.seedTimeless)) fail(`${label}: the value of seedRandom(7, true) varied over time`);
       if (varies(row.seedTimed)) fail(`${label}: the value of seedRandom(7) varied over time (the playback library now ignores the second argument, so it should not change)`);
       if (twinApart(row.twin.random) !== frames.length || twinApart(row.twin.wiggle) < frames.length - 1) fail(`${label}: the same composition placed twice, the two copies should move independently; frames where they differ: random ${twinApart(row.twin.random)}, wiggle ${twinApart(row.twin.wiggle)} (of ${frames.length} frames)`);
       if (!(runtime.gives === 4 && runtime.repeatable && runtime.mathKeepsRest)) fail(`${label}: calling the card's own random function directly gave a wrong result ${JSON.stringify(runtime)}`);
     }
-    // 只有 wiggle 的表达式跟在别的表达式的 seedRandom 后面求值时(fixture 的 wiggle-pos 就是):播放库现在让它接着那一串取,
-    // 看起来是连续的(每帧最多走幅度的六分之一)。「替换」下也得是这样
+    // When an expression with only wiggle evaluates after another expression's seedRandom (as in fixture's
+    // wiggle-pos): the player library currently lets it continue fetching from that sequence,
+    // appearing continuous (moving at most one-sixth of amplitude per frame). Under "replace" it must
+    // also be like this
     if (ASSETS.includes('fixture')) {
       const late = Array.from({ length: 15 }, (_, i) => 42 + i); const steps = {};
       for (const mode of ['off', 'seed', 'expr']) { const p = await open(); const m = await call(p, 'make', 'fixture', mode); const rows = await call(p, 'readLayers', m.id, late); await p.close(); const xs = late.map((f) => rows[f]['wiggle-pos'][X]); steps[mode] = +Math.max(...xs.slice(1).map((x, i) => Math.abs(x - xs[i]))).toFixed(2); }
@@ -637,7 +733,8 @@ try {
       if (!(steps.expr <= AMP / 6 + 0.001)) fail(`Expression cases/replace: the fixture's wiggle-pos is evaluated after another expression's seedRandom, the playback library is continuous now (max diff between adjacent frames ${steps.off}), but with the switch on it differs by ${steps.expr}`);
       console.log(`Expression cases / the fixture's wiggle-pos (evaluated every frame after an expression with seedRandom(7, true)), max diff between adjacent frames at frames 42-56: off ${steps.off}, seed ${steps.seed}, replace ${steps.expr}`);
     }
-    // 开关一和开关三叠着开(再加开关二):表达式已经不用播放库那一串了,画面应当和只开开关三(加开关二)一样
+    // Enabling switch 1 and switch 3 together (plus switch 2): expressions no longer use the player
+    // library sequence; visuals should match enabling switch 3 only (plus switch 2)
     if (ASSETS.includes('fixture')) {
       const ns = [9, 21, 41]; let same = 0;
       for (const n of ns) { const p = await open(); const m = await call(p, 'make', 'fixture', 'all'); const shot = await call(p, 'jump', m.id, n); await p.close(); if (sha(shot.v) === report.assets.fixture.modes.exprboth.perN[n].hash) same++; }
@@ -645,7 +742,8 @@ try {
       if (same !== ns.length) fail(`Expression cases: with all three switches on, out of ${ns.length} N values of the fixture only ${same} match "replace+no stale values"`);
       console.log(`Expression cases / all three switches on: fixture frames ${ns.join(', ')}, ${same}/${ns.length} match the image of "replace+no stale values"`);
     }
-    // 交替画帧:三份开着正式那一组的实例(其中两份是同一个素材、错开 11 帧)加一份关着的,轮流各跳一帧
+    // Alternating frame rendering: three instances with the production set enabled (two of which are the
+    // same asset, offset by 11 frames) plus one disabled instance, each stepping one frame in turn
     if (ASSETS.includes('fixture')) {
       const steps = [...Array.from({ length: 26 }, (_, i) => 20 + i), 30, 22, 44];
       const specs = [{ name: 'fixture', mode: 'exprboth', offset: 0 }, { name: 'exprcases', mode: 'exprboth', offset: 3 }, { name: 'fixture', mode: 'exprboth', offset: 11 }, { name: 'fixture', mode: 'off', offset: 5 }];
@@ -659,7 +757,8 @@ try {
       }
       section.alternate = rows;
       console.log(`Alternate drawing / three "replace+no stale values" instances plus one with the switches off, each jumping one frame in turn (${steps.length} steps): steps matching the standalone drawing ${rows.map((r) => `${r.name}+${r.offset} ${r.same}/${r.of}`).join(',')}`);
-      // 绕过去:直接调播放库的 goToAndStop,表达式不在卡片包住的那一段里求值
+      // Bypass: call player library goToAndStop directly, expressions are not evaluated in the segment
+      // wrapped by the card
       const late = Array.from({ length: 15 }, (_, i) => 42 + i); const runs = [];
       for (let k = 0; k < 2; k++) { p = await open(); const m = await call(p, 'make', 'fixture', 'expr'); runs.push(await call(p, 'bypass', m.id, late)); await p.close(); }
       p = await open(); const normal = await call(p, 'make', 'fixture', 'expr'); const shots = await call(p, 'seq', normal.id, late, late); await p.close();
@@ -671,10 +770,14 @@ try {
     report.exprCases = section;
   }
 
-  // ── 真卡片 ──
+  // -- Real cards --
   const inlineParams = { json: dataText('fixture'), src: '', speed: 1, loop: 'no', fit: 'contain' };
   const srcParams = (name) => ({ json: '', src: `/lottie-data/${name}.json`, speed: 1, loop: 'no', fit: 'contain' });
-  /** 开着:直接挂在第 N 帧、挂在第 0 帧再一帧帧推到第 N 帧、前面先挂一张取随机数的卡,都要和 loadLottie 直接跳的那一份相同 */
+  /**
+   * Enabled: attached directly at frame N, attached at frame 0 and advanced frame by frame to frame N,
+   * or attaching a card that draws random numbers beforehand, must all match the copy jumped to
+   * directly via loadLottie
+   */
   const cardOn = async (label, query, wantSwitches, params, rate, ns, asset, mode) => {
     const rows = [];
     for (const n of ns) {
@@ -684,7 +787,8 @@ try {
       p = await open(query); row.afterOther = sha((await call(p, 'mountCard', 'current', params, n / rate, 13)).v); await p.close();
       row.same = row.switches.seed === wantSwitches.seed && row.switches.exact === wantSwitches.exact && row.switches.expr === !!wantSwitches.expr && row.direct === want && row.pushed === want && row.afterOther === want;
       if (!row.same) {
-        // 不同在哪:再用 loadLottie 建一份直接跳,和「直接挂」的那一份比
+        // Where the difference lies: create another instance with loadLottie jumping directly and compare
+        // against the "directly attached" copy
         p = await open(); const m = await call(p, 'make', asset, mode); const ref = await call(p, 'jump', m.id, n); await p.close();
         row.diff = { ...describeDiff(ref.v, directShot.v, asset.startsWith('fixture') ? FIXTURE_LAYERS : null), pixels: await pixelDiff(ref.r, directShot.r) };
         fail(`Real card/${label}: frame ${n}: mounted directly ${row.direct}, pushed over ${row.pushed}, other card first ${row.afterOther}, expected ${want} (switches read ${JSON.stringify(row.switches)}); mounted directly vs loadLottie direct jump: ${row.diff.pixels.pct}% of pixels differ${row.diff.layers ? `, layers ${row.diff.layers.join(',')}` : ''}; ${row.diff.a} ‖ ${row.diff.b}`);
@@ -695,10 +799,11 @@ try {
     return rows;
   };
   if (ASSETS.includes('fixture')) report.card.seed = await cardOn('seed, fixture (inline JSON)', '?lottieSeed=1&lottieExpr=0&lottieExact=0', { seed: true, exact: false }, inlineParams, 30, [9, 21, 41, 59], 'fixture', 'seed');
-  // 装载是异步的那一份:卡片在装载完成之前就调过一次跳帧,播放库装完那一下画的就是那一帧
+  // The copy with asynchronous loading: the card called frame jump once before loading completed;
+  // the player library renders that exact frame right upon finishing loading
   if (ASSETS.includes('fixtureasync')) report.card.seedAsync = await cardOn('seed, fixtureasync (inline JSON, loading is async)', '?lottieSeed=1&lottieExpr=0&lottieExact=0', { seed: true, exact: false }, { ...inlineParams, json: dataText('fixtureasync') }, 30, [21, 41], 'fixtureasync', 'seed');
   if (ASSETS.includes('fixtureip')) report.card.seedIp = await cardOn('seed, fixtureip (inline JSON, start is not at frame 0)', '?lottieSeed=1&lottieExpr=0&lottieExact=0', { seed: true, exact: false }, { ...inlineParams, json: dataText('fixtureip') }, 30, [0, 2, 17], 'fixtureip', 'seed');
-  // 开关三:同样三份
+  // Switch 3: same three copies
   if (ASSETS.includes('fixture')) report.card.expr = await cardOn('replace, fixture (inline JSON)', '?lottieExpr=1&lottieExact=0', { seed: false, exact: false, expr: true }, inlineParams, 30, [9, 21, 41, 59], 'fixture', 'expr');
   if (ASSETS.includes('fixtureasync')) report.card.exprAsync = await cardOn('replace, fixtureasync (inline JSON, loading is async)', '?lottieExpr=1&lottieExact=0', { seed: false, exact: false, expr: true }, { ...inlineParams, json: dataText('fixtureasync') }, 30, [21, 41], 'fixtureasync', 'expr');
   if (ASSETS.includes('fixtureip')) report.card.exprIp = await cardOn('replace, fixtureip (inline JSON, start is not at frame 0)', '?lottieExpr=1&lottieExact=0', { seed: false, exact: false, expr: true }, { ...inlineParams, json: dataText('fixtureip') }, 30, [0, 2, 17], 'fixtureip', 'expr');
@@ -711,7 +816,7 @@ try {
     report.card.exprBoth = await cardOn('replace+no stale values, happy2016 (loaded via src)', '?lottieExpr=1&lottieExact=1', { seed: false, exact: true, expr: true }, srcParams('happy2016'), a.fr, [a.picks[4], a.picks[a.picks.length - 1]], 'happy2016', 'exprboth');
     report.card.both = await cardOn('seed+no stale values, happy2016 (loaded via src)', '?lottieSeed=1&lottieExact=1&lottieExpr=0', { seed: true, exact: true }, srcParams('happy2016'), a.fr, [a.picks[4], a.picks[a.picks.length - 1]], 'happy2016', 'both');
   }
-  // 缺省(地址上什么都不带):就是正式的一组「替换+不留旧数」
+  // Default (nothing in the URL): the production set of "replace + do not keep old values"
   {
     const dflt = { seed: false, exact: true, expr: true };
     if (ASSETS.includes('fixture')) report.card.dflt = await cardOn('default, fixture (inline JSON)', '', dflt, inlineParams, 30, [9, 21, 41, 59], 'fixture', 'exprboth');
@@ -720,7 +825,8 @@ try {
     if (ASSETS.includes('textrandom')) report.card.dfltText = await cardOn('default, textrandom (inline JSON, text in random order)', '', dflt, { ...inlineParams, json: dataText('textrandom') }, 30, [15, 31, 45], 'textrandom', 'exprboth');
     if (ASSETS.includes('happy2016')) { const a = report.assets.happy2016; report.card.dfltHappy = await cardOn('default, happy2016 (loaded via src)', '', dflt, srcParams('happy2016'), a.fr, [a.picks[4], a.picks[a.picks.length - 1]], 'happy2016', 'exprboth'); }
   }
-  // 关着(地址带 lottieExpr=0&lottieExact=0):和 --before 那个提交的卡片逐帧原文相同(内联 JSON 的 fixture,和走 src 加载的 navidad)
+  // Disabled (URL with lottieExpr=0&lottieExact=0): matches card frame-by-frame output verbatim from
+  // the --before commit (inline JSON fixture and navidad loaded via src)
   {
     const cases = [];
     if (ASSETS.includes('fixture')) cases.push(['fixture (inline JSON)', inlineParams, 30, 30]);
@@ -732,10 +838,11 @@ try {
       const seqs = {};
       for (const which of ['before', 'current']) {
         const p = await open('?lottieExpr=0&lottieExact=0'); const switches = await call(p, 'switches'); if (switches.seed || switches.exact || switches.expr) fail(`Real card/off: with lottieExpr=0&lottieExact=0 in the URL, read ${JSON.stringify(switches)}`);
-        // 关着比的是原文:连看不见的图层上留着的旧属性也要一样
+        // When disabled, it compares output verbatim: even old attributes remaining on invisible layers
+        // must match
         const out = [sha((await call(p, 'mountCard', which, params, 0, 0)).r)];
         for (let f = 1; f < count; f++) out.push(sha((await call(p, 'cardFrame', f / rate)).r));
-        // 再往回跳一次、往前跳一次
+        // Jump back once more, then jump forward once
         out.push(sha((await call(p, 'cardFrame', 3 / rate)).r)); out.push(sha((await call(p, 'cardFrame', (count + 5) / rate)).r));
         seqs[which] = out; await p.close();
       }

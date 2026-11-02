@@ -1,12 +1,19 @@
 /**
- * L3:在线页面按层表与清单取预渲染原尺寸进 L2(C10 契约第 5 节、第 18 节第 3 条),以及最低一档(`small`)的 L2 只存小尺寸(第 4 节)。
+ * L3: Online pages fetch prerender original size into L2 based on layer table and manifest
+ * (C10 contract Section 5, Section 18 Item 3), and L2 for the lowest tier (`small`) only stores
+ * small size (Section 4).
  *
- *   L3-1 层表:`original` 只认 v 2 且带 contentKey、envFingerprint 的层;最低一档 v 1、v 2 都认;不认得的 v 整张当没有
- *   L3-2 原尺寸:按清单的 frames 表凭只读票据拉 snap/<hash>,写进 L2 的 snapshots,ranges 写入即就绪;小尺寸请求 0
- *   L3-3 关掉再开(同一个 L2):已在库里的块不再请求,就绪照样出来
- *   L3-4 预取只拉播放头前后 2 秒;层表对不上(v 1)的层按「没有预渲染结果」处理,一个请求都不发
- *   L3-5 最低一档:小尺寸存进 L2(px/<hash>),重开后不再请求;库里没有 snap/
- * 跑:node --test src/render/c10-l3-source.test.mjs
+ *   L3-1 Layer table: `original` only recognizes v 2 layers with contentKey and envFingerprint;
+ *        lowest tier recognizes both v 1 and v 2; unrecognized v treats the whole thing as missing
+ *   L3-2 Original size: fetch snap/<hash> using read-only tickets according to manifest frames table,
+ *        write into L2 snapshots, ready upon writing ranges; 0 small-size requests
+ *   L3-3 Close and reopen (same L2): chunks already in the store are not requested again,
+ *        ready states still appear
+ *   L3-4 Prefetch only pulls 2 seconds before and after the playhead; layers mismatched with layer
+ *        table (v 1) are treated as "no prerender output", not a single request is sent
+ *   L3-5 Lowest tier: small size is stored into L2 (px/<hash>), no requests after reopening;
+ *        no snap/ in store
+ * Run: node --test src/render/c10-l3-source.test.mjs
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -73,7 +80,8 @@ test("C10-L3-1 layer map: `original` only accepts layers with v 2 and both field
   assert.equal(usableLayer(v1, v1.layers[0]), false, "`original` does not accept v 1");
   assert.equal(usableLayer(v1, v1.layers[0], { anyVersion: true }), true);
   assert.equal(parseLayerMap({ v: 9, kind: "layer-map", layers: [] }), null, "an unrecognized v makes the whole map count as absent");
-  // layerRefOf:对得上回带 contentKey / envFingerprint 的那一层;对不上回 null,不抛
+  // layerRefOf: returns the layer with contentKey / envFingerprint on match;
+  // returns null on mismatch, without throwing
   const body = { v: 2, kind: "layer-map", layers: [{ clipId: "a", kind: "html", key: "K", resultKey: "R", firstFrame: 0, count: 10, contentKey: "ck", envFingerprint: FP }] };
   assert.equal(layerRefOf(body, "a").contentKey, "ck");
   assert.equal(layerRefOf(body, "a").envFingerprint, FP);
@@ -100,7 +108,7 @@ test("C10-L3-2 original size: no automatic prefetch after snapshots are withdraw
   await settle(src);
   assert.equal(w.fetches.filter((f) => f.ns === "px").length, 0, "`original` does not fetch small sizes");
   assert.equal(w.fetches.filter((f) => f.ns === "snap").length, 0, "original-size snapshot chunks are not prefetched automatically after snapshots are withdrawn");
-  // 按需拉取:凭只读票据拉取并写进 L2
+  // On-demand fetch: fetch using read-only ticket and write into L2
   const html = await src.fetchSnapshot("html", "K-a", 5);
   assert.match(html, /data-f="5"/);
   const snaps = w.fetches.filter((f) => f.ns === "snap");
@@ -126,7 +134,7 @@ test("C10-L3-3 turn off and on again: chunks already in L2 are not requested aga
   first.setProject("p1");
   first.focus(1, 30);
   await settle(first);
-  // 按需取一块进 L2(fetchSnapshot 自身会把该帧区间写进 L2)
+  // Fetch one chunk into L2 on demand (fetchSnapshot itself writes this frame range into L2)
   await first.fetchSnapshot("html", "K-a", 3);
   await new Promise((r) => setTimeout(r, 20));
   first.stop();
@@ -155,7 +163,7 @@ test("C10-L3-4 after snapshot removal, original size is not prefetched automatic
   const src = new OnlineSnapshotSource(w.deps, { tier: "original", store: await openL2({ indexedDB: createFakeIndexedDB() }) });
   src.subscribeReady("x", 0, () => {});
   src.setProject("p1");
-  src.focus(10, 30);                 // 全局帧 300,窗口 240..360
+  src.focus(10, 30);                 // Global frame 300, window 240..360
   await settle(src);
   assert.equal(w.fetches.filter((f) => f.ns === "snap").length, 0, "original-size snapshot chunks are not prefetched automatically after snapshots are withdrawn");
   src.stop();
@@ -187,7 +195,7 @@ test("C10-L3-5 lowest tier: after snapshot removal, small size is not prefetched
   src.focus(0, 30);
   await settle(src);
   assert.equal(w.fetches.filter((f) => f.ns === "px").length, 0, "after snapshot removal, small-size chunks are not prefetched automatically");
-  // 按需取一块进 L2
+  // Fetch one chunk into L2 on demand
   const html = await src.fetchSnapshot("html", "K-a", 2);
   assert.match(html, /^<img /);
   assert.equal(w.fetches.filter((f) => f.ns === "px").length, 1, "small-size image fetched on demand");

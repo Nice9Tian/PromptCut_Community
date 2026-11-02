@@ -1,183 +1,291 @@
 /**
- * 本页产流的**编排**(任务书 `docs/plan/render-refactor-task.md`「甲二」;做法与〔裁〕见 `docs/plan/browser-stream-task.md`「本页产流」)。
+ * **Arrangement** for stream generation on this page (task brief `docs/plan/render-refactor-task.md`
+ * "Jia-2"; for implementation and [ruling], see `docs/plan/browser-stream-task.md` "Generate streams
+ * on this page").
  *
- * 线上没有能切分的节点时,身份为电脑的在线页面在后台舞台闲时自己生成单卡轨道流、推到素材服务、自己播;产物和经队列产的是同一种东西
- * (键、清单、层表里的那一行都相同,计划在 `pageStreamPlan.ts`,与服务端对拍),别的成员的页面、之后上线的桌面应用和渲染主机直接用。
+ * When there are no nodes capable of splitting online, an online page with desktop identity
+ * generates single-card track streams itself during idle time on the background stage, pushes them
+ * to the asset service, and plays them itself; output is the same as produced via the queue (keys,
+ * manifest, and that row in the layer table are identical; planned in `pageStreamPlan.ts`, verified
+ * against the server), directly usable by other members' pages, desktop apps coming online later,
+ * and render hosts.
  *
- * 本模块只有判据与次序,不碰舞台、网络、存储:它们由宿主(`src/editor/browserNodeHost.ts`)经 `deps` 注入。宿主每拍调一次 `tick()`。
+ * This module contains only criteria and ordering, without touching stage, network, or storage:
+ * they are injected by the host (`src/editor/browserNodeHost.ts`) via `deps`. The host calls `tick()`
+ * once per tick.
  *
- * # 什么时候轮到本页自己产(〔裁〕)
+ * # When it is this page's turn to produce [ruling]
  *
- *   1. 本页是浏览器节点(当节点的条件全部成立、拿到了指纹、探到了编码器),或只为本页产稀疏版的页面(身份为手机、只有一个舞台;
- *      2026-10-14 用户定「手机、平板也为本页产稀疏版」)—— 最低一档不产;
- *   2. 本页这一版的清单计划已经发出去(清单 = 本页自己判重的片段:只为自己打开的项目、自己要播的卡),其中有本页能产的单卡流还没有产物;
- *   3. **线上没有能切分的节点接这份计划**:计划发出去满 `PAGE_STREAM_WAIT_MS` 仍然没人认领(队列里它还是 `open`)。怎么知道:把同一个计划任务
- *      再发布一次(队列对同一个结果键只合并,不另起任务),回包里带它此刻的状态;有活要做的期间每 `PAGE_STREAM_POLL_MS` 问一次。
- *      状态是 `claimed` / `done` 就是有节点接了活:不产;正在产的做完当前这一帧就停(已经推完的分段按任务 id 留着,切分方把同一个任务
- *      发进队列后本页的节点认领它,只补缺的)。`failed`(切分方试过、做不成)与 `open` 同样对待;
- *   4. 闲(`deps.isIdle()`:宿主的闲的判据,再加本页的节点手里没有认领)。
+ *   1. This page is a browser node (all conditions for being a node are met, fingerprint obtained,
+ *      encoder probed), or a page that produces sparse versions only for this page (identity is
+ *      mobile, only one stage; (user decision, 2026-10-14) "mobile and tablet also produce sparse
+ *      versions for this page"): lowest tier does not produce;
+ *   2. This page's version of manifest plan has been published (manifest = clips classified as
+ *      heavy by this page itself: only for projects it opened itself and cards it needs to play),
+ *      in which single-card streams that this page can produce do not yet have outputs;
+ *   3. **No splitting nodes online took on this plan**: `PAGE_STREAM_WAIT_MS` has elapsed since the
+ *      plan was published and it remains unclaimed (still `open` in the queue). How to detect:
+ *      publish the same plan task again (the queue only merges for the same result key without
+ *      spawning a new task), and the response includes its current status; query once every
+ *      `PAGE_STREAM_POLL_MS` while there is work to do. Status `claimed` / `done` means a node
+ *      took on the work: do not produce; if currently producing, stop after finishing the current
+ *      frame (segments already pushed are retained by task id, and when a splitter sends the same
+ *      task to the queue, this page's node claims it and backfills only missing ones). `failed`
+ *      (splitter tried and could not complete) is treated the same as `open`;
+ *   4. Idle (`deps.isIdle()`: host's idle criteria, plus this page's node holds no claims).
  *
- * # 先查,没有才产
+ * # Check first, produce only if missing
  *
- * 每一段任务动手之前查两处:本页自己的键在内容库里有没有覆盖这一段的清单、块都在素材服务上(另一个同指纹的页面、上一次打开时产的);
- * 层表里这张卡有没有别的**能播的**单卡流(桌面应用、渲染主机、别的指纹的页面产的;能播的判据与播放那一侧相同:同一个内容键,或输入签名没过期),
- * 它的清单覆盖这一段、块都在。查到就直接用,不产。产的途中每 `PAGE_STREAM_RECHECK_MS` 再查一次,别处已经产出来了就做完当前这一帧停下,改用现成的。
+ * Before starting each segment task, check two places: whether this page's own key has a manifest in
+ * the content store covering this segment and chunks are all on the asset service (produced by
+ * another page with the same fingerprint or on the previous open); whether the layer table has
+ * another **playable** single-card stream for this card (produced by desktop apps, render hosts, or
+ * pages with different fingerprints; playable criteria match the playback side: same content key,
+ * or unexpired input signature), whose manifest covers this segment and chunks are all present. If
+ * found, use directly without producing. During production, recheck once every
+ * `PAGE_STREAM_RECHECK_MS`; if produced elsewhere, finish the current frame, stop, and switch to the
+ * existing one.
  *
- * # 层表
+ * # Layer table
  *
- * 没有切分方时层表没人写:本页开工前把自己的那一行并进内容库里的层表(`mergeLayerStreams`,只动 `streams` 里自己这几行),
- * 之后每隔 `PAGE_STREAM_ROWS_MS` 核对一次还在不在(两个页面同时写,后写的会盖掉先写的)。本页的那一行不在了、而表里这张卡已经有别人整条产好的流时
- * 不再写回去(不和别的写层表的一方来回盖)。有切分方接了活之后不再写(层表归它)。
+ * When there is no splitter, no one writes the layer table: before starting work, this page merges
+ * its row into the layer table in the content store (`mergeLayerStreams`, modifying only its own
+ * rows in `streams`), and verifies whether it is still present every `PAGE_STREAM_ROWS_MS` thereafter
+ * (if two pages write concurrently, the later write overwrites the earlier one). If this page's row
+ * is gone and the table already has a complete stream produced by someone else for this card, do not
+ * write back (avoids overwriting back and forth with another layer-table writer). Once a splitter
+ * takes on the work, stop writing (the layer table belongs to it).
  *
- * # 让路
+ * # Yield
  *
- * 规矩同浏览器节点认领任务(`browserNode.ts` 的 D8):播放、拖动、后台舞台来了更急的活 —— 当前这一帧做完就停,`YIELD_FRAME_MAX_MS` 之内
- * 做不完就中止;页面隐藏不等当前帧,马上中止。已经推完的分段留着,闲下来接着补缺的。
+ * Rules match browser nodes claiming tasks (D8 of `browserNode.ts`): playback, scrubbing, or more
+ * urgent work arriving on the background stage: stop after the current frame finishes, or abort if
+ * not finished within `YIELD_FRAME_MAX_MS`; when the page is hidden, abort immediately without
+ * waiting for the current frame. Already-pushed segments are kept, and missing ones are backfilled
+ * when idle.
  *
- * # 两趟:先稀疏,后满密度(`docs/semantics/mechanism/rendering.md`「重管线:预渲染」)
+ * # Two passes: sparse first, then full density (`docs/semantics/mechanism/rendering.md` "Heavy pipeline: prerender")
  *
- * 每条流产两趟(`passes`,缺省 `[稀疏, 满密度]`):稀疏的一趟每个分段只截分段的第一帧(任务是 `pageStreamTasks(…, { density: 'sparse' })`,
- * 与切分方出的稀疏流任务逐字段相同),满密度的一趟每帧都截;两趟用同一个结果键、同一个清单键,清单由宿主合并。
- * **所有流的稀疏那一趟都落定了(产了、查到已有、或这一版里放下了),才开始满密度的一趟**:稀疏的某一段在退避,满密度的也等着。
- * 先查按这一趟的密度认:稀疏的一趟,清单里每个分段有一版(稀疏或满密度)就算有;满密度的一趟要每个分段都是满密度。
+ * Each stream is produced in two passes (`passes`, default `[sparse, full density]`): the sparse pass
+ * captures only the first frame of each segment (task is `pageStreamTasks(…, { density: 'sparse' })`,
+ * identical field-by-field to sparse stream tasks emitted by the splitter), while the full density
+ * pass captures every frame; both passes share the same result key and manifest key, with manifests
+ * merged by the host. **The full density pass starts only after sparse passes for all streams have
+ * settled (produced, found existing, or dropped in this version)**: if a sparse segment is backing
+ * off, full density also waits. "Check first" recognizes according to the density of this pass: for
+ * the sparse pass, having one version (sparse or full density) for each segment in the manifest
+ * counts as present; for the full density pass, every segment must be full density.
  *
- * # 测量时就产稀疏版(`measure()`;语义同上「测量」)
+ * # Produce sparse versions during measurement (`measure()`; semantics same as "Measurement" above)
  *
- * 打开项目、加载遮罩下逐张测量时,一张卡的第一趟(计时)测完、判重,测量方(`src/editor/probeRunner.ts`)紧接着调 `measure()`:
- * 把这张卡的单卡流的稀疏那一趟做出来 —— 先查(素材服务里已经有就直接用)、把本页的那一行并进层表、产、写清单、叫宿主认它。
- * 这条路不等清单计划、不问有没有切分方、不看闲不闲(遮罩下用户动不了;页面隐藏照旧中止)。它只做稀疏的一趟,满密度留给闲时。
+ * When opening a project and measuring card by card under the loading overlay, after finishing the
+ * first pass (timing) for a card and classifying as heavy, the measurer (`src/editor/probeRunner.ts`)
+ * immediately calls `measure()`: to produce the sparse pass of this card's single-card stream: check
+ * first (use directly if already on the asset service), merge this page's row into the layer table,
+ * produce, write the manifest, and ask the host to acknowledge it. This path does not wait for the
+ * manifest plan, does not ask if there is a splitter, and does not check whether idle (user cannot
+ * act under the overlay; page hiding still aborts). It only runs the sparse pass, leaving full
+ * density for idle time.
  *
- * 遮罩等稀疏版有墙上时钟的上限 `MEASURE_SPARSE_MAX_MS`(50 秒):从这一轮遮罩下第一次调 `measure()` 起算,到时在产的做完当前这一帧就停
- * (已经推完的分段按任务 id 留着)、`measure()` 当场回,之后这一轮再调一律马上回;没产完的归闲时那条路(清单计划发出去以后照上面的次序接着做,
- * 任务 id 相同,只补缺的分段)。上限只管遮罩下产稀疏版,不截断测量本身(「太慢」按单帧判)。
- * 时钟、等本页当上节点(拿到指纹、探到编码器,最多 `MEASURE_READY_WAIT_MS`)都由 `tick()` 推,所以宿主在 `measure()` 没回之前要照常调 `tick()`。
+ * Overlay waiting for sparse versions has a wall-clock cap of `MEASURE_SPARSE_MAX_MS` (50 seconds):
+ * counted from the first call to `measure()` under this round of overlay; when reached, whatever is
+ * currently producing stops after the current frame (pushed segments are retained by task id),
+ * `measure()` returns immediately, and subsequent calls in this round return immediately; unfinished
+ * items are deferred to the idle path (continued in the order above after the manifest plan is
+ * published, with matching task ids, backfilling only missing segments). The cap only governs
+ * producing sparse versions under the overlay without cutting off measurement itself ("too slow" is
+ * judged per frame). Clocks and waiting for this page to become a node (obtaining fingerprint,
+ * probing encoder, at most `MEASURE_READY_WAIT_MS`) are driven by `tick()`, so the host must call
+ * `tick()` as usual before `measure()` returns.
  *
- * 测量用的那一份记账(`measure` 的 ctx)在清单计划发出来之前留着(层表里本页的那几行照常核对);计划发出来(发成的时刻不早于它)就换成计划的那一份,
- * 稀疏的任务再先查一遍,查到的是测量时产的。
+ * The accounting state used for measurement (`measure`'s ctx) is kept until the manifest plan is
+ * published (this page's rows in the layer table are verified as usual); once the plan is published
+ * (published at a time no earlier than it), it switches to the plan's copy, and sparse tasks run
+ * "check first" once more, finding what was produced during measurement.
  *
- * 本模块属于 render 这一层(`src/online/`):不引 editor。
+ * This module belongs to the render layer (`src/online/`): does not import editor.
  */
 import type { NodeTask } from "./browserNode.ts";
 import { STREAM_SEGMENT_FRAMES, YIELD_FRAME_MAX_MS, type YieldCause } from "./browserNode.ts";
 import { candidateSpans, layerStreamCandidates, mergeLayerStreams, pageStreamRow, pageStreamTasks, type PageStreamRow, type PageStreamSpec } from "./pageStreamPlan.ts";
 import { packedSize, avcCodecFor } from "../render/streamEncode.ts";
 
-/** 清单计划发出去之后没人认领,等这么久本页才自己产(三级数字;空闲的切分方认领计划在一秒以内,留出它正忙着别的活的余量) */
+/**
+ * After the manifest plan is published and no one claims it, wait this long before this page
+ * produces it itself (tier 3 number; idle splitters claim plans within one second, leaving margin
+ * while busy with other work)
+ */
 export const PAGE_STREAM_WAIT_MS = 5000;
-/** 有活要做的期间,多久问一次计划的状态 */
+/** How often to poll plan status while there is work to do */
 export const PAGE_STREAM_POLL_MS = 2000;
-/** 产的途中多久查一次「别处产出来了没有」 */
+/** During production, how often to check "whether produced elsewhere" */
 export const PAGE_STREAM_RECHECK_MS = 5000;
-/** 多久核对一次本页的那几行还在不在层表里 */
+/** How often to verify whether this page's rows are still in the layer table */
 export const PAGE_STREAM_ROWS_MS = 20_000;
-/** 一段任务连着做不成几次就不再试(这一版里) */
+/** Stop retrying a segment task after this many consecutive failures (in this version) */
 export const PAGE_STREAM_ATTEMPTS = 3;
 /**
- * 打开项目时加载遮罩等稀疏版最多这么久(墙上时钟;`docs/semantics/mechanism/rendering.md`「测量」:遮罩下产稀疏版最多等 50 秒,
- * 到时就先进编辑,剩下的闲时接着产)。从这一轮遮罩下第一次等稀疏版起算。这个数只写在这一处。
+ * Maximum time the loading overlay waits for sparse versions when opening a project (wall clock;
+ * `docs/semantics/mechanism/rendering.md` "Measurement": wait up to 50s for sparse versions under
+ * overlay, then enter editing, producing the rest at idle time). Counted from the first wait for
+ * sparse versions under this round of overlay. This number is written only in this place.
  */
 export const MEASURE_SPARSE_MAX_MS = 50_000;
-/** 测量时等本页当上节点(拿到指纹、探到编码器)最多这么久;算在上面的 50 秒里。等不到这张卡就归闲时 */
+/**
+ * Maximum wait time during measurement for this page to become a node (obtain fingerprint, probe
+ * encoder); counted within the 50s above. If timed out, this card is deferred to idle time
+ */
 export const MEASURE_READY_WAIT_MS = 3000;
 
-/** 队列里这一版清单计划的状态;`none` = 问不到(没发出去、连接断着) */
+/** Status of this version of manifest plan in the queue; `none` = unreachable (not published, disconnected) */
 export type PlanState = "none" | "open" | "claimed" | "done" | "failed";
 
-/** 本页最近发成的那一版清单计划(`planPublisher.ts` 的 `current()`) */
+/** Latest successfully published manifest plan from this page (`current()` in `planPublisher.ts`) */
 export interface PublishedPlan {
-  /** 计划任务的 id(`plan:<项目>@<版本>#clips:<签名>`) */
+  /** Plan task id (`plan:<project>@<version>#clips:<signature>`) */
   id: string;
   projectId: string;
   projectRev: number;
-  /** 清单:本页自己判重的片段 */
+  /** Manifest: clips classified as heavy by the page itself */
   clips: readonly string[];
-  /** 发成的时刻 */
+  /** Time of successful publish */
   at: number;
 }
 
-/** 一趟产流:`stride` 是每几帧取一张(1 = 每帧都取,满密度;大于 1 是稀疏的一趟,任务是稀疏流任务) */
+/**
+ * A stream production pass: `stride` takes one frame every few frames (1 = take every frame, full
+ * density; greater than 1 is a sparse pass with sparse stream tasks)
+ */
 export interface PageStreamPass { name: string; stride: number }
-/** 缺省的两趟:先稀疏(每个分段只截分段的第一帧),后满密度 */
+/** Default two passes: sparse first (capturing only the first frame of each segment), then full density */
 export const PAGE_STREAM_PASSES: readonly PageStreamPass[] = [{ name: "sparse", stride: STREAM_SEGMENT_FRAMES }, { name: "dense", stride: 1 }];
 
-/** 测量时要产稀疏版的一张卡(`measure()` 的入参) */
+/** A card to produce sparse version for during measurement (input parameter of `measure()`) */
 export interface MeasureRequest {
-  /** 这一轮遮罩的编号(遮罩每出现一轮换一个):50 秒的时钟按它算 */
+  /** Sequence number of this overlay round (changes each time overlay appears): 50s clock is computed by it */
   round: number | string;
   projectId: string;
-  /** 用哪一版已确认项目算流(宿主留存着这一版) */
+  /** Which version of confirmed project to compute streams with (host retains this version) */
   projectRev: number;
-  /** 刚测完的这张卡的片段(同一张卡的几个片段身份相同,一起给) */
+  /** Clips of this card just measured (clips of the same card share the same identity, given together) */
   clips: readonly string[];
-  /** 此刻本页判重的全部片段(合并成组流的判据要看全部;只产 `clips` 里的) */
+  /**
+   * All clips currently classified as heavy by this page (criteria for merging into group streams
+   * inspect all; produces only those in `clips`)
+   */
   heavy: readonly string[];
-  /** 这一轮测量作废了(项目变了):停手 */
+  /** This round of measurement is invalidated (project changed): stop */
   stale?: () => boolean;
 }
-/** `measure()` 的结果:`ok` 这张卡的稀疏版都落定了;其余是没做完的原因 */
+/** Result of `measure()`: `ok` sparse versions for this card have all settled; others are reasons for incomplete */
 export interface MeasureOutcome {
   result: "ok" | "none" | "deadline" | "incapable" | "busy" | "stale" | "stopped" | "interrupted" | "failed";
-  /** 这一次落定的任务数:本页产的、查到自己的键已有的、查到别的候选已有的;`left` 没做完的(归闲时) */
+  /**
+   * Number of tasks settled this time: produced by this page, found existing under own key, found
+   * existing under another candidate; `left` incomplete tasks (deferred to idle time)
+   */
   produced: number; have: number; elsewhere: number; left: number;
 }
 
 export interface PageStreamsDeps {
   now: () => number;
-  /** 本页此刻能不能产流:是浏览器节点、拿到了指纹、探到了编码器、有代码指纹 */
+  /**
+   * Whether this page can currently produce streams: is a browser node, obtained fingerprint, probed
+   * encoder, has code fingerprint
+   */
   capable: () => boolean;
-  /** 闲不闲(宿主的闲的判据,再加本页的节点手里没有认领) */
+  /** Whether idle (host's idle criteria, plus this page's node holds no claims) */
   isIdle: () => boolean;
-  /** 本页最近发成的那一版清单计划;没有回 null */
+  /** Latest successfully published manifest plan from this page; returns null if none */
   plan: () => PublishedPlan | null;
-  /** 问队列这一版计划此刻的状态;问不到回 `none` */
+  /** Query the queue for this version of manifest plan's status; returns `none` if unreachable */
   planState: () => Promise<PlanState>;
-  /** 这一版里本页能产的单卡流(`pageStreamPlan.ts` 的 `planPageStreams`,宿主按那一版的已确认项目算);算不出回 null(过一会儿再算) */
+  /**
+   * Single-card streams this page can produce in this version (`planPageStreams` in
+   * `pageStreamPlan.ts`, host computes from confirmed project of that version); returns null if
+   * computation fails (retry later)
+   */
   specs: (plan: PublishedPlan) => Promise<{ specs: PageStreamSpec[]; skipped: Record<string, string>; project: unknown } | null>;
-  /** 嵌在页面里的代码版本(写进任务的 `requires.codeVersion`,与切分方出的任务同形) */
+  /**
+   * Code version embedded in the page (written into task's `requires.codeVersion`, same shape as
+   * tasks emitted by splitter)
+   */
   codeVersion?: string | null;
-  /** 先查之一:本页自己的键,这一段的清单在内容库里、块都在素材服务上 */
+  /**
+   * One of the "check first" queries: this page's own key, this segment's manifest is in the content
+   * store, and chunks are all on the asset service
+   */
   lookupOwn: (task: NodeTask, need: { dense: boolean }) => Promise<boolean>;
-  /** 先查之二:别的候选的结果键,这一段的清单在内容库里、块都在素材服务上。`need.dense`:要每个分段都是满密度(稀疏的一趟不要求) */
+  /**
+   * Pre-check 2: result key of another candidate; the manifest for this segment is in the content
+   * store and all chunks are on the asset service. `need.dense`: requires every segment to be full
+   * density (not required for a sparse pass).
+   */
   lookupOther: (resultKey: string, range: { from: number; to: number }, need: { dense: boolean }) => Promise<boolean>;
-  /** 内容库里现有的层表(没有回 null);读不到抛 */
+  /** Existing layer table in the content store (returns null if none); throws on read failure. */
   readLayerMap: (project: unknown) => Promise<unknown | null>;
-  /** 把整张层表写回内容库 */
+  /** Writes the entire layer table back to the content store. */
   writeLayerMap: (project: unknown, body: Record<string, unknown>) => Promise<void>;
   /**
-   * 产一段:逐帧向后台舞台要像素、送编码器、推分段,全部分段齐了写清单。每帧前问 `yielding()`,为真就做完当前帧停手、回 `yielded`;
-   * `signal` 中止时尽早停手(抛)。`stride` 是这一趟每几帧取一张。
+   * Produce a segment: request pixels frame by frame from the background stage, feed to encoder,
+   * and push segments; write the manifest once all segments are complete. Before each frame, check
+   * `yielding()`; if true, stop after completing the current frame and return `yielded`; stop as
+   * early as possible (throws) when `signal` aborts. `stride` is how many frames per sample in this
+   * pass.
    */
   produce: (job: { task: NodeTask; project: unknown; stride: number; signal: AbortSignal; yielding: () => boolean }) => Promise<"done" | "yielded">;
-  /** 这个结果键有了可用的流(本页产的、先查查到的):宿主叫在线来源认它、马上重取层表 */
+  /**
+   * An available stream exists for this result key (produced by this page or found via pre-check):
+   * the host tells the online source to recognize it and immediately refetches the layer table.
+   */
   onAlive?: (resultKey: string) => void;
-  /** 产几趟、每趟多密;缺省先稀疏后满密度(`PAGE_STREAM_PASSES`) */
+  /**
+   * How many passes to produce and how dense each pass is; defaults to sparse first then full
+   * density (`PAGE_STREAM_PASSES`).
+   */
   passes?: readonly PageStreamPass[];
-  /** 遮罩等稀疏版的上限;缺省 `MEASURE_SPARSE_MAX_MS` */
+  /** Upper limit for overlay waiting on the sparse version; defaults to `MEASURE_SPARSE_MAX_MS`. */
   measureMaxMs?: number;
   measureReadyMs?: number;
   waitMs?: number;
   pollMs?: number;
   recheckMs?: number;
   rowsMs?: number;
-  /** 只为本页产稀疏版(身份为手机、只有一个舞台):只产稀疏版;产流前调 VideoEncoder.isConfigSupported 检查配置。缺省假 */
+  /**
+   * Only produce sparse versions for this page (mobile identity, only one stage): only produces
+   * sparse versions; calls VideoEncoder.isConfigSupported to check config before producing streams.
+   * Defaults to false.
+   */
   sparseOnly?: boolean | (() => boolean);
-  /** 检查编码器配置是否支持(单测注入桩,缺省查 globalThis.VideoEncoder.isConfigSupported) */
+  /**
+   * Checks whether encoder config is supported (unit test stub injection, defaults to checking
+   * globalThis.VideoEncoder.isConfigSupported).
+   */
   isConfigSupported?: (config: Record<string, unknown>) => Promise<{ supported?: boolean } | boolean>;
 }
 
 type TaskState = "todo" | "produced" | "have" | "elsewhere" | "failed";
 interface Job { task: NodeTask; spec: PageStreamSpec; pass: PageStreamPass; passIndex: number; state: TaskState; fails: number; retryAt: number; via: string | null }
 interface Ctx {
-  /** 测量时的那一份记账(没有清单计划;`plan` 是照项目与版本拼的一个替身) */
+  /**
+   * Accounting record during measurement (no manifest plan; `plan` is a stand-in composed from
+   * project and version).
+   */
   measure: boolean;
   plan: PublishedPlan;
   specs: PageStreamSpec[] | null;
-  /** 每条流在层表里的那一行(结果键 → 行;先查与写层表都用它的输入签名) */
+  /**
+   * The row in the layer table for each stream (result key → row; both pre-check and writing layer
+   * table use its input signature).
+   */
   rows: Map<string, PageStreamRow>;
   skipped: Record<string, string>;
   project: unknown;
   jobs: Job[];
-  /** 本页有份的流(产了、在产、或查到自己的键已经有):层表里要有本页的那一行 */
+  /**
+   * Streams belonging to this page (produced, in production, or found its own key already exists):
+   * the layer table must have this page's row.
+   */
   mine: Set<string>;
   rowsAt: number;
   specsAt: number;
@@ -188,38 +296,54 @@ interface Run {
   controller: AbortController;
   yieldCause: YieldCause | null;
   yieldAt: number | null;
-  /** 不是让路的停手原因:`splitter`(有切分方接了活)、`elsewhere`(别处产出来了)、`plan-changed`、`stopped`、`deadline`(遮罩等稀疏版到时了)、`stale` */
+  /**
+   * Non-yielding stop reasons: `splitter` (a splitter claimed the work), `elsewhere` (produced
+   * elsewhere), `plan-changed`, `stopped`, `deadline` (overlay timed out waiting for sparse version),
+   * `stale`.
+   */
   stop: string | null;
   recheckAt: number;
   rechecking: boolean;
 }
 
 export interface PageStreamsDebug {
-  /** `off` 不产(不是节点、没有计划)、`planning` 在算这一版的流、`none` 这一版没有本页能产的、`waiting` 在等有没有切分方、
-   *  `taken` 有切分方接了活、`checking` 在先查、`producing` 在产、`idle-wait` 等闲、`done` 都有了、
-   *  `measuring` 测量时那一份记账(清单计划还没发出来) */
+  /** `off` not producing (not a node, no plan), `planning` computing streams for this revision,
+   *  `none` this revision has nothing this page can produce, `waiting` waiting for a splitter,
+   *  `taken` a splitter claimed the work, `checking` pre-checking, `producing` producing,
+   *  `idle-wait` waiting idle, `done` all available, `measuring` accounting record during measurement
+   *  (manifest plan not yet published) */
   state: "off" | "planning" | "none" | "waiting" | "taken" | "checking" | "producing" | "idle-wait" | "done" | "measuring";
   planId: string | null;
   planState: PlanState;
-  /** 计划发出去多久了 */
+  /** How long since the plan was published. */
   waitedMs: number | null;
   streams: { clipId: string; contentKey: string; streamKey: string; firstSegment: number; lastSegment: number; mine: boolean }[];
   jobs: { id: string; clipId: string; pass: string; state: TaskState; via: string | null; fails: number }[];
   skipped: Record<string, string>;
   running: { id: string; yield: string | null; stop: string | null } | null;
   counters: {
-    /** 本页产完的任务数、先查查到自己的键已有的、查到别的候选已有的 */
+    /**
+     * Number of tasks completed by this page, found its own key existing via pre-check, and found
+     * another candidate existing.
+     */
     produced: number; have: number; elsewhere: number; failed: number;
-    /** 开工次数(每次进 `produce` 记一次,让路后回来再记一次) */
+    /** Start count (recorded once each time entering `produce`, and again upon returning after yielding). */
     starts: number;
     yields: Record<string, number>;
     stops: Record<string, number>;
     aborts: number;
     probes: number; rowsWritten: number; rowsFailed: number;
-    /** 本页的那一行不在层表里了、别人整条产好的流在:不写回去的次数 */
+    /**
+     * Count of times not written back when this page's row is no longer in the layer table and someone
+     * else's fully produced stream is present.
+     */
     rowsYielded: number;
   };
-  /** 测量时产稀疏版:这一轮遮罩的编号、时钟从哪一刻起、到哪一刻止、调了几次、各种结果的次数、各自落定的任务数、此刻有没有在等 */
+  /**
+   * Producing sparse version during measurement: overlay ID for this round, clock start and end
+   * timestamps, call count, counts of each outcome, settled task counts for each, and whether
+   * currently waiting.
+   */
   measure: {
     round: number | string | null; startedAt: number | null; deadlineAt: number | null; calls: number; active: boolean;
     results: Record<string, number>; produced: number; have: number; elsewhere: number; left: number;
@@ -230,16 +354,24 @@ export interface PageStreamsDebug {
 
 export interface PageStreams {
   tick(): void;
-  /** 让路(规矩同浏览器节点):`hidden` 马上中止,其余做完当前这一帧就停 */
+  /**
+   * Yielding (same rules as browser nodes): abort immediately on `hidden`; otherwise stop after
+   * completing the current frame.
+   */
   yieldFor(cause: YieldCause): void;
-  /** 此刻有没有在产、或测量时在等稀疏版(宿主据此不让节点同时认领:两条路共用后台舞台的同一份活) */
+  /**
+   * Whether currently producing or waiting for a sparse version during measurement (used by host to
+   * prevent nodes from claiming concurrently: both paths share the same background stage workload).
+   */
   running(): boolean;
   /**
-   * 测量时就产稀疏版:一张卡的第一趟测完、判重之后调。先查,没有才产;遮罩等它,最多等到这一轮的 50 秒到头(到时当场回)。
-   * 不抛。没回之前宿主要照常调 `tick()`(时钟由它推)。
+   * Produce sparse version during measurement: called after measuring the first pass of a card and
+   * classifying as heavy. Pre-checks, producing only if absent; overlay waits for it, at most until
+   * 50 seconds for this round expires (returns immediately on timeout). Does not throw. Before
+   * returning, host must call `tick()` as usual (drives the clock).
    */
   measure(req: MeasureRequest): Promise<MeasureOutcome>;
-  /** 下线、换项目:停下、清掉这一版的记账 */
+  /** Going offline or switching projects: stop and clear accounting for this revision. */
   stop(reason?: string): void;
   debug(): PageStreamsDebug;
 }
@@ -247,7 +379,7 @@ export interface PageStreams {
 export function createPageStreams(deps: PageStreamsDeps): PageStreams {
   const passes: readonly PageStreamPass[] = deps.passes?.length ? deps.passes : PAGE_STREAM_PASSES;
   const isLow = () => typeof deps.sparseOnly === "function" ? deps.sparseOnly() : !!deps.sparseOnly;
-  /** 这一趟是不是稀疏的(任务是稀疏流任务、先查不要求满密度) */
+  /** Whether this pass is sparse (task is a sparse stream task, pre-check does not require full density). */
   const sparse = (pass: PageStreamPass) => pass.stride > 1;
   const effectivePasses = (): readonly PageStreamPass[] => {
     if (isLow()) {
@@ -294,14 +426,14 @@ export function createPageStreams(deps: PageStreamsDeps): PageStreams {
   const recheckMs = deps.recheckMs ?? PAGE_STREAM_RECHECK_MS, rowsMs = deps.rowsMs ?? PAGE_STREAM_ROWS_MS;
   let ctx: Ctx | null = null;
   let run: Run | null = null;
-  /** 在算流、在先查、在写层表:一次只做一件 */
+  /** Computing streams, pre-checking, or writing the layer table: only do one at a time. */
   let working = false;
   let phase: "planning" | "checking" | null = null;
   let lastError: string | null = null;
   const counters: PageStreamsDebug["counters"] = { produced: 0, have: 0, elsewhere: 0, failed: 0, starts: 0, yields: {}, stops: {}, aborts: 0, probes: 0, rowsWritten: 0, rowsFailed: 0, rowsYielded: 0 };
   const bump = (bag: Record<string, number>, key: string) => { bag[key] = (bag[key] ?? 0) + 1; };
   const fail = (e: unknown) => { lastError = String((e as Error)?.message ?? e).slice(0, 200); };
-  const alive = (key: string) => { try { deps.onAlive?.(key); } catch { /* 宿主坏了 */ } };
+  const alive = (key: string) => { try { deps.onAlive?.(key); } catch { /* The host is broken */ } };
 
   const stopRun = (reason: string, abort = false) => {
     const r = run;
@@ -310,11 +442,11 @@ export function createPageStreams(deps: PageStreamsDeps): PageStreams {
     if (abort) r.controller.abort();
   };
 
-  /* ---------------- 测量时产稀疏版:这一轮遮罩的时钟、在等的那一次 ---------------- */
+  /* --- Producing sparse version during measurement: clock for this round of overlay, waiting invocation --- */
   let clock: { round: number | string; startedAt: number } | null = null;
   interface Measuring { req: MeasureRequest; at: number; done: boolean; resolve: (out: MeasureOutcome) => void; out: MeasureOutcome }
   let measuring: Measuring | null = null;
-  /** 等下一拍(`tick()` 里叫醒) */
+  /** Wait for the next tick (woken up in `tick()`). */
   let tickWaiters: (() => void)[] = [];
   const nextTick = () => new Promise<void>((resolve) => { tickWaiters.push(resolve); });
   const mstats: PageStreamsDebug["measure"] = { round: null, startedAt: null, deadlineAt: null, calls: 0, active: false, results: {}, produced: 0, have: 0, elsewhere: 0, left: 0, log: [] };
@@ -330,7 +462,10 @@ export function createPageStreams(deps: PageStreamsDeps): PageStreams {
     m.resolve({ ...m.out });
   };
 
-  /** 层表 `map` 里这条流别的候选,有没有哪一个的清单把分段 `[from, to]` 整个盖住、块都在。回那个候选的结果键 */
+  /**
+   * Whether any other candidate for this stream in layer table `map` has a manifest covering segment
+   * `[from, to]` entirely and all chunks present. Returns that candidate's result key.
+   */
   const coveredBy = async (c: Ctx, spec: PageStreamSpec, map: unknown, from: number, to: number, dense = true): Promise<string | null> => {
     const row = c.rows.get(spec.streamKey) ?? pageStreamRow(c.project, spec);
     for (const cand of layerStreamCandidates(map, row)) {
@@ -344,7 +479,7 @@ export function createPageStreams(deps: PageStreamsDeps): PageStreams {
     return null;
   };
 
-  /** 把本页有份的那几行并进层表;没有变化不写 */
+  /** Merge rows belonging to this page into the layer table; does not write if there are no changes. */
   const syncRows = async (c: Ctx): Promise<void> => {
     c.rowsAt = deps.now();
     if (!c.mine.size) return;
@@ -356,7 +491,9 @@ export function createPageStreams(deps: PageStreamsDeps): PageStreams {
       for (const spec of c.specs ?? []) {
         if (!c.mine.has(spec.streamKey)) continue;
         const row = c.rows.get(spec.streamKey) ?? pageStreamRow(c.project, spec);
-        // 本页的这一行不在表里(还没写过,或被别的写层表的一方盖掉了),而表里这张卡已经有别人整条产好的流:不写回去
+        // This page's row is not in the table (not written yet, or overwritten by another party writing the
+        // layer table), and this card in the table already has someone else's fully produced stream: do not
+        // write back.
         if (!listed(spec.streamKey, row) && await coveredBy(c, spec, existing, spec.firstSegment, spec.lastSegment)) {
           if (ctx !== c) return;
           c.mine.delete(spec.streamKey);
@@ -373,15 +510,19 @@ export function createPageStreams(deps: PageStreamsDeps): PageStreams {
     } catch (e) {
       counters.rowsFailed++;
       fail(e);
-      // 没写成:下一拍再核对
+      // Write failed: verify again on the next tick.
       c.rowsAt = -Infinity;
     }
   };
 
-  /** 先查:这一段的结果在不在。回查到的结果键(自己的或别的候选的),没有回 null */
+  /**
+   * Pre-check: whether results for this segment exist. Returns the found result key (its own or
+   * another candidate's), or null if none.
+   */
   const check = async (c: Ctx, job: Job): Promise<{ resultKey: string; own: boolean } | null> => {
     const range = { from: job.task.range!.from, to: job.task.range!.to };
-    // 稀疏的一趟:每个分段有一版就算有;满密度的一趟要每个分段都是满密度
+    // Sparse pass: counted as present if each segment has any revision; full density pass requires
+    // every segment to be full density.
     const dense = !sparse(job.pass);
     if (await deps.lookupOwn(job.task, { dense }).catch(() => false)) return { resultKey: job.task.resultKey, own: true };
     let map: unknown = null;
@@ -397,7 +538,10 @@ export function createPageStreams(deps: PageStreamsDeps): PageStreams {
     alive(found.resultKey);
   };
 
-  /** 这几条流在这一趟的任务(稀疏的一趟出稀疏流任务,id 末尾多 `:sparse`;与切分方出的逐字段相同) */
+  /**
+   * Tasks for these streams in this pass (sparse pass produces sparse stream tasks with `:sparse`
+   * appended to id; field-by-field identical to those from splitters).
+   */
   const jobsOf = (c: Ctx, specs: readonly PageStreamSpec[], pass: PageStreamPass, passIndex: number): Job[] =>
     specs.flatMap((spec) => pageStreamTasks(spec, { projectId: c.plan.projectId, projectRev: c.plan.projectRev, codeVersion: deps.codeVersion ?? null,
       derivedFrom: c.measure ? null : c.plan.id, density: sparse(pass) ? "sparse" : null })
@@ -427,7 +571,8 @@ export function createPageStreams(deps: PageStreamsDeps): PageStreams {
 
   const pollPlan = (c: Ctx) => {
     const now = deps.now();
-    // `done` 是终态:切分方接了这一版,不用再问(再发布过了保留期的任务会把它重新建出来)
+    // `done` is terminal: a splitter claimed this revision, no need to ask again (republishing a task
+    // past retention will recreate it).
     if (c.probe.flying || c.probe.state === "done" || now - c.probe.at < pollMs) return;
     c.probe.flying = true;
     c.probe.at = now;
@@ -450,7 +595,8 @@ export function createPageStreams(deps: PageStreamsDeps): PageStreams {
         counters.produced++;
         consecutiveErrors = 0;
         alive(job.task.resultKey);
-        // 这一段的清单进了内容库:马上核对一次层表里本页的那一行
+        // Manifest for this segment entered the content store: immediately verify this page's row in the
+        // layer table once.
         if (ctx === c) c.rowsAt = -Infinity;
       } else if (r.stop) bump(counters.stops, r.stop);
       else bump(counters.yields, r.yieldCause ?? "urgent");
@@ -463,7 +609,7 @@ export function createPageStreams(deps: PageStreamsDeps): PageStreams {
       fail(e);
       job.fails++;
       consecutiveErrors++;
-      // 做不成:退避后再试,连着不成就放下这一段(这一版里)
+      // Failed: retry after backoff; drop this segment (in this revision) if failing consecutively.
       if (job.fails >= PAGE_STREAM_ATTEMPTS || (e as { retryable?: boolean })?.retryable === false || (isLow() && consecutiveErrors >= 3)) {
         job.state = "failed";
         counters.failed++;
@@ -473,13 +619,17 @@ export function createPageStreams(deps: PageStreamsDeps): PageStreams {
     }).finally(() => { if (run === r) run = null; });
   };
 
-  /** 挑下一段:先查,查不到、还闲、还没人接活才开工 */
+  /**
+   * Pick next segment: pre-check; start work only if not found, still idle, and no one has claimed
+   * the work.
+   */
   const step = async (c: Ctx) => {
     working = true;
     phase = "checking";
     try {
       const now = deps.now();
-      // 一趟一趟来:前面的趟(稀疏)还有没落定的任务时,后面的趟(满密度)不开工 —— 在退避的也算没落定,等它
+      // One pass at a time: do not start later passes (full density) while earlier passes (sparse) still
+      // have unsettled tasks: those in backoff also count as unsettled, wait for them.
       const todo = c.jobs.filter((j) => j.state === "todo");
       const pass = todo.reduce((min, j) => Math.min(min, j.passIndex), Infinity);
       const job = todo.find((j) => j.passIndex === pass && now >= j.retryAt);
@@ -501,9 +651,11 @@ export function createPageStreams(deps: PageStreamsDeps): PageStreams {
           return;
         }
       }
-      // 开工前把这一行写进层表:别的页面(和本页的在线来源)据此找这条流的清单
+      // Write this row into the layer table before starting work: other pages (and this page's online
+      // source) locate this stream's manifest from it.
       if (!c.mine.has(job.spec.streamKey)) { c.mine.add(job.spec.streamKey); await syncRows(c); }
-      // 写的时候发现别人整条产好了(`syncRows` 把这条流从本页的名下拿掉了):不开工,下一拍先查会认它
+      // Found someone else fully produced it while writing (`syncRows` removed this stream from this
+      // page's ownership): do not start work, pre-check on the next tick will recognize it.
       if (ctx !== c || run || taken(c) || !deps.isIdle() || !c.mine.has(job.spec.streamKey)) return;
       void start(c, job);
     } catch (e) {
@@ -514,7 +666,10 @@ export function createPageStreams(deps: PageStreamsDeps): PageStreams {
     }
   };
 
-  /** 产的途中再查一次:别处已经有了就做完当前帧停下,改用现成的 */
+  /**
+   * Check again mid-production: if already available elsewhere, stop after completing current frame
+   * and switch to existing one.
+   */
   const recheck = (c: Ctx, r: Run) => {
     const now = deps.now();
     if (r.rechecking || r.stop || now < r.recheckAt) return;
@@ -535,7 +690,11 @@ export function createPageStreams(deps: PageStreamsDeps): PageStreams {
   const newCtx = (plan: PublishedPlan, measure: boolean): Ctx =>
     ({ measure, plan, specs: null, rows: new Map(), skipped: {}, project: null, jobs: [], mine: new Set(), rowsAt: -Infinity, specsAt: -Infinity, probe: { state: "none", at: -Infinity, flying: false } });
 
-  /** 遮罩等稀疏版到头了、或这一轮测量作废了:在产的做完当前这一帧就停(迟迟做不完照让路的时限中止),在等的那一次当场回 */
+  /**
+   * Overlay timed out waiting for sparse version, or this measurement round was invalidated:
+   * producing stops after completing the current frame (aborts per yield timeout if delayed too
+   * long), and the waiting invocation returns immediately.
+   */
   const cutMeasure = (m: Measuring, why: "deadline" | "stale" | "stopped") => {
     const r = run;
     if (r && ctx?.measure) {
@@ -545,13 +704,17 @@ export function createPageStreams(deps: PageStreamsDeps): PageStreams {
     endMeasure(m, why);
   };
 
-  /** 测量时这一张卡的稀疏那一趟:先查,没有才产。每一步之后看这一次还在不在等(到时了就不再往下做) */
+  /**
+   * Sparse pass for this card during measurement: pre-checks, producing only if absent. Checks
+   * whether this invocation is still waiting after each step (stops proceeding on timeout).
+   */
   const runMeasure = async (m: Measuring): Promise<MeasureOutcome["result"]> => {
     const { req } = m;
     const eff = effectivePasses();
     const sparsePass = eff.findIndex(sparse);
     if (sparsePass < 0 || !req.clips.length) return "none";
-    // 等本页当上节点(拿到指纹、探到编码器):最多 `measureReadyMs`,等不到这张卡归闲时
+    // Wait for this page to become a node (obtain fingerprint, probe encoder): at most
+    // `measureReadyMs`; if timed out, this card is deferred to idle time.
     const readyBy = deps.now() + measureReadyMs;
     for (;;) {
       let ok = false;
@@ -561,12 +724,13 @@ export function createPageStreams(deps: PageStreamsDeps): PageStreams {
       await nextTick();
       if (m.done) return "stopped";
     }
-    // 这一份记账:同一个项目、同一版接着用(这一轮里一张卡一张卡地加);清单计划的那一份在的话先停掉、换下
+    // This accounting record: reused for same project and revision (cards added one by one in this
+    // round); if manifest plan's record exists, stop and replace it first.
     const id = `measure:${req.projectId}@${req.projectRev}`;
     if (!ctx || !ctx.measure || ctx.plan.id !== id) {
       if (run) {
         stopRun("measure", true);
-        // 等它收尾(中止之后马上回)
+        // Wait for it to finalize (returns immediately after abort).
         for (let i = 0; run && i < 40; i++) { await nextTick(); if (m.done) return "stopped"; }
         if (run) return "busy";
       }
@@ -601,10 +765,12 @@ export function createPageStreams(deps: PageStreamsDeps): PageStreams {
         if (found.own) { m.out.have++; await syncRows(c); if (m.done) return "stopped"; } else m.out.elsewhere++;
         continue;
       }
-      // 开工前把这一行写进层表(本页的在线来源、别的页面据此找这条流的清单)
+      // Write this row into the layer table before starting work (this page's online source and other
+      // pages locate this stream's manifest from it).
       if (!c.mine.has(job.spec.streamKey)) { c.mine.add(job.spec.streamKey); await syncRows(c); if (m.done) return "stopped"; }
       if (ctx !== c) return "interrupted";
-      // 写的时候发现别人整条产好了:这一段下一次先查会认它,这里不产
+      // Found someone else fully produced it while writing: next pre-check will recognize it for this
+      // segment; do not produce here.
       if (!c.mine.has(job.spec.streamKey)) continue;
       if (run) return "busy";
       if (isLow()) {
@@ -627,7 +793,8 @@ export function createPageStreams(deps: PageStreamsDeps): PageStreams {
       if (ctx !== c) return "interrupted";
       if ((job.state as TaskState) === "produced") { m.out.produced++; m.out.left--; await syncRows(c); if (m.done) return "stopped"; continue; }
       if ((job.state as TaskState) === "have" || (job.state as TaskState) === "elsewhere") { m.out.left--; continue; }
-      // 没做成(页面隐藏中止、舞台出错):这张卡剩下的归闲时
+      // Failed (aborted due to page hidden, stage error): remaining work for this card is deferred to
+      // idle time.
       failed = true;
       break;
     }
@@ -637,7 +804,7 @@ export function createPageStreams(deps: PageStreamsDeps): PageStreams {
   return {
     tick() {
       const now = deps.now();
-      // 测量时在等的那一次:时钟到头、这一轮作废,当场回
+      // The invocation waiting during measurement: clock expired, this round invalidated, returns immediately.
       const m = measuring;
       if (m && clock && now - clock.startedAt >= measureMaxMs) cutMeasure(m, "deadline");
       else if (m) { let stale = false; try { stale = m.req.stale?.() === true; } catch { stale = false; } if (stale) cutMeasure(m, "stale"); }
@@ -645,32 +812,35 @@ export function createPageStreams(deps: PageStreamsDeps): PageStreams {
       const plan = deps.plan();
       let capable = false;
       try { capable = deps.capable() === true; } catch { capable = false; }
-      // 测量时的那一份记账:清单计划发出来之前留着(没有计划不算「不产」);在等的那一次没回之前也不换
+      // Accounting record during measurement: kept until manifest plan is published (no plan does not
+      // count as "not producing"); not replaced before waiting invocation returns.
       const mc = ctx?.measure ? ctx : null;
       if (mc && capable && (measuring || !plan || plan.projectId !== mc.plan.projectId || plan.at < mc.plan.at)) {
         const r = run;
         if (r && r.yieldAt !== null && now - r.yieldAt >= YIELD_FRAME_MAX_MS && !r.controller.signal.aborted) r.controller.abort();
-        // 本页的那几行还在不在层表里(同下)
+        // Whether this page's rows are still in the layer table (same as below).
         if (!measuring && !working && mc.mine.size && now - mc.rowsAt >= rowsMs) { working = true; void syncRows(mc).finally(() => { working = false; }); }
         return;
       }
       if (!plan || !capable) { if (ctx || run) drop(!plan ? "no-plan" : "incapable"); return; }
       if (!ctx || ctx.plan.id !== plan.id) {
-        // 换了一版(或清单变了):旧一版在产的马上停(那一版的流多半已经过期)
+        // Switched to a new revision (or manifest changed): immediately stop production for old revision
+        // (streams for that revision are likely already stale).
         if (run) stopRun("plan-changed", true);
         ctx = newCtx(plan, false);
       }
       const c = ctx;
       const r = run;
-      // 让路之后当前帧迟迟做不完(播放、拖动时后台活的门关了):不再等,中止
+      // Current frame delayed too long after yielding (gate for background work closed during
+      // playback/scrubbing): do not wait any longer, abort.
       if (r && r.yieldAt !== null && now - r.yieldAt >= YIELD_FRAME_MAX_MS && !r.controller.signal.aborted) r.controller.abort();
       if (!c.specs) { if (!working && now - c.specsAt >= 1000) void loadSpecs(c); return; }
       if (!c.jobs.length) return;
       const pending = c.jobs.some((j) => j.state === "todo");
-      // 没活了就不再问队列(一条消息也不多发)
+      // No more work, stop querying queue (do not send a single extra message).
       if (pending || r) pollPlan(c);
       if (taken(c)) { if (r) stopRun("splitter"); return; }
-      // 本页的那几行还在不在层表里(后写的会盖掉先写的)
+      // Whether this page's rows are still in the layer table (later writes overwrite earlier writes).
       if (!working && c.mine.size && now - c.rowsAt >= rowsMs) { working = true; void syncRows(c).finally(() => { working = false; }); return; }
       if (r) { recheck(c, r); return; }
       if (!pending || working) return;
@@ -693,7 +863,7 @@ export function createPageStreams(deps: PageStreamsDeps): PageStreams {
       mstats.calls++;
       const blank = (result: MeasureOutcome["result"]): MeasureOutcome => { bump(mstats.results, result); return { result, produced: 0, have: 0, elsewhere: 0, left: 0 }; };
       if (measuring) return Promise.resolve(blank("busy"));
-      // 这一轮遮罩的时钟:第一次等稀疏版起算
+      // Clock for this round of overlay: starts counting from first time waiting for sparse version.
       if (!clock || clock.round !== req.round) {
         clock = { round: req.round, startedAt: now };
         Object.assign(mstats, { round: req.round, startedAt: now, deadlineAt: now + measureMaxMs });

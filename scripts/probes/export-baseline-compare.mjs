@@ -1,57 +1,67 @@
 /*
- * 全长导出逐字节相同 —— 基线对账探针(C1「挂载算式统一」/ H7 的验收工具)
+ * Full-length export byte-for-byte identical: baseline reconciliation probe
+ * (acceptance check tool for C1 "Unified Mount Formulas" / H7)
  *
- * 干两件事:
- *   1. run     —— 在指定的仓库树里跑一趟**全长** PNG 导出(不出视频),产物是 <out>/frames/%06d.png;
- *   2. compare —— 把两个 frames 目录逐帧比 sha256,报第一处不同、并对不同的帧数像素差。
+ * Does two things:
+ *   1. run     : runs one pass of **full-length** PNG export in the specified repository tree
+ *                (no video), outputting to <out>/frames/%06d.png;
+ *   2. compare : compares two frames directories frame-by-frame via sha256, reports the first
+ *                difference, and counts pixel differences on differing frames.
  *
- * 为什么 run 要带 --tree:基线跑的必须是 **HEAD 那棵树自己的** scripts/export-frames.mjs(引擎在 server/bakery/)(引擎在 server/bakery/)
- * (这次重构改的就是它),拿工作树的脚本去渲基线就不是 apples-to-apples 了。
- * 所以 run 只负责 `node scripts/export-frames.mjs …`,cwd 指到哪棵树就用哪棵树的代码。
- * cwd 还决定素材目录:server/bakery/media.mjs 的 mediaRootDir() = <cwd>/out/media
- * (PROMPTCUT_EXPORT_DIR 没设时),/@media/<文件名> 两边都得有那份文件。
+ * Why run requires --tree: the baseline must run **HEAD tree's own** scripts/export-frames.mjs
+ * (engine in server/bakery/)(engine in server/bakery/) (which is what this refactor modifies);
+ * rendering the baseline with the working tree's script wouldn't be apples-to-apples.
+ * So run is only responsible for `node scripts/export-frames.mjs …`; whichever tree cwd points to,
+ * that tree's code is used.
+ * cwd also determines the asset directory: mediaRootDir() in server/bakery/media.mjs = <cwd>/out/media
+ * (when PROMPTCUT_EXPORT_DIR is unset); both sides must have that file at /@media/<filename>.
  *
- * ───────────── 这一轮实际跑的命令(照抄即可复现) ─────────────
+ * ───────────── Commands actually run in this round (copy verbatim to reproduce) ─────────────
  *
- * 前置:
- *   # 1) HEAD 的工作树(不动主树的 git 状态)
+ * Prerequisites:
+ *   # 1) HEAD working tree (leaves main tree git state untouched)
  *   git worktree add <scratch>/pc-head 0ba58cb
  *   cmd /c mklink /J <scratch>\pc-head\node_modules C:\Users\admin\Documents\PromptCut\node_modules
- *   # 2) 素材(ffmpeg testsrc2),两棵树的 out/media 各放一份,按文件名取
+ *   # 2) Assets (ffmpeg testsrc2): place one copy in each tree's out/media, fetched by filename
  *   ffmpeg -f lavfi -i "testsrc2=s=320x180:r=30:d=8" -c:v libx264 -pix_fmt yuv420p -g 30 -y pc-baseline-fixture.mp4
- *   cp pc-baseline-fixture.mp4 <主树>/out/media/ ; cp pc-baseline-fixture.mp4 <scratch>/pc-head/out/media/
- *   # 3) 两台 dev server(避开用户的 5190 / 5197;TEMP 指到 scratch,别覆盖全局 port.json)
+ *   cp pc-baseline-fixture.mp4 <main-tree>/out/media/ ; cp pc-baseline-fixture.mp4 <scratch>/pc-head/out/media/
+ *   # 3) Two dev servers (avoid user's 5190 / 5197; point TEMP to scratch, avoid overwriting global port.json)
  *   cd <scratch>/pc-head && TEMP=<scratch>/tmp-head TMP=<scratch>/tmp-head npx vite --port 5215 --strictPort --host 127.0.0.1
- *   cd <主树>          && TEMP=<scratch>/tmp-work TMP=<scratch>/tmp-work npx vite --port 5216 --strictPort --host 127.0.0.1
- *   curl -o /dev/null -w "%{http_code}\n" http://127.0.0.1:5215/@media/pc-baseline-fixture.mp4   # 两边都要 200
+ *   cd <main-tree>       && TEMP=<scratch>/tmp-work TMP=<scratch>/tmp-work npx vite --port 5216 --strictPort --host 127.0.0.1
+ *   curl -o /dev/null -w "%{http_code}\n" http://127.0.0.1:5215/@media/pc-baseline-fixture.mp4   # both sides must return 200
  *
- * 基线(HEAD 那棵树的脚本 + 5215):
+ * Baseline (HEAD tree script + 5215):
  *   node scripts/probes/export-baseline-compare.mjs run \
  *     --tree <scratch>/pc-head --origin http://127.0.0.1:5215 \
  *     --project <scratch>/export-fixture/project.json --out <scratch>/export-fixture/baseline
  *
- * 候选(工作树的脚本 + 5216):
+ * Candidate (working tree script + 5216):
  *   node scripts/probes/export-baseline-compare.mjs run \
  *     --origin http://127.0.0.1:5216 \
  *     --project <scratch>/export-fixture/project.json --out <scratch>/export-fixture/candidate
  *
- * 比对(不同即退出码 1):
+ * Compare (exit code 1 if different):
  *   node scripts/probes/export-baseline-compare.mjs \
  *     --baseline <scratch>/export-fixture/baseline/frames \
  *     --candidate <scratch>/export-fixture/candidate/frames
  *
- * run 之后接着比,一条命令也行:run 里同时给 --baseline。
+ * Comparing immediately after run in a single command is also supported: provide --baseline to run as well.
  *
- * ───────────── 对账口径(docs/guides/compare-pitfalls.md)─────────────
- * - 验收口径是**逐字节**(sha256):PNG 的字节相同 ⟹ 像素相同。像素差只在不同的帧上再算一次,
- *   用来区分「抗锯齿末位差几个像素」和「真的画错了」——两者都算不通过,但结论不一样。
- * - 两边必须同 fps、同分片数、同一条动画路径。这里一律 --workers 1:分片计划(shardPlan)
- *   本身也在重构范围内,分片数不同会把「分片边界重挂载」的差异混进来。
- * - --no-video:验收比的是帧,不是编码产物;ffmpeg / prores 不进对账。
- * - Chrome 参数(--disable-gpu、--font-render-hinting=none、软件光栅化…)都在 server/bakery/chrome.mjs
- *   的 CHROME_ARGS 里,两棵树各自用自己的那份——这正是要比的东西之一,不要在这里覆盖。
+ * ───────────── Reconciliation criteria (docs/guides/compare-pitfalls.md) ─────────────
+ * - Acceptance criteria is **byte-for-byte** (sha256): identical PNG bytes ⟹ identical pixels.
+ *   Pixel differences are recalculated only on differing frames to distinguish between "last-digit
+ *   anti-aliasing differing by a few pixels" and "genuinely drawn wrong": both count as failure,
+ *   but the conclusions differ.
+ * - Both sides must have identical fps, shard count, and animation path. Use --workers 1 across the
+ *   board here: the sharding plan (shardPlan) itself is also within the refactor scope, and differing
+ *   shard counts would introduce differences from "remounting at shard boundaries".
+ * - --no-video: acceptance checks compare frames, not encoded outputs; ffmpeg / prores are not part
+ *   of reconciliation.
+ * - Chrome flags (--disable-gpu, --font-render-hinting=none, software rasterization, etc.) are all
+ *   in CHROME_ARGS in server/bakery/chrome.mjs; each tree uses its own copy: this is one of the
+ *   things being compared, so do not override them here.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -84,13 +94,13 @@ function parseArgs(argv) {
   return opts;
 }
 
-/** 导出页地址:项目用 data: URL 带进去,和 scripts/verify-*.mjs 一个写法 */
+/** Export page URL: project is passed in via data: URL, same pattern as scripts/verify-*.mjs */
 export function exportUrlOf(origin, project) {
   const timeline = 'data:application/json,' + encodeURIComponent(JSON.stringify(project));
   return `${origin.replace(/\/$/, '')}/?export=1&timeline=${encodeURIComponent(timeline)}`;
 }
 
-/** 跑一趟全长 PNG 导出。cwd = 哪棵树,就用哪棵树的 scripts/export-frames.mjs 和 out/media */
+/** Run one pass of full-length PNG export. Whichever tree cwd points to, use that tree's scripts/export-frames.mjs and out/media */
 export async function runExport({ tree, origin, project, out, fps, workers, frames }) {
   const proj = JSON.parse(await fsp.readFile(project, 'utf8'));
   const url = exportUrlOf(origin, proj);
@@ -117,7 +127,7 @@ export async function runExport({ tree, origin, project, out, fps, workers, fram
 
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
-/** 给的是 <out> 还是 <out>/frames 都认 */
+/** Accepts either <out> or <out>/frames */
 function framesDirOf(dir) {
   if (!fs.existsSync(dir)) throw new Error('Directory does not exist:' + dir);
   const hasPng = fs.readdirSync(dir).some((f) => /\.(png|jpe?g|webp)$/i.test(f));
@@ -131,7 +141,7 @@ async function listFrames(dir) {
   return names;
 }
 
-/** 两张 PNG 的像素差。返回不同像素数、最大通道差、以及第一处不同的坐标 */
+/** Pixel difference between two PNGs. Returns differing pixel count, max channel difference, and first differing coordinates */
 async function pixelDiff(fileA, fileB) {
   const { PNG } = await import('pngjs');
   let a, b;

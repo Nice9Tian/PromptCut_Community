@@ -1,6 +1,8 @@
 /**
- * 过期的云端项目转成本地项目(`cloudGone.ts`)与它的出处记录、转换通知(`recoveryAssociation.ts`)。
- * 对应 `docs/plan/account-binding-task.md`「逐项验收」的「过期云端项目转本地」一行里不需要页面的部分。
+ * Converting expired cloud projects to local projects (`cloudGone.ts`), along with their origin
+ * records and conversion notifications (`recoveryAssociation.ts`).
+ * Corresponds to the part not requiring a page in the "Convert expired cloud project to local" row
+ * of "Itemized acceptance checks" in `docs/plan/account-binding-task.md`.
  */
 import { srcUrl } from "../../testing/registerTs.mjs";
 import test from "node:test";
@@ -72,7 +74,7 @@ test("association after conversion: the current association is cleared, and save
   assert.equal(R.currentAssociation(), null); assert.equal(R.isRecoveringAssociation(), false);
 });
 
-/* ---------------- 转换之前并入这台设备上没发出去的离线修改 ---------------- */
+/* ---------------- Merge unsent offline modifications from this device before conversion ---------------- */
 
 const { restoreOfflineEdits } = await import(srcUrl("editor/sync/cloudGone.ts"));
 const { DocSync } = await import(srcUrl("store/docsync.ts"));
@@ -80,12 +82,14 @@ const { createEmptyProject } = await import(srcUrl("kernel/project.ts"));
 const docCopy = (initial) => new DocSync(initial, { projectId: room, session: "gone-test", initialize: false, send: () => {}, saveBackup: () => {} });
 
 test("edited offline and not saved as a copy: the converted local project contains those edits", async () => {
-  // 上一次打开:连着云端时断了线,离线改了名字和时长,记进本机的恢复数据
+  // Last opened: disconnected while connected to cloud, changed name and duration offline, recorded
+  // into local recovery data
   const file = { ...createEmptyProject("Name in the file"), id: "old-content-id" };
   const before = docCopy(file); before.connect(); before.receive({ type: "project.state", projectId: room, project: file, rev: 4 }); before.disconnect();
   before.commit({ ...before.project, name: "Name changed offline", duration: 42 });
   const journal = JSON.parse(JSON.stringify(before.recoveryJournal()));
-  // 这一次打开:云端项目已被清掉,一上来就拿到了证明,这时手上只有文件内容
+  // Opened this time: cloud project was purged, proof obtained immediately, only file content is
+  // available at this point
   const kept = { ds: docCopy(file), restored: false };
   assert.equal(kept.ds.project.name, "Name in the file");
   let reads = 0;
@@ -93,7 +97,7 @@ test("edited offline and not saved as a copy: the converted local project contai
   assert.equal(how, "restored"); assert.equal(reads, 1);
   const out = convertGoneProject(kept.ds.project, descriptor, proof, { newId: () => "new-local-id" });
   assert.equal(out.project.name, "Name changed offline"); assert.equal(out.project.duration, 42); assert.equal(out.project.id, "new-local-id");
-  // 不先并进来的话(改之前的做法)拿到的只是文件内容
+  // If not merged in first (behavior before the change), only file content is obtained
   assert.equal(convertGoneProject(docCopy(file).project, descriptor, proof).project.name, "Name in the file");
 });
 

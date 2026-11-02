@@ -1,17 +1,18 @@
 import { useSyncExternalStore } from "react";
 
 /**
- * 左右两条竖向 rail 旁边的抽屉 / 面板是否收起。
- * Editor.tsx 按它算两侧列宽;rail 上点已选中的项时切换,外部要把面板拉出来时直接设 false。
+ * Whether the drawer / panel beside the left and right vertical rails is collapsed.
+ * Editor.tsx uses it to compute the column widths on both sides; clicking an already selected item
+ * on a rail toggles it, and to pull a panel out from outside, set it to false directly.
  */
 export type RailSide = "left" | "right";
 
-/** rail 本身的宽度(px),和 studio.css 里的 --ui-rail-w 对应 */
+/** Width of the rail itself (px), corresponds to --ui-rail-w in studio.css */
 export const RAIL_W = 64;
 
 const keyOf = (side: RailSide) => `pc.rail.${side}.collapsed`;
 
-/** 从 localStorage 读取初始收起状态(带异常保护) */
+/** Read the initial collapsed state from localStorage (with exception guard) */
 function readInitial(side: RailSide): boolean {
   try {
     return localStorage.getItem(keyOf(side)) === "1";
@@ -22,12 +23,12 @@ function readInitial(side: RailSide): boolean {
 const collapsed: Record<RailSide, boolean> = { left: readInitial("left"), right: readInitial("right") };
 const listeners = new Set<() => void>();
 
-/** 当前是否收起 */
+/** Whether it is currently collapsed */
 export function isRailCollapsed(side: RailSide): boolean {
   return collapsed[side];
 }
 
-/** 设置收起状态并持久化至 localStorage */
+/** Set the collapsed state and persist it to localStorage */
 export function setRailCollapsed(side: RailSide, value: boolean): void {
   if (collapsed[side] === value) return;
   collapsed[side] = value;
@@ -39,12 +40,12 @@ export function setRailCollapsed(side: RailSide, value: boolean): void {
   }
 }
 
-/** 收起 ↔ 展开 */
+/** Collapsed ↔ expanded */
 export function toggleRailCollapsed(side: RailSide): void {
   setRailCollapsed(side, !collapsed[side]);
 }
 
-/** 订阅任一侧的收起状态变化 */
+/** Subscribe to collapsed-state changes on either side */
 export function subscribeRails(fn: () => void): () => void {
   listeners.add(fn);
   return () => {
@@ -52,7 +53,7 @@ export function subscribeRails(fn: () => void): () => void {
   };
 }
 
-/** React hook:某一侧是否收起 */
+/** React hook: whether one side is collapsed */
 export function useRailCollapsed(side: RailSide): boolean {
   return useSyncExternalStore(subscribeRails, () => collapsed[side], () => false);
 }

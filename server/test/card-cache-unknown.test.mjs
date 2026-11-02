@@ -1,13 +1,20 @@
 /**
- * 未知卡片(预渲染间的注册表里查不到定义的卡片段)不进卡片计划(`CardFrameCache.plan()`),预渲染进程不为它排任何活。
- * 跑:node --test server/test/card-cache-unknown.test.mjs
+ * Unknown cards (card clips whose definition cannot be found in the prerender registry) do not
+ * enter the card plan (`CardFrameCache.plan()`), and the prerender process schedules no work for them.
+ * Run: node --test server/test/card-cache-unknown.test.mjs
  *
- *   CU-01 同一个项目带或不带一个未知卡片段:其余片段的控件(`key` / `contentKey` / `snapshotKey` / `cacheContentKey` /
- *         `costKey` / 结果键)逐字相同;未知卡片段没有控件
- *   CU-02 未知卡当别的卡的输入(素材效果卡滤镜吃它的输出):那张卡照常有控件,键与不跳过时逐字相同
- *   CU-03 预渲染集合(`prerenderSetOfPlan`,两条路:没有成本记录按声明、有成本记录按分派表)不含未知卡片段;
- *         不带 `unknownClipIds`(旧行为)时它按「没有定义」的缺省能力(stateful、要预渲染)判重 —— 这就是修掉的副作用
- *   CU-04 接线:导出页的 `__pcCardPlan` 带上 `unknownClipIds`(注册表的 `unknownCardClipIds`)
+ *   CU-01  The same project with or without an unknown card clip: controls (`key` / `contentKey` /
+ *          `snapshotKey` / `cacheContentKey` / `costKey` / result key) of remaining clips are
+ *          verbatim identical; unknown card clips have no controls
+ *   CU-02  Unknown card as input to another card (media effect card filter consumes its output):
+ *          that card has controls as usual, with keys verbatim identical to when not skipped
+ *   CU-03  Prerender set (`prerenderSetOfPlan`, two paths: fallback by declaration when no cost
+ *          record, by dispatch table when cost record exists) excludes unknown card clips; without
+ *          `unknownClipIds` (legacy behavior), it was classified as heavy using the default
+ *          capability of "no definition" (stateful, requires prerendering): this is the fixed
+ *          side effect
+ *   CU-04  Wiring: `__pcCardPlan` on the export page includes `unknownClipIds`
+ *          (`unknownCardClipIds` in the registry)
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -38,7 +45,8 @@ function project({ unknown = false, consumer = false } = {}) {
   if (unknown) tracks.push({ id: 't-x', name: 'x', clips: [{ id: 'x', cardId: 'nobody', start: 0, end: 4, params: { text: 'hi' } }] });
   const p = { version: 1, id: 'p', name: 'p', width: 640, height: 360, fps: 30, duration: 4, media: [], tracks };
   if (consumer) {
-    // 素材效果卡滤镜吃未知卡片段的输出(`@clip/x/source`),另一个片段 f 指向这个滤镜节点
+    // Media effect card filter consumes output of unknown card clip (`@clip/x/source`), another clip f
+    // points to this filter node
     p.cardNodes = [{ id: 'n-f', adapter: 'card', cardId: 'gfx', kind: 'filter', inputs: { source: { nodeId: '@clip/x/source' } }, params: { amount: 0.5 } }];
     tracks.push({ id: 't-f', name: 'f', clips: [{ id: 'f', nodeId: 'n-f', start: 0, end: 4, params: { amount: 0.5 } }] });
   }
@@ -69,7 +77,7 @@ test('CU-01 with or without one unknown card clip: the keys of the remaining cli
   assert.deepEqual(Object.keys(withX).sort(), ['a', 'b'], 'unknown card clip x produces no controls');
   assert.deepEqual(withX, without, 'remaining clips: key / contentKey / snapshotKey / cacheContentKey / costKey / result key are identical verbatim');
   for (const c of Object.values(withX)) for (const k of ['key', 'contentKey', 'snapshotKey', 'resultKey']) assert.match(c[k], /^[0-9a-f]+/, `${c.clipId}.${k}`);
-  // 不跳过(旧行为)时 x 有控件、别的卡也照旧:跳过只少了 x 这一项
+  // When not skipped (legacy behavior), x has controls and other cards remain unchanged: skipping only omits x
   const old = byClip(planOf(project({ unknown: true }), false));
   assert.deepEqual(Object.keys(old).sort(), ['a', 'b', 'x']);
   const { x: _x, ...rest } = old;
@@ -91,10 +99,10 @@ test('CU-03 the prerender set does not include the unknown card clip (two paths:
   const p = project({ unknown: true });
   const plan = planOf(p);
   const old = planOf(p, false);
-  // 没有成本记录:按声明兜底
+  // No cost record: fallback by declaration
   assert.equal(prerenderSetOfPlan(old, { fps: 30, costs: [] }).has('x'), true, 'old behavior: with no definition, classified as heavy by stateful / needs prerender (the side effect that was fixed)');
   assert.equal(prerenderSetOfPlan(plan, { fps: 30, costs: [] }).has('x'), false, 'no cost records: does not include the unknown card clip');
-  // 有成本记录(别的卡测过,未知卡没有记录):按分派表
+  // Has cost record (tested on other cards, unknown card has no record): by dispatch table
   const costs = plan.map((c) => ({ identityKey: c.costKey, fps: 30, device: 'd', measuredAt: 1, stepMs: 0.3, kind: 'random', catchUpMs: 0.3, seekOk: true, seekMs: 0.3 }));
   assert.equal(prerenderSetOfPlan(old, { fps: 30, costs }).has('x'), true, 'old behavior: with no record, classified as heavy by declaration');
   const set = prerenderSetOfPlan(plan, { fps: 30, costs });

@@ -2,41 +2,56 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 /**
- * 帧管线的素材戳(`_frameSourceStamp`):`FramePipeline.entry()` 把它塞进每条素材记录,
- * `frameIdentity` 按它算整场景键 —— 素材的字节变了,键就得变,旧的帧库条目才不会被当成新的命中。
+ * Frame pipeline asset stamp (`_frameSourceStamp`): `FramePipeline.entry()` embeds it into each
+ * asset record, and `frameIdentity` uses it to compute the whole scene key: if asset bytes change,
+ * the key must change so old frame store entries are not mistaken for hits on new ones.
  *
- * **预渲染进程不直接读素材服务的存储目录**(`docs/semantics/product/asset-service.md`「职责」
- * 第三条;`docs/semantics/product/rendering.md`「重管线:预渲染」)。以前这里按
- * `card-media-path.mjs` 把 URL 换成本地路径再 `fs.stat`,用 `${size}:${mtimeMs}` 当戳;现在:
+ * **The prerender process does not directly read the asset service storage directory**
+ * (`docs/semantics/product/asset-service.md` "Responsibilities" item 3;
+ * `docs/semantics/product/rendering.md` "Heavy pipeline: prerender"). Previously this converted
+ * URLs to local paths per `card-media-path.mjs` and ran `fs.stat`, using `${size}:${mtimeMs}` as
+ * the stamp; now:
  *
- *   - **有内容哈希的**(`m.hash`,或 `url` 是 `/@media/<hash>[.ext]`):戳就是哈希。按哈希寻址的内容
- *     写入后不可变,哈希相同字节就相同,不用问任何人。
- *   - **没有哈希的**(迁移期按文件名存的 `/@media/<文件名>`、老 `.proc` 的 `path` /
- *     `/api/media/file?path=`):向素材服务发 `HEAD`,戳 = `Content-Length:Last-Modified`。
- *     素材服务不可达、`HEAD` 失败 → `'missing'`(和以前 stat 失败一样)。结果按 URL 缓存
- *     `MEDIA_STAMP_TTL_MS`,每次 `entry()` 不会对 N 条素材各发一次请求。
- *   - **`/@export/<id>/media/…`**:这一趟导出**自己的产物目录**(导出开始时从暂存区挪进
- *     `export-<id>/media/`,`vite-plugin-export.ts`),不是素材库里的内容,不归素材服务管 ——
- *     和导出页、`mux-audio.mjs` 一样照旧在本地 `stat`。
- *   - 其余(`blob:`、`data:`、外部 http 地址):不打戳,和以前一样。
+ *   - **Those with content hashes** (`m.hash`, or `url` is `/@media/<hash>[.ext]`):
+ *     the stamp is the hash. Content addressed by hash is immutable once written;
+ *     identical hashes mean identical bytes, no need to query anyone.
+ *   - **Those without hashes** (stored by filename during transition period as
+ *     `/@media/<filename>`, legacy `.proc` `path` / `/api/media/file?path=`): sends a `HEAD` to
+ *     the asset service, stamp = `Content-Length:Last-Modified`. If asset service is unreachable
+ *     or `HEAD` fails → `'missing'` (same as previous stat failures). Results are cached by URL
+ *     for `MEDIA_STAMP_TTL_MS`, avoiding sending separate requests for each of N assets on every
+ *     `entry()`.
+ *   - **`/@export/<id>/media/…`**: this export pass's **own artifact directory** (moved from
+ *     staging into `export-<id>/media/` when export begins, `vite-plugin-export.ts`), not content
+ *     in the media library and not managed by the asset service; locally `stat`ed as before, just
+ *     like the export page and `mux-audio.mjs`.
+ *   - Others (`blob:`, `data:`, external http URLs): not stamped, same as before.
  *
- * 地址怎么拼(哈希 → `/@media/<hash>`、老路径 → `/api/media/file?path=`、文件名 → `/@media/<文件名>`)
- * 不在这里重写一遍:由调用方注入 `mediaUrl(m)`(`vite-plugin-frames.ts` 传的是
- * `server/vision/ffmpeg-frames.ts` 的 `mediaSourceOf`,基址按 `server/asset-client.ts` 定)。
+ * How URLs are composed (hash → `/@media/<hash>`, legacy path → `/api/media/file?path=`,
+ * filename → `/@media/<filename>`) is not rewritten here: injected by the caller via `mediaUrl(m)`
+ * (`vite-plugin-frames.ts` passes `mediaSourceOf` from `server/vision/ffmpeg-frames.ts`, with the
+ * base URL determined by `server/asset-client.ts`).
  */
 
-/** HEAD 结果缓存多久。拖动时间轴每拍都会进一次 `entry()`,5 秒内同一条素材只问一次 */
+/**
+ * How long HEAD results are cached. Scrubbing the timeline enters `entry()` on every tick;
+ * the same asset is only queried once within 5 seconds
+ */
 export const MEDIA_STAMP_TTL_MS = 5000;
-/** 一次 HEAD 最多等多久;素材服务就在本机,正常几毫秒 */
+/**
+ * Maximum wait time for a single HEAD; the asset service is on the local machine, normally
+ * taking a few milliseconds
+ */
 export const MEDIA_STAMP_TIMEOUT_MS = 2000;
 
 const HASH = /^[0-9a-f]{64}$/;
 const HASH_NAME = /^([0-9a-f]{64})(?:\.[a-z0-9]+)?$/;
 
 /**
- * 素材的内容哈希:`m.hash`,或 `url` 是 `/@media/<hash>[.ext]`。按哈希寻址的内容写入后不可变,
- * 所以它可以直接当缓存键;没有哈希的(迁移期按文件名存的、老 .proc 的绝对路径)返回 null。
- * (`server/vision/ffmpeg-frames.ts` 从这里转出同名函数。)
+ * Content hash of an asset: `m.hash`, or `url` is `/@media/<hash>[.ext]`. Content addressed by hash
+ * is immutable once written, so it can be used directly as a cache key; returns null for assets
+ * without a hash (stored by filename during transition period, absolute paths in legacy .proc).
+ * (`server/vision/ffmpeg-frames.ts` re-exports the function with the same name from here.)
  */
 export function mediaHashOf(m) {
   const hash = String(m?.hash || '').toLowerCase();
@@ -48,8 +63,10 @@ export function mediaHashOf(m) {
 }
 
 /**
- * `/@export/<id>/media/<文件>` → 本地文件(这一趟导出自己的产物目录),越界或不是这种地址回 null。
- * `exportRoot` = 导出根目录(`PROMPTCUT_EXPORT_DIR`,缺省帧库目录的上一级 `out/`)。
+ * `/@export/<id>/media/<file>` → local file (the artifact directory of this export pass); returns
+ * null if out of bounds or not this kind of address.
+ * `exportRoot` = export root directory (`PROMPTCUT_EXPORT_DIR`, defaults to `out/`, parent of the
+ * frame store directory).
  */
 export function exportMediaFile(url, exportRoot) {
   const raw = String(url || '');
@@ -63,7 +80,7 @@ export function exportMediaFile(url, exportRoot) {
   return file.startsWith(base + path.sep) ? file : null;
 }
 
-/** 以前靠本地路径打戳的那几种地址 —— 只有它们要问素材服务 */
+/** URL types that previously relied on local paths for stamping: only these need to query the asset service */
 function needsServiceStamp(m) {
   if (m?.path) return true;
   const url = String(m?.url || '');
@@ -71,16 +88,16 @@ function needsServiceStamp(m) {
 }
 
 /**
- * 造一个打戳器。
+ * Creates a stamper.
  *
- *   `mediaUrl(m)`  → 素材服务上这条素材的绝对 HTTP 地址,取不到(素材服务不可达)回 null;
- *   `exportRoot()` → `/@export/` 地址落在哪个目录下;
- *   `fetch` / `now` / `ttlMs` 给单测替换。
+ *   `mediaUrl(m)`  → Absolute HTTP URL for this asset on the asset service; returns null if unreachable;
+ *   `exportRoot()` → Directory where `/@export/` URLs reside;
+ *   `fetch` / `now` / `ttlMs` substituted for unit testing.
  *
- * `stamp(m)` 回戳(字符串),不该打戳的回 undefined。
+ * `stamp(m)` returns a stamp (string); returns undefined if it should not be stamped.
  */
 export function createMediaStamper({ mediaUrl = () => null, exportRoot = () => null, fetch: doFetch = globalThis.fetch, now = Date.now, ttlMs = MEDIA_STAMP_TTL_MS, timeoutMs = MEDIA_STAMP_TIMEOUT_MS, ownership = null } = {}) {
-  /** url → { at, value: Promise<string> } —— 存 Promise,同一时刻的并发请求共用一次 HEAD */
+  /** url → { at, value: Promise<string> }: stores a Promise so concurrent requests at the same time share a single HEAD */
   const cache = new Map();
   const head = url => {
     const hit = cache.get(url);
@@ -93,7 +110,7 @@ export function createMediaStamper({ mediaUrl = () => null, exportRoot = () => n
       } catch { return 'missing'; }
     })();
     cache.set(url, { at: now(), value });
-    // 过期的条目顺手清掉,别让一个长跑的预渲染进程把每个见过的地址都攒着
+    // Clean up expired entries along the way, avoiding having a long-running prerender process accumulate every URL it has seen
     if (cache.size > 256) for (const [key, entry] of cache) if (now() - entry.at >= ttlMs) cache.delete(key);
     return value;
   };
@@ -113,7 +130,7 @@ export function createMediaStamper({ mediaUrl = () => null, exportRoot = () => n
       if (!url) return 'missing';
       return head(url);
     },
-    /** 诊断 / 单测:缓存里有几条 */
+    /** Diagnostics / unit tests: number of entries in the cache */
     get size() { return cache.size; },
   };
 }

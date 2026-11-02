@@ -1,22 +1,36 @@
 /**
- * 仅供测试与本机验证，生产代码不得引用。
+ * For testing and local verification only; production code must not reference this.
  *
- * 会话网关：一个**测试用的最小会话服务端桩**，照契约 `docs/plan/http-transport-contract.md` 第 3、4.1、4.2、5、16 节
- * 与测试方 `server/test/ht-kit.mjs` 的假设（H3～H6）讲会话，在它背后为每个会话开一条旧式（不带会话项）的 WebSocket
- * 连到真的文档服务。这样客户端会话层（`server/render-node/session-link.mjs`）能在服务端会话层（`claude/http-transport`）
- * 合入之前对着真的业务模块测「传输断了接续、两边补发、核心不见断开」。它不是服务端会话层的实现，也不替代它。
+ * Session gateway: a **minimal test session server stub** that speaks session per contract
+ * `docs/plan/http-transport-contract.md` Sections 3, 4.1, 4.2, 5, and 16 and assumptions (H3 to H6)
+ * of tester `server/test/ht-kit.mjs`, opening a legacy WebSocket (without session items) behind it
+ * for each session to connect to the real document service. This allows client session layer
+ * (`server/render-node/session-link.mjs`) to test "resuming when transport drops, retransmitting
+ * from both sides, disconnecting when core is gone" against real business modules before server
+ * session layer (`claude/http-transport`) is merged. It is not an implementation of server session
+ * layer, nor does it replace it.
  *
- *   - 建会话：列表里有 `promptcut.session.new`，去掉它把其余项原样交给上游握手；上游连上才回 101，
- *     随后发 `session.welcome { sid, resumed: false, ack: 0, retainMs, transport: 'ws' }`；上游握手被拒就回 401。
- *   - 接续：`promptcut.session.<sid>.<ack>`：先接受升级，会话在就挂上（旧传输以 4009 关）、按 ack 释放、发 welcome
- *     （`resumed: true`、`ack` 为已收全的客户端最大 seq）再按原 seq 补发；不在：结束过（墓碑）以 4410 关，否则 4404。
- *   - 序号与确认：两个方向照第 3.3 节；控制消息 `session.ack`、`session.close`；跳号 1002 `bad-seq`。
- *   - 传输断开：脱开，保留 `retainMs`，期满结束会话（关上游、立墓碑）。上游关了：会话以上游的关闭码结束。
- *   - 不带会话项的旧客户端（契约第 3.6 节）：升级请求原样转给上游（TCP 直通）。
- *   - 给了 `httpUpstream`：普通 HTTP 请求（共享项目的挑战、建项目）原样转给它，页面与探针可以把网关当文档服务地址用。
- *   - `cutAll()`：从服务端这头掐断全部客户端传输（不发关闭帧）；`onForward(msg)`：每条转给上游的业务消息。
+ *   - Create session: if `promptcut.session.new` is in list, strip it and pass remaining items
+ *     as-is to upstream handshake; only respond with 101 once upstream connects, then send
+ *     `session.welcome { sid, resumed: false, ack: 0, retainMs, transport: 'ws' }`; respond with
+ *     401 if upstream handshake is rejected.
+ *   - Resume: `promptcut.session.<sid>.<ack>`: accept upgrade first; if session exists, attach
+ *     it (close old transport with 4009), release up to ack, send welcome (`resumed: true`, `ack`
+ *     is largest client seq received in full), and retransmit by original seq; if absent: close
+ *     with 4410 if previously ended (tombstone), otherwise 4404.
+ *   - Sequence numbers and acks: both directions per Section 3.3; control messages `session.ack`,
+ *     `session.close`; skipped sequence 1002 `bad-seq`.
+ *   - Transport disconnected: detach, retain for `retainMs`, and end session when expired (close
+ *     upstream, record tombstone). Upstream closed: session ends with upstream close code.
+ *   - Legacy client without session items (contract Section 3.6): pass upgrade request through
+ *     to upstream as-is (TCP passthrough).
+ *   - Given `httpUpstream`: pass ordinary HTTP requests (shared project challenge, create project)
+ *     through to it as-is; pages and probes can use gateway as document service address.
+ *   - `cutAll()`: cut all client transports from this server side (without sending close frames);
+ *     `onForward(msg)`: each business message forwarded to upstream.
  *
- * 只引 Node 内置模块与 `../docservice/ws.mjs`；上游用 Node 内置的 `WebSocket`。
+ * Imports only Node built-in modules and `../docservice/ws.mjs`; upstream uses Node built-in
+ * `WebSocket`.
  */
 import http from 'node:http';
 import net from 'node:net';
@@ -29,7 +43,8 @@ const SESSION_PREFIX = 'promptcut.session.';
 
 /**
  * @param {object} o
- * @param {() => string} o.upstream  上游文档服务的 WebSocket 地址（函数：测试可以中途换）
+ * @param {() => string} o.upstream  WebSocket address of upstream document service (function:
+ *   tests can switch midway)
  * @param {number} [o.retainMs]
  * @param {number} [o.ackDelayMs]
  * @param {number} [o.ackEvery]
@@ -48,9 +63,9 @@ export async function startSessionGateway({ upstream, httpUpstream = null, retai
     tombstones.set(s.sid, { code, reason });
     clearTimeout(s.retainTimer);
     clearTimeout(s.ackTimer);
-    if (s.ws) { try { s.ws.close(code, reason); } catch { /* 已关 */ } }
+    if (s.ws) { try { s.ws.close(code, reason); } catch { /* Closed */ } }
     s.ws = null;
-    if (closeUpstream) { try { s.up.close(1000, 'session-ended'); } catch { /* 已关 */ } }
+    if (closeUpstream) { try { s.up.close(1000, 'session-ended'); } catch { /* Closed */ } }
     log('gw.end', { code, reason });
   }
 
@@ -86,7 +101,7 @@ export async function startSessionGateway({ upstream, httpUpstream = null, retai
       stats.superseded++;
       const old = s.ws;
       s.ws = null;
-      try { old.close(4009, 'superseded'); } catch { /* 已关 */ }
+      try { old.close(4009, 'superseded'); } catch { /* Closed */ }
     }
     clearTimeout(s.retainTimer);
     s.retainTimer = null;
@@ -110,8 +125,8 @@ export async function startSessionGateway({ upstream, httpUpstream = null, retai
       s.inAck = msg.seq;
       const { seq: _s, ack: _a, ...body } = msg;
       stats.fromClient++;
-      try { onForward?.(body); } catch { /* 观察者出错不影响转发 */ }
-      try { s.up.send(JSON.stringify(body)); } catch { /* 上游在关 */ }
+      try { onForward?.(body); } catch { /* Observer errors do not affect forwarding */ }
+      try { s.up.send(JSON.stringify(body)); } catch { /* Upstream is closing */ }
       s.inUnacked++;
       if (s.inUnacked >= ackEvery) sendAck(s);
       else if (!s.ackTimer) s.ackTimer = setTimeout(() => sendAck(s), ackDelayMs);
@@ -124,7 +139,8 @@ export async function startSessionGateway({ upstream, httpUpstream = null, retai
     });
   }
 
-  // 普通 HTTP 请求（共享项目的挑战、建项目等）：给了 `httpUpstream` 就原样转给它，否则 404
+  // Ordinary HTTP requests (shared project challenge, create project, etc.): forward as-is to
+  // `httpUpstream` if provided, otherwise 404
   const server = http.createServer((req, res) => {
     if (!httpUpstream) { res.writeHead(404); res.end(); return; }
     const target = new URL(req.url ?? '/', httpUpstream);
@@ -163,7 +179,8 @@ export async function startSessionGateway({ upstream, httpUpstream = null, retai
       return;
     }
     if (!items.includes(SESSION_NEW)) {
-      // 旧客户端（不带会话项，契约第 3.6 节）：原样转给上游，一条传输就是一个连接
+      // Legacy client (without session items, contract Section 3.6): forward as-is to upstream;
+      // one transport is one connection
       pipeUpgrade(req, socket, head, new URL(upstreamOf()));
       stats.legacy++;
       return;
@@ -184,7 +201,7 @@ export async function startSessionGateway({ upstream, httpUpstream = null, retai
     up.addEventListener('open', () => {
       settled = true;
       const ws = acceptUpgrade(req, socket, head, { maxPayload: 16 * 1024 * 1024, protocol: PROTOCOL });
-      if (!ws) { try { up.close(); } catch { /* 已关 */ } return; }
+      if (!ws) { try { up.close(); } catch { /* Closed */ } return; }
       sessions.set(s.sid, s);
       stats.opened++;
       log('gw.open', {});
@@ -207,13 +224,13 @@ export async function startSessionGateway({ upstream, httpUpstream = null, retai
     url: `ws://${host}:${server.address().port}/`,
     stats,
     sessions,
-    /** 从服务端这头掐断全部客户端传输（不发关闭帧，模拟网络断）；会话脱开、保留 */
+    /** Cut all client transports from server side (no close frames, simulating network drops); session detaches, retained */
     cutAll() {
       let n = 0;
       for (const s of sessions.values()) if (s.ws) { s.ws.terminate(); n += 1; }
       return n;
     },
-    /** 服务端主动结束某个会话（测 4003 等） */
+    /** Server actively ends a session (tests 4003, etc.) */
     endAll(code, reason) { for (const s of [...sessions.values()]) end(s, code, reason); },
     close() {
       for (const s of [...sessions.values()]) end(s, 1001, 'server shutting down');
@@ -223,8 +240,9 @@ export async function startSessionGateway({ upstream, httpUpstream = null, retai
 }
 
 /**
- * 把一个升级请求原样（TCP 直通）转给 `target`：路径换成 `target` 的，`Host` 换成它的；`protocols` 给了就改写
- * `Sec-WebSocket-Protocol`。回这一对连接（`{ a, b }`），调用方可以记下来掐断。
+ * Forwards an upgrade request as-is (TCP passthrough) to `target`: replaces the path with `target`'s,
+ * `Host` with its host; rewrites `Sec-WebSocket-Protocol` if `protocols` is given. Returns this pair
+ * of connections (`{ a, b }`), which caller can track and cut.
  */
 function pipeUpgrade(req, socket, head, target, protocols = null) {
   const up = net.connect(Number(target.port || 80), target.hostname);
@@ -249,9 +267,12 @@ function pipeUpgrade(req, socket, head, target, protocols = null) {
 }
 
 /**
- * 「旧服务端」前端：在（可能已经有会话层的）真文档服务前面去掉握手里的会话项再 TCP 直通，服务端于是把客户端
- * 当作旧客户端（契约第 3.6 节），客户端也就看不到 `session.welcome`——用来测客户端对没有会话层的旧服务端的退化，
- * 服务端会话层合入前后都成立。`cutAll()` 掐断现有连接（两头都断）。
+ * "Legacy server" front-end: strips session items from the handshake in front of the real document
+ * service (which may already have a session layer) and does TCP passthrough; server therefore treats
+ * client as a legacy client (contract Section 3.6), so client does not see `session.welcome`: used
+ * to test client degradation against a legacy server without a session layer, holding true both
+ * before and after server session layer merge. `cutAll()` cuts existing connections (disconnecting
+ * both ends).
  */
 export async function startLegacyFront({ upstream, port = 0, host = '127.0.0.1' } = {}) {
   const target = new URL(upstream);

@@ -1,25 +1,35 @@
 // First import protects user directories and the shared port file before any fixture import.
 import '../lib/no-user-dirs.mjs';
 /**
- * 氛围式「详细编辑」展开时，拓展栏里那块聊天面板怎么画的验收探针（issue #4，用户 2026-10-26 定）。
+ * Acceptance probe for rendering the chat panel in the side panel when Vibe mode "detail
+ * editing" is expanded (issue #4, user decision, 2026-10-26).
  *
- * 不接云端、不接项目、不挂真舞台：`src/start/extchat-harness.tsx` 用探针给的假消息把那条拓展栏单独画出来，
- * vite 中间件模式服务它（写法同 `mobile-agent-view-probe.mjs`）。
+ * No cloud connection, no project, no real stage mounted: `src/start/extchat-harness.tsx` renders
+ * that side panel in isolation using mock messages provided by the probe, served via Vite
+ * middleware mode (same approach as `mobile-agent-view-probe.mjs`).
  *
- *   node scripts/probes/vibe-ext-chat-probe.mjs [--out <截图目录>] [--port 5952]
- *   端口：分给本探针的 5950～5959
+ *   node scripts/probes/vibe-ext-chat-probe.mjs [--out <screenshot-dir>] [--port 5952]
+ *   Port: 5950-5959 assigned to this probe
  *
- * 验收（每项一行进最后那行 JSON 的 `fails`）：
- *   V1 只有**最新那一条 Agent 回复**留全文；其余 Agent 回复和全部用户气泡都收起来（`data-folded`）；
- *      全文那条上方标「最新一条回复」。
- *   V2 收起来的文字正好两行：气泡里那段话的可见高度 ≈ 2 行，且确实被截掉了一截。
- *   V3 收起来的那一轮「Agent 操作」整块折起来，另标一句「… 还有 N 条操作」，N 和这一轮的操作条数一致。
- *   V4 点一下收起来的气泡，只有它展开（`data-folded` 没了、操作卡出来），别的仍然收着。
- *   V5 「甲」：上面两段照常摊开，聊天面板吃掉这条栏剩下的高度（底边贴着栏的下内边距），
- *      输入框钉在面板自己的底部、就在面板里面。
- *   V6 一行说完的短句不摆出能点开的样子：收着（`data-folded`）但没有 `data-more`。
- *   V7 最窄 250px（`sideWidth.ts` 的 `EXT_WIDTH.min`）时不横向溢出、页面无报错。
- * 截图：`ext-chat-<宽度>.png`、`ext-chat-expanded.png`。最后一行是一行 JSON：{ ok, fails, ... }。退出码 0 过、1 不过。
+ * Acceptance (each item adds a line to `fails` in the final JSON line):
+ *   V1 Only the **latest Agent response** retains full text; remaining Agent responses and all
+ *      user bubbles are collapsed (`data-folded`); the full-text one is labeled "Latest response"
+ *      above.
+ *   V2 Collapsed text is exactly two lines: visible height of the text in the bubble is ~2 lines,
+ *      and is indeed truncated.
+ *   V3 The collapsed round of "Agent operations" is folded as a whole block, additionally labeled
+ *      "… N more operations", where N matches the number of operations in this round.
+ *   V4 Clicking a collapsed bubble expands only that bubble (`data-folded` removed, operation cards
+ *      displayed), while others remain collapsed.
+ *   V5 "Jia": top two sections are expanded as usual, chat panel consumes the remaining height of
+ *      this panel (bottom edge flush with panel bottom padding), and input box is pinned to the
+ *      bottom of the panel itself, inside the panel.
+ *   V6 Short sentences that fit in a single line do not appear clickable: collapsed (`data-folded`)
+ *      but without `data-more`.
+ *   V7 At minimum width 250px (`EXT_WIDTH.min` in `sideWidth.ts`), no horizontal overflow and no
+ *      page errors.
+ * Screenshots: `ext-chat-<width>.png`, `ext-chat-expanded.png`. The last line is a JSON line:
+ * { ok, fails, ... }. Exit code 0 for pass, 1 for fail.
  */
 import http from 'node:http';
 import fs from 'node:fs';
@@ -67,7 +77,7 @@ const server = http.createServer((req, res) => {
 });
 await new Promise((resolve, reject) => { server.once('error', reject); server.listen(PORT, '127.0.0.1', resolve); });
 
-/* ── 假消息:两轮带操作的回复,中间夹用户的话,最后一条用户消息只有一行 ── */
+/* -- Mock messages: two rounds of responses with operations, user text between; last user message is only one line -- */
 const now = Date.now();
 const tool = (name, input = {}, ok) => ({ kind: 'tool', name: `mcp__promptcut__${name}`, input, ...(ok === undefined ? {} : { ok }) });
 const say = (text) => tool('send_message', { to: 'user', text }, true);
@@ -99,7 +109,7 @@ try {
   const render = async (s) => { await page.evaluate((st) => window.__extChatHarness.render(st), s); await sleep(400); };
   const shot = (name) => page.screenshot({ path: path.join(OUT, `${name}.png`) });
 
-  /** 面板里每一条消息此刻长什么样 */
+  /** What each message in the panel currently looks like */
   const readRows = () => page.evaluate(() => [...document.querySelectorAll('[data-pc="start-ext-chat-msg"]')].map((row) => {
     const holder = row.querySelector('.ps-xbubble, .ps-xbody');
     const p = holder?.querySelector('.ps-xtext');
@@ -119,7 +129,7 @@ try {
     };
   }));
 
-  /* ================================================================ V1~V3、V6 */
+  /* ================================================================ V1-V3, V6 */
   await render({ ...base, width: 320 });
   await shot('ext-chat-320');
   {
@@ -149,7 +159,7 @@ try {
     check(rows[0].more === true && rows[0].cursor === 'zoom-in', 'V6 only the one that is actually truncated gets zoom-in', rows[0]);
   }
 
-  /* ================================================================ V4 点开一条 */
+  /* ================================================================ V4 Expand one */
   {
     await page.evaluate(() => document.querySelectorAll('[data-pc="start-ext-chat-msg"]')[1].querySelector('.ps-xbody').click());
     await sleep(300);
@@ -161,7 +171,7 @@ try {
     check(rows[0].folded === true && rows[2].folded === true, 'V4 the other rows stay collapsed', out.V4);
   }
 
-  /* ================================================================ V5 高度分配(「甲」) */
+  /* ================================================================ V5 Height allocation ("Jia") */
   {
     await render({ ...base, width: 320 });
     const box = await page.evaluate(() => {
@@ -178,7 +188,7 @@ try {
     check(box.foot.bottom <= box.chat.bottom && box.foot.top >= box.list.bottom - 1, 'V5 the input box is pinned to the panel\'s own bottom, inside the panel', box);
   }
 
-  /* ================================================================ V7 最窄 250 */
+  /* ================================================================ V7 Minimum width 250 */
   {
     await render({ ...base, width: 250 });
     await shot('ext-chat-250');

@@ -74,12 +74,12 @@ test('validateProgressReport trim and empty-string handling', () => {
 });
 
 test('validateProgressReport missing fields', () => {
-  // has_* 是冗余字段,缺了不拒;数组缺了算空组
+  // has_* are redundant fields and not rejected if missing; missing arrays count as empty arrays
   const res = validateProgressReport({ final: true });
   assert.equal(res.ok, true);
   assert.deepEqual(res.value, { final: true, has_done: false, has_todo: false, has_problem: false, done: [], todo: [], problems: [] });
 
-  // 函数调用常把可选字段填成 null:按没给处理
+  // Function calls often set optional fields to null: treat as not provided
   const res2 = validateProgressReport({ final: null, stage: null, done: ['Added captions'], todo: null, problems: null });
   assert.equal(res2.ok, true);
   assert.equal(res2.value.final, false);
@@ -87,7 +87,7 @@ test('validateProgressReport missing fields', () => {
   assert.deepEqual(res2.value.done, ['Added captions']);
   assert.equal(res2.value.has_done, true);
 
-  // 什么都没给:不是一份报告
+  // Nothing provided: not a report
   const res3 = validateProgressReport({ has_done: false, has_todo: false, has_problem: false });
   assert.equal(res3.ok, false);
   assert.match(res3.error, /The report is empty/);
@@ -150,8 +150,8 @@ test('validateProgressReport truncation of over-long entries and of more than 8 
 test('validateProgressReport inconsistent boolean and array are corrected', () => {
   const input = {
     final: true,
-    has_done: false, // 应该是 true，因为 done 有内容
-    has_todo: true,  // 应该是 false，因为 todo 为空
+    has_done: false, // Should be true because done has content
+    has_todo: true,  // Should be false because todo is empty
     has_problem: false,
     done: ['Did something'],
     todo: [],
@@ -164,8 +164,10 @@ test('validateProgressReport inconsistent boolean and array are corrected', () =
 });
 
 /*
- * blocked:停下来等用户回话(2026-10-24 用户定,起因见 docs/plan/agent-blind-stop.md)。
- * 没有这一位的时候,界面上「撞上轮次上限停了」和「在等你回话」长得一样,用户分不出球在谁那边。
+ * blocked: stop and wait for user reply (user decision, 2026-10-24, origin in
+ * docs/plan/agent-blind-stop.md).
+ * Without this bit, "stopped upon hitting round limit" and "waiting for your reply" look the same
+ * in the UI, and the user cannot tell whose court the ball is in.
  */
 test('blocked: the new field is not in required, and old calls are accepted as usual without any change', () => {
   const tool = tools.find(t => t.name === 'report_progress');

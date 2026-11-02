@@ -1,6 +1,7 @@
-// 配音(voice_generate):设置落盘、API Key 加密、三家请求的形状、音色白名单、复刻流程。
-// 全部用假 fetch,不花钱。真实合成见 voice-smoke.mjs(手动跑)。
-// 跑法:node --test server/test/voice.test.mjs
+// Voiceover (voice_generate): settings persistence, API Key encryption, request shapes for three
+// providers, voice whitelist, clone workflow.
+// All use mock fetch, costing no money. For real synthesis see voice-smoke.mjs (run manually).
+// How to run: node --test server/test/voice.test.mjs
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -27,7 +28,7 @@ after(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-/** 按顺序回放响应的假 fetch,顺手记下每次请求 */
+/** Mock fetch that replays responses in order, also recording each request */
 function fakeFetch(...responses) {
   const calls = [];
   const f = async (url, init = {}) => {
@@ -42,7 +43,7 @@ function fakeFetch(...responses) {
 const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status });
 const ctx = (fetch) => ({ baseUrl: 'https://gw.test', apiKey: 'sk-test', fetch });
 
-// ── API Key 加密 ─────────────────────────────────────────────
+// ── API Key encryption ─────────────────────────────────────────────
 test('The API Key for voice has its own wrapper and is not a valid source for the chat API', () => {
   assert.deepEqual(KEY_KINDS, ['custom', 'router'], 'If voice were mixed in, it would become a selectable chat source in ai.json');
   const sealed = sealKey('sk-abc', 'voice');
@@ -51,7 +52,7 @@ test('The API Key for voice has its own wrapper and is not a valid source for th
   assert.equal(openKey(sealed, 'custom'), '', 'Decrypting the voiceover ciphertext through the chat path must give an empty string');
 });
 
-// ── 设置 ─────────────────────────────────────────────────
+// ── Settings ─────────────────────────────────────────────────
 test('The default is MiniMax speech-2.8-hd, with no API Key', () => {
   const c = readVoiceConfig();
   assert.equal(c.provider, 'minimax');
@@ -106,7 +107,7 @@ test('My voices: add, remove, deduplicate', () => {
   assert.equal(list.length, 0);
 });
 
-// ── 三家请求 ─────────────────────────────────────────────
+// ── Requests for three providers ─────────────────────────────────────
 test('MiniMax: t2a_v2 request shape, hex decoding', async () => {
   const f = fakeFetch(json({ data: { audio: '494433' }, extra_info: { usage_characters: 5 }, base_resp: { status_code: 0 } }));
   const r = await synthesize(ctx(f), { provider: 'minimax', text: 'Hello.', voiceId: 'female-shaonv', model: 'speech-2.8-hd', speed: 1.2, emotion: 'calm' });
@@ -160,7 +161,7 @@ test('No API Key, no API URL, or overlong text are all blocked before the reques
   assert.equal(f.calls.length, 0);
 });
 
-// ── 音色白名单 + 落盘 ────────────────────────────────────
+// ── Voice whitelist + persistence ────────────────────────────────────
 test('A voice that has not been registered sends no request: this prevents being charged ¥9.9 on the first synthesis', async () => {
   const cfg = { ...readVoiceConfig(), apiKey: 'sk-test' };
   const f = fakeFetch();
@@ -181,7 +182,7 @@ test('A registered cloned voice can be used; the file is written to the asset ca
   assert.equal(p.name, 'voice-preview-minimax.mp3');
 });
 
-// ── 设计 / 复刻 ──────────────────────────────────────────
+// ── Design / clone ──────────────────────────────────────────
 test('Voice design: returns a new id and a preview', async () => {
   const f = fakeFetch(json({ voice_id: 'ttv-voice-1', trial_audio: '494433', base_resp: { status_code: 0 } }));
   const r = await designVoice(ctx(f), { prompt: 'Young male voice', previewText: 'Hello' });
@@ -208,7 +209,7 @@ test('Clone: upload as voice_clone first, then use the file_id to create the voi
   assert.equal(r.demo.toString('latin1'), 'ID3');
 });
 
-// ── 可提交的音色清单 ─────────────────────────────────────
+// ── Submittable voice manifest ───────────────────────────────────────
 test('fixtures/voices.json: only voice ids, no API Key', () => {
   const raw = fs.readFileSync(new URL('./fixtures/voices.json', import.meta.url), 'utf8');
   assert.ok(!/sk-[A-Za-z0-9]{8,}/.test(raw), 'An API Key must not go into the repository');

@@ -2,28 +2,31 @@ import type { Box } from "../../render/contentBox";
 import staticFile from "../../cards/preview-boxes.json";
 
 /**
- * 预览卡包围盒的三层存放:静态表 → 本机缓存 → 这次会话量到的。
+ * Three layers of storage for preview card bounding boxes: static table → local cache → measured in this session.
  *
- * 为什么要存:量一次要把动效从头到尾拨一遍(几十档),第一次悬停会有一小下黑屏。
- * 卡片的默认参数是固定的,盒子也就是固定的 —— 那就没必要每台机器、每次开软件都重量:
+ * Why store them: measuring means playing the motion graphics through from start to finish (dozens of
+ * steps), so the first hover shows a brief black screen. A card's default parameters are fixed, so its box
+ * is fixed too, and there is no need to re-measure on every machine and every launch:
  *
- *   1. **静态表**(`src/cards/preview-boxes.json`,`npm run preview-boxes` 离线生成并入库):
- *      随包发出去,开箱即用,一步到位;
- *   2. **本机缓存**(localStorage):静态表里没有的(用户 / AI 现场建的卡、新加的部件),
- *      后台补量一次就记住,下次开软件还在;
- *   3. **内存**:这次会话量到的,顺手写进本机缓存。
+ *   1. **Static table** (`src/cards/preview-boxes.json`, generated offline with `npm run preview-boxes` and
+ *      committed): ships with the package, works out of the box, one step;
+ *   2. **Local cache** (localStorage): for what the static table lacks (cards built on the fly by users / AI,
+ *      newly added parts); measured once in the background and remembered, still there on the next launch;
+ *   3. **Memory**: what was measured in this session, also written to the local cache along the way.
  *
- * 盒子是舞台坐标(项目像素),所以按舞台尺寸分桶存:1920×1080 量的盒子不能给竖屏项目用。
+ * Boxes are in stage coordinates (project pixels), so they are bucketed by stage size: a box measured at
+ * 1920×1080 cannot be used for a portrait project.
  */
 export type BoxTuple = [number, number, number, number];
 
 /**
- * 静态表的类型按 **JSON 导入进来的样子**写,而不是按我们希望的样子写:
- * TS 把 json 里的数组推成 `number[]`,不是定长元组,断言成元组会被拒(TS2352)。
- * 定长是生成脚本(scripts/preview-boxes.mjs)那头保证的,这边只读不写,拿 `number[]` 就够用。
+ * The static table's type is written to match **what a JSON import looks like**, not what we would like:
+ * TS infers arrays in json as `number[]`, not fixed-length tuples, and asserting to a tuple is rejected
+ * (TS2352). The fixed length is guaranteed on the generating script's side (scripts/preview-boxes.mjs);
+ * this side only reads, so `number[]` is enough.
  */
 interface StaticFile {
-  /** 这张表是哪一版量的。重新生成就变,本机缓存跟着作废(那是旧代码量出来的) */
+  /** Which version of the table this was measured with. It changes on regeneration, and the local cache is invalidated with it (it was measured by old code) */
   rev?: number;
   stage: number[];
   boxes: Record<string, number[] | null>;
@@ -32,7 +35,7 @@ interface StaticFile {
 const LS_KEY = "pc.previewBoxes.v1";
 const statics: StaticFile = staticFile;
 
-/** 舞台分桶的键 */
+/** Key of the stage bucket */
 function bucket(w: number, h: number): string {
   return `${Math.round(w)}x${Math.round(h)}`;
 }
@@ -45,7 +48,7 @@ function toTuple(b: Box | null): BoxTuple | null {
   return b ? [Math.round(b.l), Math.round(b.t), Math.round(b.r), Math.round(b.b)] : null;
 }
 
-/** 本机缓存:{ "1920x1080": { "card:xxx": [l,t,r,b] | null } } */
+/** Local cache: { "1920x1080": { "card:xxx": [l,t,r,b] | null } } */
 type Store = Record<string, Record<string, BoxTuple | null>>;
 
 let mem: Store | null = null;
@@ -56,12 +59,13 @@ function load(): Store {
   try {
     const raw = localStorage.getItem(LS_KEY);
     const parsed = raw ? JSON.parse(raw) : null;
-    // 只认同一版静态表下量的:表重新生成过(卡片改了动画 / 默认参数),本机这份就是旧结论,整份丢掉
+    // Only trust what was measured under the same version of the static table: if the table was regenerated
+    // (a card changed its animation / default parameters), this local copy is an old conclusion, so drop it entirely
     if (parsed && typeof parsed === "object" && parsed.rev === (statics.rev ?? 0) && parsed.buckets) {
       mem = parsed.buckets as Store;
     }
   } catch {
-    // 存坏了、被禁用了都不要紧,大不了重量一遍
+    // Corrupted or disabled storage does not matter, at worst we measure again
   }
   return mem;
 }
@@ -74,20 +78,21 @@ function saveSoon() {
     try {
       localStorage.setItem(LS_KEY, JSON.stringify({ rev: statics.rev ?? 0, buckets: mem ?? {} }));
     } catch {
-      // 满了 / 隐私模式:算了,这是缓存不是数据
+      // Full / private mode: never mind, this is a cache, not data
     }
   }, 800);
 }
 
 /**
- * 查一个盒子。`has` 为 false 表示从来没量过(要去量);为 true 而 `box` 为 null
- * 表示**量过了,结论就是「内容铺满整幅」**,按整幅显示即可,别再白量一遍。
+ * Look up a box. `has` false means it was never measured (go measure it); `has` true with `box` null
+ * means **it was measured and the conclusion is "the content fills the whole frame"**, so just show the
+ * whole frame and do not measure again for nothing.
  */
 export function lookupBox(key: string, stageW: number, stageH: number): { has: boolean; box: Box | null } {
   const b = bucket(stageW, stageH);
   const local = load()[b];
   if (local && key in local) return { has: true, box: toBox(local[key]) };
-  // 静态表只在舞台尺寸对得上时才作数
+  // The static table only counts when the stage size matches
   if (b === bucket(statics.stage?.[0] ?? 0, statics.stage?.[1] ?? 0) && key in (statics.boxes ?? {})) {
     return { has: true, box: toBox(statics.boxes[key]) };
   }
@@ -102,9 +107,11 @@ export function rememberBox(key: string, stageW: number, stageH: number, box: Bo
 }
 
 /**
- * 有静态表 / 本机缓存的键(给后台补量用:已经有的不用再排队)。
- * `ignoreStatic` 是给生成静态表的脚本用的:那时候静态表正是要重算的东西,不能当成「已经有了」,
- * 但本机缓存要认 —— 页面中途被顶得重载时,接着量就行,不用从头来。
+ * Keys that exist in the static table / local cache (for background measuring: those already present do not
+ * need to queue).
+ * `ignoreStatic` is for the script that generates the static table: at that point the static table is exactly
+ * what is being recomputed, so it cannot count as "already present", but the local cache is honored: if the
+ * page gets reloaded midway, just continue measuring, no need to start over.
  */
 export function knownKeys(stageW: number, stageH: number, ignoreStatic = false): Set<string> {
   const b = bucket(stageW, stageH);
@@ -115,7 +122,7 @@ export function knownKeys(stageW: number, stageH: number, ignoreStatic = false):
   return out;
 }
 
-/** 卡片源码改了、参数默认值变了,量出来的盒子就过时了 —— 让人能手动丢掉 */
+/** When a card's source changes or parameter defaults change, the measured boxes go stale, so let people drop them manually */
 export function forgetBoxes(stageW?: number, stageH?: number): void {
   if (stageW && stageH) {
     const store = load();
@@ -126,7 +133,7 @@ export function forgetBoxes(stageW?: number, stageH?: number): void {
   saveSoon();
 }
 
-/** 导出这次量到的一切,给 scripts/preview-boxes.mjs 生成静态表 */
+/** Export everything measured in this session, for scripts/preview-boxes.mjs to generate the static table */
 export function dumpBoxes(stageW: number, stageH: number): StaticFile {
   return { stage: [Math.round(stageW), Math.round(stageH)], boxes: { ...(load()[bucket(stageW, stageH)] ?? {}) } };
 }

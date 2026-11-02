@@ -1,10 +1,12 @@
-// 文本协议下,工具调用是写在回复正文里的,而正文一个字一个字流给界面。
-// 围栏必须在流的途中就摘掉,否则用户会在聊天框里看到裸 JSON 和一条空的深色代码块。
+// Under the text protocol, tool calls are written in the response body, which streams to the UI
+// character by character.
+// The fence must be stripped mid-stream, otherwise the user sees raw JSON and an empty dark code
+// block in the chat box.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createFenceFilter } from "../harness/tool-protocol.mjs";
 
-/** 把整段文本按给定大小切块喂进去,返回用户最终看到的正文 */
+/** Chunk the full text by given size and feed it in; return the body text the user ultimately sees */
 function feed(text, chunkSize) {
   const f = createFenceFilter();
   let out = "";
@@ -74,16 +76,17 @@ test("Text after the fence flows out as usual", () => {
 });
 
 /*
- * 端到端钉住这次的回归本身。
+ * Pin down this regression itself end-to-end.
  *
- * 原来的 bug 不在过滤器,而在转发那一句:onEvent 里 text 分支累积完 collectedText
- * 之后**没有 return**,又落进 else 被原样转发出去。所以光测过滤器不够 —— 得真跑一遍
- * runTextProtocolLoop,确认界面收到的 text 事件里干干净净。
+ * The original bug was not in the filter, but in that forwarding line: in onEvent, after the text
+ * branch accumulated collectedText, there was **no return**, so it fell into else and was forwarded
+ * as-is. So testing only the filter is not enough: runTextProtocolLoop must actually be run to
+ * confirm that the text events received by the UI are completely clean.
  */
 import { runTextProtocolLoop } from "../harness/tool-protocol.mjs";
 
 test("End-to-end: fences and bare JSON do not stream into the UI", async () => {
-  // 故意在围栏标记中间断开,模拟流式分块
+  // Intentionally split inside fence markers to simulate streaming chunks
   const chunks = [
     "First I will check the video media.\n\n``",
     '`promptcut-tool\n{"name":"li',
@@ -120,6 +123,6 @@ test("End-to-end: fences and bare JSON do not stream into the UI", async () => {
   assert.ok(shown.includes("First I will check the video media."), "Swallowed the body text");
   assert.ok(shown.includes("Done."), "The text after the fence was lost");
 
-  // 工具本身仍然要被识别、被调用 —— 摘围栏不能把功能一起摘掉
+  // The tool itself must still be recognized and invoked: stripping fences must not strip functionality
   assert.ok(seen.some((e) => e.type === "tool_call" && e.name === "list_media"), "No tool call was recognized");
 });

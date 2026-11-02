@@ -46,7 +46,7 @@ test('real HTTP: loopback without credentials is rejected; legacy media and PCM,
   assert.equal((await request(f, 'B', `/api/media/file?path=${encodeURIComponent(file)}`)).status, 403);
   assert.equal((await request(f, 'B', `/api/media/adopt?path=${encodeURIComponent(file)}`, { method: 'POST' })).status, 403);
   const remote = await request(f, 'B', '/api/media/remote', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base: `${f.base}/api/asset`, ticket: 'A-r' }) });
-  assert.equal(remote.status, 403); // 真实归属错误保留权限状态，不能配置跨项目remote
+  assert.equal(remote.status, 403); // Actual ownership errors retain permission state; cannot configure cross-project remote
   assert.equal((await (await request(f, 'B', '/api/media/remote')).json()).base, null);
 });
 test('real HTTP: upload streams go into a separate project directory, the environment-wide directory cannot override it, and the input is not rewritten', async t => {

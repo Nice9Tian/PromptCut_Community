@@ -1,9 +1,12 @@
 /**
- * 粒子配置「函数翻译」的单测。跑:node --test src/cards/assets/particlesKnobs.test.mjs
+ * Unit test for particle config "function translation". Run: node --test
+ * src/cards/assets/particlesKnobs.test.mjs
  *
- * 翻译的两条底线:
- *   - 配置里有的旋钮才露出来,默认值就是配置里的值 —— 一个旋钮都不动时 apply 出来的配置和原配置等价;
- *   - 改旋钮只改对应的键,区间保持区间形状;原配置对象不被改。
+ * Two baseline rules for translation:
+ *   - Only knobs present in the config are exposed, with default values matching the config:
+ *     when no knobs are changed, the applied config is equivalent to the original config;
+ *   - Changing a knob only modifies the corresponding key, intervals retain interval shape;
+ *     the original config object is not mutated.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -19,7 +22,7 @@ test("basic config: count / speed / size / links all translate into knobs (it ha
   for (const key of ["count", "speed", "size", "links"]) assert.ok(keys.includes(key), key);
   assert.equal(k.defaults.count, basic.particles.number.value);
   assert.equal(k.defaults.links, basic.particles.links.enable === false ? "no" : "yes");
-  // 不动旋钮 → 配置等价
+  // No knobs changed → equivalent configuration
   assert.deepEqual(k.apply(basic, k.defaults), basic);
 });
 

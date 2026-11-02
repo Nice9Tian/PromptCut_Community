@@ -1,34 +1,45 @@
 import type { ChatMessage, MessagePart } from "./types.ts";
 
 /**
- * Agent 对用户说的话:气泡里只显示这些(2026-10-20 用户定,原话「气泡里面只展示在做什么(harness可能要改,
- * 比如加入send_message(user,xxx)的用法。)」)。做过的操作和汇报在气泡下面的「Agent 操作」里(ActivityPanel.tsx)。
+ * What the Agent says to the user: the bubble shows only these (user decision, 2026-10-20; the
+ * user's words: "the bubble should only show what is being done (the harness may need to change,
+ * e.g. adding a usage like send_message(user,xxx).)"). The operations done and the reports are in
+ * "Agent operations" under the bubble (ActivityPanel.tsx).
  *
- * - 一轮里调过 `send_message`(`to: "user"`)的,按先后列出它们的 `text`;
- * - 一次都没调、只回了文字的,那段文字当成「在做什么」显示(相邻的文字并成一句);
- * 两种不混:调过 send_message 的那一轮,文字回复不再进气泡(要看在「显示思考」里看),免得同一句话出现两遍。
+ * - If `send_message` (`to: "user"`) was called in a round, list their `text` in order;
+ * - If it was never called and only text was replied, that text is shown as "what is being done"
+ *   (adjacent text is merged into one sentence);
+ * The two are not mixed: in a round where send_message was called, the text reply no longer goes
+ * into the bubble (to see it, look under "Show thinking"), so the same sentence does not appear twice.
  *
- * 纯函数,不碰 React,好让 node 直接跑测试(user-messages.test.mjs)。
+ * A pure function that does not touch React, so that node can run the tests directly
+ * (user-messages.test.mjs).
  */
 
-/** 去掉各家工具名前缀(`mcp__promptcut__`、`promptcut.`),规则同 chat/iconRuns.ts 的 bareToolName */
+/**
+ * Strips each provider's tool name prefix (`mcp__promptcut__`, `promptcut.`), with the same rule as
+ * bareToolName in chat/iconRuns.ts
+ */
 const bare = (name: string) => name.replace(/^mcp__.+?__/, "").replace(/^[\w-]+\.(?=\w)/, "");
 
-/** 这次工具调用是不是「对用户说话」(send_message 发给 user) */
+/** Whether this tool call is "speaking to the user" (send_message to user) */
 export function isUserMessageCall(name: string | undefined, input: unknown): boolean {
   if (!name || bare(name) !== "send_message" || !input || typeof input !== "object") return false;
   const to = (input as { to?: unknown }).to;
   return typeof to === "string" && to.trim().toLowerCase() === "user";
 }
 
-/** 对用户说的那句话;不是对用户说话、或话是空的,给 null */
+/** The sentence said to the user; null if it is not speaking to the user or the text is empty */
 export function userMessageText(name: string | undefined, input: unknown): string | null {
   if (!isUserMessageCall(name, input)) return null;
   const text = (input as { text?: unknown }).text;
   return typeof text === "string" && text.trim() ? text.trim() : null;
 }
 
-/** 一条消息的有序片段;旧记录没有 parts 时按「文字 → 工具」兜底(同 AgentBubble 的 partsOf) */
+/**
+ * The ordered parts of a message; for old records without parts, fall back to "text → tools" (same
+ * as partsOf in AgentBubble)
+ */
 function partsOf(m: Pick<ChatMessage, "parts" | "text" | "tools">): MessagePart[] {
   if (m.parts && m.parts.length > 0) return m.parts;
   const legacy: MessagePart[] = [];
@@ -38,16 +49,19 @@ function partsOf(m: Pick<ChatMessage, "parts" | "text" | "tools">): MessagePart[
 }
 
 export interface Saying {
-  /** 在这一轮里的位置(片段下标),做 React key */
+  /** Its position in this round (part index), used as the React key */
   key: string;
   text: string;
-  /** 来自 send_message 还是来自文字回复 */
+  /** Whether it comes from send_message or from a text reply */
   from: "send_message" | "text";
 }
 
 const cache = new WeakMap<object, Saying[]>();
 
-/** 这一轮气泡里要显示的话,按发生顺序。消息对象不可变,按对象缓存 */
+/**
+ * The lines to show in this round's bubble, in order of occurrence. Message objects are immutable,
+ * so the result is cached per object
+ */
 export function sayingsOf(m: Pick<ChatMessage, "parts" | "text" | "tools">): Saying[] {
   const hit = cache.get(m);
   if (hit) return hit;
@@ -71,7 +85,7 @@ export function sayingsOf(m: Pick<ChatMessage, "parts" | "text" | "tools">): Say
         if (start < 0) start = i;
         buf += p.text;
       } else if (p.kind === "tool") flush();
-      // 思考、状态行不打断一句话
+      // Thinking and status lines do not break up a sentence
     });
     flush();
   }

@@ -1,20 +1,28 @@
 /**
- * 手机浏览器点输入框自动放大、失焦后不缩回的验收探针(`src/ui/focusZoomReset.ts` 与 `src/index.css` 的触屏输入框字号)。
- * 全程在本机:本机托管组合 + 仿 nginx 的代理(`lib/mobile-env.mjs`),在线构建当页面,不连真正的托管端。
+ * Acceptance check probe for mobile browsers auto-zooming on input tap and not zooming back out
+ * on blur (`src/ui/focusZoomReset.ts` and touchscreen input font sizes in `src/index.css`).
+ * Runs entirely on this machine: local hosted suite + simulated nginx proxy (`lib/mobile-env.mjs`),
+ * online build serving as page, without connecting to real hosted side.
  *
  *   npx vite build --mode online
  *   node scripts/probes/mobile-input-zoom-probe.mjs [--dist dist-online] [--base-port 5850] [--doc-port 5858] [--asset-port 5859]
  *
- * 安卓 Chrome 仿真(375×812、触屏)进手机版开始页:
- *   F 触屏下(`pointer: coarse` 成立)页面上每个文字输入框,以及临时插进手机版界面与页面根上的 input / textarea / select,
- *     计算字号都 ≥ 16px(iOS Safari 对小于 16px 的输入框聚焦放大;安卓 Chrome 按字号算「看得清」的倍数放大);
- *   Z 双指捏合放大页面,点输入框打字、失焦 → 兜底把 viewport 临时换成带 `maximum-scale=1` 的内容、随后恢复原样,
- *     恢复后仍能双指放大;
- *   K 焦点从一个输入框挪到下一个时不动 viewport(不打断连续输入),最后失焦才动;
- *   N 没碰输入框时不动 viewport(用户自己放大的页面不管)。
- * 仿真的局限(2026-10-21 实测无头 Chrome):聚焦小字号输入框不会自动放大,改 viewport 也不会把已有的缩放拉回 1,
- * 所以「真的放大了、真的缩回来了」只能在真机上看;本探针验的是放大的起因已去掉、兜底按时序动了 viewport。
- * 结果最后一行是一行 JSON(`ok`、`fails`、各项数字)。
+ * Enter mobile app start page with Android Chrome emulation (375×812, touchscreen):
+ *   F On touchscreen (`pointer: coarse` holds), every text input on page, plus input / textarea /
+ *     select temporarily inserted into mobile app UI and page root, has computed font size
+ *     ≥ 16px (iOS Safari zooms on focus for inputs < 16px; Android Chrome zooms by a multiple
+ *     calculated from font size for "readability");
+ *   Z Pinch to zoom in on page, tap input to type, blur → fallback temporarily replaces viewport
+ *     with content containing `maximum-scale=1` then restores original, pinch-to-zoom still works
+ *     after restoration;
+ *   K Moving focus from one input to the next does not modify viewport (does not interrupt
+ *     continuous typing); only final blur modifies it;
+ *   N When inputs are not touched, viewport is not modified (ignores pages zoomed in by user).
+ * Limitations of emulation (tested on headless Chrome, 2026-10-21): focusing a small-font input
+ * does not auto-zoom, and modifying viewport does not pull existing zoom back to 1, so "truly
+ * zoomed in, truly zoomed back out" can only be seen on real devices; this probe verifies the
+ * cause of zooming is eliminated and fallback updates viewport in sequence.
+ * The last line of the result is a JSON line (`ok`, `fails`, various numbers).
  */
 import puppeteer from 'puppeteer';
 import path from 'node:path';
@@ -36,8 +44,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const scale = (page) => page.evaluate(() => window.visualViewport?.scale ?? null);
 const viewportMeta = (page) => page.evaluate(() => document.querySelector('meta[name="viewport"]')?.getAttribute('content') ?? null);
 /**
- * CDP 两个触点从中线向两边拉开(zoomIn)或收拢,让页面放大或缩小。`Input.synthesizePinchGesture` 在无头里不生效;
- * 拉开的幅度和最终缩放不成比例(无头 Chrome 实测 100→200 px 就到上限 5 倍),探针只看「放大了没有」(> 1.5)。
+ * CDP pulls two touch points apart from the center line (zoomIn) or pinches them together to
+ * zoom the page in or out. `Input.synthesizePinchGesture` does not take effect in headless mode;
+ * pull distance is not proportional to final scale (headless Chrome tests show 100→200 px reaches
+ * the 5x ceiling), probe only checks "whether it zoomed in" (> 1.5).
  */
 async function pinch(page, zoomIn) {
   const cx = 187, y = 420;
@@ -66,7 +76,7 @@ try {
   const base = await viewportMeta(page);
   out.viewport = base;
 
-  /* viewport 的每次改动记下来(兜底只靠改它) */
+  /* Record every viewport change (fallback relies solely on modifying it) */
   await page.evaluate(() => {
     const m = document.querySelector('meta[name="viewport"]');
     window.__metaLog = [];
@@ -74,7 +84,7 @@ try {
   });
   const metaLog = () => page.evaluate(() => window.__metaLog.splice(0));
 
-  /* F:字号 */
+  /* F: Font size */
   out.F = await page.evaluate(() => {
     const visible = [...document.querySelectorAll('input, textarea, select')]
       .filter((e) => e.offsetParent !== null && !['checkbox', 'radio', 'range', 'button', 'submit', 'file'].includes(e.type))
@@ -94,13 +104,13 @@ try {
   check(out.F.inputs.length > 0, 'F the start page should have text input boxes', out.F);
   for (const i of [...out.F.inputs, ...out.F.probe]) check(i.fontSize >= 16, `F input box ${i.name} font size should be ≥ 16px`, i);
 
-  /* Z:放大 → 点输入框打字 → 失焦 → viewport 临时加 maximum-scale=1 再恢复 */
+  /* Z: zoom in → tap input to type → blur → temporarily add maximum-scale=1 to viewport then restore */
   await pinchTo(page);
   out.Z.zoomed = await scale(page);
   check(out.Z.zoomed > 1.5, 'Z the page should zoom in after a two-finger pinch', out.Z);
   const first = await page.$('.pcm input.text-in');
   await first.tap();
-  // 放大 5 倍时输入框可能在可视区外,点不中就直接给焦点:这里验的是失焦之后,不是点击
+  // At 5x zoom, input may be outside viewport; focus directly if tap misses: verifies after blur, not tap
   await first.evaluate((el) => { if (document.activeElement !== el) el.focus(); });
   await page.keyboard.type('probe');
   await sleep(300);
@@ -120,8 +130,8 @@ try {
   await resetZoom(page);
   await metaLog();
 
-  /* K:焦点从一个输入框挪到下一个 */
-  // 社区版开始页只有一个输入框,补一个:焦点挪动的判断不看是哪个输入框
+  /* K: Move focus from one input to the next */
+  // Community edition start page has only one input, add one: focus shift check does not care which input
   await page.evaluate(() => {
     const all = document.querySelectorAll('.pcm input.text-in');
     if (all.length < 2) all[0].after(Object.assign(document.createElement('input'), { className: 'text-in' }));
@@ -142,7 +152,7 @@ try {
     await metaLog();
   }
 
-  /* N:没碰输入框 */
+  /* N: Input not touched */
   await pinchTo(page);
   await page.evaluate(() => { document.body.focus(); document.body.blur(); });
   await sleep(1200);

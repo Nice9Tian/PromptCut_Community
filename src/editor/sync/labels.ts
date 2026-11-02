@@ -1,10 +1,12 @@
 /**
- * 撤销提示条、离线对话框、本地备份列表里「哪一处」「谁改的」的说法(c65-undo-draft.md 第 2 节)。
+ * Wording for "which place" and "who changed it" in the undo bar, the offline dialog and the local backup list
+ * (c65-undo-draft.md, section 2).
  *
- * - 实体按顶层计,前缀带类别:片段「开头空镜」、序列「主序列」、项目设置「帧率」;
- * - 身份:另一位成员(用户名)、Agent 的某个对话、某位成员的云端 Agent、你在另一个页面。
+ * - Entities are counted at the top level, and the prefix carries the category: clip "Opening shot", track "Main track",
+ *   project settings "Frame rate";
+ * - Identity: another member (username), a chat of the Agent, a member's Cloud Agent, you on another page.
  *
- * 纯函数,不读 store:项目与「我是谁」都由调用方传进来。
+ * Pure functions that do not read the store: the project and "who am I" are both passed in by the caller.
  */
 import { entityValuePath, getAt, parsePath } from "../../kernel/diffProject";
 import { relocatePath } from "../../kernel/cutPaths";
@@ -15,7 +17,7 @@ import { cloudAgentLabel } from "./hostedServices";
 import { tr } from "../../i18n/index.ts";
 import { shownName, shownNameOf } from "../../i18n/names.ts";
 
-/** 集合名 → 类别 */
+/** Collection name → category */
 const KIND: Record<string, string> = {
   tracks: tr("track"),
   clips: tr("Clips"),
@@ -30,7 +32,7 @@ const KIND: Record<string, string> = {
   captions: tr("Captions"),
 };
 
-/** 项目顶层字段 → 名字 */
+/** Top-level project field → name */
 const META: Record<string, string> = {
   name: tr("Name"),
   fps: tr("Frame rate"),
@@ -49,8 +51,9 @@ const META: Record<string, string> = {
 const quoted = (s: string) => tr("\"{0}\"", s);
 
 /**
- * 片段怎么称呼:和时间轴上片段的标题一致(ClipView:卡片片段用卡片名,素材段用它的标签),
- * 同一张卡出现好几次时,后面带上开始时间好区分;都没有就用 id。
+ * How a clip is referred to: consistent with the clip's title on the timeline (ClipView: a card clip uses the card name,
+ * a media clip uses its label). When the same card appears several times, the start time is appended to tell them apart;
+ * if neither exists, use the id.
  */
 function clipName(c: Record<string, unknown> | undefined, id: string): string {
   if (!c) return id;
@@ -61,7 +64,7 @@ function clipName(c: Record<string, unknown> | undefined, id: string): string {
   return typeof c.start === "number" ? `${name} @${c.start.toFixed(1)}s` : name;
 }
 
-/** 实体 → 给人看的名字,例如 `片段「开头空镜」`、`序列「序列 1」`、`项目设置「帧率」` */
+/** Entity → human-readable name, for example `clip "Opening shot"`, `track "Track 1"`, `project settings "Frame rate"` */
 export function entityLabel(entity: string, project: Project | null): string {
   if (entity === "*") return tr("Entire project");
   if (entity.startsWith("/meta/")) {
@@ -73,7 +76,7 @@ export function entityLabel(entity: string, project: Project | null): string {
   const coll = segs[segs.length - 2];
   const id = segs[segs.length - 1].replace(/^@/, "");
   const kind = KIND[coll] ?? tr("Items");
-  // 序列在停放剪辑里时实体(不分住在哪)的路径要按序列 id 换到它现在住的地方才取得到值
+  // When a track is in a parked cut, the entity's path (regardless of where it lives) must be remapped by track id to where it lives now before a value can be read
   const valuePath = entityValuePath(entity);
   const value = project ? ((getAt(project, valuePath) ?? getAt(project, relocatePath(project, valuePath))) as Record<string, unknown> | undefined) : undefined;
   if (coll === "clips") return tr("Clip {0}", quoted(clipName(value, id)));
@@ -81,42 +84,43 @@ export function entityLabel(entity: string, project: Project | null): string {
   return `${kind}${quoted(name)}`;
 }
 
-/** 实体能不能点过去看:片段(选中并把播放头挪到开头)、序列、项目设置 */
+/** Whether an entity can be clicked to jump to it: clip (select it and move the playhead to its start), track, project settings */
 export function clipOfEntity(entity: string): string | null {
   const m = /\/clips\/@([^/]+)$/.exec(entity);
   return m ? m[1].replace(/~1/g, "/").replace(/~0/g, "~") : null;
 }
 
-/** 本页面是谁:会话号,和连接的身份(本机空间是 `local`,共享项目是 `用户名@设备`) */
+/** Who this page is: the session number and the connection identity (the local space is `local`, a shared project is `username@device`) */
 export interface Me {
   session: string;
   userId: string | null;
 }
 
 type Actor = { userId?: string; username?: string; deviceId?: string; deviceName?: string; role?: string; conversation?: number; session?: string; service?: string;
-  /** 账号云端项目的写入身份带账号号(`server/docservice/modules/actor.mjs`);`userId` 是 `account:<账号号>@<设备号>`,不是给人看的 */
+  /** The write identity of an account cloud project carries the account id (`server/docservice/modules/actor.mjs`); `userId` is `account:<account id>@<device id>`, not meant for people to read */
   accountId?: string };
 
-/** 账号云端项目里显示名表的键:按账号查(同一个账号在哪台设备上都是同一个名字) */
+/** Key of the display-name table in an account cloud project: looked up by account (the same account has the same name on any device) */
 export const accountNameKey = (accountId: string): string => `account:${accountId}`;
 
-/** `用户名@设备` 里的用户名(写入身份里不带用户名,发起成员不在线时成员列表里也查不到) */
+/** The username in `username@device` (the write identity carries no username, and it cannot be found in the member list either when the initiating member is offline) */
 const usernameOf = (userId: string | undefined): string => {
   const s = userId ?? "";
   const at = s.lastIndexOf("@");
   return at > 0 ? s.slice(0, at) : s;
 };
 
-/** 共享项目里的显示名:成员列表给的 displayName(重名时带设备名),按 userId 查 */
+/** Display name in a shared project: the displayName given by the member list (with the device name added when names collide), looked up by userId */
 export type DisplayNames = Map<string, string>;
 
 /**
- * 写入身份 → 给人看的说法:`张三`、`Agent「第 2 个对话」`、`张三 · Agent · 第 2 个对话`、`张三的云端 Agent`、`你在另一个页面`。
- * 云端 Agent(`role: 'agent'` 且 `service: 'agent'`,契约 cloud-agent-contract.md 第 5 节)用的是发起成员的身份:
- * 别人看到「〈成员名〉的云端 Agent」,发起的那台设备上自己看到「你的云端 Agent」。
+ * Write identity → human-readable wording: `Zhang San`, `Agent "chat 2"`, `Zhang San · Agent · chat 2`, `Zhang San's Cloud Agent`,
+ * `you on another page`.
+ * A Cloud Agent (`role: 'agent'` and `service: 'agent'`, contract cloud-agent-contract.md section 5) uses the identity of
+ * the member who started it: others see "<member name>'s Cloud Agent", and the device that started it sees "Your Cloud Agent".
  */
 export function writerLabel(by: Writer | undefined, me: Me, names: DisplayNames = new Map()): string {
-  // 两种形状都认:`{ actor, session }`(DocSync 记的),和文档服务直接给的 actor 本身(`project.overwritten.by`)
+  // Both shapes are recognized: `{ actor, session }` (recorded by DocSync), and the bare actor given directly by the document service (`project.overwritten.by`)
   const raw = by as (Writer & Actor) | undefined;
   const actor = ((raw?.actor && typeof raw.actor === "object" ? raw.actor : raw && typeof raw.userId === "string" ? raw : {}) as Actor);
   const session = by?.session ?? actor.session;
@@ -124,7 +128,7 @@ export function writerLabel(by: Writer | undefined, me: Me, names: DisplayNames 
   if (!actor.userId && session === me.session) return tr("You on this page");
   if (actor.role === "agent" && actor.service === "agent") {
     if (sameUser) return tr("Your Cloud Agent");
-    // 账号云端项目:云端 Agent 的写入身份是 `account:<账号号>@run:<任务号>`,不带设备,按账号认人、按账号查名字
+    // Account cloud project: a Cloud Agent's write identity is `account:<account id>@run:<task id>`, with no device; people are identified by account and names are looked up by account
     if (typeof actor.accountId === "string") {
       if (me.userId?.startsWith(`${accountNameKey(actor.accountId)}@`)) return tr("Your Cloud Agent");
       if (names.has(accountNameKey(actor.accountId))) return cloudAgentLabel(names.get(accountNameKey(actor.accountId))!);
@@ -139,20 +143,22 @@ export function writerLabel(by: Writer | undefined, me: Me, names: DisplayNames 
   if (session === me.session && (sameUser || !actor.userId)) return tr("You on this page");
   if (sameUser) return tr("You on another page");
   if (actor.userId && names.has(actor.userId)) return names.get(actor.userId)!;
-  // 账号云端项目:成员名单按账号给名字(`syncManager.ts` 的 `displayNames`)
+  // Account cloud project: the member list gives names by account (`displayNames` in `syncManager.ts`)
   if (typeof actor.accountId === "string" && names.has(accountNameKey(actor.accountId))) return names.get(accountNameKey(actor.accountId))!;
   return actor.username ?? actor.userId ?? tr("Someone else");
 }
 
 /**
- * 改密码或重设密码之后选了「退出」，文档服务撤回了旧设备在那段时间里做的修改：此刻在线的成员收到的那条气泡
- * （`product/document-service.md`「保存与延迟退出的修改处理」，2026-10-22 用户定）。〈用户名〉是改密码的那个账号；名字取不到时退回「有成员」。
+ * After a password change or reset the user chose "Log out", and the document service rolled back the changes the old
+ * devices made in the meantime: the bubble received by members who are online right now
+ * (`product/document-service.md`, "Handling of changes from saving and delayed logout", user decision, 2026-10-22).
+ * <username> is the account that changed the password; when the name cannot be found, fall back to "A member".
  */
 export function rolledBackText(name: unknown): string {
   return typeof name === "string" && name.trim() ? tr("{0} undid content", name.trim()) : tr("A member undid content");
 }
 
-/** 项目历史序号（修改计数）给人看的文字：历史序号 N */
+/** Human-readable text for the project history sequence number (change count): History sequence number N */
 export function historySeqLabel(rev: number | null | undefined): string {
   if (rev === null || rev === undefined || !Number.isFinite(rev)) return tr("History sequence number -");
   return tr("History sequence number {0}", rev);

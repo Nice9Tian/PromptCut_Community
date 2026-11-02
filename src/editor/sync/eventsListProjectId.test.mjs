@@ -1,10 +1,16 @@
 /**
- * 回归(探针 A7):页面向文档服务补取工具调用记录的 `events.list` 必须带项目号。
- * 文档服务(`server/docservice/modules/events.mjs` 的 `list`)不带项目号回 bad-message「projectId 不合法」;
- * 账号项目那条路曾有两处不带(进项目时、断线重连后),云端 Agent 跑完后重开的页面没有工具调用记录,也没有「撤销这步」。
+ * Regression (probe A7): `events.list` sent by page to document service to catch up on tool call
+ * history must include project id.
+ * Document service (`list` in `server/docservice/modules/events.mjs`) returns bad-message
+ * "Invalid projectId" without project id;
+ * The account project path previously omitted it in two places (entering project, reconnecting
+ * after disconnect); pages reopened after Cloud Agent finished lacked tool call records and
+ * "Undo this step".
  *
- * `syncManager.ts` 在 Node 里载不起来(要浏览器环境),这里逐处核对源码里每一条 `events.list` 消息都带 `projectId`,
- * 并用文档服务的事件模块确认不带项目号确实会被拒、带了能取到。
+ * `syncManager.ts` cannot be loaded in Node (requires browser environment); here we check each
+ * occurrence in source code to ensure every `events.list` message includes `projectId`,
+ * and use document service's events module to confirm omitting project id is indeed rejected and
+ * including it fetches successfully.
  *
  *   node --test src/editor/sync/eventsListProjectId.test.mjs
  */
@@ -19,7 +25,7 @@ const root = path.resolve(here, "../../..");
 
 test("EVL-01 every events.list message in syncManager.ts carries projectId", () => {
   const src = fs.readFileSync(path.join(here, "syncManager.ts"), "utf8");
-  // 找出所有 `{ type: 'events.list' ... }` 对象字面量(到同一层的右花括号为止)
+  // Find all `{ type: 'events.list' ... }` object literals (up to the closing brace at the same level)
   const sends = [...src.matchAll(/\{\s*type:\s*["']events\.list["'][^}]*\}/g)].map((m) => m[0]);
   assert.ok(sends.length >= 4, `too few events.list messages found (${sends.length}); if the source's style changed, update this test`);
   for (const s of sends) assert.match(s, /projectId\s*:/, `this events.list does not carry projectId: ${s}`);

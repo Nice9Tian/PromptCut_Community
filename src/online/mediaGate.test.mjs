@@ -1,15 +1,25 @@
 /**
- * 素材闸门(`mediaGate.ts`、`render/netSpeed.ts`、`render/mediaTier.ts` 的 `smallOnlyFor` 与 `smallFirst`;语义 `product/platforms.md`
- * 「素材闸门」)。用例 MG-01～MG-08。跑:npm test -- src/online/mediaGate.test.mjs
+ * Media gate (`smallOnlyFor` and `smallFirst` in `mediaGate.ts`, `render/netSpeed.ts`,
+ * `render/mediaTier.ts`; semantics in `product/platforms.md` "Media gate"). Test cases MG-01-MG-08.
+ * Run: npm test -- src/online/mediaGate.test.mjs
  *
- *   MG-01 解码上限:从高往低问,第一个解得动的就是;问不出来按 1080p;都说解不动按最低一级
- *   MG-02 撑崩过的往下调级(累计,最低到最后一级)
- *   MG-03 打开时测一次,这次使用期间不变(之后再问回同一个结果,不再问浏览器)
- *   MG-04 按素材判:宽 × 高超过上限的视频只用小尺寸(没有小尺寸就等上传方,不拉原尺寸);没超过的照常;没记下宽高的不按它判;最低一档一律小尺寸
- *   MG-05 网速:资源计时里素材服务的大请求才算样本;滑动平均低于 8 Mbps 先拉小尺寸,高于 12 Mbps 只拉原尺寸,中间不变
- *   MG-06 只拉原尺寸(网速快):两档都到齐、可播性还不知道时直接给原尺寸(后台照样探可播性);先小后大(慢、没样本)照旧
- *   MG-07 要载入原尺寸的素材签名:超过上限的不算;换了一批才变(留崩溃记录用)
- *   MG-08 桌面不受影响:缺省策略不限上限、先小后大
+ *   MG-01 Decoding limit: query from high to low, the first that can decode is used; if undetermined,
+ *         use 1080p; if all fail, use the lowest tier
+ *   MG-02 Downgrade if crashed previously (cumulative, down to the last tier at lowest)
+ *   MG-03 Test once on open, remains unchanged during this session (subsequent queries return the same
+ *         result without querying the browser again)
+ *   MG-04 Judged per asset: videos whose width × height exceeds limit use small size only (if no small
+ *         size, wait for uploader without pulling original size); normal if not exceeded; not judged
+ *         if width and height are not recorded; lowest tier always uses small size
+ *   MG-05 Network speed: only large requests to asset service in Resource Timing count as samples;
+ *         moving average below 8 Mbps pulls small size first, above 12 Mbps pulls original size only,
+ *         unchanged in between
+ *   MG-06 Pull original size only (fast network): when both tiers are present and playability is still
+ *         unknown, give original size directly (probes playability in background as usual); small first
+ *         then large (slow, no samples) as before
+ *   MG-07 Asset signatures to load in original size: those exceeding limit do not count; changes only
+ *         when a batch is swapped (for crash logs)
+ *   MG-08 Desktop unaffected: default policy does not cap limits, small first then large
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

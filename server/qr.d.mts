@@ -1,25 +1,26 @@
 /**
- * `server/qr.mjs` 的类型（页面一侧直接 import 它画二维码：协作设置里的邀请二维码、「在手机上打开」）。
- * 实现是零依赖的纯 JS，这里只声明用得到的那两个出口。
+ * Types for `server/qr.mjs` (imported directly on the page side to render QR codes: invite QR code
+ * in collaboration settings, "Open on phone").
+ * The implementation is zero-dependency pure JS; only the two used exports are declared here.
  */
 
 export type QrEcLevel = "L" | "M" | "Q" | "H";
 
 export interface QrOptions {
-  /** 纠错等级，缺省 `M` */
+  /** Error correction level, defaults to `M` */
   ec?: QrEcLevel;
-  /** 静区模块数，缺省 4 */
+  /** Quiet zone module count, defaults to 4 */
   quiet?: number;
-  /** 一个模块画多少像素，缺省 6 */
+  /** Pixels per module, defaults to 6 */
   scale?: number;
-  /** 深色，缺省 `#000` */
+  /** Dark color, defaults to `#000` */
   dark?: string;
-  /** 浅色，缺省 `#fff` */
+  /** Light color, defaults to `#fff` */
   light?: string;
 }
 
-/** 编成布尔矩阵（`true` = 深色模块） */
+/** Encodes into a boolean matrix (`true` = dark module) */
 export function encodeQr(text: string, opts?: { ec?: QrEcLevel; mask?: number | null }): boolean[][];
 
-/** 直接出一段 SVG 字符串 */
+/** Directly outputs an SVG string */
 export function qrSvg(text: string, opts?: QrOptions): string;

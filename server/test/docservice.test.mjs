@@ -1,9 +1,12 @@
 /**
- * 文档服务骨架（server/docservice/）：WebSocket 帧层、消息解析、连接身份记录、渲染任务队列挂载点。
- * 跑：node --test server/test/docservice.test.mjs
+ * Document service skeleton (server/docservice/): WebSocket frame layer, message parsing, connection
+ * identity recording, render queue mount point.
+ * Run: node --test server/test/docservice.test.mjs
  *
- * 用真实的 createRenderQueue 核对 hello 的回包形状（契约 `docs/plan/render-queue-contract.md` A.6）；
- * 帧层的异常情形（分片、无掩码、超限、心跳）用原始 TCP 手搓帧来测。端口一律由系统分配。
+ * Check hello response shape with real createRenderQueue (contract
+ * `docs/plan/render-queue-contract.md` A.6); frame layer exceptional cases (fragmentation, unmasked,
+ * over limit, heartbeat) are tested using handcrafted frames over raw TCP. Ports are always
+ * system-allocated.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -25,7 +28,7 @@ async function startService({ mount = true, ...options } = {}) {
   return { service, queue, port, url: `ws://127.0.0.1:${port}` };
 }
 
-/** 用 Node 内置的 WebSocket 客户端连上，收到的消息排进队列，按条件等 */
+/** Connect with Node's built-in WebSocket client, enqueue received messages, wait by condition */
 function wsClient(url) {
   const ws = new WebSocket(url);
   const inbox = [];
@@ -61,7 +64,7 @@ function wsClient(url) {
 
 const byReq = (reqId) => (m) => m.reqId === reqId;
 
-/** 原始 TCP 客户端：自己握手、自己组帧，用来测帧层 */
+/** Raw TCP client: handshakes and frames on its own, used to test frame layer */
 async function rawClient(port, { path = '/' } = {}) {
   const sock = netConnect(port, '127.0.0.1');
   await new Promise((resolve) => sock.once('connect', resolve));
@@ -91,7 +94,7 @@ async function rawClient(port, { path = '/' } = {}) {
     buf = buf.subarray(end + 4);
     return Number(head.split(' ')[1]);
   });
-  /** 读一帧（服务端帧不带掩码） */
+  /** Read one frame (server frames have no mask) */
   function readFrame() {
     if (buf.length < 2) return undefined;
     let len = buf[1] & 0x7f;
@@ -104,7 +107,7 @@ async function rawClient(port, { path = '/' } = {}) {
   }
   return {
     status, sock, closed,
-    /** 组一帧发出去；mask=false 用来造违规帧 */
+    /** Assemble a frame and send it out; mask=false is used to create non-compliant frames */
     frame(opcode, payload, { fin = true, mask = true } = {}) {
       const data = Buffer.from(payload);
       const len = data.length;

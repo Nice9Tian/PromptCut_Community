@@ -6,7 +6,7 @@ import path from 'node:path';
 import { PNG } from 'pngjs';
 import { CardFrameCache } from '../card-cache.mjs';
 
-// 契约 E.3:plan() 要求环境指纹(M4)。这里只补输入,断言不变。
+// Contract E.3: plan() requires environment fingerprint (M4). Only complements inputs here; assertions remain unchanged.
 const ENV_FP = '0123456789abcdef';
 
 // Cached samples are PNGs carrying their render record; a lookup validates the bytes it reads.

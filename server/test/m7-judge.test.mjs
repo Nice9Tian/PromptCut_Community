@@ -1,6 +1,7 @@
 /**
- * M7 验收探针 D1-D2-D12 判据（`scripts/probes/m7-judge.mjs`）。夹具取自笔记本在 claude/rq-m7 4047133 上那一轮
- * （h1、h3 的 page 那份中途被 D2 接手，旧判据报 badRanges ["0-59:2"]）。
+ * Criteria for M7 acceptance check probe D1-D2-D12 (`scripts/probes/m7-judge.mjs`). Fixtures taken
+ * from laptop run on claude/rq-m7 4047133 (page copy on h1, h3 was taken over midway by D2,
+ * old criterion reported badRanges ["0-59:2"]).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +13,7 @@ import { judgeDualClip, observedSuperseded, observeLayerEnvironments, createTask
 const RANGES = ['0-59', '60-119', '120-179', '180-239', '240-299'];
 const all = (live) => RANGES.map((range) => ({ range, live }));
 
-/** 旧判据（改前的探针）：所有出键合起来每段恰好一份有效 */
+/** Old criterion (probe before change): all output keys combined have exactly one valid copy per segment */
 function oldJudge({ groups, candidates }) {
   const counts = new Map();
   for (const list of Object.values(groups)) for (const t of list) counts.set(t.range, (counts.get(t.range) ?? 0) + (t.live ? 1 : 0));

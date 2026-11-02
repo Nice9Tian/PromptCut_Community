@@ -1,26 +1,36 @@
 /**
- * 3D 页播放(回归探针):真的打开编辑台,在 3D 页按播放,看播放头是不是照常跟着舞台走。
+ * 3D tab playback (regression probe): genuinely open editor, press play on 3D tab, and check
+ * whether playhead follows stage as normal.
  *
  *   node scripts/probes/preview-3d-playback.mjs [--origin http://127.0.0.1:5230]
  *
- * 不带 `--origin` 就看 `PC_STAGE_TEST_URL`,再没有就打 `.claude/launch.json` 的 `dev-test`。
- * 只验缺省的跨源双舞台(K4:播放头由可见舞台的 `frame` 推);页面退回单舞台时直接判失败并说明。
+ * Without `--origin`, check `PC_STAGE_TEST_URL`; if still missing, hit `dev-test` in
+ * `.claude/launch.json`. Only verifies default cross-origin dual stage (K4: playhead is driven
+ * by `frame` from visible stage); fails immediately with explanation if page falls back to
+ * single stage.
  *
- * 钉的是这几件事(排障过程见 fix 提交说明):
+ * Pins down these items (see fix commit message for troubleshooting process):
  *
- *   1. **3D 页按播放,t 往前走、声音层还在。** 以前切到 3D 会把 2D 子树连同两个舞台 iframe 一起卸掉,
- *      `frontStage()` 交出一个指向已关窗口的客户端,`play()` 永不回包,播放头停在原地、按钮却显示「暂停」。
- *      同时看 3D 画布没有被藏起来的 2D 页挡住(它们叠在同一块地方)。
- *   2. **播放中来回切 2D / 3D,播放不断。** 舞台不再随切页重建,t 一直往前。
- *   3. **带着 `playing` 换一个舞台渲染面(这里用重载可见舞台 iframe 模拟),播放自己接上。**
- *      以前新舞台先收到 `play`、后收到项目,回 `no-project`,父页不重试 —— 画面永远不动。
- *   4. **舞台拒绝起播时界面退回暂停。** 让可见舞台临时顶着 `back` 角色,按播放必回 `{ ok: false }`;
- *      store 的 `playing` 要翻回 false,不能停在「在播」。
- *   5. **RPC 发给已经拿出 DOM 的 iframe 会被回绝,不会永远挂着**(真 Chrome 的 WindowProxy,
- *      单测里用的是替身)。
+ *   1. **Press play on 3D tab: t advances, audio layer remains.** Previously, switching to 3D
+ *      unmounted the 2D subtree along with both stage iframes; `frontStage()` handed over a client
+ *      pointing to a closed window, `play()` never responded, playhead was stuck in place while
+ *      button showed "Pause". Also check that 3D canvas is not obscured by hidden 2D page (they
+ *      overlap in the same area).
+ *   2. **Switch back and forth between 2D and 3D during playback: playback uninterrupted.** Stage
+ *      is no longer rebuilt upon tab switching, t advances continuously.
+ *   3. **Switch stage render surface while `playing` (simulated here by reloading visible stage
+ *      iframe): playback resumes on its own.** Previously, the new stage received `play` before
+ *      receiving the project, returning `no-project`; parent page did not retry: picture never
+ *      moved.
+ *   4. **When stage refuses to start playback, UI reverts to paused.** Let visible stage
+ *      temporarily take the `back` role; pressing play must return `{ ok: false }`; store's
+ *      `playing` must flip back to false, cannot stay on "playing".
+ *   5. **RPC sent to an iframe removed from DOM is rejected, not hanging forever** (real Chrome
+ *      WindowProxy; unit test uses a mock).
  *
- * 和 editor-preview-smoke 一样,每一趟先 `newProject` 起空项目,卡片参数带本趟标记,
- * 免得同一台 server 上前几趟留下的成本记录(`out/card-costs.json`)串进来。
+ * Like editor-preview-smoke, each pass first calls `newProject` to start an empty project, with
+ * card parameters tagged for this pass, to avoid cross-contamination from cost records
+ * (`out/card-costs.json`) left by earlier passes on the same server.
  */
 import puppeteer from 'puppeteer';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
@@ -50,7 +60,7 @@ try {
   const dual = await page.evaluate(() => document.querySelectorAll('iframe[data-pc^="stage-frame"]').length === 2);
   if (!check(dual, 'the editor runs the default cross-origin dual stage (this probe only covers K4 playback)')) throw new Error('not dual stage');
 
-  // 父页这一侧:数 `frame` 事件(K4 每拍一条),以及读播放头
+  // Parent page side: count `frame` events (one per tick in K4), and read the playhead
   await page.evaluate(() => {
     window.__p3d = { frames: 0, marker: 1 };
     window.addEventListener('message', (e) => { if (e.data && e.data.type === 'frame') window.__p3d.frames++; });
@@ -63,7 +73,7 @@ try {
     [...document.querySelectorAll('[data-pc="preview-tabs"] button')].find((b) => b.textContent === label).click();
   }, label);
   const clickPlay = () => page.click('.pc-pv-btn--play');
-  /** 等播放器自己停稳(暂停收尾是异步 RPC),免得下一段从一个还在走的播放头开始 */
+  /** Wait for player to settle (pause wrap-up is async RPC) so next segment does not start with moving playhead */
   const waitStopped = async () => {
     const deadline = Date.now() + 5000;
     let prev = null;
@@ -89,7 +99,7 @@ try {
   check(ids.scene && ids.pill && ids.clips === 2, 'the run starts from an empty project with its own scene-3d + 2D card', ids);
   await sleep(1500);
 
-  /* ── 1. 3D 页按播放 ─────────────────────────────────────────── */
+  /* ── 1. Press play on 3D tab ─────────────────────────────────── */
   await tab('3D');
   await page.waitForSelector('.pc-3d-checker canvas', { timeout: 30000 });
   await sleep(800);
@@ -122,7 +132,7 @@ try {
   out.play3dStopped = await pauseIfPlaying();
   check(!out.play3dStopped.playing, 'pause on the 3D page stops playback', out.play3dStopped);
 
-  /* ── 2. 播放中来回切页 ──────────────────────────────────────── */
+  /* ── 2. Switch tabs back and forth during playback ──────────── */
   await tab('2D');
   await page.evaluate(async () => { (await import('/src/store/project.ts')).actions.seek(0.2); });
   await sleep(500);
@@ -140,7 +150,7 @@ try {
   check(s2.playing && s2.t - s1.t > 0.5, 'switching 3D -> 2D while playing keeps the playhead moving', out.switching);
   await pauseIfPlaying();
 
-  /* ── 3. 带着 playing 换舞台渲染面(重载可见舞台 iframe) ─────── */
+  /* ── 3. Switch stage render surface while playing (reload visible stage iframe) ── */
   await page.evaluate(async () => { (await import('/src/store/project.ts')).actions.seek(0.5); });
   await sleep(400);
   await clickPlay();
@@ -148,7 +158,7 @@ try {
   await page.evaluate(async () => { window.__p3d.oldFront = (await import('/src/editor/stageBridge.ts')).frontStage(); });
   const frontId = await page.evaluate(() => (typeof window.__pcPreviewDiag === 'function' ? window.__pcPreviewDiag().frontId : 'A'));
   const frontFrame = page.frames().find((f) => f.url().includes('stage=1') && f.url().includes(`id=${frontId}`));
-  await frontFrame.evaluate(() => location.reload()).catch(() => { /* 导航掐断了这次 evaluate,正常 */ });
+  await frontFrame.evaluate(() => location.reload()).catch(() => { /* Navigation aborted this evaluate, normal */ });
   await page.waitForFunction(async () => {
     const c = (await import('/src/editor/stageBridge.ts')).frontStage();
     return !!c && c !== window.__p3d.oldFront;
@@ -160,10 +170,10 @@ try {
   check(r1.playing && r1.t - r0.t > 0.8, 'after the visible stage is replaced mid-playback, playback resumes on the new stage (play waits for the project)', out.remount);
   await pauseIfPlaying();
 
-  /* ── 4. 舞台拒绝起播 → 界面退回暂停 ─────────────────────────── */
+  /* ── 4. Stage refuses playback start → UI reverts to paused ─── */
   await page.evaluate(async () => {
     const { frontStage } = await import('/src/editor/stageBridge.ts');
-    await frontStage().setRole('back');   // 舞台的 play() 只认 front,必回 { ok: false, reason: 'role' }
+    await frontStage().setRole('back');   // Stage play() only accepts front, always returns { ok: false, reason: 'role' }
   });
   await clickPlay();
   const deadline = Date.now() + 3000;
@@ -184,7 +194,7 @@ try {
   check(q1.playing && q1.t - q0.t > 0.5, 'after the stage accepts again, one click on play starts cleanly', out.recovered);
   await pauseIfPlaying();
 
-  /* ── 5. 发给已拿出 DOM 的 iframe 的 RPC 会被回绝 ────────────── */
+  /* ── 5. RPC sent to iframe removed from DOM is rejected ──────── */
   out.closedTarget = await page.evaluate(async () => {
     const { createStageRpc } = await import('/src/render/stageRpc.ts');
     const f = document.createElement('iframe');
@@ -196,7 +206,7 @@ try {
     f.remove();
     const late = createStageRpc(win, location.origin);
     const t0 = performance.now();
-    // 两个都限时:修之前它们真的会永远挂着,探针自己不能跟着挂死
+    // Both have timeouts: before the fix they really hung forever; probe itself cannot hang dead with them
     const within = (p) => Promise.race([p, new Promise((r) => setTimeout(() => r('still pending'), 3000))]);
     const pendingResult = await within(pending);
     const lateResult = await within(late.play(0).then(() => 'resolved', (e) => String(e.message)));

@@ -1,45 +1,66 @@
 /**
- * 账号云端项目里,页面那条文档连接的寿命(`syncManager.ts` 的 `enterAccountProject` 用;在线页面与桌面版同一条路)。
+ * Lifetime of the page's document connection inside an account cloud project (used by `enterAccountProject` in
+ * `syncManager.ts`; the online page and the desktop app take the same path).
  *
- * 账号连接上的每条消息都要过闸,闸拿建连时那张票据背后的访问令牌去问账号服务;访问令牌到期(120 秒,票据的 `expiresAt` 就是那个时刻)
- * 之后,连接还开着,但每条消息都回「凭证到期」,续令牌也救不回这条连接(`server/account-card-link.mjs` 文件头有实测)。
- * 所以页面要在到期之前换到一个凭新票据建的会话上。本模块只管「什么时候换、换不成怎么办」,怎么换在 `link.ts` 的 `renew()`:
+ * Every message on the account connection passes a gate. The gate asks the account service using the access token
+ * behind the ticket that was used to open the connection. Once the access token expires (120 seconds; the ticket's
+ * `expiresAt` is that moment), the connection stays open but every message gets "credential expired", and renewing
+ * the token cannot save this connection (measured results are in the header of `server/account-card-link.mjs`).
+ * So before expiry the page has to switch to a session built from a new ticket. This module only decides "when to
+ * switch, and what to do if switching fails"; how to switch is in `renew()` in `link.ts`:
  *
- * - **每张票据都要够用**:取会话时要求背后的访问令牌至少还剩 `MIN_TICKET_LIFE_MS`,不够客户端先续令牌(`client.session` 的 `minRemainingMs`)。
- * - **到期前换**:`tick()`(调用方每几秒调一次,看的是墙上时钟)发现离到期不到 `RENEW_MARGIN_MS` 就换。看墙上时钟而不是定一个长定时器,
- *   是为了电脑睡眠醒来之后第一下就能发现「早就过期了」。两次换之间至少隔 `MIN_RENEW_GAP_MS`。
- * - **换不成**:账号服务一时不通,下一次 `tick()` 再试;试到到期那一刻还没换成,这条连接就是坏的 —— 调 `link.expire()` 按断线处理
- *   (页面转离线、改动进离线队列、照普通断线重连),不让页面显示在线而实际写不进。取票据的请求挂住不回也一样:到期后 `busy` 超过
- *   `BUSY_EXPIRE_MS` 就 `expire()`,不等它。登录失效、被踢(会话接口回 401 / 403)交给 `onTerminal`,由调用方照现有的做法收场。
- * - **已经过期才发现**(睡眠醒来;或文档服务回了「凭证到期」,`authExpired()`):**不换,直接 `expire()`**。过期期间做的改动文档服务没收,
- *   它们得照离线的规矩重新进去 —— 重连后第一条带期望版本,别人在这期间改过就停下来问用户(语义 `product/document-service.md`「冲突」:
- *   暂时离线重入不能静默覆盖)。传输已经脱开(正在接续)时同理,`renew()` 自己不换。
- * - **权限变了**(`accessSeen`):只读改成可写时换一个会话,新连接才写得进去;正忙着就记下、忙完补一轮。
+ * - **Every ticket must last long enough**: when fetching a session, require the access token behind it to have at
+ *   least `MIN_TICKET_LIFE_MS` left; if not, the client renews the token first (`minRemainingMs` of
+ *   `client.session`).
+ * - **Switch before expiry**: `tick()` (the caller invokes it every few seconds; it reads the wall clock) switches
+ *   as soon as it finds less than `RENEW_MARGIN_MS` left before expiry. It reads the wall clock instead of setting
+ *   one long timer so that, right after the computer wakes from sleep, the first call can notice "it expired long
+ *   ago". Consecutive switches are at least `MIN_RENEW_GAP_MS` apart.
+ * - **Switch fails**: if the account service is briefly unreachable, the next `tick()` tries again; if it still
+ *   has not succeeded when the expiry moment arrives, the connection is broken: call `link.expire()` to handle it
+ *   like a disconnect (the page goes offline, changes go into the offline queue, and it reconnects like an ordinary
+ *   disconnect), so the page never shows online while writes cannot get through. The same applies when the ticket
+ *   request hangs without a reply: once `busy` lasts longer than `BUSY_EXPIRE_MS` after expiry, call `expire()`
+ *   without waiting for it. Login invalidation or being kicked (the session endpoint returns 401 / 403) goes to
+ *   `onTerminal`, and the caller wraps up the way it already does.
+ * - **Found already expired** (after waking from sleep; or the document service replied "credential expired",
+ *   `authExpired()`): **do not switch, call `expire()` directly**. The document service did not accept changes made
+ *   during the expired period, so they must re-enter under the offline rules: after reconnecting, the first
+ *   message carries the expected version, and if someone else changed things in the meantime, stop and ask the user
+ *   (semantics, `product/document-service.md`, "Conflicts": a temporary offline re-entry must not silently
+ *   overwrite). The same applies when the transport has already detached (is resuming): `renew()` itself does not
+ *   switch.
+ * - **Permission changed** (`accessSeen`): when read-only becomes writable, switch to a new session so the new
+ *   connection can write; if busy, record it and do one more round when done.
  *
- * **本机时钟不准**:到期时刻是文档服务的钟,这里拿本机的钟去比。取到票据那一刻就算一下它「还剩多久」:我们要的是至少 60 秒,
- * 算出来却不到(`RENEW_MARGIN_MS` + `SKEW_SLACK_MS`),只能是本机的钟快了 —— 这张票据的到期时刻不可信,改成「从现在起按 `MIN_TICKET_LIFE_MS` 算」,
- * 也不凭本机的钟判它过期(过期由文档服务的「凭证到期」说了算)。本机的钟快 90～120 秒时,效果是大约每 30 秒换一次会话(不是每 3 秒),
- * 客户端自己续访问令牌的那一处(`client.ts` 的 `ensureLogin`)仍按本机的钟,会比正常更勤地续令牌;钟慢的一侧,票据实际寿命比算的短,
- * 靠文档服务回「凭证到期」兜住。
+ * **Inaccurate local clock**: the expiry moment is the document service's clock, and here it is compared against
+ * the local clock. At the moment the ticket is obtained, compute how long it has "left": we asked for at least 60
+ * seconds, and if the computed value falls short (`RENEW_MARGIN_MS` + `SKEW_SLACK_MS`), the local clock can only be
+ * fast. The ticket's expiry moment is then untrustworthy, so count it as "`MIN_TICKET_LIFE_MS` from now", and do
+ * not judge it expired by the local clock either (expiry is decided by the document service's "credential
+ * expired"). When the local clock is 90-120 seconds fast, the effect is switching sessions about every 30 seconds
+ * (not every 3 seconds). The place where the client renews its own access token (`ensureLogin` in `client.ts`)
+ * still follows the local clock and will renew the token more often than normal. On the slow-clock side, the
+ * ticket's real lifetime is shorter than computed, and the document service's "credential expired" reply covers it.
  */
 
-/** 离到期不到这么久就换会话 */
+/** Switch sessions when less than this much time is left before expiry */
 export const RENEW_MARGIN_MS = 30_000;
-/** 取票据时,背后的访问令牌至少还要剩这么久(比 `RENEW_MARGIN_MS` 大,新会话才不会一建成又到了该换的时候) */
+/** When fetching a ticket, the access token behind it must have at least this much left (larger than `RENEW_MARGIN_MS`, so a new session is not already due for a switch right after it is built) */
 export const MIN_TICKET_LIFE_MS = 60_000;
-/** 两次计划内换会话之间至少隔这么久(时钟不准、票据寿命异常短时不至于连着换) */
+/** Minimum gap between two planned session switches (so an inaccurate clock or an abnormally short ticket lifetime does not cause back-to-back switches) */
 export const MIN_RENEW_GAP_MS = 20_000;
-/** 取到的票据算出来的剩余寿命比 `RENEW_MARGIN_MS` 多不出这么多:本机的钟不可信 */
+/** If the remaining lifetime computed for the fetched ticket exceeds `RENEW_MARGIN_MS` by less than this: the local clock is untrustworthy */
 export const SKEW_SLACK_MS = 10_000;
-/** 到期之后,换会话那一步(取票据、建新会话)还没回来超过这么久:不等了,按连接作废处理 */
+/** After expiry, if the session switch step (fetching a ticket, building a new session) has not returned for longer than this: stop waiting and treat the connection as void */
 export const BUSY_EXPIRE_MS = 5_000;
 
 export interface AccountLinkLifeOptions {
-  /** 取一份新的项目会话,要求背后的访问令牌至少还剩 `minRemainingMs`(`CloudAccountClient.session`) */
+  /** Fetch a new project session, requiring the access token behind it to have at least `minRemainingMs` left (`CloudAccountClient.session`) */
   session: (o: { minRemainingMs: number }) => Promise<{ connectionTicket: string; expiresAt: number }>;
-  /** 页面那条连接(`SyncLink` 里用到的部分) */
+  /** The page's connection (the part used in `SyncLink`) */
   link: () => { readonly connected: boolean; renew(): Promise<boolean>; expire(reason?: string): void } | null;
-  /** 登录失效、被踢、不在名单:不再试 */
+  /** Login invalidated, kicked, not on the list: do not retry */
   onTerminal: (error: unknown) => void;
   now?: () => number;
   renewMarginMs?: number;
@@ -59,7 +80,7 @@ export function createAccountLinkLife(o: AccountLinkLifeOptions) {
   const margin = o.renewMarginMs ?? RENEW_MARGIN_MS;
   const minLife = o.minTicketLifeMs ?? MIN_TICKET_LIFE_MS;
   const minGap = o.minRenewGapMs ?? MIN_RENEW_GAP_MS;
-  /** 最近一次取到的票据:到什么时候(本机的钟)、这个时刻可不可信;连接建成(或换成)时记成当前连接的 */
+  /** The most recently fetched ticket: until when (local clock) and whether that moment is trustworthy; recorded as the current connection's when the connection is built (or switched) */
   let issued: { at: number; trusted: boolean } | null = null;
   let active: { at: number; trusted: boolean } | null = null;
   let busySince: number | null = null;
@@ -67,7 +88,7 @@ export function createAccountLinkLife(o: AccountLinkLifeOptions) {
   let renews = 0;
   let expires = 0;
   let knownAccess: string | null = null;
-  /** 权限每变一次加一;`handledSeq` 是取票据时已经算进去的那一次。两者不等 = 还欠一轮换会话(变的时候正忙着) */
+  /** Incremented on every permission change; `handledSeq` is the change already accounted for when the ticket was fetched. Unequal = one session switch still owed (it was busy when the change happened) */
   let accessSeq = 0;
   let handledSeq = 0;
 
@@ -78,7 +99,7 @@ export function createAccountLinkLife(o: AccountLinkLifeOptions) {
     return "expired";
   }
 
-  /** 换一次。回:换成了 / 没换成(可再试) / 终局 */
+  /** Do one switch. Returns: switched / not switched (can retry) / terminal */
   async function swap(): Promise<"renewed" | "retry" | "terminal"> {
     const link = o.link();
     if (!link) return "retry";
@@ -94,40 +115,43 @@ export function createAccountLinkLife(o: AccountLinkLifeOptions) {
   }
 
   return {
-    /** `SyncLink` 的 `protocols`:每次建会话(含换会话)现取票据。`first` 给了就用它(进项目时已经取到的那份会话) */
+    /** `protocols` of `SyncLink`: fetch a ticket on demand for every session build (including session switches). If `first` is given, use it (the session already fetched when entering the project) */
     async ticket(first?: { connectionTicket: string; expiresAt: number } | null): Promise<string> {
       const s = first && first.expiresAt - now() >= minLife ? first : await o.session({ minRemainingMs: minLife });
       const life = s.expiresAt - now();
-      // 要的是至少 minLife;算出来连「该换的提前量」都不够,是本机的钟快了:到期时刻不可信,按从现在起 minLife 算
+      // We need at least minLife; if the computed value does not even cover the "lead time for switching", the local clock is fast: the expiry moment is untrustworthy, so count minLife from now
       issued = life >= margin + SKEW_SLACK_MS ? { at: s.expiresAt, trusted: true } : { at: now() + minLife, trusted: false };
       return s.connectionTicket;
     },
-    /** 会话建成了(新建或换成):当前连接能用到刚才那张票据到期 */
+    /** The session was built (newly or by switching): the current connection can use that ticket until it expires */
     opened(): void {
       active = issued;
     },
-    /** 调用方每几秒调一次。按 2026-10-14 用户定：已经建好的连接不再按时间失效，也不轮询；失效一律由账号服务主动通知。 */
+    /** The caller invokes this every few seconds. Per user decision, 2026-10-14: an already-built connection no longer expires by time and is not polled; invalidation is always notified actively by the account service. */
     async tick(): Promise<TickResult> {
       const link = o.link();
       if (busySince !== null) return "busy";
-      // 没有会话(正在断线重连)时不管:重连那条路本来就凭新票据建会话
+      // With no session (reconnecting after a disconnect), do nothing: the reconnect path builds its session from a new ticket anyway
       if (!link || !link.connected || active === null) return "idle";
-      // 只有权限变更（如只读改可写）需要换会话
+      // Only a permission change (e.g. read-only to writable) requires a session switch
       if (accessSeq !== handledSeq && now() - lastRenewAt >= minGap) {
         return swap();
       }
       return "idle";
     },
-    /** 文档服务回了「凭证到期」:这条连接已经写不进去。不换(理由同上),按断线处理 */
+    /** The document service replied "credential expired": this connection can no longer write. Do not switch (same reason as above), handle it as a disconnect */
     async authExpired(): Promise<TickResult> {
       const link = o.link();
       if (!link || !link.connected) return "idle";
       return expire(link);
     },
     /**
-     * 调用方每次读到会话里的权限(`r` / `rw`)都报一下。连接的权限是建连时那张票据上的,文档服务改项目时照它判:
-     * 权限被提高(只读改可写)时服务端不关旧连接,旧连接一直是只读 —— 所以发现权限变了就换一个会话。
-     * (权限被降低时服务端自己会关掉旧连接,页面照断线重连。)正忙着就记下,下一次 `tick()` 补换。
+     * The caller reports every time it reads the permission (`r` / `rw`) from the session. A connection's permission
+     * is the one on the ticket used to build it, and the document service checks against it when changing a project:
+     * when the permission is raised (read-only to writable), the server does not close the old connection, which stays
+     * read-only forever, so when a permission change is found, switch to a new session.
+     * (When the permission is lowered, the server closes the old connection itself and the page reconnects like a
+     * disconnect.) If busy, record it, and the next `tick()` makes up the switch.
      */
     async accessSeen(access: string): Promise<TickResult> {
       const before = knownAccess;
@@ -139,7 +163,7 @@ export function createAccountLinkLife(o: AccountLinkLifeOptions) {
       if (busySince !== null) return "busy";
       return swap();
     },
-    /** 诊断 */
+    /** Diagnostics */
     describe: () => ({ expiresAt: active?.at ?? null, trusted: active?.trusted ?? null, renews, expires, busy: busySince !== null }),
   };
 }

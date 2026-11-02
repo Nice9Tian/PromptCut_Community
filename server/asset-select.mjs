@@ -1,35 +1,55 @@
 /**
- * 预渲染进程里推送、拉取用哪一个素材服务(契约 `docs/plan/render-queue-contract.md` J.13,按 D7 选基址)。
- * 原在 `vite-plugin-frames.ts` 里,为了能单测搬到这里(`docs/archive/agent-reports/AGENT-push-scope.md`)。
+ * Which asset service to use for push and pull in the prerender process (contract
+ * `docs/plan/render-queue-contract.md` J.13, base URL chosen per D7). Originally in
+ * `vite-plugin-frames.ts`, moved here to enable unit tests
+ * (`docs/archive/agent-reports/AGENT-push-scope.md`).
  *
- * 顺序:
- *   1. `PROMPTCUT_ASSET_URL`(形如 `http://192.168.50.96:5460/api/asset`);
- *   2. 页面交来的素材服务基址(自动渲染节点;现取,页面换了基址下一次调用就换);
- *   3. 服务地址登记里别的机器的 `asset`(`foreignAssetEndpoints`),取第一个的第一个地址;登记变了就新建一个
- *      client 换上,在飞的请求照旧用旧的(回的是一个代理,每次调用时才取当前的 client);
- *   4. 本机的 `assetServiceOrigin()` 加 `/api/asset`。
+ * Order:
+ *   1. `PROMPTCUT_ASSET_URL` (formatted like `http://192.168.50.96:5460/api/asset`);
+ *   2. Asset service base URL provided by the page (automated render node; fetched dynamically,
+ *      switches on the next call if the page changes the base URL);
+ *   3. `asset` on other machines in the service address registry (`foreignAssetEndpoints`), taking
+ *      the first URL of the first entry; when the registry changes, create a new client to swap in,
+ *      while in-flight requests continue using the old one (returns a proxy that retrieves the
+ *      current client on each call);
+ *   4. Local `assetServiceOrigin()` plus `/api/asset`.
  *
- * **第一次调用前先等登记**(交接文件 `HANDOFF-2026-09-29.md` 第 4 节第三条的第二问):1、2 都没有时,要靠登记才知道
- * 该推到哪里,而登记要连上文档服务、订阅之后才回。原来先按本机建 client、登记到了再换,于是起步那一阵
- * (队列文件里上次没推完的段、刚写进帧库的段)先推到了本机素材服务。现在代理上的方法在「定下来」之前先等:
- * 收到第一份登记(哪怕是空的),或页面交来了基址,或等满 `settleMs`(连不上文档服务,缺省 10 s)就按那时的选择走。
- * 定下来之后与原来相同。`ready` 是这一刻的 promise(调用方可以等它再起队列)。
+ * **Wait for registry before first call** (handoff document `HANDOFF-2026-09-29.md` section 4,
+ * item 3, question 2): when neither 1 nor 2 is present, it relies on the registry to know where to
+ * push, but the registry only responds after connecting to the document service and subscribing.
+ * Previously, a client was created based on local first and swapped once registry arrived; thus
+ * during startup (segments left unpushed in the queue file last time, segments freshly written to the
+ * frame store), they were pushed to the local asset service first. Now, methods on the proxy wait
+ * before "settling": wait until receiving the first registry (even if empty), or the page provides
+ * a base URL, or `settleMs` elapses (cannot connect to document service, default 10 s), then proceed
+ * with the choice at that time. Once settled, it behaves as before. `ready` is the promise for this
+ * moment (caller can wait for it before starting the queue).
  *
- * 读写带素材票据(M6a,`docs/plan/auth-contract.md` 第 8、11 节):凭共享项目进入的由调用方给 `ticket`;本机身份不带票据。
- * 每换一次基址记一行 `push.asset-base { source, base }`,定下来记一行 `push.asset-ready { source, base, waitedMs }`,都不含票据。
+ * Reads and writes carry asset tickets (M6a, `docs/plan/auth-contract.md` sections 8 and 11): for
+ * entries via shared projects, caller supplies `ticket`; local identity carries no ticket. Each
+ * time the base URL switches, log a line `push.asset-base { source, base }`; once settled, log a
+ * line `push.asset-ready { source, base, waitedMs }`, neither containing tickets.
  */
 import os from 'node:os';
 
-/** 没有显式基址时,第一次推送、拉取最多等登记这么久 */
+/**
+ * When there is no explicit base URL, wait at most this long for the registry on the first
+ * push or pull
+ */
 export const ASSET_SETTLE_MS = 10_000;
 
-/** 本机登记素材服务时用的身份(`asset-announce.mjs` 的缺省身份) */
+/**
+ * Identity used when registering the asset service locally (default identity in
+ * `asset-announce.mjs`)
+ */
 export const selfAnnouncerId = (hostname = os.hostname()) => `asset:${String(hostname || 'host').replace(/[^A-Za-z0-9._:-]/g, '-') || 'host'}`.slice(0, 128);
 
 /**
- * 服务地址登记里**别的机器**的素材服务(J.6 素材回退与 J.13 推送基址共用这一个判据):本机登记的排除 ——
- * `announcerId` 是本机身份,或者地址与本机素材服务同 host。按 `announcerId` 的字典序排,每项只留不是本机的地址,
- * 留不下地址的整项去掉。
+ * Asset services of **other machines** in the service address registry (J.6 asset fallback and J.13
+ * push base URL share this single criterion): exclude those registered by this machine:
+ * `announcerId` is the local identity, or the address shares the host with the local asset service.
+ * Sorted lexicographically by `announcerId`; keep only non-local addresses for each entry, and drop
+ * the entire entry if no addresses remain.
  * @param {any[]} list
  * @param {string | null} origin
  * @param {{ self?: string }} [options]
@@ -37,7 +57,7 @@ export const selfAnnouncerId = (hostname = os.hostname()) => `asset:${String(hos
  */
 export function foreignAssetEndpoints(list, origin, { self = selfAnnouncerId() } = {}) {
   let selfHost = '';
-  try { selfHost = origin ? new URL(origin).host : ''; } catch { /* 没有就不按地址排 */ }
+  try { selfHost = origin ? new URL(origin).host : ''; } catch { /* If absent, do not sort by address */ }
   const out = [];
   for (const item of list ?? []) {
     if (item?.kind !== 'asset' || typeof item.announcerId !== 'string' || item.announcerId === self) continue;
@@ -55,20 +75,20 @@ export function foreignAssetEndpoints(list, origin, { self = selfAnnouncerId() }
  * @param {object} options
  * @param {{ watchServiceEndpoints(endpoint: any, kinds: string[], onChange: (list: any[]) => void): () => void }} options.node
  * @param {any} options.endpoint
- * @param {string} options.origin  本机素材服务的源
+ * @param {string} options.origin  Origin of the local asset service
  * @param {((opts?: { refresh?: boolean }) => Promise<string | null>) | null} options.ticket
  * @param {(opts: { base: string, ticket: any }) => any} options.createAssetClient
- * @param {string} options.owner  日志里的 `for`
- * @param {() => string | null} [options.preferred]  页面此刻用的素材服务基址
- * @param {string} [options.envBase]  缺省读 `PROMPTCUT_ASSET_URL`
+ * @param {string} options.owner  `for` in logs
+ * @param {() => string | null} [options.preferred]  Asset service base URL currently used by the page
+ * @param {string} [options.envBase]  Reads `PROMPTCUT_ASSET_URL` by default
  * @param {(event: string, fields: object) => void} [options.log]
  * @param {number} [options.settleMs]
  * @param {() => number} [options.now]
- * @param {string} [options.self]  本机的登记身份(测试用)
+ * @param {string} [options.self]  Local registration identity (for testing)
  */
 export function selectAssetClient({ node, endpoint, origin, ticket, createAssetClient, owner, preferred, envBase: envOpt, log = () => {},
   settleMs = ASSET_SETTLE_MS, now = Date.now, self } = /** @type {any} */ ({})) {
-  const say = (event, fields) => { try { log(event, fields); } catch { /* 日志出错不影响推送 */ } };
+  const say = (event, fields) => { try { log(event, fields); } catch { /* Logging errors do not affect pushing */ } };
   const localBase = `${origin}/api/asset`;
   /** @type {any} */
   let current = null;
@@ -103,7 +123,8 @@ export function selectAssetClient({ node, endpoint, origin, ticket, createAssetC
   let stop = () => {};
   if (envBase) use(envBase, 'env');
   if (!current && pagePick()) use(/** @type {string} */ (pagePick()), 'page');
-  // 显式给了基址并且建成了就只用它;否则(含没给页面基址时)本机兜底,按登记换
+  // If a base URL was explicitly provided and successfully created, use only that; otherwise
+  // (including when no page base URL was given), fall back to local and switch based on registry
   const envOk = !!envBase && currentBase === envBase;
   if (current) settle(envOk ? 'env' : 'page');
   if (!envOk) {
@@ -125,7 +146,10 @@ export function selectAssetClient({ node, endpoint, origin, ticket, createAssetC
       settleTimer?.unref?.();
     }
   }
-  /** 此刻该用的 client(页面后来才给、或换了素材基址:这一次调用就换上) */
+  /**
+   * Client to use at this moment (if page provided it later or changed asset base URL:
+   * swapped in on this invocation)
+   */
   const pick = () => {
     if (!envOk) {
       const p = pagePick();
@@ -139,14 +163,14 @@ export function selectAssetClient({ node, endpoint, origin, ticket, createAssetC
     const value = now0?.[key];
     if (typeof value !== 'function') return value;
     if (settled) return value.bind(now0);
-    // 还没定下来:等定下来再按那时的选择调(方法都是异步的)
+    // Not settled yet: wait until settled, then call per the choice at that time (all methods are async)
     return (...args) => ready.then(() => { const c = pick(); return c[key](...args); });
   } });
   return {
     client,
     ready,
     settled: () => settled,
-    stop: () => { if (settleTimer !== null) { clearTimeout(settleTimer); settleTimer = null; } try { stop(); } catch { /* 已经停了 */ } settle('stopped'); },
+    stop: () => { if (settleTimer !== null) { clearTimeout(settleTimer); settleTimer = null; } try { stop(); } catch { /* Already stopped */ } settle('stopped'); },
     base: () => currentBase,
   };
 }

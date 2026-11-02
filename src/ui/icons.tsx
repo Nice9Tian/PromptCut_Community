@@ -1,9 +1,10 @@
 import type { SVGProps } from "react";
 
 /**
- * 按钮图标(设计稿「工具栏组件表」第 04 节)。
- * 统一规格:24 画幅、18px 显示、1.5 描边、方头端点、fill 走 none;颜色一律 currentColor,
- * 由按钮的文字色决定(常态次文字、悬浮主文字、主按钮跟随按钮前景)。
+ * Button icons (design mockup, "Toolbar component table", section 04).
+ * Uniform spec: 24 artboard, displayed at 18px, 1.5 stroke, square caps, fill set to none; the color is
+ * always currentColor, determined by the button's text color (secondary text normally, primary text on
+ * hover, and for the primary button it follows the button foreground).
  */
 type IconProps = SVGProps<SVGSVGElement> & { size?: number };
 
@@ -26,7 +27,7 @@ function Stroked({ size = 18, children, ...rest }: IconProps) {
   );
 }
 
-/** 播放:唯一的实心图标 */
+/** Play: the only solid icon */
 export function IconPlay({ size = 18, ...rest }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...rest}>
@@ -35,7 +36,7 @@ export function IconPlay({ size = 18, ...rest }: IconProps) {
   );
 }
 
-/** 暂停:设计稿没给,按播放的实心规格补一个(播放/暂停是同一个按钮的两态) */
+/** Pause: the design mockup did not provide one, so one was added following the solid spec of play (play/pause are two states of the same button) */
 export function IconPause({ size = 18, ...rest }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...rest}>
@@ -162,7 +163,7 @@ export function IconMove(p: IconProps) {
   );
 }
 
-/** 更多操作(三点) */
+/** More actions (three dots) */
 export function IconMore(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -173,7 +174,7 @@ export function IconMore(p: IconProps) {
   );
 }
 
-/** 项目设置(齿轮) */
+/** Project settings (gear) */
 export function IconSettings(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -184,7 +185,7 @@ export function IconSettings(p: IconProps) {
 }
 
 
-/** 回到开始页 */
+/** Back to the start page */
 export function IconHome(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -195,7 +196,7 @@ export function IconHome(p: IconProps) {
   );
 }
 
-/** 配音设置:正在说话的小人(头、肩,嘴前两道声波)。以前是一排竖条声波,看着像语音识别 */
+/** Voiceover settings: a little person who is speaking (head, shoulders, two sound waves in front of the mouth). It used to be a row of vertical-bar sound waves, which looked like speech recognition */
 export function IconVoice(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -207,7 +208,7 @@ export function IconVoice(p: IconProps) {
   );
 }
 
-/** 新建项目 */
+/** New project */
 export function IconNew(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -218,10 +219,10 @@ export function IconNew(p: IconProps) {
   );
 }
 
-/* ── 配色诊断与修正 v2 整屏用到、之前没有的图标 ─────────────────────────
- * 规格同上:24 画幅、1.5 描边、currentColor。 */
+/* ── Icons needed by the whole color diagnosis and correction v2 screen that did not exist before ──────
+ * Same spec as above: 24 artboard, 1.5 stroke, currentColor. */
 
-/** 上一段 / 跳到开头 */
+/** Previous clip / jump to start */
 export function IconSkipBack(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -229,7 +230,7 @@ export function IconSkipBack(p: IconProps) {
     </Stroked>
   );
 }
-/** 下一段 / 跳到结尾 */
+/** Next clip / jump to end */
 export function IconSkipForward(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -237,7 +238,7 @@ export function IconSkipForward(p: IconProps) {
     </Stroked>
   );
 }
-/** 循环播放 */
+/** Loop playback */
 export function IconLoop(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -246,7 +247,7 @@ export function IconLoop(p: IconProps) {
     </Stroked>
   );
 }
-/** 扬声器 */
+/** Speaker */
 export function IconVolume(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -255,7 +256,7 @@ export function IconVolume(p: IconProps) {
     </Stroked>
   );
 }
-/** 静音 */
+/** Mute */
 export function IconVolumeMute(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -264,7 +265,7 @@ export function IconVolumeMute(p: IconProps) {
     </Stroked>
   );
 }
-/** 锁定 */
+/** Locked */
 export function IconLock(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -273,7 +274,7 @@ export function IconLock(p: IconProps) {
     </Stroked>
   );
 }
-/** 未锁定 */
+/** Unlocked */
 export function IconUnlock(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -282,7 +283,7 @@ export function IconUnlock(p: IconProps) {
     </Stroked>
   );
 }
-/** 可见 */
+/** Visible */
 export function IconEye(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -291,7 +292,7 @@ export function IconEye(p: IconProps) {
     </Stroked>
   );
 }
-/** 隐藏 */
+/** Hidden */
 export function IconEyeOff(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -300,7 +301,7 @@ export function IconEyeOff(p: IconProps) {
     </Stroked>
   );
 }
-/** 拖动把手(三横) */
+/** Drag handle (three horizontal lines) */
 export function IconDrag(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -308,7 +309,7 @@ export function IconDrag(p: IconProps) {
     </Stroked>
   );
 }
-/** 加号 */
+/** Plus sign */
 export function IconPlus(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -316,7 +317,7 @@ export function IconPlus(p: IconProps) {
     </Stroked>
   );
 }
-/** 曲别针(添加附件):一根绕了两圈的回形针,整体斜 45° 放 */
+/** Paperclip (add attachment): a paper clip wound twice, placed at a 45° tilt overall */
 export function IconPaperclip(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -325,9 +326,11 @@ export function IconPaperclip(p: IconProps) {
   );
 }
 /**
- * 新开 Agent 分页(rail 上的「+」):对话气泡轮廓(左下角带小尾巴)里面一个 +。
- * 放在 rail 上,所以不走本文件的 1.5 描边方头规格,而是和 rail 图标(left/railIcons.tsx)同一套:
- * 24 网格、1.6 描边、圆头圆角、currentColor;显示尺寸由 .pc-rail-item svg 定(22px)。
+ * Open a new Agent tab ("+" on the rail): a chat bubble outline (with a small tail at the lower left)
+ * with a + inside.
+ * It sits on the rail, so it does not follow this file's 1.5 stroke square-cap spec, but the same set as
+ * the rail icons (left/railIcons.tsx): 24 grid, 1.6 stroke, round caps and joins, currentColor; the
+ * display size is set by .pc-rail-item svg (22px).
  */
 export function IconBubblePlus({ size = 22, ...rest }: IconProps) {
   return (
@@ -348,7 +351,7 @@ export function IconBubblePlus({ size = 22, ...rest }: IconProps) {
     </svg>
   );
 }
-/** 搜索 */
+/** Search */
 export function IconSearch(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -357,7 +360,7 @@ export function IconSearch(p: IconProps) {
     </Stroked>
   );
 }
-/** 下拉箭头 */
+/** Dropdown arrow */
 export function IconChevronDown(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -365,7 +368,7 @@ export function IconChevronDown(p: IconProps) {
     </Stroked>
   );
 }
-/** 历史 / 刷新 */
+/** History / refresh */
 export function IconHistory(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -375,7 +378,7 @@ export function IconHistory(p: IconProps) {
     </Stroked>
   );
 }
-/** 向上发送 */
+/** Send upward */
 export function IconSend(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -384,7 +387,7 @@ export function IconSend(p: IconProps) {
     </Stroked>
   );
 }
-/** 搜索图标旁的清空 */
+/** The clear button next to the search icon */
 export function IconClose(p: IconProps) {
   return (
     <Stroked {...p}>
@@ -393,7 +396,7 @@ export function IconClose(p: IconProps) {
   );
 }
 
-/** 皮肤/配色(调色盘) */
+/** Skin / color scheme (palette) */
 export function IconPalette(p: IconProps) {
   return (
     <Stroked {...p}>

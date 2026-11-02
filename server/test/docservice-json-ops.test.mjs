@@ -1,7 +1,8 @@
 /**
- * 通用 JSON 路径引擎（`server/docservice/json-ops.mjs`；C6.5 设计稿第 2 节，精确语义 `docs/plan/c65-ops-spec.md`）。
- * 用例 DS-J1～DS-J12。
- * 跑：node --test server/test/docservice-json-ops.test.mjs
+ * Generic JSON path engine (`server/docservice/json-ops.mjs`; C6.5 design draft section 2,
+ * exact semantics `docs/plan/c65-ops-spec.md`).
+ * Test cases DS-J1 to DS-J12.
+ * Run: node --test server/test/docservice-json-ops.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -183,7 +184,7 @@ test('DS-J11 entity: the longest prefix of /<name>/@<id> pairs starting at the r
 test('DS-J12 entitiesOf: set counts by actual difference; insert counts the new element; noop does not count; root replacement compares entity by entity', () => {
   const prev = base();
   const r1 = applyOps(prev, [
-    { op: 'set', path: '/tracks/@t1/clips/@c1/frame/x', value: 1 }, // 值没变
+    { op: 'set', path: '/tracks/@t1/clips/@c1/frame/x', value: 1 }, // Value did not change
     { op: 'set', path: '/tracks/@t1/clips/@c2/start', value: 9 },
     { op: 'insert', path: '/tracks/@t2/clips', index: 0, value: { id: 'c7' } },
     { op: 'remove', path: '/tracks/@t1/clips/@zz' },
@@ -193,13 +194,13 @@ test('DS-J12 entitiesOf: set counts by actual difference; insert counts the new 
 
   const next = structuredClone(prev);
   next.tracks[0].clips[2].start = 5; // c3
-  next.tracks[0].name = 'A2'; // t1 自身
-  next.filters.push({ id: 'f2' }); // 新效果
+  next.tracks[0].name = 'A2'; // t1 itself
+  next.filters.push({ id: 'f2' }); // New effect
   next.tracks[1].clips.push({ id: 'c8' });
   const r2 = applyOps(prev, [{ op: 'set', path: '', value: next }]);
   assert.deepEqual(new Set(entitiesOf(r2.effects)), new Set(['/tracks/@t1/clips/@c3', '/tracks/@t1', '/filters/@f2', '/tracks/@t2/clips/@c8']));
 
-  // 顺序变了：记到数组本身所属的实体
+  // Order changed: record to the entity the array itself belongs to
   const moved = structuredClone(prev);
   moved.tracks[0].clips.reverse();
   assert.deepEqual(entitiesOf(applyOps(prev, [{ op: 'set', path: '', value: moved }]).effects), ['/tracks/@t1']);

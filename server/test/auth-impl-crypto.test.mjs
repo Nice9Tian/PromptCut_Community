@@ -1,8 +1,10 @@
 /**
- * `server/auth/` 的编码与派生（实现方自测；契约 `docs/plan/auth-contract.md` 第 2、5、7、8 节）。
- * 跑：node --test server/test/auth-impl-crypto.test.mjs
+ * Encoding and derivation in `server/auth/` (implementer self-test; contract
+ * `docs/plan/auth-contract.md` sections 2, 5, 7, 8).
+ * Run: node --test server/test/auth-impl-crypto.test.mjs
  *
- * 纯 JS 的 SHA-256 / HMAC / PBKDF2 以 `node:crypto` 对拍；客户端的 WebCrypto 路径与纯 JS 路径结果相同。
+ * Pure JS SHA-256 / HMAC / PBKDF2 cross-checked against `node:crypto`; client WebCrypto path and
+ * pure JS path yield identical results.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

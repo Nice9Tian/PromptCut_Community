@@ -1,12 +1,16 @@
 /**
- * HT3：等价性（契约 `docs/plan/http-transport-contract.md` 第 11 节 HT3；HT-a 只跑「只走 WebSocket」与「中途断开再接续」两种）。
- * 跑：node --test server/test/ht3-equivalence.test.mjs
+ * HT3: Equivalence (contract `docs/plan/http-transport-contract.md` section 11 HT3; HT-a runs only
+ * "WebSocket-only" and "disconnect mid-way then resume").
+ * Run: node --test server/test/ht3-equivalence.test.mjs
  *
- * 同一段业务脚本跑两遍：一遍传输从不断；一遍在每一步前后把传输掐断（可控 TCP 代理 `cutAll()`），让会话接续。
- * 两遍记下的业务结果（去掉时间戳、租约到期时刻、epoch 这类每次都变的字段）必须逐项相同。覆盖：
- * render-queue 的认领、完成、断线放回；project 的提交与 stale；content 的 put 与 watch。
- * 客户端是 `createDocEndpoint`（假设 H10），服务端是 `createDocService` 挂真模块；两边会话层都到位才跑。
- * 只照契约写，没看实现。
+ * Run the same business script twice: once with transport never disconnecting; once cutting
+ * transport before and after each step (controllable TCP proxy `cutAll()`) to let the session
+ * resume. Business results recorded across both runs (excluding fields that vary each time, such as
+ * timestamps, lease expiration times, and epoch) must match item-by-item. Covers: render-queue
+ * claim, complete, and release on disconnect; project commit and stale; content put and watch.
+ * Client is `createDocEndpoint` (assumption H10), and server is `createDocService` mounted with
+ * real modules; runs only when session layers on both sides are in place. Written strictly to the
+ * contract without looking at the implementation.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -34,7 +38,7 @@ async function client(url, user, createDocEndpoint) {
   return {
     ep,
     got,
-    /** 发一条带 reqId 的请求，等带同一 reqId 的回包 */
+    /** Send a request with reqId and wait for a response with the same reqId */
     async rpc(msg, ms = 5000) {
       const reqId = `${user}-${++n}`;
       ep.send({ ...msg, reqId });
@@ -60,9 +64,9 @@ async function runScenario(t, mode) {
   t.after(() => proxy.close());
   const { createDocEndpoint } = await loadDocEndpoint();
   const url = `ws://127.0.0.1:${proxy.port}/`;
-  const A = await client(url, 'alice', createDocEndpoint); // 发布方 + 页面
-  const N = await client(url, 'nora', createDocEndpoint); // 渲染节点
-  const B = await client(url, 'bob', createDocEndpoint); // 第二个节点（只看）+ 页面
+  const A = await client(url, 'alice', createDocEndpoint); // Publisher + page
+  const N = await client(url, 'nora', createDocEndpoint); // Render node
+  const B = await client(url, 'bob', createDocEndpoint); // Second node (watch-only) + page
   t.after(() => { for (const c of [A, N, B]) c.ep.close(); });
 
   let cuts = 0;
@@ -75,7 +79,7 @@ async function runScenario(t, mode) {
   const out = [];
   const rec = (label, value) => out.push([label, value]);
 
-  // ---- render-queue：报到、发布
+  // ---- render-queue: check in, publish
   rec('node.welcome', pick(await N.rpc({ type: 'node.hello', nodeId: 'n1', profile: 'pc' }), ['type', 'nodeId', 'resumed', 'lost']));
   rec('queue.snapshot', (await N.rpc({ type: 'queue.watch', projects: 'all' })).tasks?.map((x) => x.id));
   await B.rpc({ type: 'node.hello', nodeId: 'n2', profile: 'pc' });
@@ -88,7 +92,7 @@ async function runScenario(t, mode) {
   await N.wait((m) => m.type === 'task.opened' && m.task?.id === t2.id, 'N sees task.opened');
   rec('opened@N', N.got.filter((m) => m.type === 'task.opened').map((m) => m.task.id).sort());
 
-  // ---- 认领、完成
+  // ---- Claim, complete
   await cut();
   const c1 = await N.rpc({ type: 'task.claim', id: t1.id, expectVersion: 1 });
   rec('task.claimed', { ...pick(c1, ['type', 'id', 'token', 'version']), state: c1.task?.state });
@@ -100,7 +104,7 @@ async function runScenario(t, mode) {
   rec('taken@B', pick(await B.wait((m) => m.type === 'task.taken' && m.id === t1.id, 'B sees task.taken'), ['id', 'version']));
   rec('closed@B', pick(await B.wait((m) => m.type === 'task.closed' && m.id === t1.id, 'B sees task.closed'), ['id', 'state']));
 
-  // ---- 断线放回：传输断不放回；会话结束才放回
+  // ---- Release on disconnect: transport disconnect does not release; release only when session ends
   const c2 = await N.rpc({ type: 'task.claim', id: t2.id, expectVersion: 1 });
   rec('task.claimed#2', pick(c2, ['type', 'id', 'token', 'version']));
   await cut();
@@ -116,7 +120,7 @@ async function runScenario(t, mode) {
   const back = await waitFor(() => B.got.slice(openedBefore).find((m) => m.type === 'task.opened' && m.task?.id === t2.id), 3000, 'B sees t2 put back');
   rec('reopened@B', pick(back.task, ['id', 'state', 'version', 'attempts']));
 
-  // ---- project：提交与 stale
+  // ---- project: commit and stale
   rec('project.state@A', pick(await A.rpc({ type: 'project.open', projectId: 'proj' }), ['type', 'projectId', 'rev']));
   rec('project.state@B', pick(await B.rpc({ type: 'project.open', projectId: 'proj' }), ['type', 'projectId', 'rev']));
   await cut();
@@ -126,7 +130,7 @@ async function runScenario(t, mode) {
   const stale = await B.rpc({ type: 'project.op', projectId: 'proj', opId: 'o2', expectRev: 0, ops: [{ op: 'set', path: '/a', value: 2 }] });
   rec('project.op.rejected', pick(stale, ['type', 'reason']));
 
-  // ---- content：watch 与 put
+  // ---- content: watch and put
   rec('content.watching', pick(await B.rpc({ type: 'content.watch', kinds: ['card-source'] }), ['type', 'kinds']));
   await cut();
   rec('content.stored', pick(await A.rpc({ type: 'content.put', kind: 'card-source', key: 'cards/x', body: { v: 1 } }), ['type', 'kind', 'key', 'rev', 'hash']));
@@ -134,7 +138,7 @@ async function runScenario(t, mode) {
   rec('content.changed@B', pick(await B.wait((m) => m.type === 'content.changed' && m.key === 'cards/x', 'B receives content.changed'), ['type', 'kind', 'key', 'rev', 'hash']));
   rec('content.item', pick(await B.rpc({ type: 'content.get', kind: 'card-source', key: 'cards/x' }), ['type', 'body', 'rev']));
 
-  // 业务消息两边都没有 seq / ack，也没有 error
+  // Business messages have neither seq / ack nor error on either side
   for (const c of [A, N, B]) {
     for (const m of c.got) assert.ok(!('seq' in m) && !('ack' in m), `the upper layer cannot see seq / ack: ${JSON.stringify(m)}`);
     assert.deepEqual(c.got.filter((m) => m.type === 'error'), [], 'no error replies');
@@ -153,6 +157,6 @@ test('HT3-ws-vs-resume the same sequence of operations (queue claim / completion
   assert.ok(resumed.health.sessions.resumed >= 2, `the server recorded the resumes: ${JSON.stringify(resumed.health.sessions)}`);
   assert.equal(plain.health.sessions.resumed, 0);
   assert.deepEqual(resumed.out, plain.out, 'the results of the two runs are identical item by item');
-  // 放回确实是会话结束引起的，不是传输断开引起的
+  // Release was indeed caused by session termination, not transport disconnection
   assert.deepEqual(plain.out.find(([k]) => k === 'still-claimed-after-transport-cut')[1], true);
 });

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { X509Certificate } from 'node:crypto';
 
-/** 仅TMP临时CA/各角色独立叶证书；不读生产钥匙。 */
+/** TMP temporary CA only / independent leaf certificates per role; does not read production keys. */
 export function assetWiringPki(dir, extraNames = []) {
   const openssl = process.env.OPENSSL ?? (process.platform === 'win32' ? path.join(process.env.ProgramFiles ?? 'C:/Program Files', 'Git/usr/bin/openssl.exe') : 'openssl');
   const run = args => { const result = spawnSync(openssl, args, { cwd: dir, windowsHide: true, stdio: 'ignore', timeout: 30000 }); if (result.status !== 0) throw new Error('temporary-pki-generation-failed'); };

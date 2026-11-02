@@ -1,9 +1,12 @@
 /**
- * C6.5 页面同步（设计稿 `docs/plan/c65-design.md` 第 3、4、6 节；验收 V2、V4 页面侧、V6、V7、V8 的回环延迟）。
- * 跑：node --test server/test/c65-sync.test.mjs
+ * C6.5 page sync (design doc `docs/plan/c65-design.md` Sections 3, 4, 6; acceptance check V2,
+ * page side of V4, loopback latency of V6, V7, V8).
+ * Run: node --test server/test/c65-sync.test.mjs
  *
- * 只照设计稿写，不看实现。页面同步实例由 `c65-kit.mjs` 的 `createPage` 包装（假设 A7），
- * 文档服务是内存存储的真服务（假设 A3），断网经 TCP 代理模拟（`createLink`）。
+ * Written only against the design doc without looking at the implementation. Page sync instances
+ * are wrapped by `createPage` in `c65-kit.mjs` (assumption A7), document service is a real
+ * in-memory service (assumption A3), and network disconnection is simulated via a TCP proxy
+ * (`createLink`).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,7 +20,7 @@ const PID = 'c65-sync';
 async function setup(t, { clips = 6 } = {}) {
   const env = await startProjectService();
   t.after(env.cleanup);
-  env.clock.t -= 60 * MIN; // 种子早于覆盖窗口
+  env.clock.t -= 60 * MIN; // Seed is earlier than the coverage window
   await seedProject(env, PID, fixedProject({ clips }));
   env.clock.t += 60 * MIN;
   const pages = [];
@@ -26,11 +29,11 @@ async function setup(t, { clips = 6 } = {}) {
     pages.push(p);
     return p;
   };
-  t.after(() => { for (const p of pages) { try { p.close(); } catch { /* 已关 */ } } });
+  t.after(() => { for (const p of pages) { try { p.close(); } catch { /* Closed */ } } });
   return { env, open };
 }
 
-/** 等页面的项目与服务端一致（别人的 project.ops 到达需要时间） */
+/** Wait until page project matches the server (others' project.ops takes time to arrive) */
 async function converged(env, pages, ms = 10_000) {
   for (const p of pages) await p.settled(ms);
   let st;
@@ -41,7 +44,7 @@ async function converged(env, pages, ms = 10_000) {
   return st ?? serverState(env, PID);
 }
 
-/** 页面上的一次随机编辑（只动本地现有的片段） */
+/** A random edit on the page (only touches locally existing clips) */
 function randomEdit(r, page, tag, n) {
   const clips = page.project.tracks.flatMap((tr) => tr.clips.map((c) => [tr.id, c.id]));
   const k = r.int(8);
@@ -83,7 +86,8 @@ test('C65-V2-01 two pages each make 200 random edits and commit interleaved: bot
   while (left.a + left.b > 0) {
     const useA = left.b === 0 || (left.a > 0 && r.chance(0.5));
     if (useA) { left.a -= 1; randomEdit(r, A, 'a', ++n); } else { left.b -= 1; randomEdit(r, B, 'b', ++n); }
-    // 交错：有时连着改几下再让网络走，有时每改一下都让对面的操作进来
+    // Interleaved: sometimes edit several times consecutively before letting network proceed,
+    // sometimes let peer operations in after each edit
     if (r.chance(0.4)) await sleep(r.int(3));
     else if (r.chance(0.5)) await new Promise((res) => setImmediate(res));
   }
@@ -122,7 +126,7 @@ test('C65-V6-01 20 edits made while disconnected land in order after reconnectin
   assertSameBytes(A.project, st.project, 'page and document service after recovery');
 });
 
-/** 离线期间别人也改过：A 断线改 5 次，B 在线改 c1、c2，A 恢复 */
+/** Others also edited while offline: A edits 5 times offline, B edits c1 and c2 online, A recovers */
 async function offlineConflict(t) {
   const { env, open } = await setup(t);
   const link = await createLink(env);
@@ -171,7 +175,7 @@ test('C65-V6-03 others also edited during the offline period: after choosing "Di
   assert.equal(clipOf(A.project, 'c1').frame.x, -5);
   assert.ok(A.backups.length > nBackups, 'before discarding, that batch of local changes is saved to a local backup (design draft section 8 ruling)');
 
-  // 丢弃之后照常在线编辑
+  // Edit online as usual after discarding
   A.edit((p) => { clipOf(p, 'c4').frame.x = 44; });
   await A.settled();
   assert.equal(clipOf((await serverState(env, PID)).project, 'c4').frame.x, 44);
@@ -189,7 +193,7 @@ test('C65-V7-01 saving .proc while operations are unacknowledged: it writes only
   A.edit((p) => { p.name = 'Before save'; });
   const writes = [];
   const saving = A.save((project, rev) => { writes.push({ project: structuredClone(project), rev }); });
-  saving.catch(() => {}); // 断线期间可能提示超时；这里只看写没写
+  saving.catch(() => {}); // May prompt timeout during disconnection; here only check whether it was written
   await sleep(400);
   assert.deepEqual(writes, [], 'does not write while operations are still unacknowledged');
 
@@ -215,7 +219,7 @@ test('C65-V7-02 no unacknowledged operations: save writes immediately, and rev i
   assert.deepEqual(writes[0].project, st.project);
 });
 
-// ------------------------------------------------------------------ V4 页面侧
+// ------------------------------------------------------------------ V4 page side
 
 test('C65-V4-10 an overwritten page: first saves its own version of that entity as a local backup, then applies the new version', async (t) => {
   const { open } = await setup(t);
@@ -234,7 +238,7 @@ test('C65-V4-10 an overwritten page: first saves its own version of that entity 
   assert.equal(B.backups.length, 0, 'the overwriting side saves no backup');
 });
 
-// ------------------------------------------------------------------ V8 回环延迟
+// ------------------------------------------------------------------ V8 loopback latency
 
 test('C65-V8-02 local loopback: from one page\'s edit to the other page seeing the change ≤ 300 ms', async (t) => {
   const { open } = await setup(t, { clips: 50 });
@@ -244,7 +248,7 @@ test('C65-V8-02 local loopback: from one page\'s edit to the other page seeing t
   for (let i = 0; i < 12; i++) {
     const x = 5000 + i;
     const t0 = performance.now();
-    A.edit((p) => { clipOf(p, `c${1 + (i % 50)}`).start = x; }); // 拖动松手 = 一次提交
+    A.edit((p) => { clipOf(p, `c${1 + (i % 50)}`).start = x; }); // Drag and release = one commit
     await waitFor(() => clipOf(B.project, `c${1 + (i % 50)}`).start === x, 3000, `change ${i} reaches B`);
     lat.push(performance.now() - t0);
   }

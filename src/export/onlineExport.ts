@@ -1,7 +1,9 @@
 /**
- * 在线页面的逐帧导出(`docs/plan/c10a-contract.md` 第 11.1 节)——`src/editor/io/index.ts` 的 `exportVideo` 在线分支的本体。
- * 流水在 `browserExport.ts`;这里接编辑器那一侧:项目、素材服务与文档服务(`assetTiers.ts`)、提示(`pushToast`)、落点。
- * 由 `io/index.ts` 按需载入(这一串在 Node 单测里载不进来)。
+ * Frame-by-frame export on the online page (`docs/plan/c10a-contract.md` Section 11.1): the core
+ * implementation of the online branch of `exportVideo` in `src/editor/io/index.ts`.
+ * The pipeline is in `browserExport.ts`; this connects to the editor side: project, asset service,
+ * document service (`assetTiers.ts`), notifications (`pushToast`), drop target.
+ * Loaded on demand by `io/index.ts` (this entire chain cannot be loaded in Node unit tests).
  */
 import type { Project } from "../kernel/project";
 import { actions, getState } from "../store/project";
@@ -21,16 +23,18 @@ import { prepareExportSounds } from "../editor/io/exportSounds";
 
 export interface OnlineExportOptions {
   /**
-   * 「另存为」拿到的落点:给了就边编边按位置写进去(`showSaveFilePicker` 的流式写),回包带 `written: true`,
-   * 调用方**不要**再 `streamExportFile`(那会把刚写好的文件换成空的)。不给就攒在内存里,由 `streamExportFile` /
-   * `fetchExportFile` 取走;这个浏览器连「另存为」都没有(iOS)时攒成 Blob 直接下载。
+   * Drop target obtained from "Save as": if provided, writes positionally while encoding (streaming
+   * writes via `showSaveFilePicker`), response includes `written: true`; caller must **not** call
+   * `streamExportFile` again (which would replace the newly written file with an empty one).
+   * If omitted, accumulates in memory to be retrieved by `streamExportFile` / `fetchExportFile`;
+   * when the browser lacks "Save as" altogether (iOS), accumulates into a Blob for direct download.
    */
   target?: FileSystemFileHandle | null;
-  /** 导出方式:`fast` 快速导出、`full` 完整导出(用户点导出时选的);不给 = 完整导出 */
+  /** Export mode: `fast` for fast export, `full` for full export (selected by user when clicking export); omitted = full export */
   mode?: ExportMode;
-  /** 导出前核对没过(素材原尺寸没传完、在等渲染节点把本页不执行的卡逐帧渲好)时给用户看的话;null = 过了 */
+  /** Message shown to the user when pre-export check fails (original-size assets not fully uploaded, waiting for render nodes to render cards not executed on this page frame-by-frame); null = passed */
   onWaiting?: (message: string | null) => void;
-  /** 探针:只导前 n 帧 */
+  /** Probe: export first n frames only */
   maxFrames?: number;
 }
 
@@ -41,7 +45,7 @@ export interface OnlineJob {
 
 let seq = 0;
 
-/** 这个浏览器有没有「另存为」(没有的是 iOS 这类,只能攒成 Blob 下载) */
+/** Whether this browser supports "Save as" (those without it like iOS can only accumulate into a Blob for download) */
 const canPickFile = () => typeof (globalThis as { showSaveFilePicker?: unknown }).showSaveFilePicker === "function";
 
 function downloadBlob(blob: Blob, name: string) {
@@ -58,7 +62,7 @@ import { isCardRunnable, nonRunnableClips } from "./cardLayers";
 import { tr } from "../i18n/index.ts";
 export { isCardRunnable, nonRunnableClips };
 
-/** 卡片画面的现成来源从哪取:文档服务(层表、清单、任务队列)与素材服务;页面没连着项目时为 null(全部由导出页活渲) */
+/** Where ready-made sources for card frames are fetched from: document service (layer table, manifest, task queue) and asset service; null when page is not connected to a project (all live rendered by the export page) */
 const cardLayerDeps = (over: { stallMs?: number } = {}) => (hasDocLink() ? {
   projectId: () => currentDocProjectId() || null,
   projectRev: () => currentSharedLink()?.ds.rev ?? null,
@@ -75,8 +79,11 @@ export async function exportVideoOnline(
   const job: OnlineJob = { controller: new AbortController(), blob: null };
   jobs.set(id, job);
   opts.onStart?.(id);
-  // 导出开始时先把未生成、缺失或过期的声音生成好,再出画面(`product/rendering.md`「有声动效卡」;在线页面只合成判轻的内置声音)。
-  // 项目快照在这之后才取;这一步失败或取消时落点文件还没打开,不留东西
+  // When export begins, generate ungenerated, missing, or expired sounds before producing frames
+  // (`product/rendering.md` "Audio motion card"; the online page only synthesizes built-in sounds
+  // classified as light).
+  // The project snapshot is taken only after this; if this step fails or is canceled, the drop target
+  // file has not been opened yet, leaving nothing behind
   try {
     await prepareExportSounds({ signal: job.controller.signal, onProgress: (done, total) => opts.onProgress?.(done, total, "sound") });
   } catch (e) {
@@ -85,7 +92,7 @@ export async function exportVideoOnline(
     throw err.cancelled ? Object.assign(new Error(ONLINE_EXPORT_TEXT.cancelled), { cancelled: true }) : err;
   }
   const p = JSON.parse(JSON.stringify(getState().project)) as Project;
-  // 导出期间暂停预览,并释放小尺寸缓存(契约第 11.1 节)
+  // Pause preview during export, and release small-size cache (Contract Section 11.1)
   if (getState().playing) actions.pause();
   activeOnlineSource()?.clearCache();
 
@@ -97,7 +104,7 @@ export async function exportVideoOnline(
   const remote = mediaTierPolicy().remote ?? (remoteAssetBase() ? { base: remoteAssetBase()!, ticket: null } : null);
   const name = `${(p.name || "PromptCut").replace(/[\\/:*?"<>|]+/g, "_")}.mp4`;
   let waitingShown = "";
-  // C10 契约第 12 节:导出可能比只读票据的时限还长,途中按时限提前续签(取票复用 assetTicketSource)
+  // C10 Contract Section 12: export may take longer than read-only ticket validity; renew early along the way based on expiration limit (ticket retrieval reuses assetTicketSource)
   const renewer = remote ? await startRenewer() : null;
   try {
     const result = await runBrowserExport({
@@ -117,7 +124,7 @@ export async function exportVideoOnline(
       checkMediaOriginals: () => exportGate(p),
       cardLayers: cardLayerDeps(),
       nonRunnable: () => nonRunnableClips(p),
-      // 导出只用素材原尺寸:它的地址换成远程素材服务的取回地址(只读票据走查询串,`<video>` 带不了头)
+      // Export uses only original-size assets: its URL is swapped for remote asset service retrieval URL (read-only ticket goes in query string, `<video>` cannot send headers)
       mediaUrl: remote ? (url) => remoteMediaUrl(url, { base: remote.base, ticket: renewer?.ticket() ?? remote.ticket }) : undefined,
       freshTicket: renewer ? () => renewer.ticket() : undefined,
     });
@@ -131,14 +138,14 @@ export async function exportVideoOnline(
     return { outDir: "", id, written: !!writable };
   } catch (e) {
     renewer?.stop();
-    try { await writable?.abort?.(); } catch { /* 已经关了 */ }
+    try { await writable?.abort?.(); } catch { /* Already closed */ }
     const err = e as Error & { cancelled?: boolean };
     pushToast(err.cancelled ? ONLINE_EXPORT_TEXT.cancelled : ONLINE_EXPORT_TEXT.failed(err.message), err.cancelled ? "info" : "warn");
     throw err.cancelled ? Object.assign(new Error(ONLINE_EXPORT_TEXT.cancelled), { cancelled: true }) : err;
   }
 }
 
-/** 逐帧导出的票据续签(C10 契约第 12 节);取不到票据来源(本地素材服务)回 null,照旧用固定的那一张 */
+/** Ticket renewal for frame-by-frame export (C10 Contract Section 12); returns null if ticket source (local asset service) is unavailable, keeping the fixed one as before */
 async function startRenewer(): Promise<TicketRenewer | null> {
   if (!(await remoteAssetTicketInfo(false))) return null;
   const renewer = createTicketRenewer({ fetchTicket: () => remoteAssetTicketInfo(true) });
@@ -146,29 +153,36 @@ async function startRenewer(): Promise<TicketRenewer | null> {
   lastRenewer = renewer;
   return renewer;
 }
-/** 探针看:最近一次导出的续签次数 */
+/** For probe inspection: renewal count of the most recent export */
 let lastRenewer: TicketRenewer | null = null;
 export function exportRenewalStats() {
   return lastRenewer?.stats() ?? null;
 }
 
 /**
- * 探针入口(`window.__pcIo.exportVideoBrowser`,`scripts/probes/lowmem-export-compare.mjs`、`online-export-modes-probe.mjs`):在当前页面上跑一次
- * 浏览器逐帧导出,回产物字节(base64)与统计。不经「另存为」、不下载。
- *   - `originals: false`:卡片一律由导出页活渲,不取任何现成的画面(桌面运行环境没有文档服务;本页不执行的卡这时没有画面);
- *   - `originals: true`:照正式导出,按 `mode`(`fast` / `full`,缺省 `full`)取卡片画面的来源;
- *   - `capture`:这些帧(项目帧号)合成完当场拷一张 PNG 回来(`captures`:帧号 → `data:` 地址),逐像素核对用;
- *   - `waitLimit`:导出前的等待提示最多看到几条就取消(缺省 3;等渲染节点现渲时给大一点)。
- *   - `stallMs`:等渲染节点时多久没有进展就报失败(缺省是 `exportFrames.ts` 的 `EXPORT_STALL_MS`;探针注成几秒)。
+ * Probe entry point (`window.__pcIo.exportVideoBrowser`, `scripts/probes/lowmem-export-compare.mjs`,
+ * `online-export-modes-probe.mjs`): runs browser frame-by-frame export on the current page,
+ * returning artifact bytes (base64) and statistics. Bypasses "Save as", does not download.
+ *   - `originals: false`: cards are all live rendered by the export page without fetching any
+ *     ready-made frames (desktop runtime environment lacks document service; cards not executed on
+ *     this page will have no visuals);
+ *   - `originals: true`: matches formal export, fetching card frame sources according to `mode`
+ *     (`fast` / `full`, defaults to `full`);
+ *   - `capture`: after these frames (project frame numbers) are composited, immediately copies back
+ *     a PNG (`captures`: frame number → `data:` URL), used for pixel-by-pixel verification;
+ *   - `waitLimit`: maximum pre-export waiting notices observed before canceling (defaults to 3;
+ *     increase when waiting for render nodes to render on demand);
+ *   - `stallMs`: duration without progress before failing while waiting for render nodes (defaults to
+ *     `EXPORT_STALL_MS` in `exportFrames.ts`; probes inject a few seconds).
  */
 export async function exportVideoBrowserProbe(o: { maxFrames?: number; originals?: boolean; sounds?: boolean; mode?: ExportMode; capture?: number[]; waitLimit?: number; stallMs?: number } = {}) {
-  // `sounds: true`:同正式导出,先把声音生成好(探针 `sound-ab-probe.mjs`)
+  // `sounds: true`: matches formal export, generating sounds first (probe `sound-ab-probe.mjs`)
   if (o.sounds) await prepareExportSounds({ signal: new AbortController().signal });
   const p = JSON.parse(JSON.stringify(getState().project)) as Project;
   const sink = new MemorySink();
   const controller = new AbortController();
   const waits: string[] = [];
-  // 在线页面上(c10a-demo-probe):素材原尺寸同 exportVideoOnline 一样换成远程素材服务的取回地址;桌面运行环境没有远程时照旧
+  // On the online page (c10a-demo-probe): original-size assets are swapped for remote asset service retrieval URLs, just like in exportVideoOnline; remains unchanged when desktop runtime environment has no remote service
   const remote = mediaTierPolicy().remote ?? (remoteAssetBase() ? { base: remoteAssetBase()!, ticket: null } : null);
   const renewer = remote ? await startRenewer() : null;
   let result: Awaited<ReturnType<typeof runBrowserExport>>;
@@ -189,7 +203,7 @@ export async function exportVideoBrowserProbe(o: { maxFrames?: number; originals
     });
   } catch (e) {
     renewer?.stop();
-    // 导出前核对一直没过(等待上传方等)时,把看到的提示交回去,探针要核对文案
+    // When pre-export checks keep failing (waiting for uploader, etc.), pass back the observed notices; the probe needs to verify the copy
     const err = e as Error & { cancelled?: boolean };
     return { result: null, waits, base64: "", error: String(err?.message ?? err), cancelled: !!err?.cancelled };
   }

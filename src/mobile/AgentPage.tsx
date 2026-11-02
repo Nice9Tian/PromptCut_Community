@@ -1,14 +1,22 @@
 /**
- * 手机版 Agent 分页(语义 `workflow/editing.md`「手机版界面」「AI 栏的 Agent 标签」;演示稿 `prototypes/mobile-ui-demo/` 的 Agent 页)。
+ * Mobile app Agent tab (semantics `workflow/editing.md` "Mobile app interface" and "Agent tab in the
+ * AI panel"; the Agent page of the demo `prototypes/mobile-ui-demo/`).
  *
- * 上面一排对话标签(Agent 1、Agent 2……,每个都能关,「+」新开)+ 当前会话的对话页。标签清单和桌面共用 `src/ai/agentTabs.ts`:
- * 按项目分开、标记是「项目ID_AgentID」;本项目一个会话都没有时只有一项「开始」,对话页是开始页(预设 + 输入框,刚进项目时带引导动画),
- * 用户点发送才建第一个会话(Agent 1)。每个会话各挂一份 `AgentChat`(切标签不卸载,后台的对话照跑)。
+ * A row of chat tabs on top (Agent 1, Agent 2..., each can be closed, "+" opens a new one) + the chat
+ * page of the current session. The tab manifest is shared with desktop in `src/ai/agentTabs.ts`:
+ * separate per project, keyed as "projectID_AgentID"; when the project has no session at all there is
+ * only one item, "Start", and the chat page is the start page (presets + input box, with a guide
+ * animation right after entering the project). The first session (Agent 1) is only created when the
+ * user taps send. Each session mounts its own `AgentChat` (switching tabs does not unmount it, chats
+ * in the background keep running).
  *
- * **没有账号的项目**(局域网里的第二块屏,`workflow/editing.md`「局域网里的第二块屏」)接的是**本机 Agent**
- * (`AgentChatLocal.tsx` → `../start/useVibeLocal.ts` → `src/ai/useAiChat.ts`):标签栏、开始页、创造力、
- * 引用标记条照旧,换的只是底下接谁。手机和电脑是两个浏览器,分页清单与消息都在各自页面里,**不是同一段对话**;
- * 共用的是电脑上那个编辑器进程(请求由它发给本机 Agent,改的是同一个项目)。
+ * **Projects without an account** (the second screen on the LAN, `workflow/editing.md` "Second screen
+ * on the LAN") connect to the **local Agent**
+ * (`AgentChatLocal.tsx` → `../start/useVibeLocal.ts` → `src/ai/useAiChat.ts`): the tab bar, start
+ * page, creativity level and quote bar stay as they are, only what sits underneath changes. The phone
+ * and the computer are two browsers, their tab lists and messages live in their own pages, **not the
+ * same chat**; what they share is the editor process on the computer (requests are sent by it to the
+ * local Agent, and it changes the same project).
  */
 import "../ai/agentTabsProject";
 import { ONLINE } from "../online/mode";
@@ -30,18 +38,22 @@ export function AgentPage({ active }: { active: boolean }) {
   const counts = useRef(new Map<string, number>());
   const projectId = useStore((s) => s.project.id) ?? null;
   /**
-   * 没有账号的项目(局域网里的第二块屏)接本机 Agent,其余接云端。
+   * Projects without an account (the second screen on the LAN) connect to the local Agent, all others
+   * connect to the cloud.
    *
-   * `!ONLINE &&` 这一节不能少:在线构建里没有编辑器进程、本机 Agent 根本不存在,而这一支是
-   * `useVibeLocal → useAiChat → providerState` 在在线产物里**唯一存活的消费者** ——
-   * 漏了它,8 个 /api/ai/* 会被提进入口块(C10A-API-03 判红)。ONLINE 是编译期常量,这里会整段剪掉。
+   * The `!ONLINE &&` part must stay: the online build has no editor process and the local Agent does not
+   * exist at all, and this branch is the **only surviving consumer** of
+   * `useVibeLocal → useAiChat → providerState` in the online output ——
+   * without it, the 8 /api/ai/* routes would be hoisted into the entry chunk (C10A-API-03 fails the
+   * check). ONLINE is a compile-time constant, so this whole block is pruned.
    */
   const local = !ONLINE && !cloud.accountMode;
 
   const close = (id: string, title: string) => {
     if ((counts.current.get(id) ?? 0) === 0) { closeTab(id); return; }
-    // 手机版没有历史对话列表,所以关之前先问一声。两种模式后果不一样,话也不一样:
-    // 云端那段对话仍留在云端历史里;本机这一份这一版不归档(归档是电脑 AI 栏那边在做的事),关了就没了
+    // The mobile app has no chat history list, so ask before closing. The two modes have different
+    // consequences, so the wording differs: the cloud chat stays in the cloud history; the local one is
+    // not archived in this version (archiving is done on the desktop AI panel side), so it is gone once closed
     const text = local
       ? tr("Close \"{0}\"? This chat won't be kept; closing it deletes it.", title)
       : tr("Close \"{0}\"? This chat will no longer show on mobile, but stays in the cloud chat history (open it in the desktop app).", title);

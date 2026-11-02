@@ -11,15 +11,18 @@ import { useCardGroups, useCardLibrary, usePartsList } from "./library/cardGroup
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 「动画」分区:搜索 + 卡片筛选 → 分组(定制卡片 / Magic UI / 自家卡片 / 部件库 / Lottie 动效 / 粒子背景)。
+ * "Animations" section: search + card filter → groups (custom cards / Magic UI / built-in cards / parts library / Lottie motion graphics / particle backgrounds).
  *
- * 这几组全是视觉类,GroupBrowser 看组表只有一种分类,就不画「所有 / 视觉 / 音频」胶囊行。
- * 卡片列表和可见性只有一个来源(useCardLibrary),几个卡片组共用 —— 归属表只加载一次,筛选一改所有组一起变。
- * 定制卡的右键换档菜单挂在这一级常驻渲染,总览、组详情、搜索结果里都弹得出来;
- * 部件「加进组合卡」之类的提示 PartCell 自己画在卡上,不走分区提示条。
+ * These groups are all visual, and GroupBrowser sees only one category in the group table, so it does not
+ * draw the "All / Visual / Audio" pill row. The card list and visibility have a single source
+ * (useCardLibrary), shared by several card groups: the membership table is loaded only once, and one filter
+ * change updates all groups together. The right-click tier-switch menu of custom cards is mounted at this
+ * level and always rendered, so it can pop up in the overview, group detail and search results; hints like
+ * a part being "added to a composite card" are drawn by PartCell itself on the card, not through the
+ * section's hint bar.
  *
- * index.tsx 静态导入这里:index → AnimationsSection → cardGroups → CardCell → previewZoom → prewarmBoxes,
- * window.__pcPreviewBoxes 靠这条链挂上,别改成 lazy。
+ * index.tsx statically imports this: index → AnimationsSection → cardGroups → CardCell → previewZoom →
+ * prewarmBoxes, and window.__pcPreviewBoxes gets attached through this chain, so do not change it to lazy.
  */
 export function AnimationsSection() {
   const [search, setSearch] = useState("");
@@ -37,7 +40,7 @@ export function AnimationsSection() {
   const closeUserMenu = useCallback(() => setUserMenu(null), []);
   const data = useCardGroups(cards, parts, searching, openUserMenu);
 
-  // 搜索框右边的筛选浮层(CardScopeBar):点外面或按 Esc 收起
+  // Filter popover to the right of the search box (CardScopeBar): click outside or press Esc to close it
   const [scopeOpen, setScopeOpen] = useState(false);
   const scopeWrapRef = useRef<HTMLDivElement>(null);
   useEffect(() => {

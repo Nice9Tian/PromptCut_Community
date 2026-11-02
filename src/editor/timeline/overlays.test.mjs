@@ -1,9 +1,11 @@
 /**
- * 叠加卡清单与退化档次(`overlays.ts`)。
+ * Overlay card manifest and degradation tiers (`overlays.ts`).
  *
- * 要守住的两件事:
- * 1. 带里从左到右就是处理顺序 —— 像素映射走哪一档看它定义里的 `source.stage`;
- * 2. 片段短下去时一档一档退,最后只剩那个计数徽标,而不是让名字和徽标互相盖住。
+ * Two things to ensure:
+ * 1. Left-to-right in the strip is the processing order: which tier a pixel map uses depends on
+ *    `source.stage` in its definition;
+ * 2. When a clip gets shorter, it degrades tier by tier, eventually leaving only the count badge,
+ *    rather than letting the name and badge overlap each other.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -78,7 +80,7 @@ test("Filters, pixel maps and audio effects can all be toggled to disabled", () 
   assert.equal(items.every((i) => i.canToggle), true);
 });
 
-/* ------------------------------------------------------------------ 带 */
+/* ------------------------------------------------------------------ Strip */
 
 const chips = (names) => names.map((name) => ({ kind: "filter", refId: name, name, value: "", upstream: false, off: false, canToggle: true }));
 
@@ -107,7 +109,7 @@ test("When it is too narrow to fit even one, shown is empty and everything goes 
   assert.equal(plan.hidden, 2);
 });
 
-/* ------------------------------------------------------------------ 退化档次 */
+/* ------------------------------------------------------------------ Degradation tiers */
 
 test("Medium row height, wide enough: draw the band, write the duration, write the name", () => {
   const p = planClipLayout(300, "medium", 2);

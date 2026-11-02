@@ -1,25 +1,35 @@
 /**
- * 探针共用:让在线页面进入一个凭口令的共享项目,不经开始页的表单。
+ * Shared across probes: enters a passphrase-based shared project on an online page without going
+ * through the form on the start page.
  *
- * 2026-10 起在线构建的开始页只有账号入口(`src/account/AccountProjects.tsx`),「加入别人的项目」那张表单(`[data-pc="join-form"]`)
- * 不再进在线构建,照它写的探针(`m7-node-probe.mjs`、`m7-browser-probe.mjs` 的 node 角色等)在第一步就等不到表单。
- * 凭口令的共享项目在服务端和页面里都还在:页面有一条现成的产品路径 ——「同一个标签页刷新之后回到刷新前打开的共享项目」
- * (`src/editor/sync/syncManager.ts` 的 `resumeShared`,`Shell.tsx` 启动时看 `sessionStorage['pc.shared.resume']`)。
- * 这里在页面载入前把那条记录放进 sessionStorage(只放派生出的 K,不放口令),页面就照「刷新后回到项目」那样进去。
- * 不注入任何页面代码,不改页面的网络请求。
+ * Since 2026-10, the start page of online builds only has an account entry point
+ * (`src/account/AccountProjects.tsx`), and the "Join another person's project" form
+ * (`[data-pc="join-form"]`) is no longer included in the online build; probes written against it
+ * (such as the node role in `m7-node-probe.mjs`, `m7-browser-probe.mjs`) cannot wait for the form
+ * at the very first step. Passphrase-based shared projects still exist on the server side and in
+ * the page: the page has an existing product path: "return to the shared project open before refresh
+ * after refreshing the same tab" (`resumeShared` in `src/editor/sync/syncManager.ts`, `Shell.tsx`
+ * checks `sessionStorage['pc.shared.resume']` on startup). Here, before the page loads, that record
+ * is placed into sessionStorage (only storing derived K, not the passphrase), and the page enters
+ * just like "return to project after refresh". Injects no page code, modifies no network requests
+ * of the page.
  *
  *   const record = await resumeRecord({ base, projectId, name, username, password, deviceId });
- *   await plantResume(page, record);      // 在 page.goto 之前
- *   await page.goto(editorUrl);           // 页面自己进项目,等 `[data-pc="members-button"]`
+ *   await plantResume(page, record);      // before page.goto
+ *   await page.goto(editorUrl);           // page enters the project on its own, wait for `[data-pc="members-button"]`
  */
 import { buildAuthProtocols, redeemInvite } from '../../../server/auth/client.mjs';
 
-/** sessionStorage 里那条记录的键(同 `syncManager.ts` 的 `SHARED_RESUME_KEY`) */
+/** Key for that record in sessionStorage (same as `SHARED_RESUME_KEY` in `syncManager.ts`). */
 export const SHARED_RESUME_KEY = 'pc.shared.resume';
 
 /**
- * 算出「刷新前开着这个项目」的记录:向文档服务取一次挑战、按项目口令派生 K(与页面自己进入时同一个算法,`server/auth/client.mjs`)。
- * `base` 是页面看到的文档服务地址(以 `/` 结尾,例如 `http://pc.localhost:5810/hosted/`);`derivationBase` 给了就用它取挑战(Node 这边直连)。
+ * Computes the "project open before refresh" record: fetches a challenge from the document
+ * service and derives K from the project passphrase (same algorithm used when the page enters
+ * on its own, `server/auth/client.mjs`).
+ * `base` is the document service address seen by the page (ending with `/`, e.g.
+ * `http://pc.localhost:5810/hosted/`); if `derivationBase` is provided, it is used to fetch
+ * the challenge (direct connection from Node).
  * @returns {Promise<{ candidate: object, as: 'member' | 'creator', username: string, key: string }>}
  */
 export async function resumeRecord({ base, derivationBase = base, projectId, name, username, password, deviceId, as = 'member', mode = 'free' }) {
@@ -30,8 +40,9 @@ export async function resumeRecord({ base, derivationBase = base, projectId, nam
 }
 
 /**
- * 凭邀请码兑换出「刷新前开着这个项目」的记录:向文档服务调 `shared/invite/redeem`(与开始页凭邀请码进入同一个端点),
- * 拿到项目口令的 K 后装成会话恢复记录。
+ * Redeems the "project open before refresh" record with an invite code: calls `shared/invite/redeem`
+ * on the document service (same endpoint as entering with an invite code on the start page),
+ * obtains K for the project passphrase, and packages it into a session resume record.
  */
 export async function resumeRecordFromInvite({ base, derivationBase = base, code, username, deviceId, as = 'member' }) {
   const red = await redeemInvite({ base: derivationBase, code, username, deviceId });
@@ -39,16 +50,18 @@ export async function resumeRecordFromInvite({ base, derivationBase = base, code
   return { candidate: { where: 'hosted', base: base.endsWith('/') ? base : `${base}/`, projectId: red.projectId, name: red.name, mode: red.mode }, as, username, key: red.key };
 }
 
-/** 页面载入前把记录放进顶层文档的 sessionStorage(舞台 iframe 不放;已经有记录就不动) */
+/** Puts the record into the top-level document's sessionStorage before the page loads (skips stage iframes; leaves untouched if a record already exists). */
 export async function plantResume(page, record, storageKey = SHARED_RESUME_KEY) {
   await page.evaluateOnNewDocument((k, r) => {
-    try { if (window.top === window && !sessionStorage.getItem(k)) sessionStorage.setItem(k, r); } catch { /* 存不了:页面留在开始页,探针等不到成员按钮 */ }
+    try { if (window.top === window && !sessionStorage.getItem(k)) sessionStorage.setItem(k, r); } catch { /* Cannot store: page remains on the start page, probe cannot wait for the member button */ }
   }, storageKey, JSON.stringify(record));
 }
 
 /**
- * 在不整页刷新的前提下让已打开的在线编辑页切换到另一个共享项目(保留本页模块级状态,如 `measureGate` 的连接计数):
- * 先用 `newProject` 断开当前共享连接,再写入新项目的恢复记录并调用 `syncManager` 的 `resumeShared()`。
+ * Switches an open online editor page to another shared project without a full-page refresh
+ * (preserving module-level state of this page, such as the connection count in `measureGate`):
+ * first disconnects the current shared connection with `newProject`, then writes the resume record
+ * for the new project and calls `resumeShared()` on `syncManager`.
  */
 export async function switchSharedInPlace(page, record, storageKey = SHARED_RESUME_KEY) {
   await page.evaluate(async (k, r) => {

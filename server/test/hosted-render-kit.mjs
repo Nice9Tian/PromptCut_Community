@@ -1,10 +1,14 @@
 /**
- * 仅供测试，生产代码不得引用。
+ * For testing only; production code must not reference this.
  *
- * 托管方服务身份的测试（契约 `docs/plan/hosted-render-contract.md` 第 10.1 节 HR1～HR15）共用的工具：起一台带服务登记表的
- * 托管端文档服务（`mode: 'hosted'`、端口 0、本机信任关掉——与云节点同样的配置），以及服务一侧的握手、目录、票据。
- * 成员一侧的建项目、进入、创建者操作沿用 `auth-kit.mjs`（`env` 的形状与它的 `startHost` 相同）。
- * 服务握手的签名在这里照契约第 1.2 节现算（`node:crypto`），不经 `service-identity.mjs` 的客户端函数。
+ * Shared utilities for host service identity tests (contract
+ * `docs/plan/hosted-render-contract.md` Section 10.1 HR1-HR15): start a hosted side document
+ * service with a service registry (`mode: 'hosted'`, port 0, local trust disabled: same
+ * configuration as cloud nodes), along with service-side handshake, catalog, and tickets.
+ * Member-side project creation, entry, and creator operations reuse `auth-kit.mjs` (the shape of
+ * `env` is the same as its `startHost`).
+ * Service handshake signatures are computed on the fly here per Section 1.2 of contract
+ * (`node:crypto`), without using client functions from `service-identity.mjs`.
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -25,14 +29,20 @@ import {
 export const SERVICE_PREFIX = 'promptcut.service.';
 export const TICKET_PREFIX = 'promptcut.ticket.';
 
-/** 新造一把服务密钥并登记进 `file`；回服务一侧要的那份 `{ service, role, kid, pub, priv, instanceId, instanceName }` */
+/**
+ * Generate a new service key and register it in `file`; return
+ * `{ service, role, kid, pub, priv, instanceId, instanceName }` needed by service side
+ */
 export function enrollService(file, { service = 'render', role = service, actsFor = service === 'agent' ? 'member' : 'self', instanceId = newInstanceId(), instanceName = `${service}-test` } = {}) {
   const pair = generateServiceKeyPair();
   addServiceKey(file, { service, role, actsFor, kid: pair.kid, pub: pair.pub });
   return { service, role, actsFor, ...pair, instanceId, instanceName };
 }
 
-/** 契约第 1.2 节的签名：Ed25519 签 `promptcut.service.v1\n<服务名>\n<instanceId>\n<nonce>` */
+/**
+ * Signature for contract Section 1.2: Ed25519 signs
+ * `promptcut.service.v1\n<service name>\n<instanceId>\n<nonce>`
+ */
 export function serviceSignature(priv, { service, deviceId, nonce }) {
   const key = createPrivateKey({ key: Buffer.from(priv, 'base64url'), format: 'der', type: 'pkcs8' });
   return sign(null, Buffer.from(`promptcut.service.v1\n${service}\n${deviceId}\n${nonce}`, 'utf8'), key).toString('base64url');
@@ -45,15 +55,19 @@ export const serviceItem = (fields) => {
 };
 
 /**
- * 起一台托管端文档服务。
+ * Start a hosted side document service.
  * @param {object} [o]
- * @param {string[]} [o.services] 预先登记哪些服务（各一把密钥），缺省 `['render']`；`[]` 表示登记表文件不存在
- * @param {boolean} [o.registry] false：不给登记表（等同没有托管方服务的旧托管端）
- * @param {boolean} [o.attached] 挂载模式（局域网主机）
- * @param {boolean} [o.trustLoopback] 缺省 false（云节点在 nginx 之后）
- * @param {boolean} [o.assets] 同进程再起素材服务（三个命名空间，票据核对共用登记表）
- * @param {number} [o.lingerMs] 目录里 `active` 的保持时长
- * @param {Record<string, string>} [o.serviceUrls] 托管方服务对页面的公网地址（成员列表顶层 `hosted.<服务名>.url`）
+ * @param {string[]} [o.services] Which services to pre-register (one key each), defaults to
+ * `['render']`; `[]` means registry file does not exist
+ * @param {boolean} [o.registry] false: do not provide registry (equivalent to old hosted side
+ * without host services)
+ * @param {boolean} [o.attached] Attached mode (LAN host)
+ * @param {boolean} [o.trustLoopback] Defaults to false (cloud node is behind nginx)
+ * @param {boolean} [o.assets] Also start asset service in same process (three namespaces, ticket
+ * verification shares registry)
+ * @param {number} [o.lingerMs] Linger duration for `active` in catalog
+ * @param {Record<string, string>} [o.serviceUrls] Public address of host services facing page
+ * (top-level `hosted.<service name>.url` in member list)
  */
 export async function startServiceHost({
   services = ['render'], registry: withRegistry = true, attached = false, trustLoopback = false, assets = false, lingerMs, clock = testClock(),
@@ -134,7 +148,7 @@ export async function startServiceHost({
       const r = await fetch(`http://127.0.0.1:${port}${withRemote(httpPrefix + rel, remote)}`, init);
       const text = await r.text();
       let json = null;
-      try { json = JSON.parse(text); } catch { /* 不是 JSON */ }
+      try { json = JSON.parse(text); } catch { /* Not JSON */ }
       return { status: r.status, headers: r.headers, json, text };
     },
 
@@ -156,7 +170,7 @@ export async function startServiceHost({
       const r = await fetch(`http://127.0.0.1:${assetPort}/api/asset/${rel}`, { method, headers, body });
       const buf = Buffer.from(await r.arrayBuffer());
       let json = null;
-      try { json = JSON.parse(buf.toString('utf8')); } catch { /* 字节 */ }
+      try { json = JSON.parse(buf.toString('utf8')); } catch { /* Bytes */ }
       return { status: r.status, json, buf };
     },
 
@@ -164,10 +178,13 @@ export async function startServiceHost({
       return built.service.describe().conns.map((c) => c.principal);
     },
 
-    /** 让目录模块立刻走一拍（保持期到期、登记表重读都在 tick 里） */
+    /**
+     * Advance catalog module by one tick immediately (linger expiration and registry reread are
+     * both in tick)
+     */
     tickHosted() { built.service.tick('hosted'); },
 
-    /** 换一把新密钥并登记（旧的还在）；回新的那份 */
+    /** Switch to a new key and register it (old one remains); return the new one */
     enroll(options) { return enrollService(registryFile, options); },
     retire(service, kid) { return retireServiceKey(registryFile, { service, kid }); },
 
@@ -195,13 +212,14 @@ export async function serviceHostFor(t, options) {
   return env;
 }
 
-/** 取服务挑战 */
+/** Fetch service challenge */
 export async function serviceChallenge(env, key, { remote } = {}) {
   return env.http('shared/service-challenge', { method: 'POST', body: { service: key.service, deviceId: key.instanceId }, remote });
 }
 
 /**
- * 取挑战、拼服务握手的子协议。`mutate(fields)` 可以在签名之后改字段（造坏的握手项）。
+ * Fetch challenge and assemble subprotocols for service handshake. `mutate(fields)` can modify
+ * fields after signing (to forge invalid handshake items).
  * @returns {Promise<{ protocols: string[], nonce: string, fields: object }>}
  */
 export async function serviceProtocolsFor(env, key, { mutate, nonce: givenNonce } = {}) {
@@ -219,13 +237,13 @@ export async function serviceProtocolsFor(env, key, { mutate, nonce: givenNonce 
   return { protocols: [PROTOCOL, serviceItem(fields)], nonce, fields };
 }
 
-/** 开控制连接 */
+/** Open control connection */
 export async function openControl(env, key) {
   const p = await serviceProtocolsFor(env, key);
   return env.open(p.protocols);
 }
 
-/** 控制连接上订阅目录，回完整清单 */
+/** Subscribe to catalog on control connection, return full manifest */
 export async function watchDirectory(control) {
   const r = await ask(control, { type: 'hosted.watch' }, 'hosted.projects');
   assert.equal(r.type, 'hosted.projects', `hosted.watch reply: ${JSON.stringify(r)}`);
@@ -233,12 +251,12 @@ export async function watchDirectory(control) {
   return r.projects;
 }
 
-/** 控制连接上要一张进项目的票据；回整条回包（可能是 error） */
+/** Request ticket to enter project on control connection; return entire response (may be error) */
 export function requestServiceTicket(control, projectId, extra = {}) {
   return ask(control, { type: 'hosted.ticket', projectId, ...extra }, 'hosted.ticket.ok');
 }
 
-/** 要票据并凭它开数据连接 */
+/** Request ticket and use it to open data connection */
 export async function openData(env, control, projectId) {
   const r = await requestServiceTicket(control, projectId);
   assert.equal(r.type, 'hosted.ticket.ok', `hosted.ticket reply: ${JSON.stringify(r)}`);
@@ -247,18 +265,21 @@ export async function openData(env, control, projectId) {
   return c;
 }
 
-/** 发一条消息，回「类型」或「error:原因」 */
+/** Send a message, return "type" or "error:reason" */
 export async function outcome(c, message, okTypes = null) {
   const r = await ask(c, message, okTypes);
   return r.type === 'error' ? `error:${r.reason}` : r.type;
 }
 
-/** 假的握手请求（直接喂给 `authenticate`，测来源判断用） */
+/** Fake handshake request (fed directly to `authenticate`, used to test origin detection) */
 export function fakeUpgrade(protocols, { remoteAddress = '127.0.0.1', headers = {} } = {}) {
   return { method: 'GET', url: '/', socket: { remoteAddress }, headers: { 'sec-websocket-protocol': protocols.join(', '), ...headers } };
 }
 
-/** 全部数据面与管理面的消息类型（每个都有模块认领；HR4 逐个发） */
+/**
+ * All data plane and management plane message types (each claimed by a module; HR4 sends them
+ * one by one)
+ */
 export const ALL_TYPES = [
   'project.open', 'project.announce', 'project.close', 'project.op', 'project.follow', 'project.upload', 'project.snapshot.put', 'project.snapshot.get',
   'content.put', 'content.get', 'content.list', 'content.watch',

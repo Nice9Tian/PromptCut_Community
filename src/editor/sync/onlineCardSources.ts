@@ -1,49 +1,63 @@
 import { cardSourceVersion } from "../../render/cardSourceVersion.mjs";
 import { cyrb53 } from "../../render/cyrb53.mjs";
 /**
- * 在线页面读内容库里的卡片源码,认出「已知但本机不能运行」的用户卡(C10 契约第 9 节「识别」,2026-09-29 用户改语义)。
+ * The online page reads card sources from the content store and recognizes user cards that are "known but
+ * cannot run on this machine" (C10 contract section 9, "Recognition", user semantics change 2026-09-29).
  *
- * 在线包的卡片表是构建时从 `src/cards/user` 生成的,桌面版卡片库里的卡、经内容库同步的卡都不在表里;在线构建又关掉了
- * 页面侧的卡片同步(`cardSync.ts`)。于是这里经页面已有的文档服务连接(在线来源用的同一条 `docRequest`,不走 `/api`):
+ * The online bundle's card table is generated at build time from `src/cards/user`; cards in the desktop
+ * app's card library and cards synced through the content store are not in the table, and the online build
+ * also turns off the page-side card sync (`cardSync.ts`). So here, through the document service connection
+ * the page already has (the same `docRequest` the online source uses, not going through `/api`):
  *
- *   `content.list({ kind: 'card-source', prefix: 'src/cards/user/' })` → 入口文件(`src/cards/user/<名>.tsx`)里
- *   哈希变了的逐条 `content.get` → 正文就是源码字符串(`server/card-sync.mjs`)→ `parseCardSource` 取卡片的 id、名字、
- *   说明、参数默认值与控件(只认字面量)→ `registry.setSyncedUserCards`(不执行源码,也不进主注册表;参数面板经
- *   `registry.syncedCardView` 看默认值与控件)。
+ *   `content.list({ kind: 'card-source', prefix: 'src/cards/user/' })` → entry files
+ *   (`src/cards/user/<name>.tsx`) whose hash changed, each fetched with `content.get` → the body is the
+ *   source string (`server/card-sync.mjs`) → `parseCardSource` extracts the card's id, name, description,
+ *   parameter defaults and controls (literals only) → `registry.setSyncedUserCards` (the source is not
+ *   executed and does not enter the main registry; the parameters panel sees defaults and controls through
+ *   `registry.syncedCardView`).
  *
- * **跟着 import 找**(C10 契约第 9 节〔裁〕2026-09-30):入口文件经相对导入引到的同一目录下的文件(`src/cards/user/` 下的
- * `.ts` / `.tsx`,桌面版按卡的导入闭包一并同步进内容库)也在列表里,就同样按哈希取正文,再跟着它们的导入往下取(有环不重取);
- * 解析入口时把这些正文交给 `parseCardSource`(`files`),引进来的控件、默认值照样认得出。引到页面自己带着的内置模块的,
- * 由调用方给的 `builtins`(`src/cards/builtinSourceExports.ts`)解析。列表里没有的文件取不到,面板说明是哪一条。
+ * **Follow imports** (C10 contract section 9 [ruling 2026-09-30]): files in the same directory that an
+ * entry file reaches through relative imports (`.ts` / `.tsx` under `src/cards/user/`, which the desktop
+ * app syncs into the content store together as the card's import closure) are also in the list, so their
+ * bodies are fetched by hash in the same way, and then their own imports are followed further down (no
+ * refetch on cycles); when parsing an entry, these bodies are handed to `parseCardSource` (`files`), so
+ * controls and defaults brought in by imports are still recognized. Imports of built-in modules that the
+ * page carries itself are resolved by the `builtins` given by the caller (`src/cards/builtinSourceExports.ts`).
+ * Files not in the list cannot be fetched, and the panel explains which one.
  *
- * 跟变化的办法选**定时重取**(每 `CARD_SOURCE_POLL_MS` 列一次,哈希没变的不再取正文),不订阅 `content.watch`:
- * 内容库的订阅按连接只认最后一次 `watch` 的那一组,与同一条连接上别的订阅方会互相顶掉;会话接续、重连时也不必补订阅。
- * 连接换了(重连、换项目、离开共享项目)清表重取。取不到(没连上、被拒、超时)时手里的表不动,下一轮再试。
+ * To follow changes, the approach chosen is **periodic refetch** (list every `CARD_SOURCE_POLL_MS`, and do
+ * not refetch bodies whose hash did not change), not subscribing to `content.watch`: the content store's
+ * subscriptions recognize only the last `watch` set per connection, so they would knock out other
+ * subscribers on the same connection; there is also no need to resubscribe on session resumption or
+ * reconnect.
+ * When the connection changes (reconnect, switching project, leaving the shared project), clear the table
+ * and refetch. When fetching fails (not connected, rejected, timeout), the table in hand is left untouched
+ * and retried in the next round.
  */
 import { cardSourceImports, importSpecifiers, isUserCardEntryKey, parseCardSource, type ParsedCardSource } from "../../kernel/cardSourceParse.mjs";
 import type { BundleResult } from "../../online/cardRuntime/protocol.ts";
 import { setSyncedUserCards, type SyncedUserCard } from "../../kernel/registry";
 import { tr } from "../../i18n/index.ts";
 
-/** 多久重列一次内容库的卡片源码 */
+/** How often to re-list the content store's card sources */
 export const CARD_SOURCE_POLL_MS = 5_000;
-/** 内容库里用户卡源码的键前缀 */
+/** Key prefix of user card sources in the content store */
 export const CARD_SOURCE_PREFIX = "src/cards/user/";
 export const CARD_SOURCE_KIND = "card-source";
-/** 跟着 import 最多取多少个非入口文件(防坏数据把页面拖住) */
+/** Maximum number of non-entry files to fetch by following imports (keeps bad data from bogging the page down) */
 export const CARD_SOURCE_MAX_DEPS = 200;
 
-/** 列表里可以当被引文件取的键:用户卡目录下的 `.ts` / `.tsx` / `.mjs` / `.js`(含子目录) */
+/** Keys in the list that can be fetched as imported files: `.ts` / `.tsx` / `.mjs` / `.js` under the user card directory (subdirectories included) */
 export function isCardSourceModuleKey(key: unknown): key is string {
   return typeof key === "string" && key.startsWith(CARD_SOURCE_PREFIX) && /\.(tsx?|mjs|js)$/.test(key) && !key.split("/").some((p) => p === "" || p === "." || p === "..");
 }
 
-/** 列表里可以当样式取的键:用户卡目录下的 `.css`(卡片 `import "./x.css"` 引的;只在要转译时取) */
+/** Keys in the list that can be fetched as styles: `.css` under the user card directory (imported by a card via `import "./x.css"`; fetched only when transpiling is needed) */
 export function isCardSourceStyleKey(key: unknown): key is string {
   return typeof key === "string" && key.startsWith(CARD_SOURCE_PREFIX) && key.endsWith(".css") && !key.split("/").some((p) => p === "" || p === "." || p === "..");
 }
 
-/** 一份源码相对导入的样式文件的键(`./x.css`、`../y.css`;爬出用户卡目录的不算) */
+/** Keys of the style files a source imports by relative path (`./x.css`, `../y.css`; those climbing out of the user card directory do not count) */
 export function cardSourceStyleImports(source: string, key: string): string[] {
   const out = new Set<string>();
   for (const spec of importSpecifiers(source)) {
@@ -62,49 +76,55 @@ export function cardSourceStyleImports(source: string, key: string): string[] {
 }
 
 /**
- * 把同步来的卡转译成舞台能执行的包(`docs/plan/online-card-exec-contract.md` 第 1 节)。由浏览器入口注入
- * (转译器按需载入,见 `src/online/cardRuntime/transpile.browser.ts`);不给就只做静态解析,与原来相同。
+ * Transpile a synced card into a bundle the stage can execute (`docs/plan/online-card-exec-contract.md`
+ * section 1). Injected by the browser entry (the transpiler is loaded on demand, see
+ * `src/online/cardRuntime/transpile.browser.ts`); if omitted, only static parsing is done, as before.
  */
 export interface CardBundling {
-  /** 本页此刻能不能执行同步来的卡(`src/online/cardRuntime/gate.ts`);不能就不转译,已有的包清掉 */
+  /** Whether this page can execute synced cards right now (`src/online/cardRuntime/gate.ts`); if not, do not transpile and clear existing bundles */
   enabled: () => boolean;
-  /** 每个入口一张卡:包,或这张卡的运行状态 */
+  /** One card per entry: the bundle, or the run state of this card */
   run: (job: { entries: readonly string[]; read: (key: string) => { body: string; hash: string } | null }) => Promise<BundleResult[]>;
-  /** 结果换了(整份;不能执行时是空数组) */
+  /** The result changed (as a whole; an empty array when execution is not possible) */
   onBundles: (results: BundleResult[]) => void;
 }
 
 type Request = (msg: Record<string, unknown>, timeoutMs?: number) => Promise<Record<string, unknown>>;
 
 export interface OnlineCardSourcesDeps {
-  /** 浏览器入口注入原始内置源码表，避免纯同步/Node侧依赖Vite宏。 */
+  /** The browser entry injects the raw built-in source table, so the pure sync / Node side does not depend on Vite macros. */
   sourceFiles?: Record<string, string>;
   request: Request;
-  /** 此刻的连接(共享项目的链接对象;变了就清表重取,null = 没连上共享项目) */
+  /** The current connection (the shared project's link object; if it changes, clear the table and refetch; null = not connected to a shared project) */
   linkKey: () => unknown;
-  /** 表变了(写进注册表之后) */
+  /** The table changed (after writing into the registry) */
   onChange?: (entries: SyncedUserCard[]) => void;
-  /** 写进哪里;缺省注册表 */
+  /** Where to write; defaults to the registry */
   apply?: (entries: SyncedUserCard[]) => boolean;
   /**
-   * 每条连接的第一轮有了结果(每条连接叫一次):`ok` 为 true 是列完、取完、写进了表(个别条目这轮没取到也算),
-   * false 是列表取不到(没连上、被拒、超时、回包不对)。`link` 是那一轮用的连接。在线页面的测量等它开门
-   * (`measureGate.ts`);连接换了(换项目、重连)再叫一次;还没连上共享项目的那几轮不算。
+   * The first round of each connection has a result (called once per connection): `ok` true means listing and
+   * fetching finished and the table was written (it still counts if a few entries could not be fetched this
+   * round), false means the list could not be fetched (not connected, rejected, timeout, malformed reply).
+   * `link` is the connection used in that round. The online page's measurement waits for it to open the gate
+   * (`measureGate.ts`); it is called again when the connection changes (switching project, reconnect); rounds
+   * before the shared project is connected do not count.
    */
   onFirstSettled?: (ok: boolean, link: unknown) => void;
   requestTimeoutMs?: number;
   now?: () => number;
-  /** 页面自己带着的内置模块的导出(`parseCardSource` 的 `builtins`);缺省不认内置模块 */
+  /** Exports of the built-in modules the page carries itself (the `builtins` of `parseCardSource`); by default built-in modules are not recognized */
   builtins?: (key: string) => Readonly<Record<string, unknown>> | null | undefined;
-  /** 转译成舞台能执行的包;不给就不转译 */
+  /** Transpile into a bundle the stage can execute; if omitted, no transpiling */
   bundling?: CardBundling;
 }
 
 type ParsedCard = Pick<ParsedCardSource, "id" | "name"> & Partial<Omit<ParsedCardSource, "id" | "name">> & { audioSourceVersion?: string };
 
 /**
- * 一份列表 + 已取到的正文 → 同步用户卡的条目(按键、按源码里的先后;同一 id 取第一条)。
- * 说明、默认值、控件原样带上(参数面板用);没有的不写这一项。
+ * A list + the bodies fetched so far → entries for synced user cards (by key, in source order; for the same
+ * id, the first one wins).
+ * Description, defaults and controls are carried over as they are (for the parameters panel); those that
+ * are absent are not written.
  */
 export function entriesOf(keys: readonly string[], parsed: ReadonlyMap<string, ParsedCard[]>): SyncedUserCard[] {
   const out: SyncedUserCard[] = [];
@@ -128,9 +148,9 @@ export function entriesOf(keys: readonly string[], parsed: ReadonlyMap<string, P
   return out;
 }
 
-/** 此刻在跑的那份(同一页只有一份);`nodeCardInfoLive.ts` 经它读同步来的源码算代码身份(块 N) */
+/** The instance currently running (only one per page); `nodeCardInfoLive.ts` reads synced sources through it to compute the code identity (chunk N) */
 let activeSources: OnlineCardSources | null = null;
-/** 同步来的源码的只读入口:入口文件的键表与「键 → 正文与哈希」;没有在跑的回 null */
+/** Read-only entry to the synced sources: the key table of entry files and "key → body and hash"; returns null if none is running */
 export function activeCardSourceReader(): { entries: () => string[]; read: (key: string) => { body: string; hash: string } | null } | null {
   return activeSources ? activeSources.reader() : null;
 }
@@ -138,15 +158,15 @@ export function activeCardSourceReader(): { entries: () => string[]; read: (key:
 export class OnlineCardSources {
   private readonly deps: OnlineCardSourcesDeps;
   private link: unknown = null;
-  /** 键 → 这份正文与它的哈希(入口文件与跟着 import 取到的文件) */
+  /** Key → this body and its hash (entry files and files fetched by following imports) */
   private readonly cache = new Map<string, { hash: string; body: string }>();
-  /** 入口键 → 解析结果;正文有变(任何一份)时整份重解析 */
+  /** Entry key → parse result; when any body changes, reparse the whole set */
   private parsed = new Map<string, ParsedCard[]>();
   private busy: Promise<void> | null = null;
   private entries: SyncedUserCard[] = [];
   private stopped = false;
   private settled = false;
-  /** 上一次转译的结果与它对应的输入签名(入口与闭包的哈希);签名没变不重转 */
+  /** The last transpile result and the input signature it corresponds to (hashes of the entries and the closure); no retranspile if the signature is unchanged */
   private bundles: BundleResult[] = [];
   private bundledSig: string | null = null;
   readonly stats = { lists: 0, gets: 0, errors: 0, lastSyncAt: 0, lastError: "" as string, truncated: false, bundleRuns: 0, bundleErrors: 0 };
@@ -156,7 +176,7 @@ export class OnlineCardSources {
     activeSources = this;
   }
 
-  /** 只读入口(见 `activeCardSourceReader`) */
+  /** Read-only entry (see `activeCardSourceReader`) */
   reader(): { entries: () => string[]; read: (key: string) => { body: string; hash: string } | null } {
     return {
       entries: () => this.entries.map((e) => e.source).filter((k): k is string => typeof k === "string" && !!k),
@@ -173,7 +193,7 @@ export class OnlineCardSources {
   private settle(ok: boolean, link: unknown): void {
     if (this.settled || this.stopped) return;
     this.settled = true;
-    try { this.deps.onFirstSettled?.(ok, link); } catch { /* 订阅方坏了不影响同步 */ }
+    try { this.deps.onFirstSettled?.(ok, link); } catch { /* A broken subscriber does not affect sync */ }
   }
 
   private request(msg: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -185,7 +205,7 @@ export class OnlineCardSources {
     ]).finally(() => { if (timer !== undefined) clearTimeout(timer); });
   }
 
-  /** 跑一轮;正在跑就等那一轮 */
+  /** Run one round; if one is already running, wait for that round */
   sync(): Promise<void> {
     if (this.stopped) return Promise.resolve();
     if (this.busy) return this.busy;
@@ -196,13 +216,13 @@ export class OnlineCardSources {
   private async syncOnce(): Promise<void> {
     const link = this.deps.linkKey();
     if (link !== this.link) {
-      // 连接换了:换项目时别的项目的卡不能留着
+      // Connection changed: when switching projects, cards of the other project must not be kept
       this.link = link;
       this.cache.clear();
       this.parsed = new Map();
       this.apply([]);
       this.setBundles([], null);
-      // 新连接的第一轮重新算「第一次」
+      // The first round of the new connection counts as "the first time" again
       this.settled = false;
     }
     if (!link) return;
@@ -230,13 +250,13 @@ export class OnlineCardSources {
       if (isCardSourceModuleKey(it?.key)) listed.set(it.key, typeof it.hash === "string" ? it.hash : "");
       else if (isCardSourceStyleKey(it?.key)) styles.set(it.key, typeof it.hash === "string" ? it.hash : "");
     }
-    // 样式文件只在要转译时才取(不转译的页面与原来一字不差)
+    // Style files are fetched only when transpiling is needed (pages that do not transpile stay identical to before)
     const wantStyles = !!this.deps.bundling?.enabled();
     if (wantStyles) for (const [k, h] of styles) listed.set(k, h);
     const entryKeys = [...listed.keys()].filter((k) => isUserCardEntryKey(k)).sort();
     let dirty = false;
     for (const k of [...this.cache.keys()]) if (!listed.has(k)) { this.cache.delete(k); dirty = true; }
-    // 入口文件,再跟着 import 取同一目录下被引的文件(只取列表里有的;哈希没变不重取;有环不重取)
+    // The entry file, then follow imports to fetch the referenced files in the same directory (only those in the list; no refetch if the hash is unchanged; no refetch on cycles)
     const queue = [...entryKeys];
     const visited = new Set<string>();
     let deps = 0;
@@ -257,7 +277,7 @@ export class OnlineCardSources {
           this.cache.set(key, { hash: typeof got.hash === "string" ? got.hash : hash, body });
           dirty = true;
         } catch (err) {
-          // 这一条这轮取不到:留着旧的正文(有的话),下一轮再取
+          // This entry could not be fetched this round: keep the old body (if any) and fetch again next round
           this.stats.errors++;
           this.stats.lastError = String((err as Error)?.message ?? err).slice(0, 160);
         }
@@ -268,7 +288,7 @@ export class OnlineCardSources {
       for (const dep of cardSourceImports(cur.body, key)) if (listed.has(dep) && !visited.has(dep)) queue.push(dep);
       if (wantStyles) for (const dep of cardSourceStyleImports(cur.body, key)) if (listed.has(dep) && !visited.has(dep)) queue.push(dep);
     }
-    // 不再被引的文件不留
+    // Files that are no longer referenced are not kept
     for (const k of [...this.cache.keys()]) if (!visited.has(k)) { this.cache.delete(k); dirty = true; }
     if (dirty || [...this.parsed.keys()].some((k) => !this.cache.has(k))) {
       const files = (k: string) => this.cache.get(k)?.body ?? null;
@@ -294,12 +314,14 @@ export class OnlineCardSources {
     this.bundles = results;
     this.bundledSig = sig;
     if (!had && !results.length) return;
-    try { this.deps.bundling?.onBundles(results); } catch { /* 订阅方坏了不影响同步 */ }
+    try { this.deps.bundling?.onBundles(results); } catch { /* A broken subscriber does not affect sync */ }
   }
 
   /**
-   * 转译这一轮的入口(本页能执行时)。输入没变(入口与已取到的文件的哈希都没变)不重转;
-   * 不能执行了就把已有的包清掉。转译器载入失败、抛错:这一轮不出包,下一轮再试。
+   * Entry point for transpiling this round (when this page can execute). If the input is unchanged (hashes of
+   * the entries and of the fetched files are all unchanged), do not retranspile;
+   * if execution is no longer possible, clear the existing bundles. If the transpiler fails to load or throws:
+   * no bundle this round, try again next round.
    */
   private async bundle(entries: string[], link: unknown): Promise<void> {
     const b = this.deps.bundling;
@@ -319,7 +341,7 @@ export class OnlineCardSources {
     }
   }
 
-  /** 此刻认出的卡(诊断、探针用) */
+  /** The cards recognized at this moment (for diagnostics and probes) */
   debug() {
     return {
       link: !!this.link,
@@ -334,7 +356,7 @@ export class OnlineCardSources {
     };
   }
 
-  /** 停下并清表(离开在线页面、换档重建时) */
+  /** Stop and clear the table (when leaving the online page or rebuilding on a tier change) */
   stop(): void {
     this.stopped = true;
     if (activeSources === this) activeSources = null;

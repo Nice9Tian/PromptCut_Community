@@ -1,15 +1,22 @@
 /**
- * 「用户正在编辑」的汇总与节流(计划 docs/plan/agent-workflow-plan.md A2;语义 user-workflow.md「保护」)。
- * 纯逻辑,不碰 store、不发请求:接线在 ./userEditing.ts,测试在 ./userEditingCore.test.mjs。
+ * Aggregation and throttling of "user is editing" (plan docs/plan/agent-workflow-plan.md A2;
+ * semantics: user-workflow.md "Protection").
+ * Pure logic, does not touch the store, sends no requests: the wiring is in ./userEditing.ts,
+ * and the tests are in ./userEditingCore.test.mjs.
  *
- * 口径(计划第 4 节第 1 条〔裁〕):一个片段(卡片也是片段)算「正在编辑」,当且仅当
- *   - 拖动中(时间轴拖动 / 改时长、舞台上移动、字幕条拖动),或
- *   - 文字编辑中(舞台上改字、字幕双击改字),或
- *   - 选中着,且选中期间用户动过它、离最后一次动不到 30 秒。
- * 只选中不动不算;取消选中后「动过」的记录作废。
+ * Criterion (plan section 4, item 1 [ruling]): a clip (a card is also a clip) counts as "being
+ * edited" if and only if
+ *   - it is being dragged (timeline drag / duration change, move on the stage, caption bar drag), or
+ *   - its text is being edited (editing text on the stage, double-click to edit caption text), or
+ *   - it is selected, and the user touched it while it was selected, less than 30 seconds after
+ *     the last touch.
+ * Selecting without touching does not count; after deselecting, the "touched" record is void.
  *
- * 推送:状态一变就推(前沿立即发,之后至多每 250 ms 一次,窗口到点发最新一份 —— 拖动时不会每帧发);
- * 非空时每 5 秒心跳一次,服务端 15 秒收不到续期就当页面走了;「刚动过」的条目带剩余毫秒数,到点自动掉出。
+ * Push: push as soon as the state changes (the leading edge is sent immediately, then at most once
+ * every 250 ms, and at the end of the window the latest copy is sent: no per-frame sends while
+ * dragging); when non-empty, a heartbeat every 5 seconds, and if the server gets no renewal for
+ * 15 seconds it assumes the page is gone; "just touched" entries carry the remaining
+ * milliseconds and drop out automatically when due.
  */
 
 export type EditingKind = "drag" | "text" | "recent";
@@ -17,16 +24,17 @@ export type EditingKind = "drag" | "text" | "recent";
 export interface EditingEntity {
   clipId: string;
   kind: EditingKind;
-  /** 只有 recent 带:离 30 秒到期还剩多少毫秒 */
+  /** Only carried by recent: how many milliseconds remain until the 30-second expiry */
   remainingMs?: number;
 }
 
 export const USER_EDITING_TIMING = Object.freeze({
-  /** 选中后动过,多久之内算「正在编辑」 */
+  /** Within how long after a touch while selected it counts as "being edited" */
   recentMs: 30_000,
-  /** 两次推送之间至少隔多久 */
+  /** Minimum interval between two pushes */
   throttleMs: 250,
-  /** 非空时多久心跳一次(服务端的过期时间是它的 3 倍,见 server/agent/user-editing.mjs 的 ttlMs) */
+  /** How often to send a heartbeat when non-empty (the server's expiry time is 3 times this, see
+   *  ttlMs in server/agent/user-editing.mjs) */
   heartbeatMs: 5_000,
 });
 
@@ -43,15 +51,17 @@ export interface EditingTrackerOptions {
 }
 
 export interface EditingTracker {
-  /** 某个界面位置(slot)开始 / 结束拖动或文字编辑某个片段;clipId 为 null 表示结束 */
+  /** A UI position (slot) starts / ends dragging or text-editing a clip; clipId null means the end */
   setActive(slot: string, clipId: string | null, kind: "drag" | "text"): void;
-  /** 当前选区(第一个是主选) */
+  /** Current selection (the first one is the primary selection) */
   setSelection(ids: readonly string[]): void;
-  /** 用户这次修改动到的片段(调用方已排除 Agent 让页面执行的修改) */
+  /** Clips touched by this user change (the caller has already excluded changes made by tools the
+   *  Agent had the page run) */
   touch(ids: readonly string[]): void;
-  /** 此刻的完整状态 */
+  /** The complete state right now */
   snapshot(): EditingEntity[];
-  /** 发送开关:关着时只记状态不发;打开时立刻补发一次 */
+  /** Send switch: while off, only record the state and do not send; when turned on, resend once
+   *  immediately */
   setEnabled(on: boolean): void;
   dispose(): void;
 }
@@ -67,7 +77,7 @@ export function createEditingTracker(o: EditingTrackerOptions): EditingTracker {
   /** slot → { clipId, kind } */
   const active = new Map<string, { clipId: string; kind: "drag" | "text" }>();
   let selection: string[] = [];
-  /** clipId → 最后一次动过的时刻(只记选中着的) */
+  /** clipId → time of the last touch (only recorded while selected) */
   const touched = new Map<string, number>();
 
   let enabled = false;
@@ -93,7 +103,7 @@ export function createEditingTracker(o: EditingTrackerOptions): EditingTracker {
     return [...byClip.values()].sort((a, b) => (a.clipId < b.clipId ? -1 : a.clipId > b.clipId ? 1 : 0));
   }
 
-  /** 比较用的键:不含剩余毫秒(它每一刻都在变) */
+  /** Key for comparison: excludes the remaining milliseconds (they change every moment) */
   const keyOf = (list: EditingEntity[]) => JSON.stringify(list.map((e) => [e.clipId, e.kind]));
 
   function arm(at: number) {
@@ -104,7 +114,7 @@ export function createEditingTracker(o: EditingTrackerOptions): EditingTracker {
     timer = setTimer(() => { timer = null; timerAt = Infinity; flush(); }, Math.max(0, at - now()));
   }
 
-  /** 下一次该醒来的时刻:心跳、最早到期的「刚动过」 */
+  /** The next time to wake up: the heartbeat, or the earliest-expiring "just touched" entry */
   function nextWake(list: EditingEntity[]): number {
     let at = Infinity;
     if (list.length) at = lastSentAt + heartbeatMs;
@@ -123,7 +133,7 @@ export function createEditingTracker(o: EditingTrackerOptions): EditingTracker {
       if (t - lastSentAt < throttleMs) { arm(lastSentAt + throttleMs); return; }
       lastKey = key;
       lastSentAt = t;
-      try { o.send(list); } catch { /* 发不出去就等下一次 */ }
+      try { o.send(list); } catch { /* If it cannot be sent, wait for the next time */ }
     }
     const wake = nextWake(list);
     if (wake < Infinity) arm(wake);
@@ -142,7 +152,7 @@ export function createEditingTracker(o: EditingTrackerOptions): EditingTracker {
       const next = ids.filter((x) => typeof x === "string");
       if (next.length === selection.length && next.every((x, i) => x === selection[i])) return;
       selection = next;
-      // 取消选中的片段,「动过」的记录作废
+      // For a clip that is deselected, its "touched" record is void
       for (const id of [...touched.keys()]) if (!next.includes(id)) touched.delete(id);
       flush();
     },

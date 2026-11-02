@@ -1,47 +1,62 @@
 /**
- * 仅供测试，生产代码不得引用。
+ * For testing only; must not be referenced by production code.
  *
- * M6a 共享项目鉴权测试（契约 `docs/plan/auth-contract.md` 第 12 节 AU1～AU14）共用的工具。
- * 只照契约写，不看实现。
+ * Shared utilities for M6a shared project authentication tests (contract
+ * `docs/plan/auth-contract.md` section 12, AU1-AU14).
+ * Written strictly against the contract, without looking at the implementation.
  *
- * # 假设的服务端接口（契约没写死，主会话集成时对账；对不上只改本文件的 `assemble` / `assetMiddleware` 两处）
+ * # Assumed server interfaces (not frozen by contract, reconciled during lead session
+ * integration; if mismatched, only modify `assemble` / `assetMiddleware` in this file)
  *
  *   server/auth/index.mjs
  *     createSharedHost(options) → host
- *       options.dataDir       文档服务的数据目录；凭证存储在 <dataDir>/auth/，共享项目的空间在 <dataDir>/tenants/<projectId>/
- *       options.server        给了就是挂载模式（局域网主机，vite）：挂到这个 http 服务器上，WS 路径 options.path
- *       options.path          挂载模式的 WS 路径，缺省 '/docservice'；HTTP 端点在 `<path>/shared/…`
- *       options.now           注入时钟（nonce 过期、票据过期、限速冷却、每小时建项目上限都按它算）
- *       options.log           (event, fields) => void，文档服务与鉴权的日志都走它
- *       options.device        本机设备信息 { deviceId, deviceName }（本机声明用）
- *       options.clusterToken  独立模式的集群令牌；挂载模式下不传
- *     host.service            createDocService 的返回值（describe()、close() 照旧）
- *     host.auth               凭证存储；交给素材服务核对票据
- *     host.handleHttp(req, res) → boolean   答 `shared/…` 端点（含 OPTIONS）；不归它管的回 false。
- *                             独立模式下 host 自己已接到自建服务器上，测试不再调；挂载模式由宿主（这里是测试）调
- *     host.listen(port, hostname) → Promise<address>   只在独立模式
+ *       options.dataDir       Document service data directory; credentials stored in
+ *                             <dataDir>/auth/, shared project spaces in <dataDir>/tenants/<projectId>/
+ *       options.server        If provided, indicates attached mode (LAN host, vite): mounts to this
+ *                             http server, WS path options.path
+ *       options.path          WS path for attached mode, default '/docservice'; HTTP endpoints at
+ *                             `<path>/shared/…`
+ *       options.now           Injected clock (nonce expiration, ticket expiration, rate limit
+ *                             cooldown, hourly project creation limit all computed from it)
+ *       options.log           (event, fields) => void, all document service and auth logs go through it
+ *       options.device        Local device info { deviceId, deviceName } (for local declaration)
+ *       options.clusterToken  Cluster token for standalone mode; omitted in attached mode
+ *     host.service            Return value of createDocService (describe(), close() as usual)
+ *     host.auth               Credential store; passed to asset service to verify tickets
+ *     host.handleHttp(req, res) → boolean   Handles `shared/…` endpoints (including OPTIONS);
+ *                             returns false if not handled. In standalone mode host is already
+ *                             connected to self-created server, not called by tests; in attached
+ *                             mode called by host (test here)
+ *     host.listen(port, hostname) → Promise<address>   Only in standalone mode
  *     host.close() → Promise
  *
  *   server/asset-service.ts
- *     assetServiceMiddleware(root, { stores: { media }, auth: host.auth })   素材服务凭 host.auth 核对票据
+ *     assetServiceMiddleware(root, { stores: { media }, auth: host.auth })   Asset service verifies
+ *                                                                            tickets against host.auth
  *
- *   server/auth/client.mjs（契约第 11 节）
+ *   server/auth/client.mjs (contract section 11)
  *     deriveKey(password, salt, kdf) → Promise<string | Uint8Array>
  *     buildAuthProtocols({ base, projectId, username, deviceId, deviceName, as, password | key, role, conversation, owner }) → Promise<string[]>
- *     ticketExpiry(ticket) → number（毫秒时间戳）
+ *     ticketExpiry(ticket) → number (timestamp in milliseconds)
  *
- * # 模拟非回环来源
+ * # Simulate non-loopback sources
  *
- * 服务都绑 127.0.0.1、端口 0。要模拟局域网 / 公网来源时，URL 查询串加 `__remote=<地址>`：测试在服务器的
- * `request` / `upgrade` 事件上抢先挂一个监听，把 `req.socket.remoteAddress` 改成这个地址并从 `req.url` 删掉这一项，
- * 实现看不到它。没带这一项的请求把 socket 恢复成原来的回环地址（keep-alive 复用的 socket 不串）。
+ * All services bind to 127.0.0.1, port 0. When simulating LAN / public network sources, append
+ * `__remote=<address>` to the URL query string: the test hooks a listener in advance on the server's
+ * `request` / `upgrade` events, modifies `req.socket.remoteAddress` to this address, and removes
+ * this entry from `req.url` so the implementation cannot see it. Requests without this entry
+ * restore the socket to the original loopback address (preventing crosstalk across sockets
+ * reused by keep-alive).
  *
- * # 协议自己实现
+ * # Self-implemented protocol
  *
- * 派生、挑战、证明、创建者操作的证明都按契约第 2、4、5、7 节用 `node:crypto` 在这里现算，不经 `client.mjs`，
- * 这样测试核对的是线上的格式本身；`client.mjs` 另有用例对拍。派生的盐按「base64url 解码后的 16 字节」喂给 PBKDF2
- * （契约写「KDF(口令, 盐)」，盐是 16 字节随机数、以 base64url 存；服务端从不派生，所以服务端用例不受这一点影响）。
- * 测试用 `iter: 100000`（契约允许的下限），省时间。
+ * Derivation, challenge, proof, and creator operation proofs are all computed on the fly here using
+ * `node:crypto` according to contract sections 2, 4, 5, 7, bypassing `client.mjs`, so that tests
+ * verify the wire format itself; `client.mjs` has separate test cases for cross-checking. The
+ * derived salt is fed to PBKDF2 as "16 bytes after base64url decoding" (the contract writes
+ * "KDF(passphrase, salt)", where salt is a 16-byte random number stored as base64url; the server
+ * never derives, so server test cases are unaffected by this). Tests use `iter: 100000` (the lower
+ * bound permitted by the contract) to save time.
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -62,19 +77,19 @@ export const PROTOCOL = 'promptcut.v1';
 export const b64u = (buf) => Buffer.from(buf).toString('base64url');
 export const unb64u = (s) => Buffer.from(s, 'base64url');
 
-// ------------------------------------------------------------------ 时钟
+// ------------------------------------------------------------------ Clock
 
-/** 注入时钟：跟着真实时间走，`advance(ms)` 往前拨 */
+/** Injected clock: follows real time, advanced forward with `advance(ms)` */
 export function testClock() {
   let offset = 0;
   const now = () => Date.now() + offset;
   return { now, advance(ms) { offset += ms; } };
 }
 
-// ------------------------------------------------------------------ 派生与证明（契约第 2、5、7 节）
+// ------------------------------------------------------------------ Derivation and proof (contract sections 2, 5, 7)
 
 const keyCache = new Map();
-/** K = PBKDF2-HMAC-SHA256(口令, 盐的 16 字节, iter, 32)，base64url */
+/** K = PBKDF2-HMAC-SHA256(passphrase, 16 bytes of salt, iter, 32), base64url */
 export function derive(password, salt, kdf = KDF) {
   const id = `${kdf.iter}\n${salt}\n${password}`;
   let k = keyCache.get(id);
@@ -85,7 +100,7 @@ export function derive(password, salt, kdf = KDF) {
   return k;
 }
 
-/** 新造一份凭证记录 { username?, salt, key } */
+/** Create a fresh credential record { username?, salt, key } */
 export function credential(password, username) {
   const salt = b64u(randomBytes(16));
   const rec = { salt, key: derive(password, salt) };
@@ -94,17 +109,17 @@ export function credential(password, username) {
 
 const hmac = (key, text) => createHmac('sha256', unb64u(key)).update(Buffer.from(text, 'utf8')).digest();
 
-/** 握手证明 m（第 5 节） */
+/** Handshake proof m (section 5) */
 export function proofMac(key, { projectId, username, deviceId, as, nonce }) {
   return b64u(hmac(key, `promptcut.auth.v1\n${projectId}\n${username}\n${deviceId}\n${as}\n${nonce}`));
 }
 
-/** 创建者操作证明 m（第 7 节） */
+/** Creator operation proof m (section 7) */
 export function adminMac(key, { projectId, username, op, nonce }) {
   return b64u(hmac(key, `promptcut.admin.v1\n${projectId}\n${username}\n${op}\n${nonce}`));
 }
 
-/** 证明子协议：`promptcut.auth.<base64url(JSON)>`；extra 可以覆盖/删除任何字段（值为 undefined 即删） */
+/** Proof subprotocol: `promptcut.auth.<base64url(JSON)>`; extra can override/delete any field (deleted if undefined) */
 export function authItem(fields) {
   const json = {};
   for (const [k, v] of Object.entries(fields)) if (v !== undefined) json[k] = v;
@@ -119,27 +134,27 @@ export function proofFields({ projectId, username, deviceId, deviceName, as = 'm
   };
 }
 
-// ------------------------------------------------------------------ 票据（第 8 节）
+// ------------------------------------------------------------------ Tickets (section 8)
 
 export function parseTicket(ticket) {
   const [v, payload, sig] = ticket.split('.');
   return { v, payload, sig, body: JSON.parse(unb64u(payload).toString('utf8')) };
 }
 
-/** 改负载里的字段、保留原签名：签名必然不对 */
+/** Modify fields in payload, keep original signature: signature is bound to be invalid */
 export function tamperTicket(ticket, patch) {
   const t = parseTicket(ticket);
   const body = { ...t.body, ...patch };
   return `${t.v}.${b64u(Buffer.from(JSON.stringify(body), 'utf8'))}.${t.sig}`;
 }
 
-/** 签名段最后一个字符换掉 */
+/** Replace the last character of the signature segment */
 export function flipSignature(ticket) {
   const last = ticket.at(-1);
   return ticket.slice(0, -1) + (last === 'A' ? 'B' : 'A');
 }
 
-// ------------------------------------------------------------------ 组装（假设的接口集中在这里）
+// ------------------------------------------------------------------ Assembly (assumed interfaces are centralized here)
 
 export async function loadClient() {
   const mod = await import('../auth/client.mjs');
@@ -150,9 +165,11 @@ export async function loadClient() {
 }
 
 /**
- * 组装入口（集成对账后接到实际实现）：`server/docservice/shared-service.mjs` 的 `createSharedDocService`，
- * 凭证存储 `server/auth/store.mjs` 的 `openCredentialStore({ dir: <dataDir>/auth })`，素材票据核对器
- * `server/auth/asset-tickets.mjs` 的 `createAssetTicketVerifier`。回的 host 形状与文件头的假设一致。
+ * Assembly entry point (wired to actual implementation after integration reconciliation):
+ * `createSharedDocService` in `server/docservice/shared-service.mjs`, credential store
+ * `openCredentialStore({ dir: <dataDir>/auth })` in `server/auth/store.mjs`, and asset ticket
+ * verifier `createAssetTicketVerifier` in `server/auth/asset-tickets.mjs`. The returned host
+ * shape matches the assumptions at the top of the file.
  */
 async function assemble({ dataDir, server, path: wsPath, now, log, device, clusterToken }) {
   const [{ createSharedDocService }, { openCredentialStore }, { createAssetTicketVerifier }] = await Promise.all([
@@ -182,7 +199,7 @@ async function assemble({ dataDir, server, path: wsPath, now, log, device, clust
   };
 }
 
-// ------------------------------------------------------------------ 素材服务（TS 转译，同 asset-store-http.test.mjs 的办法）
+// ------------------------------------------------------------------ Asset service (TS transpilation, same approach as asset-store-http.test.mjs)
 
 let assetModPromise = null;
 export function loadAsset() {
@@ -190,7 +207,7 @@ export function loadAsset() {
     const require_ = createRequire(import.meta.url);
     const ts = require_('typescript');
     const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-auth-asset-'));
-    process.on('exit', () => { try { fs.rmSync(OUT, { recursive: true, force: true }); } catch { /* 忽略 */ } });
+    process.on('exit', () => { try { fs.rmSync(OUT, { recursive: true, force: true }); } catch { /* Ignore */ } });
     const compiled = new Map();
     const resolveRel = (fromFile, spec) => {
       const base = path.resolve(path.dirname(fromFile), spec);
@@ -226,18 +243,18 @@ export function loadAsset() {
   return assetModPromise;
 }
 
-/** 素材服务凭 host.auth（票据核对器）核对票据；实际选项名是 `tickets` */
+/** Asset service verifies tickets via host.auth (ticket verifier); actual option name is `tickets` */
 async function assetMiddleware(root, auth) {
   const { asset, store } = await loadAsset();
   const media = store.createBlobStore({ kind: 'memory', chunkSize: 8 * 1024 * 1024 });
   return asset.assetServiceMiddleware(root, { stores: { media }, tickets: auth });
 }
 
-// ------------------------------------------------------------------ 来源地址改写
+// ------------------------------------------------------------------ Source address rewriting
 
 const REMOTE_PARAM = '__remote';
 
-/** 在服务器上抢先挂监听：按 `__remote` 改 socket 的对端地址并从 URL 删掉这一项 */
+/** Preemptively attach listener on server: rewrite socket remote address per `__remote` and remove it from URL */
 export function installRemoteOverride(server) {
   const fix = (req) => {
     const sock = req.socket;
@@ -249,7 +266,7 @@ export function installRemoteOverride(server) {
         u.searchParams.delete(REMOTE_PARAM);
         req.url = u.pathname + (u.search === '?' ? '' : u.search);
       }
-    } catch { /* 原样 */ }
+    } catch { /* As is */ }
     if (Object.hasOwn(sock, 'remoteAddress')) delete sock.remoteAddress;
     if (remote !== null) Object.defineProperty(sock, 'remoteAddress', { value: remote, configurable: true, enumerable: true });
   };
@@ -257,13 +274,13 @@ export function installRemoteOverride(server) {
   server.prependListener('upgrade', fix);
 }
 
-/** 路径加上 `__remote` */
+/** Add `__remote` to the path */
 export function withRemote(p, remote) {
   if (!remote) return p;
   return `${p}${p.includes('?') ? '&' : '?'}${REMOTE_PARAM}=${encodeURIComponent(remote)}`;
 }
 
-// ------------------------------------------------------------------ 起服务
+// ------------------------------------------------------------------ Start service
 
 export const HOST_DEVICE = Object.freeze({ deviceId: 'host-device-0001', deviceName: 'LanHost' });
 
@@ -272,12 +289,12 @@ function tempDataDir() {
 }
 
 /**
- * 起一台带共享项目鉴权的文档服务（端口 0）。
+ * Start a document service with shared project authentication (port 0).
  * @param {object} [o]
- * @param {boolean} [o.attached] 挂载模式（局域网主机）；缺省独立模式（托管端）
- * @param {string} [o.clusterToken] 独立模式的集群令牌
+ * @param {boolean} [o.attached] Attached mode (LAN host); defaults to standalone mode (hosted side)
+ * @param {string} [o.clusterToken] Cluster token for standalone mode
  * @param {ReturnType<typeof testClock>} [o.clock]
- * @param {boolean} [o.assets] 同一进程里再起素材服务（共用 host.auth）
+ * @param {boolean} [o.assets] Also start asset service in the same process (sharing host.auth)
  */
 export async function startHost({ attached = false, clusterToken, clock = testClock(), assets = false } = {}) {
   const dataDir = tempDataDir();
@@ -328,7 +345,7 @@ export async function startHost({ attached = false, clusterToken, clock = testCl
     get service() { return host.service; },
     httpBase: `http://127.0.0.1:${port}${httpPrefix}`,
 
-    /** 文档服务的 `shared/…` 端点 */
+    /** The `shared/…` endpoint of the document service */
     async http(rel, { method = 'GET', body, remote, headers = {}, raw } = {}) {
       const init = { method, headers: { ...headers } };
       if (raw !== undefined) init.body = raw;
@@ -339,18 +356,18 @@ export async function startHost({ attached = false, clusterToken, clock = testCl
       const r = await fetch(`http://127.0.0.1:${port}${withRemote(httpPrefix + rel, remote)}`, init);
       const text = await r.text();
       let json = null;
-      try { json = JSON.parse(text); } catch { /* 不是 JSON */ }
+      try { json = JSON.parse(text); } catch { /* Not JSON */ }
       return { status: r.status, headers: r.headers, json, text };
     },
 
-    /** 握手，只看状态码与回显的子协议 */
+    /** Handshake, inspecting only status code and echoed subprotocol */
     async handshake(protocols, remote) {
       const r = await rawHandshake(port, { protocols, path: withRemote(wsPath, remote) });
       r.sock.destroy();
       return { status: r.status, protocol: r.headers['sec-websocket-protocol'] };
     },
 
-    /** 连上（等 open）；连不上抛错 */
+    /** Connect (wait for open); throw if connection fails */
     async open(protocols, remote) {
       const c = wsClient(`ws://127.0.0.1:${port}${withRemote(wsPath, remote)}`, protocols);
       clients.push(c);
@@ -358,17 +375,17 @@ export async function startHost({ attached = false, clusterToken, clock = testCl
       return c;
     },
 
-    /** 素材服务 */
+    /** Asset service */
     async asset(rel, { method = 'GET', headers = {}, body, remote } = {}) {
       assert.ok(assetPort, 'startHost needs assets: true');
       const r = await fetch(`http://127.0.0.1:${assetPort}${withRemote(`/api/asset/${rel}`, remote)}`, { method, headers, body });
       const buf = Buffer.from(await r.arrayBuffer());
       let json = null;
-      try { json = JSON.parse(buf.toString('utf8')); } catch { /* 字节 */ }
+      try { json = JSON.parse(buf.toString('utf8')); } catch { /* Bytes */ }
       return { status: r.status, headers: r.headers, json, buf };
     },
 
-    /** 当前全部连接的 principal（`describe().conns[].principal`） */
+    /** Principal of all current connections (`describe().conns[].principal`) */
     principals() {
       return host.service.describe().conns.map((c) => c.principal);
     },
@@ -390,20 +407,20 @@ export async function startHost({ attached = false, clusterToken, clock = testCl
   return env;
 }
 
-/** 起服务并在用例结束时关掉 */
+/** Start service and shut it down when test finishes */
 export async function hostFor(t, options) {
   const env = await startHost(options);
   t.after(() => env.close());
   return env;
 }
 
-// ------------------------------------------------------------------ 共享项目
+// ------------------------------------------------------------------ Shared project
 
 let nameSeq = 0;
 export const uniqueName = (prefix = 'proj') => `${prefix}-${process.pid}-${++nameSeq}`;
 
 /**
- * 建项目。`creator`、`password`、`list` 给明文口令，这里现派生。
+ * Create project. `creator`, `password`, and `list` take plaintext passphrases, derived on the fly here.
  * @returns {Promise<{ projectId, name, mode, creator, password?, list? }>}
  */
 export async function createProject(env, {
@@ -428,7 +445,8 @@ let devSeq = 0;
 export const newDevice = (name = 'Dev') => ({ deviceId: `dev-${process.pid}-${++devSeq}-abcdefgh`, deviceName: `${name}${devSeq}` });
 
 /**
- * 取挑战、拼证明子协议。password 缺省按 as 与模式从 proj 里取（创建者口令 / 项目口令 / 名单里的口令）。
+ * Retrieve challenge and construct proof subprotocol. password defaults to being retrieved
+ * from proj per `as` and mode (creator passphrase / project passphrase / passphrase in list).
  * @returns {Promise<{ protocols: string[], nonce, salt, key, fields }>}
  */
 export async function proofFor(env, proj, {
@@ -449,7 +467,7 @@ export async function proofFor(env, proj, {
   return { protocols: [PROTOCOL, authItem(fields)], nonce, salt, key: k, fields, device };
 }
 
-/** 以成员（或创建者）身份连上 */
+/** Connect as a member (or creator) */
 export async function join(env, proj, opts) {
   const p = await proofFor(env, proj, opts);
   const c = await env.open(p.protocols, opts.remote);
@@ -458,28 +476,30 @@ export async function join(env, proj, opts) {
   return c;
 }
 
-/** 以成员身份握手，只回状态码 */
+/** Handshake as a member, returning only status code */
 export async function joinStatus(env, proj, opts) {
   const p = await proofFor(env, proj, opts);
   return (await env.handshake(p.protocols, opts.remote)).status;
 }
 
-// ------------------------------------------------------------------ 消息
+// ------------------------------------------------------------------ Messages
 
 let reqSeq = 0;
 
 /**
- * 集成对账补的调用格式：服务地址登记模块（M5 起就有，`server/docservice/modules/endpoints.mjs`）的
- * `service.watch` 要求带 `kinds`（字符串数组或 `'all'`），契约没写这个字段。用例没带时补 `'all'`。
+ * Call format patched during integration reconciliation: `service.watch` in service address
+ * registry module (present since M5, `server/docservice/modules/endpoints.mjs`) requires `kinds`
+ * (string array or `'all'`), omitted in contract. Defaults to `'all'` when omitted in test cases.
  */
 function adaptMessage(message) {
   if (message?.type === 'service.watch' && message.kinds === undefined) return { ...message, kinds: 'all' };
   return message;
 }
 /**
- * 发一条带 reqId 的消息，等同 reqId 的回包。
- * 契约没写 `shared.*`、`auth.ticket` 的回包带不带 reqId（已有模块都带）：给了 `types` 时，
- * 不带 reqId 且类型在 `types` 里（或是 `error`）的消息也算回包。
+ * Send a message with reqId and wait for a response with the same reqId.
+ * Contract does not specify whether responses for `shared.*` and `auth.ticket` carry reqId
+ * (all existing modules carry it): when `types` is provided, messages without reqId whose type
+ * is in `types` (or is `error`) also count as responses.
  */
 export async function ask(c, message, types = null, ms = 3000) {
   const reqId = `au-${++reqSeq}`;
@@ -488,22 +508,23 @@ export async function ask(c, message, types = null, ms = 3000) {
   return c.next((m) => m?.reqId === reqId || (list !== null && m?.reqId === undefined && list.includes(m?.type)), ms);
 }
 
-/** 发出后在 ms 内等同 reqId 的回包，没有就回 null */
+/** Wait up to ms after sending for response with same reqId, returning null if none */
 export async function askOrNull(c, message, ms = 400) {
   try { return await ask(c, message, null, ms); } catch { return null; }
 }
 
-/** 成员列表 */
+/** Member list */
 export async function members(c) {
   const r = await ask(c, { type: 'shared.members' }, 'shared.members.list');
   assert.equal(r.type, 'shared.members.list', `shared.members reply: ${JSON.stringify(r)}`);
   return r.devices;
 }
 
-/** 创建者操作：同一连接取挑战、按创建者口令算证明、发 shared.admin */
+/** Creator operation: fetch challenge on same connection, compute proof with creator passphrase, send shared.admin */
 export async function adminOp(c, proj, op, fields = {}, { password = proj.creator.password, username = proj.creator.username, badProof = false, noProof = false } = {}) {
   const ch = await ask(c, { type: 'shared.challenge' }, 'shared.challenge.ok');
-  // 取挑战被拒（冷却中、不是成员等）时把拒绝原样交回，由用例断言
+  // When challenge request is rejected (in cooldown, not a member, etc.), return rejection as is
+  // for test assertions
   if (ch.type !== 'shared.challenge.ok') return ch;
   const key = derive(password, ch.salt, ch.kdf ?? KDF);
   let m = adminMac(key, { projectId: proj.projectId, username, op, nonce: ch.nonce });
@@ -513,7 +534,7 @@ export async function adminOp(c, proj, op, fields = {}, { password = proj.creato
   return ask(c, msg, 'shared.admin.ok');
 }
 
-/** 要一张票据 */
+/** Request a ticket */
 export async function ticketOf(c, body) {
   const r = await ask(c, { type: 'auth.ticket', ...body }, 'auth.ticket.ok');
   assert.equal(r.type, 'auth.ticket.ok', `auth.ticket reply: ${JSON.stringify(r)}`);
@@ -521,11 +542,11 @@ export async function ticketOf(c, body) {
   return r;
 }
 
-// ------------------------------------------------------------------ 素材
+// ------------------------------------------------------------------ Assets
 
 const sha256hex = (buf) => createHash('sha256').update(buf).digest('hex');
 
-/** 从回环上传一件小素材（不带票据），回哈希 */
+/** Upload a small asset from loopback (without a ticket), returning the hash */
 export async function uploadLocal(env, bytes = randomBytes(1000)) {
   const hash = sha256hex(bytes);
   const put = await env.asset(`media/${hash}/0`, { method: 'PUT', body: bytes, headers: { 'Content-Type': 'application/octet-stream', 'X-Media-Size': String(bytes.length) } });
@@ -535,7 +556,7 @@ export async function uploadLocal(env, bytes = randomBytes(1000)) {
   return { hash, bytes };
 }
 
-/** 从远端写一片（用来测写入鉴权），回状态 */
+/** Write a chunk remotely (to test write authentication), returning status */
 export async function remotePut(env, remote, headers = {}, query = '') {
   const bytes = randomBytes(64);
   const hash = sha256hex(bytes);
@@ -545,5 +566,5 @@ export async function remotePut(env, remote, headers = {}, query = '') {
 
 export const bearer = (t) => ({ Authorization: `Bearer ${t}` });
 
-/** 所有日志行序列化后的全文 */
+/** Full text of all serialized log lines */
 export const logText = (env) => env.logs.map((l) => JSON.stringify(l)).join('\n');

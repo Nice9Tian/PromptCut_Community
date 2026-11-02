@@ -1,5 +1,5 @@
 /**
- * Batched application of streaming deltas. 跑:node --test src/ai/streamBatch.test.mjs
+ * Batched application of streaming deltas. Run: node --test src/ai/streamBatch.test.mjs
  */
 import test from "node:test";
 import assert from "node:assert/strict";

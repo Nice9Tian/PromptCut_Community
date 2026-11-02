@@ -1,10 +1,16 @@
 /**
- * 数据层的档位与清单（`blob-store.mjs`「档位」，2026-10-23 游客视频条数用，按「原尺寸几个、小档几个取多的」数）：fs（两种布局）与 memory 同一套规则。
+ * Data layer tiers and inventory (`blob-store.mjs` "tier", for guest video counts, 2026-10-23,
+ * counted as "whichever is greater between original-size and small-tier count"): same rules for fs
+ * (both layouts) and memory.
  *
- * - 档位只认 `small`，缺失、拼错一律 `original`；同一个哈希只要有一片没说 `small` 就改记 `original`，不会反过来；
- * - 收尾时档位随全件入库，`inventory()` 列出来；`remove` 一起删；同一个哈希后来按原尺寸入库，旧的小档标记清掉；
- * - `inventory().stored` 与 `usage().blobs` 同数；
- * - fs：没人报档位时 `meta.json` 与原来逐字节一致、也不建 `.tiers/` 目录。
+ * - Tier only recognizes `small`; missing or misspelled are all `original`; if any chunk for the
+ *   same hash does not specify `small`, it switches to `original`, never the reverse;
+ * - On finalization, tier is stored with the whole file and listed by `inventory()`; removed
+ *   together with `remove`; if the same hash is later stored at original size, the old small-tier
+ *   marker is cleared;
+ * - `inventory().stored` matches `usage().blobs` count;
+ * - fs: when no tier is reported, `meta.json` is byte-for-byte identical to before and no `.tiers/`
+ *   directory is created.
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,7 +34,7 @@ const kinds = {
   'fs shard': () => { const dir = path.join(root, crypto.randomUUID()); return { store: createFsStore({ dir, chunkSize: CHUNK, shard: true }), dir }; },
 };
 
-/** 按片写完，每一片的 info 由 `infoOf(n)` 给 */
+/** Written chunk by chunk; info for each chunk is provided by `infoOf(n)` */
 async function putAll(store, { bytes, hash }, infoOf) {
   const count = Math.max(1, Math.ceil(bytes.length / CHUNK));
   for (let n = 0; n < count; n++) {
@@ -48,8 +54,8 @@ for (const [kind, make] of Object.entries(kinds)) {
     const { store } = make();
     const a = blob('a'), b = blob('b'), c = blob('c'), d = blob('d');
     await putAll(store, a, () => ({ ext: 'mp4', tier: 'small' }));
-    await putAll(store, b, n => ({ ext: 'mp4', tier: n === 0 ? 'small' : undefined })); // 后面的片没带头
-    await putAll(store, c, n => ({ ext: 'mp4', tier: n === 0 ? 'original' : 'small' })); // 先原件后小档：不退回
+    await putAll(store, b, n => ({ ext: 'mp4', tier: n === 0 ? 'small' : undefined })); // Subsequent chunks do not include headers
+    await putAll(store, c, n => ({ ext: 'mp4', tier: n === 0 ? 'original' : 'small' })); // Original first, then small tier: does not revert
     await putAll(store, d, () => ({ ext: 'png' }));
     assert.equal(await tierOf(store, a.hash, 'staging'), 'small');
     assert.equal(await tierOf(store, b.hash, 'staging'), 'original');
@@ -61,7 +67,7 @@ for (const [kind, make] of Object.entries(kinds)) {
     assert.deepEqual(Object.fromEntries(inv.stored.map(e => [e.hash, `${e.ext}/${e.tier}`])),
       { [a.hash]: 'mp4/small', [b.hash]: 'mp4/original', [c.hash]: 'mp4/original', [d.hash]: 'png/original' });
     assert.equal(inv.stored.length, (await store.usage()).blobs);
-    // 已入库的再传：数据层回 complete，不改档位
+    // Re-uploading what is already stored: data layer returns complete without changing tier
     assert.equal((await store.putChunk(a.hash, 0, { size: a.bytes.length, ext: 'mp4' }, [a.bytes.subarray(0, CHUNK)])).status, 'complete');
     assert.equal(await tierOf(store, a.hash), 'small');
   });
@@ -77,7 +83,7 @@ for (const [kind, make] of Object.entries(kinds)) {
     await putAll(store, a, () => ({ ext: 'mp4' }));
     await store.complete(a.hash);
     assert.equal(await tierOf(store, a.hash), 'original', 'no stale marker overriding it');
-    // 暂存也一起删
+    // Staging is also deleted
     const s = blob('rs');
     await store.putChunk(s.hash, 0, { size: s.bytes.length, ext: 'mp4', tier: 'small' }, [s.bytes.subarray(0, CHUNK)]);
     assert.equal((await store.inventory()).staging.length, 1);
@@ -102,11 +108,12 @@ test('fs: a lost small-tier marker is treated as original size; a stale marker l
   assert.equal(await tierOf(store, s.hash), 'small');
   await fsp.rm(path.join(dir, '.tiers', s.hash));
   assert.equal(await tierOf(store, s.hash), 'original', 'without the marker it is counted as original size');
-  // `.tiers/` 不被当成全件或分片目录数进去
+  // `.tiers/` is not counted as a whole file or chunk directory
   assert.equal((await store.usage()).blobs, 2);
   assert.equal((await store.list()).length, 2);
 
-  // 全件不经 remove 被删（例如别的代码直接删了文件），小档标记留在 `.tiers/` 里；同一个哈希后来按原尺寸传进来
+  // Whole file deleted without going through remove (e.g., other code deleted the file directly),
+  // small-tier marker remains in `.tiers/`; same hash is later uploaded at original size
   const o = blob('orphan');
   await putAll(store, o, () => ({ ext: 'mp4', tier: 'small' }));
   await store.complete(o.hash);

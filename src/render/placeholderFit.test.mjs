@@ -1,10 +1,12 @@
 /**
- * 占位符在屏幕上多大(`placeholderFit.ts`)。跑:node --test src/render/placeholderFit.test.mjs
+ * Placeholder size on screen (`placeholderFit.ts`). Run: node --test src/render/placeholderFit.test.mjs
  *
- *   PF-01 viewInverse:1 / 预览缩放,夹在 [1/8, 16];坏值回 1
- *   PF-02 沙漏:屏幕上保持原大小(只抵消预览缩放,不管这一层的缩放);放不进框按框缩小;噪点(铺满形态)不在这里
- *   PF-03 原先「需要本地 PC 渲染辅助」图标的排法已随图标撤掉(2026-10-21 用户定):模块不再导出 `unsupportedFit`
- *   PF-04 相邻两个小片段:沙漏在屏幕上不相交(各自在自己的框里)
+ *   PF-01 viewInverse: 1 / preview zoom, clamped to [1/8, 16]; bad values return 1
+ *   PF-02 Hourglass: keeps original size on screen (only offsets preview zoom, ignoring this
+ *         layer's scale); shrinks to box if it cannot fit; noise (fill mode) is not here
+ *   PF-03 Layout for former "Requires local PC render assistance" icon was removed with the icon
+ *         (user decision, 2026-10-21): module no longer exports `unsupportedFit`
+ *   PF-04 Two adjacent small clips: hourglasses do not intersect on screen (each in its own box)
  */
 import "../testing/registerTs.mjs";
 import test from "node:test";
@@ -29,20 +31,21 @@ test("PF-01 viewInverse", () => {
 
 test("PF-02 hourglass: only cancels the preview scale; if it does not fit the box, scales to the box", () => {
   const box = { width: 1920, height: 1080 };
-  // 27% 预览:屏幕上 28 像素
+  // 27% preview: 28 pixels on screen
   const a = F.hourglassFit({ box, viewScale: 0.27, layerScale: 1 });
   assert.ok(Math.abs(screenOf(a, null, 0.27, 1).w - 28) < 1e-9, JSON.stringify(a));
-  // 这一层缩到一半:沙漏跟着这一层缩(语义:继承该层的缩放),倍数不变
+  // This layer scaled down to half: hourglass scales with this layer
+  // (semantics: inherits this layer's scale), multiplier unchanged
   const b = F.hourglassFit({ box, viewScale: 0.27, layerScale: 0.5 });
   assert.equal(b.scale, a.scale, "Does not cancel this layer's scaling");
   assert.ok(Math.abs(screenOf(b, null, 0.27, 0.5).w - 14) < 1e-9);
-  // 框很小:按框缩(留边距)
+  // Box is very small: scale down to fit the box (preserving margins)
   const c = F.hourglassFit({ box: { width: 40, height: 40 }, viewScale: 0.25, layerScale: 1 });
   assert.ok(c.scale * F.HOURGLASS_SIZE <= 40 - 2 * Math.min(4 * 4, 0.08 * 40) + 1e-9, JSON.stringify(c));
   assert.ok(c.scale < 4);
-  // 预览 100%、框够大:原样
+  // Preview 100%, box is large enough: as-is
   assert.deepEqual(F.hourglassFit({ box, viewScale: 1 }), { scale: 1 });
-  // 框是 0:不画成 0
+  // Box is 0: do not render as 0
   assert.equal(F.hourglassFit({ box: { width: 0, height: 0 }, viewScale: 0.3 }).scale, F.FIT_MIN_SCALE);
 });
 
@@ -53,7 +56,7 @@ test("PF-03 no layout for the \"Needs local PC render assist\" icon anymore", ()
 
 test("PF-04 two adjacent small clips: each hourglass sits in its own box, no overlap on screen", () => {
   const view = 0.27;
-  // 两个 40×40 的片段挨着(舞台 x 0～40、40～80),沙漏都在框中心
+  // Two adjacent 40×40 clips (stage x 0~40, 40~80), hourglasses are both centered in their boxes
   const boxes = [{ x: 0, w: 40 }, { x: 40, w: 40 }];
   const rects = boxes.map(({ x, w }) => {
     const fit = F.hourglassFit({ box: { width: w, height: 40 }, viewScale: view, layerScale: 1 });

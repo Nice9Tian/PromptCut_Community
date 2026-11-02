@@ -1,11 +1,14 @@
 /**
- * 客户端会话层 `createDocEndpoint`（`server/render-node/session-link.mjs`，契约 `docs/plan/http-transport-contract.md`
- * 第 3、4、9、16 节）对着真的文档服务跑。跑：node --test server/test/session-link.test.mjs
+ * Client session layer `createDocEndpoint` (`server/render-node/session-link.mjs`, contract
+ * `docs/plan/http-transport-contract.md` Sections 3, 4, 9, 16) runs against real document service.
+ * Run: node --test server/test/session-link.test.mjs
  *
- * 服务端会话层在 `claude/http-transport` 上，还没合进来：这里用 `session-gateway-kit.mjs` 的会话网关（测试用的
- * 最小会话服务端桩）挡在真文档服务前面讲会话，网关背后每个会话一条旧式连接。断线用 `fake-ws-kit.mjs` 的 TCP 代理。
- * 另测对旧服务端（没有会话层）的退化、`transport` 的取值、`renew: false` 与 `onConnectFail`。
- * 假 WebSocket 逐步驱动的用例在测试方的 `ht4-client.test.mjs`（`claude/ht-tests`）。
+ * Server session layer is on `claude/http-transport` and not yet merged: here session gateway from
+ * `session-gateway-kit.mjs` (minimal test session server stub) intercepts in front of real document
+ * service to speak session; behind gateway, each session has a legacy connection. Disconnection
+ * uses TCP proxy from `fake-ws-kit.mjs`. Also tests degradation against legacy servers (without
+ * session layer), `transport` values, `renew: false`, and `onConnectFail`. Step-by-step test cases
+ * driven by fake WebSocket are in tester's `ht4-client.test.mjs` (`claude/ht-tests`).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +19,7 @@ import { startSessionGateway, startLegacyFront } from './session-gateway-kit.mjs
 
 const BACKOFF = { baseMs: 20, factor: 2, maxMs: 100, jitter: 0 };
 
-/** 测试模块 `sl`：`sl.echo { n }` → `sl.echoed { n }`；记下看到的消息与连接生命周期 */
+/** Test module `sl`: `sl.echo { n }` → `sl.echoed { n }`; records seen messages and connection lifecycle */
 function slModule() {
   const mod = {
     name: 'sl',
@@ -250,7 +253,7 @@ test('SL-agent-link the Agent server connection (doc-link) goes through a sessio
   assert.equal(link.describe().conversations[0].state, 'open');
 });
 
-/** 最小的假 WebSocket：测试手动触发 open / message，记下客户端发出的消息 */
+/** Minimal fake WebSocket: tests manually trigger open / message, recording messages sent by client */
 function fakeSocketClass() {
   const sockets = [];
   class FakeWs {
@@ -321,11 +324,14 @@ test('SL-ack-bytes once 64 KiB of unacknowledged raw text has been received, sen
   }
 });
 
-// ------------------------------------------------------------------ 4410 的上报（〔裁〕2026-09-27 主会话，契约第 17 节）
-// 用户看得到的行为不许因会话层而变：脱开期间会话因「连着时收到也不会重连」的码（4003 / 4004）结束，接续得到 4410 时，
-// 上层收到的是原关闭码，与连着时收到一样；原关闭码属于会重连的那类（或 reason 里没有原关闭码）才报 4410 并重建。
+// -------------------------- Reporting 4410 ([ruling] 2026-09-27 lead session, contract Section 17)
+// User-visible behavior must not change due to session layer: if session ends during detach due to
+// codes that "would not reconnect even when received while connected" (4003 / 4004), upper layer
+// receives original close code when resume yields 4410, matching what is received while connected;
+// reports 4410 and rebuilds only if original close code is reconnectable (or reason has no original
+// close code).
 
-/** 真服务（有会话层）前面挡一个 TCP 代理，端点经代理连 */
+/** TCP proxy placed in front of real service (with session layer); endpoint connects via proxy */
 async function realPair(t, { retainMs = 60_000, renew = true } = {}) {
   const mod = slModule();
   const service = createDocService({
@@ -348,7 +354,7 @@ async function realPair(t, { retainMs = 60_000, renew = true } = {}) {
   return { service, mod, port, proxy, ep, ev, logs, health };
 }
 
-/** 让会话脱开（代理拒绝新连接、掐断现有的），等服务端看到脱开 */
+/** Detach session (proxy rejects new connections, cuts existing); wait for server to see detachment */
 async function detach(pair) {
   pair.proxy.mode = 'reject';
   pair.proxy.cutAll();
@@ -378,7 +384,7 @@ for (const [code, reason] of [[4004, 'deleted'], [4003, 'kicked'], [4003, 'remov
     assert.deepEqual(pair.ev.closes, [{ code, reason }], 'Reported with the original close code and reason');
     assert.equal(pair.ev.resumes, 0);
     assert.ok(pair.logs.some((l) => l.event === 'session.lost' && l.code === 4410 && l.closedCode === code), 'The log records 4410 and the original code');
-    // 对照：连着时收到同一个码，上层看到的一样
+    // Baseline: receives the same code while connected, upper layer sees the same
     const live = await realPair(t, { renew: false });
     live.mod.ctx.close(live.mod.connects[0], code, reason);
     await waitFor(() => live.ev.closes.length === 1, 3000, 'onClose while connected');

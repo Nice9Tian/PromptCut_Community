@@ -1,10 +1,13 @@
 /**
- * mediaSync 的单测。跑:node --test src/render/mediaSync.test.mjs
+ * Unit test for mediaSync. Run: node --test src/render/mediaSync.test.mjs
  *
- * 钉死的是一条:**纠偏本身不能制造下一次纠偏的理由**。
- * 原来那版「偏差 > 0.2s 就 seek」在时间轴中段会自持循环 —— 中段 seek 要从上一个关键帧
- * (用户素材是每 5 秒一个)解出上百帧才出画,这几百毫秒里播放头照走,落定时又超阈值,
- * 于是再 seek。表现就是「从中间或尾部起播一卡一卡,从开头十几秒起播没事」。
+ * One rule is locked down: **correction itself must not create a reason for the next correction**.
+ * The previous version's "seek when drift > 0.2s" caused a self-sustaining loop in the middle of
+ * the timeline: seeking in the middle requires decoding over a hundred frames from the previous
+ * keyframe (user media has one every 5 seconds) before displaying a frame; during these several
+ * hundred milliseconds the playhead keeps moving, so upon settling it exceeds the threshold again,
+ * triggering another seek. The symptom was "stuttering when starting playback from the middle or
+ * end, while starting from the first dozen seconds was fine".
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -25,11 +28,11 @@ test("well aligned: do nothing, keep rate at 1", () => {
 });
 
 test("medium drift is chased with a rate change, no seek: seeking mid-segment is exactly what causes stutter", () => {
-  const behind = at({ elTime: 300, target: 300.25 }); // 视频落后 0.25s
+  const behind = at({ elTime: 300, target: 300.25 }); // Video behind by 0.25s
   assert.equal(behind.seekTo, null, "this tier must never seek");
   assert.ok(behind.rate > 1 && behind.rate <= 1 + MAX_RATE_SKEW, `should play a bit faster, got ${behind.rate}`);
 
-  const ahead = at({ elTime: 300.25, target: 300 }); // 视频超前 0.25s
+  const ahead = at({ elTime: 300.25, target: 300 }); // Video ahead by 0.25s
   assert.equal(ahead.seekTo, null);
   assert.ok(ahead.rate < 1 && ahead.rate >= 1 - MAX_RATE_SKEW, `should play a bit slower, got ${ahead.rate}`);
 });
@@ -53,16 +56,16 @@ test("seek has a cooldown: hold off if 700ms have not passed since the last one"
 });
 
 test("element played to the end of the media: do not call play() while the playhead has not left this segment, as that would replay from the start", () => {
-  // 声音比播放头快了 0.2s 先放完(素材 3.945s,播放头在 3.733s)
+  // Audio is 0.2s ahead of playhead and finishes first (media 3.945s, playhead at 3.733s)
   const p = at({ elTime: 3.945, target: 3.733, paused: true, ended: true });
   assert.equal(p.play, false, "calling play() on a finished element goes back to 0 and replays");
   assert.equal(p.seekTo, null);
   assert.equal(p.pause, false);
-  // 片段比素材长:播放头已经越过素材尽头,同样安静等着
+  // Clip is longer than media: playhead has passed the end of media, quietly waiting as well
   const q = at({ elTime: 3.945, target: 4.6, paused: true, ended: true });
   assert.equal(q.play, false);
   assert.equal(q.seekTo, null);
-  // 对照:没放完、只是暂停着的元素照旧起播
+  // Control: elements that have not finished playing and are merely paused start playback as usual
   assert.equal(at({ elTime: 3.9, target: 3.733, paused: true }).play, true);
 });
 
@@ -108,15 +111,18 @@ test("do nothing when target is invalid", () => {
 });
 
 /*
- * 回归的正主:模拟「中段起播」整个过程,数它一共 seek 了几次。
+ * The core of the regression test: simulate the entire "mid-playback start" process and count
+ * how many times it seeks in total.
  *
- * 模型按实测取值:播放头按墙钟走;seek 一次要 400ms 才出画(关键帧 5 秒一个,
- * 中段得解出上百帧),这期间 seeking=true 且视频时间不前进;不 seek 的时候视频按
- * playbackRate 正常走。起播时先给 250ms 的启动延迟,让它天然落后一截。
+ * Model values are based on actual measurements: playhead follows the wall clock; a seek takes
+ * 400ms to display a frame (one keyframe every 5 seconds, requiring over a hundred frames
+ * decoded in the middle), during which seeking=true and video time does not advance; when not
+ * seeking, video advances normally according to playbackRate. At playback start, a 250ms startup
+ * delay is given first to make it naturally lag behind.
  */
 function simulate(planner, { frames = 600, startupLagMs = 250 } = {}) {
-  let t = 300;            // 播放头
-  let el = 300;           // 视频时钟
+  let t = 300;            // Playhead
+  let el = 300;           // Video clock
   let seeking = false, seekEndsAt = 0, lastSeekAt = 0, paused = true;
   let rate = 1, seeks = 0, stalledFrames = 0;
   const dt = 1000 / 60;
@@ -136,7 +142,7 @@ function simulate(planner, { frames = 600, startupLagMs = 250 } = {}) {
   return { seeks, stalledFrames, finalDrift: +(t - el).toFixed(3) };
 }
 
-/** 原来那版逻辑,逐字照抄,用来对照 */
+/** The original logic, copied verbatim for comparison */
 const oldPlanner = ({ elTime, target, paused }) => ({
   seekTo: Math.abs(elTime - target) > 0.2 ? target : null,
   rate: null,
@@ -148,9 +154,9 @@ test("start playback mid-segment for 10 seconds: old logic seeks repeatedly (the
   const before = simulate(oldPlanner);
   const after = simulate(planSync);
 
-  // 旧逻辑:每次 seek 都制造下一次 seek 的理由,一路 seek 到底
+  // Old logic: every seek creates the reason for the next seek, seeking all the way to the end
   assert.ok(before.seeks >= 5, `old logic should seek repeatedly, but only ${before.seeks} times`);
-  // 新逻辑:最多纠一次,之后靠变速追平
+  // New logic: corrects at most once, then catches up via speed changes
   assert.ok(after.seeks <= 1, `new logic should not seek repeatedly, got ${after.seeks} times`);
   assert.ok(
     after.stalledFrames * 4 < before.stalledFrames,
@@ -165,7 +171,7 @@ test("starting at the beginning (seek is cheap), neither version stutters: the d
   assert.ok(cheapSeek(planSync).seeks === 0);
 });
 
-/* ─────────────── 拖动播放头:seek 放疏,落定后补一次 ─────────────── */
+/* ─────────────── Scrub playhead: sparser seeks, catch up once after settling ─────────────── */
 
 test("while scrubbing, throttle seeks in paused state: if less than SCRUB_SEEK_MIN_MS since the last one, do not send yet, but report when to catch up", () => {
   const p = at({ playing: false, paused: true, scrubbing: true, elTime: 40, target: 41, now: 10_000, lastSeekAt: 10_000 - 20 });
@@ -185,8 +191,9 @@ test("when not scrubbing (single click, frame stepping, after release), still al
 });
 
 /*
- * 拖 3 秒的整个过程:指针每 16ms 动一下(每动一下 = 一次渲染 = 一次同步),seek 要 seekMs 才落定。
- * resyncOnSeeked / 按 retryInMs 补,对应 MediaLayers.tsx 的 driveMedia;旧版两样都没有。
+ * The entire process of scrubbing for 3 seconds: pointer moves every 16ms (each move = one
+ * render = one sync); seeks take seekMs to settle. resyncOnSeeked / retrying via retryInMs
+ * corresponds to driveMedia in MediaLayers.tsx; the old version had neither.
  */
 function simulateScrub({ seekMs, scrubbing, resync }) {
   let el = 10, want = 10, seeking = false, seekEnds = 0, lastSeekAt = -1e9, seeks = 0, retryAt = null;
@@ -200,7 +207,7 @@ function simulateScrub({ seekMs, scrubbing, resync }) {
     if (seeking && now >= seekEnds) { seeking = false; if (resync) sync(); }
     if (retryAt !== null && now >= retryAt) { retryAt = null; sync(); }
     if (now <= 3000 && now % 16 === 0) {
-      lastMoveDuringSeek = seeking; // 最后一次赋值 = 最后一次移动那一刻是不是正在 seek
+      lastMoveDuringSeek = seeking; // Last assignment = whether a seek was in progress at the moment of the last move
       want = 10 + (9.5 * now) / 3000;
       sync();
     }
@@ -209,7 +216,8 @@ function simulateScrub({ seekMs, scrubbing, resync }) {
 }
 
 test("when the last scrub move lands in the middle of a seek: the old version leaves the picture on a stale frame, the new version adds the final position after the seek settles", () => {
-  // seek 100ms:比指针间隔长得多。两版的 seek 节奏不同,各自确认最后一次移动(2992ms)真的赶上了 seek
+  // seek 100ms: much longer than pointer interval. The two versions have different seek cadences;
+  // each confirms that the last move (2992ms) actually caught a seek
   const before = simulateScrub({ seekMs: 100, scrubbing: false, resync: false });
   assert.ok(before.lastMoveDuringSeek, "scenario set up wrong: the old version's last move did not land in the middle of a seek");
   assert.ok(before.finalOff > PAUSED_SEEK_SEC, `old version should stay at the old position, but the gap is only ${before.finalOff}`);
@@ -227,11 +235,11 @@ test("even when seek is cheap (moving forward within the same GOP), it does not 
   assert.ok(after.finalOff <= PAUSED_SEEK_SEC, `still lands at the final position, but the gap is ${after.finalOff}`);
 });
 
-/* ─────────────── 双缓冲槽位 ─────────────── */
+/* ─────────────── Double-buffered slots ─────────────── */
 
 const sc = (id, url, start, end, offset = 0) => ({ id, url, start, end, offset });
 const c1 = sc("c1", "/a.mp4", 0, 5, 20);
-const c2 = sc("c2", "/a.mp4", 5, 8, 133); // 同一个文件,源文件里不连续
+const c2 = sc("c2", "/a.mp4", 5, 8, 133); // Same file, non-contiguous in the source file
 const c3 = sc("c3", "/b.mp4", 8, 10, 7);
 const slot = (clip, ready = true) => ({ clip, ready });
 const empty = { clip: null, ready: false };
@@ -260,7 +268,7 @@ test("at the boundary, next segment already showing: only switch the display, le
 });
 
 test("at the boundary, next segment not showing yet: for back-to-back segments let the previous segment's last frame cover, and do not use the covering slot to load the segment after next", () => {
-  const c3soon = sc("c3", "/b.mp4", 5.5, 7, 7); // 很短,再下一段已经在提前量里
+  const c3soon = sc("c3", "/b.mp4", 5.5, 7, 7); // Very short, the next clip is already within the lookahead
   const p = planSlots({ slots: [slot(c1), slot(c2, false)], shown: 0, cur: c2, next: c3soon, t: 5.01, playing: true });
   assert.equal(p.active, 1);
   assert.equal(p.shown, 0, "cover");
@@ -310,25 +318,26 @@ test("In a gap: show nothing, but the segment after the gap is still preloaded i
   assert.equal(p.load[1].id, "x");
 });
 
-/* ─────────────── 换档(T1a 审查 #5:同一片段换了地址 = 新的一段) ─────────────── */
+/* ─────────────── Tier switch (T1a review #5: same clip changed address = new clip) ─────────────── */
 
 const c1small = sc("c1", "/@media/small", 0, 5, 20);
 const c1orig = sc("c1", "/@media/orig", 0, 5, 20);
 
 test("Tier switch (playing): the new tier loads into the other slot to warm up, the previous tier keeps playing as active, no freeze, no black flash", () => {
-  // 片段已经放到第 3 秒(早过了 NOT_READY_GRACE_SEC),素材小尺寸在 0 号显示,素材原尺寸刚到齐
+  // Clip has played to 3s (well past NOT_READY_GRACE_SEC); small-size asset is displayed on slot 0,
+  // original-size asset just fully arrived
   const p = planSlots({ slots: [slot(c1small), empty], shown: 0, cur: c1orig, next: null, t: 3, playing: true });
   assert.equal(p.active, 0, "The previous tier keeps playing (C6.6: load the new tier muted in the background)");
   assert.equal(p.warm, 1);
   assert.equal(p.load[1].url, "/@media/orig");
   assert.equal(p.load[0].url, "/@media/small", "The previous tier is left untouched");
   assert.equal(p.shown, 0, "The new tier is not aligned to show yet: the previous tier holds the screen");
-  // 新档还在预热(装着、没 ready):上一档仍是 active
+  // New tier is still warming up (loaded, not ready): previous tier is still active
   const w = planSlots({ slots: [slot(c1small), slot(c1orig, false)], shown: 0, cur: c1orig, next: null, t: 3.05, playing: true });
   assert.equal(w.active, 0);
   assert.equal(w.warm, 1);
   assert.equal(w.shown, 0);
-  // 新档对齐出画了:一次规划里对调
+  // New tier is aligned and displayed: swapped in a single planning pass
   const q = planSlots({ slots: [slot(c1small), slot(c1orig)], shown: 0, cur: c1orig, next: null, t: 3.1, playing: true });
   assert.equal(q.active, 1);
   assert.equal(q.shown, 1);
@@ -353,7 +362,7 @@ test("The tier switch rule does not step in when the URL is unchanged: the same 
   assert.equal(p.load[1], null);
 });
 
-/* ---------------- 到齐后重载(C6.6 T9-X2) ---------------- */
+/* ---------------- Reload after fully arrived (C6.6 T9-X2) ---------------- */
 
 const reload = (o) => reloadOnComplete({ doneNow: true, seenBefore: false, hasClip: true, freshSrc: false, error: false, networkState: 1, ...o });
 
@@ -364,7 +373,8 @@ test("At the moment it is ready: an element that previously failed to attach (er
 });
 
 test("An element that just had its src set in this round does not reload: as soon as src changes, networkState is NO_SOURCE right away, and calling load() again would only interrupt the load that just started", () => {
-  // 换档那一轮:原尺寸到齐 → 预热槽位换成原尺寸地址,同一次提交里 doneNow 翻真、src 刚换上
+  // Tier switch round: original size fully arrived → warmup slot switched to original-size address,
+  // doneNow flips to true and src just updated in the same commit
   assert.equal(reload({ freshSrc: true, networkState: 3 }), false);
   assert.equal(reload({ freshSrc: true, networkState: 3, error: true }), false);
 });
@@ -378,9 +388,10 @@ test("Not failed, not ready, ready long since seen, slot empty: none of them rel
 });
 
 test("An idle slot (not playing, not warming up, not preparing the next segment) does not reload when ready: reloading would only compete with the playability probe for bandwidth; reload when it is its turn to be used", () => {
-  // 跨机 T9 ht9a0927:闲着的原尺寸槽位被重载,和可播性探测同时拉原尺寸,慢链路上探测因此超时(AGENT-tier-reload-seek)
+  // Cross-machine T9 ht9a0927: idle original-size slot reloaded, pulling original size concurrently
+  // with playability probe; probe timed out on slow link as a result (AGENT-tier-reload-seek)
   assert.equal(reload({ inUse: false, networkState: 3, error: true }), false);
   assert.equal(reload({ inUse: true, networkState: 3, error: true }), true);
-  // 不给 inUse 按「在用」算(和以前一样)
+  // Omitting inUse counts as "in use" (same as before)
   assert.equal(reload({ networkState: 3, error: true }), true);
 });

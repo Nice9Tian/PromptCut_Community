@@ -1,15 +1,24 @@
 /**
- * 冲突合并窗口里「卡片源码」那一行的界面验收(分支 claude/conflict-merge)。
+ * UI acceptance check for the "Card source" row in the conflict merge window (branch
+ * claude/conflict-merge).
  *
  *   node scripts/probes/card-conflict-probe.mjs [--port 5890] [--doc-port 5896] [--out out/conflict-merge]
  *
- * 1. 真的卡片源码同步(`server/card-sync.mjs`,两份「编辑器进程」各有临时项目根,文件操作用 `vite-plugin-cards.ts` 的真实装卡与备份)
- *    对着进程内的文档服务(内容库):A 断开期间改了一张用户卡、B 在线改了同一张 → A 连回时同步发出 `conflict`(带两份源码);
- * 2. 起一个隔离的编辑器(本分支,数据目录在临时目录),把这条提示交给页面 —— 和编辑器进程经 HMR 送来的是同一个入口
- *    (`cardSync.ts` 的 `receiveCardSyncNotice`;开发模式经 `__pcSyncTest.cardNotice`);
- * 3. 看「冲突合并」窗口里那张卡的一行与「源码」二级,截图;再「删除选中」(保留云端现状),列表清空、截图。
- * 不点「合并」:那会让这台编辑器把卡写进本仓库的 `src/cards/user/`。「合并」的规则由 `server/test/card-sync.test.mjs` T8-8 对着真文档服务覆盖。
- * 结果最后一行是一行 JSON。
+ * 1. Real card source sync (`server/card-sync.mjs`, two "editor process" instances each having a
+ *    temporary project root, file operations use real card installation and backup from
+ *    `vite-plugin-cards.ts`) against in-process document service (content store): while A is
+ *    disconnected it edits a user card, B edits the same card online → when A reconnects,
+ *    sync emits `conflict` (with both copies of source code);
+ * 2. Start an isolated editor (this branch, data directory in temporary directory), pass this
+ *    notice to the page: this is the same entry point as delivered via HMR from the editor process
+ *    (`receiveCardSyncNotice` in `cardSync.ts`; in dev mode via `__pcSyncTest.cardNotice`);
+ * 3. Inspect the row for that card and the secondary "Source" view in the "Conflict merge" window,
+ *    take a screenshot; then click "Delete selected" (keep cloud state), list is cleared, take a
+ *    screenshot.
+ * Do not click "Merge": that would make this editor write the card into `src/cards/user/` of this
+ * repository. Rules for "Merge" are covered against real document service by T8-8 in
+ * `server/test/card-sync.test.mjs`.
+ * The last line of the result is a line of JSON.
  */
 import '../lib/no-user-dirs.mjs';
 import fs from 'node:fs';
@@ -64,7 +73,7 @@ const temps = [];
 let editor = null, browser = null, service = null;
 const syncs = [];
 try {
-  /* ---------------- 1. 真的卡片源码同步产生一条 conflict ---------------- */
+  /* ---------------- 1. Real card source sync generates a conflict ---------------- */
   service = createDocService({
     log: () => {},
     authenticate: (req) => { const q = new URL(req.url ?? '/', 'http://localhost').searchParams; return { userId: q.get('user') ?? 'u', deviceId: `dev-${q.get('user')}`, role: 'page', tenantId: 't-card' }; },
@@ -105,7 +114,7 @@ try {
   out.steps.notice = notice && { type: notice.type, key: notice.key, rev: notice.rev, mineHas: /Price edited by A while offline/.test(notice.mine), cloudHas: /Price edited by B while online/.test(notice.cloud), backup: notice.backup };
   check(notice && out.steps.notice.mineHas && out.steps.notice.cloudHas, 'Real card sync emits conflict (with both source versions)', out.steps.notice);
 
-  /* ---------------- 2. 隔离的编辑器 ---------------- */
+  /* ---------------- 2. Isolated editor ---------------- */
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-card-conflict-editor-'));
   temps.push(dataDir);
   const require = createRequire(import.meta.url);
@@ -122,14 +131,15 @@ try {
   await until('page sync connected', () => page.evaluate(() => window.__pcSyncTest?.view().status === 'online'), 120_000);
   await until('Editor appears, measurement overlay dismissed', () => page.evaluate(() => !!document.querySelector('[data-pc="editor"]') && !document.querySelector('[data-pc="probe-gate"]')), 240_000);
   await sleep(1500);
-  // 第一次打开的「选择 AI 助手」对话框会晚一点冒出来、盖住窗口:等它出来(最多 8 秒)就关掉
+  // The "Select AI assistant" dialog on first open pops up a bit later and covers the window:
+  // wait for it to appear (up to 8 seconds) and close it
   const closeAi = () => page.evaluate(() => { let n = 0; for (const b of document.querySelectorAll('.ais-dialog .ais-btn')) if (b.textContent?.trim() === 'Close') { b.click(); n++; } return n; });
   for (let i = 0; i < 16 && !(await closeAi()); i++) await sleep(500);
-  // 等时间轴排出来(截图里能看到窗口背后的编辑器)
+  // Wait for timeline to lay out (so the editor behind the window is visible in screenshot)
   await until('Timeline clips laid out', () => page.evaluate(() => [...document.querySelectorAll('[data-clip-id]')].some((e) => e.getBoundingClientRect().width > 0)), 120_000);
   await sleep(1000);
 
-  /* ---------------- 3. 窗口里那张卡 ---------------- */
+  /* ---------------- 3. That card in the window ---------------- */
   await page.evaluate((n) => window.__pcSyncTest.cardNotice(n), notice);
   const win = await until('Conflict merge window opened', () => page.$('[data-pc="conflict-merge"]'));
   await sleep(500);
@@ -146,7 +156,8 @@ try {
   await closeAi(); await sleep(300);
   out.steps.aiDialogLeft = await page.evaluate(() => !!document.querySelector('.ais-dialog'));
   await page.screenshot({ path: path.join(OUT, 'desktop-7-card-conflict.png') });
-  // 「选中无冲突项」不勾它;勾上一级 →「删除选中」:保留云端现状(本机已经是云端的版本),列表清空
+  // Do not check "Select non-conflicting items"; check the parent level → "Delete selected":
+  // keep cloud state (local is already the cloud version), list is cleared
   await page.evaluate(() => document.querySelector('[data-pc="merge-select-clean"]')?.click());
   out.steps.afterSelectClean = await page.evaluate(() => document.querySelectorAll('[data-pc="merge-prop"] input:checked').length);
   check(out.steps.afterSelectClean === 0, '"Select items without conflicts" does not tick card conflicts');

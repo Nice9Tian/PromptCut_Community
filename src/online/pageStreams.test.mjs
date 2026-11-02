@@ -1,30 +1,53 @@
 /**
- * 本页产流的编排(`pageStreams.ts`,任务书 `docs/plan/render-refactor-task.md`「甲二」):什么时候轮到本页自己产、先查、让路、停手、层表。
+ * Stream production arrangement for this page (`pageStreams.ts`, task brief
+ * `docs/plan/render-refactor-task.md` "Jia-2"): when it is this page's turn to produce, check first,
+ * yield, stop, layer table.
  *
- *   PS-01  计划发出去没人认领:等满 PAGE_STREAM_WAIT_MS 才动手;先查、把自己的那一行写进层表、再产;产完叫宿主认这个结果键
- *   PS-02  有能切分的节点接了活(计划是 claimed / done):不产;done 之后不再问队列
- *   PS-03  先查:自己的键已经有 → 不产;层表里别的能播的流已经有(同内容键,或内容键不同但输入签名没过期)→ 不产,认的是那个候选的键;
- *          输入签名过期的行(旧参数的流)不算
- *   PS-04  让路:播放、拖动、更急的活 —— 当前帧做完就停,闲下来接着做;页面隐藏马上中止;让路后当前帧 1 秒做不完就中止
- *   PS-05  产到一半有切分方接了活:做完当前帧就停,不再开工
- *   PS-06  产到一半别处产出来了:停下,改用现成的
- *   PS-07  不闲不开工;不是节点(不能产)时什么都不做;换了一版计划,旧一版在产的马上中止
- *   PS-08  层表:开工前写;本页的那一行被别人盖掉之后重写;有切分方接了活之后不再写
- *   PS-09  口子:产几趟、每趟多密由 passes 定(先稀疏后满密度时,先把每条流的稀疏那一趟都做完)
- *   PS-10  做不成:退避后再试,连着不成放下这一段;没活了不再问队列
- *   PS-11  本页的那一行被别的写层表的一方盖掉、而它整条产好了:不写回去(不来回盖)
- *   PS-12  缺省两趟:先稀疏后满密度;稀疏的任务是稀疏流任务(id 末尾 `:sparse`);稀疏的都落定了满密度才开始(稀疏的在退避,满密度的也等);
- *          先查按这一趟的密度认(稀疏的一趟有一版就算,满密度的一趟要满密度)
- *   PS-13  测量时就产稀疏版(`measure()`):不等清单计划、不问有没有切分方;先查、写层表、产、认;已经有的不产;只做稀疏的一趟
- *   PS-14  遮罩等稀疏版最多 MEASURE_SPARSE_MAX_MS:从这一轮第一次调起算,到时当场回、在产的做完当前帧就停(迟迟不停就中止),
- *          这一轮之后再调马上回;换一轮时钟重来
- *   PS-15  测量时的那一份记账在清单计划发出来之前留着;计划发出来就换成计划的,测量时产的稀疏版查得到、不重产,之后才补满密度
- *   PS-16  测量时本页还没当上节点:等 MEASURE_READY_WAIT_MS,等到了照常产,等不到回 incapable(归闲时)
- *   PS-17  只为本页产稀疏版(身份为手机、只有一个舞台)时 isConfigSupported 通过:只产稀疏版、不产满密度版
- *   PS-18  只为本页产稀疏版时 isConfigSupported 返回不支持:停产退回
- *   PS-19  只为本页产稀疏版时编码连错 3 次:停产退回
+ *   PS-01  Plan sent and unclaimed: wait full PAGE_STREAM_WAIT_MS before acting; check first,
+ *          write own row into layer table, then produce; tell host to recognize result key once done
+ *   PS-02  Node capable of splitting takes the job (plan is claimed / done): do not produce; stop
+ *          querying queue once done
+ *   PS-03  Check first: own key already exists → do not produce; another playable stream already
+ *          in layer table (same content key, or different content key with unexpired input signature)
+ *          → do not produce, recognize candidate's key; rows with expired input signatures (streams
+ *          with old parameters) do not count
+ *   PS-04  Yield: playback, scrub, more urgent jobs: stop after finishing current frame, resume when
+ *          idle; abort immediately on page hide; abort if current frame takes > 1s after yielding
+ *   PS-05  Splitter takes job midway through production: stop after current frame, do not start anew
+ *   PS-06  Produced elsewhere midway through production: stop, switch to existing output
+ *   PS-07  Do not start unless idle; do nothing if not a node (cannot produce); abort in-progress
+ *          work immediately when plan is updated
+ *   PS-08  Layer table: write before starting; rewrite if this page's row is overwritten by others;
+ *          stop writing after a splitter takes the job
+ *   PS-09  Entry point: number of passes and density of each pass defined by passes (when sparse then
+ *          full density, complete the sparse pass for every stream first)
+ *   PS-10  Failure: retry after backoff, abandon this segment after consecutive failures; stop querying
+ *          queue when no jobs remain
+ *   PS-11  When this page's row is overwritten by another layer table writer that finished producing
+ *          entirely: do not write back (avoid overwriting back and forth)
+ *   PS-12  Default two passes: sparse then full density; sparse tasks are sparse stream tasks (id ends
+ *          with `:sparse`); full density starts only after sparse settles (full density waits while
+ *          sparse is in backoff); check first recognizes density for current pass (sparse pass accepts
+ *          either version, full density pass requires full density)
+ *   PS-13  Produce sparse version during measurement (`measure()`): do not wait for manifest plan,
+ *          do not check for splitters; check first, write layer table, produce, recognize; do not
+ *          produce if already exists; run only sparse pass
+ *   PS-14  Overlay waits for sparse version at most MEASURE_SPARSE_MAX_MS: counted from first call
+ *          this round, returns immediately upon timeout, in-production work stops after current frame
+ *          (abort if delayed), subsequent calls this round return immediately; clock resets on new round
+ *   PS-15  Measurement accounting is retained until manifest plan is issued; replaced with plan once
+ *          issued, sparse version produced during measurement is found and not re-produced, followed
+ *          by catching up full density
+ *   PS-16  This page not yet a node during measurement: wait MEASURE_READY_WAIT_MS, produce normally
+ *          if ready, return incapable (treated as idle) if not
+ *   PS-17  isConfigSupported passes when only producing sparse version for this page (mobile identity,
+ *          only one stage): produce sparse version only, not full density
+ *   PS-18  isConfigSupported returns unsupported when only producing sparse version for this page:
+ *          stop production and roll back
+ *   PS-19  Three consecutive encoding errors when only producing sparse version for this page:
+ *          stop production and roll back
  *
- * 跑:npm test -- src/online/pageStreams.test.mjs
+ * Run: npm test -- src/online/pageStreams.test.mjs
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -36,8 +59,9 @@ const flush = async (n = 20) => { for (let i = 0; i < n; i++) await new Promise(
 const FP = "2222222222222222";
 const PROJECT = { id: "proj", fps: 30, width: 1920, height: 1080, tracks: [{ id: "t", clips: [{ id: "clip-a", cardId: "punch-pill", start: 0, end: 4 }, { id: "clip-b", cardId: "focus-card", start: 4, end: 5 }] }] };
 /**
- * 一条单卡流的计划:片段从项目的第 `startFrame` 帧起,共 `segments` 个满的分段。分段从这条流自己的第一帧起数
- * (`originFrame` = `startFrame`),所以 `firstSegment` 恒为 0、`lastSegment` = `segments - 1`。
+ * Plan for a single-card stream: clip starts from frame `startFrame` of the project, with
+ * `segments` full segments in total. Segments count from the first frame of this stream itself
+ * (`originFrame` = `startFrame`), so `firstSegment` is always 0, `lastSegment` = `segments - 1`.
  */
 const specOf = (clipId, contentKey, startFrame, segments) => ({
   kind: "card", plane: "local", clipIds: [clipId], topClipId: clipId, cardId: "punch-pill", contentKey, streamKey: `rk-${contentKey}`, envFingerprint: FP,
@@ -47,19 +71,19 @@ const specOf = (clipId, contentKey, startFrame, segments) => ({
 });
 const PLAN = { id: "plan:proj@7#clips:x", projectId: "proj", projectRev: 7, clips: ["clip-a", "clip-b"], at: 1000 };
 
-/** 一套假的宿主:假时钟、队列状态、内容库(层表与清单)、产一段的活 */
+/** A fake host: fake clock, queue state, content store (layer table and manifest), jobs to produce a segment */
 function rig(over = {}) {
   const w = {
     now: 1000, idle: true, capable: true, plan: PLAN, state: "open",
     specs: [specOf("clip-a", "ka", 0, 10), specOf("clip-b", "kb", 120, 2)],
-    /** 结果键 → 已有清单的范围(`from-to`) */
+    /** Result key → range of existing manifests (`from-to`) */
     present: new Set(), layerMap: null, written: [], alive: [], produced: [], probes: 0, specCalls: 0,
-    /** 在产的那一段:测试里手动放行 */
+    /** Segment in production: manually released in tests */
     current: null, readFails: false, lookups: [],
   };
   const has = (key, need) => w.present.has(key) || (need?.dense === false && w.present.has(`${key}#sparse`));
   const deps = {
-    // 旧的条目(PS-01 ～ PS-11)只看满密度的一趟;两趟的次序在 PS-09、PS-12 里看
+    // Older items (PS-01 to PS-11) only consider full-density pass; order of the two passes is covered in PS-09 and PS-12
     passes: [{ name: "dense", stride: 1 }],
     now: () => w.now,
     capable: () => w.capable,
@@ -68,7 +92,8 @@ function rig(over = {}) {
     planState: async () => { w.probes++; return w.state; },
     codeVersion: "cv",
     specs: async () => { w.specCalls++; return { specs: w.specs, skipped: { other: "canvas" }, project: PROJECT }; },
-    // `present` 里 `<键>:<起>-<止>` 是满密度的清单,后面多 `#sparse` 是只有稀疏版的清单;稀疏的一趟两种都认
+    // In `present`, `<key>:<start>-<end>` is a full-density manifest, while an added `#sparse` is a
+    // manifest with only sparse version; sparse pass accepts both
     lookupOwn: async (task, need) => { w.lookups.push({ id: task.id, dense: need?.dense }); return has(`${task.resultKey}:${task.range.from}-${task.range.to}`, need); },
     lookupOther: async (resultKey, range, need) => has(`${resultKey}:${range.from}-${range.to}`, need),
     readLayerMap: async () => { if (w.readFails) throw new Error("broken"); return w.layerMap; },
@@ -82,9 +107,9 @@ function rig(over = {}) {
     ...over,
   };
   const pages = createPageStreams(deps);
-  /** 走 ms 毫秒,每 250 毫秒一拍(宿主的节拍) */
+  /** Advance ms milliseconds, one tick every 250 ms (host ticks) */
   const run = async (ms) => { for (let t = 0; t < ms; t += 250) { w.now += 250; pages.tick(); await flush(); } };
-  /** 把在产的这一段做完(清单进内容库) */
+  /** Complete this segment in production (manifest enters content store) */
   const finish = async () => {
     const c = w.current;
     w.current = null;
@@ -92,7 +117,7 @@ function rig(over = {}) {
     c.resolve("done");
     await flush();
   };
-  /** 在产的这一段因让路停手 */
+  /** Stop this segment in production due to yielding */
   const yielded = async () => { const c = w.current; w.current = null; c.resolve("yielded"); await flush(); };
   return { w, pages, run, finish, yielded };
 }
@@ -108,7 +133,7 @@ test("PS-01 nobody claims: wait the full wait time before acting; first look up,
   await run(1000);
   assert.equal(w.produced.length, 1, "starts work once the wait is over");
   assert.deepEqual(w.produced[0], { id: "stream:rk-ka:0-9", stride: 1 }, "the task id uses the same formula as the one the splitter produces for the browser; full density");
-  // 开工前层表里已经有本页的那一行
+  // Layer table already has this page's row before starting work
   assert.equal(w.written.length, 1);
   assert.equal(w.written[0].kind, "layer-map");
   assert.deepEqual(w.written[0].streams.map((r) => [r.topClipId, r.contentKey, r.candidates[0].resultKey, r.originFrame, r.lastSegment, r.segmentsPerTask, "firstSegment" in r]), [["clip-a", "ka", "rk-ka", 0, 9, 8, false]]);
@@ -116,7 +141,7 @@ test("PS-01 nobody claims: wait the full wait time before acting; first look up,
   assert.equal(pages.debug().state, "producing");
   await finish();
   assert.deepEqual(w.alive, ["rk-ka"]);
-  // 接着做下一条流(clip-a 为 motion 卡不足 30 秒一口气做完，下一条流为 clip-b)
+  // Continue with next stream (clip-a is a motion card under 30s done in one go; next stream is clip-b)
   await run(500);
   assert.equal(w.produced[1].id, "stream:rk-kb:0-1");
   await finish();
@@ -141,7 +166,7 @@ test("PS-02 a node able to split took the job: do not produce; after done, stop 
     if (state === "done") assert.equal(w.probes, 1, "done is a terminal state, query only once");
     else assert.ok(w.probes > 2, "claimed keeps querying (the splitter may put it back)");
   }
-  // 认领的节点放回了(又成了 open):过了等待时间照常自己产
+  // Claimed node was released (became open again): after wait time elapsed, produce on its own as usual
   const { w, run } = rig();
   w.state = "claimed";
   await run(PAGE_STREAM_WAIT_MS + 2000);
@@ -151,7 +176,7 @@ test("PS-02 a node able to split took the job: do not produce; after done, stop 
 });
 
 test("PS-03 look up first: if our own key exists or another candidate exists, produce nothing", async () => {
-  // 自己的键:两段都有
+  // Its own key: both segments have it
   const own = rig();
   for (const k of ["rk-ka:0-9", "rk-kb:0-1"]) own.w.present.add(k);
   await own.run(PAGE_STREAM_WAIT_MS + 3000);
@@ -160,7 +185,7 @@ test("PS-03 look up first: if our own key exists or another candidate exists, pr
   assert.equal(own.pages.debug().state, "done");
   assert.deepEqual([...new Set(own.w.alive)].sort(), ["rk-ka", "rk-kb"]);
   assert.ok(own.w.written.length >= 1, "our own key exists, so the layer map must have this page's row");
-  // 别的候选(桌面产的):层表里这张卡、这个内容键的行列着它的键
+  // Other candidates (produced on desktop): row for this card and content key in layer table lists its key
   const other = rig();
   other.w.specs = [specOf("clip-a", "ka", 0, 8)];
   other.w.layerMap = { v: 3, kind: "layer-map", projectId: "proj", layers: [], streams: [
@@ -171,7 +196,9 @@ test("PS-03 look up first: if our own key exists or another candidate exists, pr
   assert.deepEqual(other.w.alive, ["rk-desktop"], "claims that candidate's key");
   assert.equal(other.w.written.length, 0, "for someone else's stream, this page does not add its own candidate to the layer map");
   assert.equal(other.pages.debug().jobs[0].state, "elsewhere");
-  // 内容键不同、输入签名没过期的行(别的环境按它自己的键产的同一条流:代码版本不同、字体不同):同样直接用;它的清单按它那一行的范围分份
+  // Rows with different content keys and unexpired input signatures (same stream produced by other
+  // environment with its own key: different code version, different font): also used directly;
+  // its manifest is portioned according to the range of its row
   const foreign = rig();
   foreign.w.specs = [specOf("clip-a", "ka", 0, 10)];
   foreign.w.layerMap = { ...other.w.layerMap, streams: [{ ...other.w.layerMap.streams[0], contentKey: "their-ka", lastSegment: 9, segmentsPerTask: 4 }] };
@@ -179,14 +206,15 @@ test("PS-03 look up first: if our own key exists or another candidate exists, pr
   await foreign.run(PAGE_STREAM_WAIT_MS + 3000);
   assert.equal(foreign.w.produced.length, 0);
   assert.deepEqual(foreign.pages.debug().jobs.map((j) => [j.state, j.via]), [["elsewhere", "rk-desktop"]]);
-  // 它只产了一部分(缺 8～9 那一份):本页整张(0～9)自己产,因为 motion 卡切分至少 30 秒不足 30 秒整卡产
+  // Only produced part of it (missing the 8-9 portion): this page produces the whole card (0-9)
+  // on its own, because motion cards are split at 30s minimum, and under 30s the whole card is produced
   const partly = rig();
   partly.w.specs = [specOf("clip-a", "ka", 0, 10)];
   partly.w.layerMap = structuredClone(foreign.w.layerMap);
   for (const k of ["rk-desktop:0-3", "rk-desktop:4-7"]) partly.w.present.add(k);
   await partly.run(PAGE_STREAM_WAIT_MS + 3000);
   assert.deepEqual(partly.w.produced.map((x) => x.id), ["stream:rk-ka:0-9"]);
-  // 输入签名过期的行(旧参数的流)不算
+  // Rows with expired input signatures (streams with old parameters) do not count
   const stale = rig();
   stale.w.specs = [specOf("clip-a", "ka", 0, 8)];
   stale.w.layerMap = { ...other.w.layerMap, streams: [{ ...other.w.layerMap.streams[0], contentKey: "old", inputSig: "s1-0000000000000000" }] };
@@ -202,7 +230,7 @@ test("PS-04 yield: playback and dragging stop after the current frame and resume
   assert.equal(w.produced.length, 1);
   const first = w.current.job;
   assert.equal(first.yielding(), false);
-  // 播放开始:不中止,等当前帧
+  // Playback starts: do not abort, wait for current frame
   w.idle = false;
   pages.yieldFor("play");
   assert.equal(first.yielding(), true, "asked to yield before each frame");
@@ -210,15 +238,15 @@ test("PS-04 yield: playback and dragging stop after the current frame and resume
   await yielded();
   assert.equal(pages.running(), false);
   assert.equal(pages.debug().counters.yields.play, 1);
-  // 播放期间不开工
+  // Do not start work during playback
   await run(3000);
   assert.equal(w.produced.length, 1, "nothing produced during playback");
-  // 停下、闲了:接着做同一段(已推完的分段由宿主按任务 id 留着)
+  // Stopped, idle: continue on same segment (segments already pushed are kept by host by task id)
   w.idle = true;
   await run(500);
   assert.equal(w.produced.length, 2);
   assert.equal(w.produced[1].id, w.produced[0].id, "resume the same segment");
-  // 拖动:同样等当前帧;1 秒做不完就中止
+  // Scrub: likewise wait for current frame; abort if not finished within 1 second
   const second = w.current.job;
   w.idle = false;
   pages.yieldFor("drag");
@@ -229,7 +257,7 @@ test("PS-04 yield: playback and dragging stop after the current frame and resume
   assert.equal(pages.running(), false);
   assert.equal(pages.debug().counters.yields.drag, 1);
   assert.equal(pages.debug().counters.aborts, 1);
-  // 页面隐藏:不等当前帧
+  // Page hidden: do not wait for current frame
   w.idle = true;
   await run(500);
   const third = w.current.job;
@@ -237,7 +265,7 @@ test("PS-04 yield: playback and dragging stop after the current frame and resume
   assert.equal(third.signal.aborted, true, "hiding aborts immediately");
   await flush();
   assert.equal(pages.debug().counters.yields.hidden, 1);
-  // 让路不算做不成
+  // Yielding does not count as failure
   assert.deepEqual(pages.debug().jobs.map((j) => j.fails), [0, 0]);
 });
 
@@ -261,7 +289,7 @@ test("PS-06 produced elsewhere midway: stop and use the ready-made one", async (
   w.specs = [specOf("clip-a", "ka", 0, 8)];
   await run(PAGE_STREAM_WAIT_MS + 500);
   const job = w.current.job;
-  // 桌面连上来、产好了、把自己的候选写进了层表
+  // Desktop connects, finishes producing, and writes its candidate into layer table
   w.layerMap = { ...w.layerMap, streams: [{ ...w.layerMap.streams[0], candidates: [{ envFingerprint: "desktop", resultKey: "rk-desktop" }, ...w.layerMap.streams[0].candidates] }] };
   w.present.add("rk-desktop:0-7");
   await run(PAGE_STREAM_RECHECK_MS + 500);
@@ -293,7 +321,7 @@ test("PS-07 not idle, no work; when unable to produce, do nothing; after a plan 
   none.w.plan = null;
   await none.run(3000);
   assert.equal(none.w.probes, 0);
-  // 换了一版
+  // Switched to a new version
   const { w, pages, run } = rig();
   await run(PAGE_STREAM_WAIT_MS + 500);
   const job = w.current.job;
@@ -304,7 +332,7 @@ test("PS-07 not idle, no work; when unable to produce, do nothing; after a plan 
   assert.equal(pages.debug().counters.stops["plan-changed"], 1);
   await run(PAGE_STREAM_WAIT_MS + 1000);
   assert.equal(w.produced.at(-1).id, "stream:rk-ka2:0-7", "after the new version's wait is full, produce the new key");
-  // 下线
+  // Goes offline
   pages.stop("offline");
   assert.equal(pages.running() && !w.current.job.signal.aborted, false);
   assert.equal(pages.debug().state, "off");
@@ -318,22 +346,22 @@ test("PS-08 layer map: rewrite after this page's row is overwritten by someone e
   await run(500);
   const writes = w.written.length;
   assert.ok(writes >= 1);
-  // 没有变化:核对了也不写
+  // No change: do not write even after verifying
   await run(PAGE_STREAM_ROWS_MS + 1000);
   assert.equal(w.written.length, writes);
-  // 另一个页面后写,把本页的那一行盖掉了
+  // Another page wrote later, overwriting this page's row
   w.layerMap = { v: 3, kind: "layer-map", projectId: "proj", layers: [], streams: [{ topClipId: "clip-z", clipIds: ["clip-z"], kind: "card", plane: "local", contentKey: "z", candidates: [{ envFingerprint: "x", resultKey: "rz" }], firstSegment: 0, lastSegment: 0, segmentsPerTask: 8 }] };
   await run(PAGE_STREAM_ROWS_MS + 1000);
   assert.equal(w.written.length, writes + 1, "rewrite");
   assert.deepEqual(w.layerMap.streams.map((r) => r.topClipId).sort(), ["clip-a", "clip-z"], "keep other pages' rows");
-  // 读不到层表:不写,下一拍再试
+  // Cannot read layer table: do not write, retry on next tick
   assert.equal(pages.debug().counters.rowsFailed, 0);
 });
 
 test("PS-09 hook: the number of passes and the density of each pass are set by passes", async () => {
   const { w, run, finish } = rig({ passes: [{ name: "sparse", stride: 15 }, { name: "dense", stride: 1 }] });
   w.specs = [specOf("clip-a", "ka", 0, 8), specOf("clip-b", "kb", 120, 2)];
-  // 自己的键查不到(每一趟都要做):这里让「先查」一直查不到
+  // Its own key not found (must do every pass): here make "check first" always miss
   w.present = { has: () => false, add: () => {} };
   await run(PAGE_STREAM_WAIT_MS + 500);
   for (let i = 0; i < 4; i++) { await finish(); await run(500); }
@@ -372,7 +400,8 @@ test("PS-11 this page's row was overwritten by another layer-map writer, and its
   await finish();
   await run(500);
   const writes = w.written.length;
-  // 另一方(比如代码版本不同的桌面)按它自己的键把同一条流整条产好了,并用它的层表盖掉了本页的
+  // Another peer (such as desktop with different code version) produced the entire stream
+  // using its own key, and overwrote this page's layer table with its own
   w.layerMap = { v: 3, kind: "layer-map", projectId: "proj", layers: [], streams: [
     { topClipId: "clip-a", clipIds: ["clip-a"], kind: "card", plane: "local", contentKey: "their-ka", candidates: [{ envFingerprint: "desktop", resultKey: "rk-desktop" }], originFrame: 0, lastSegment: 7, segmentsPerTask: 8 }] };
   w.present.add("rk-desktop:0-7");
@@ -381,7 +410,7 @@ test("PS-11 this page's row was overwritten by another layer-map writer, and its
   assert.equal(w.written.length, writes, "do not write back");
   assert.equal(pages.debug().counters.rowsYielded, 1);
   assert.deepEqual(w.layerMap.streams.map((r) => r.contentKey), ["their-ka"]);
-  // 对照:盖掉本页那一行的一方并没有产好(清单不在):写回去
+  // Control: the peer that overwrote this page's row did not finish producing (manifest missing): write back
   const again = rig();
   again.w.specs = [specOf("clip-a", "ka", 0, 8)];
   await again.run(PAGE_STREAM_WAIT_MS + 500);
@@ -404,7 +433,7 @@ test("PS-12 default two passes: full density starts only after all sparse ones s
   await finish();
   await run(500);
   assert.equal(w.produced[1].id, "stream:rk-kb:0-1:sparse");
-  // 第二条流的稀疏那一趟做不成(退避中):满密度的不许先开工
+  // Sparse pass of second stream failed (backing off): full density not allowed to start work first
   const c = w.current;
   w.current = null;
   c.reject(Object.assign(new Error("The stage did not hand over the pixels of this frame"), { retryable: true }));
@@ -429,9 +458,9 @@ const REQ = { round: 1, projectId: "proj", projectRev: 7, clips: ["clip-a"], hea
 
 test("PS-13 produce the sparse version at measurement time: do not wait for the plan, do not ask the splitter, do not check idleness; lookup, write the layer map, produce, claim; do not produce what already exists", async () => {
   const { w, pages, run, finish } = rig({ passes: undefined });
-  w.plan = null;        // 测量还没落定,清单计划没发
-  w.state = "claimed";  // 就算有切分方也照产(它管的是清单计划)
-  w.idle = false;       // 闲时闸不管测量时这一趟
+  w.plan = null;        // Measurement has not settled yet, manifest plan not sent
+  w.state = "claimed";  // Produce anyway even if there is a splitter (it manages the manifest plan)
+  w.idle = false;       // The idle gate does not govern this pass during measurement
   w.specs = [specOf("clip-a", "ka", 0, 10), specOf("clip-b", "kb", 120, 2)];
   let out = null;
   void pages.measure(REQ).then((o) => { out = o; });
@@ -446,17 +475,17 @@ test("PS-13 produce the sparse version at measurement time: do not wait for the 
   assert.deepEqual([...new Set(w.alive)], ["rk-ka"], "tell the host to claim this result key (this page uses its own production first)");
   assert.equal(w.produced.length, 1, "the full-density pass is not done at measurement time");
   assert.equal(w.probes, 0, "do not poll the queue");
-  // 没有计划的时候节拍照走:这一份记账留着,不被当成「没有计划」清掉
+  // Ticks proceed as usual when there is no plan: this bookkeeping entry is kept, not cleared as "no plan"
   await run(2000);
   assert.equal(pages.debug().state, "measuring");
   assert.equal(pages.debug().streams.length, 1);
-  // 下一张卡:素材服务里已经有稀疏版(别人产的、上次打开产的)就直接用
+  // Next card: if asset service already has sparse version (produced by others or last open), use directly
   w.present.add("rk-kb:0-1#sparse");
   const second = await pages.measure({ ...REQ, clips: ["clip-b"] });
   assert.deepEqual(second, { result: "ok", produced: 0, have: 1, elsewhere: 0, left: 0 });
   assert.equal(w.produced.length, 1, "do not re-produce what already exists");
   assert.deepEqual(pages.debug().measure.results, { ok: 2 });
-  // 判轻的卡、本页产不了的卡:没有它的流
+  // Cards classified as light and cards this page cannot produce: have no stream
   const none = await pages.measure({ ...REQ, clips: ["clip-x"] });
   assert.equal(none.result, "none");
 });
@@ -480,15 +509,16 @@ test("PS-14 the overlay waits for the sparse version for at most MEASURE_SPARSE_
   assert.equal(w.now - t0, MEASURE_SPARSE_MAX_MS);
   assert.equal(w.current.job.yielding(), true, "The producer stops after finishing the current frame");
   assert.equal(w.current.job.signal.aborted, false);
-  // 当前这一帧迟迟做不完:照让路的时限中止
+  // Current frame takes too long to finish: abort according to yield time limit
   await run(YIELD_FRAME_MAX_MS + 250);
   assert.equal(pages.running(), false);
   assert.equal(pages.debug().counters.stops.deadline, 1);
-  // 这一轮之后再调:马上回,不产
+  // Called after this round: return immediately, do not produce
   const again = await pages.measure({ ...REQ, clips: ["clip-b"] });
   assert.equal(again.result, "deadline");
   assert.equal(w.produced.length, 1);
-  // 时钟从这一轮第一次调起算:第二张卡开始得晚,等的时间也只到同一个时刻
+  // Clock counts from the first call of this round: the second card starts late,
+  // and wait time only extends to the same instant
   const two = rig({ passes: undefined });
   two.w.plan = null;
   two.w.specs = w.specs;
@@ -503,7 +533,7 @@ test("PS-14 the overlay waits for the sparse version for at most MEASURE_SPARSE_
   assert.equal(late, null);
   await two.run(500);
   assert.equal(late?.result, "deadline", "The second card only waits until second 50 of this round");
-  // 换一轮(切了帧率,遮罩又出现):时钟重来
+  // New round (switched frame rate, overlay reappears): clock restarts
   await two.run(YIELD_FRAME_MAX_MS + 250);
   let next = null;
   void two.pages.measure({ ...REQ, round: 2, clips: ["clip-b"] }).then((o) => { next = o; });
@@ -523,7 +553,7 @@ test("PS-15 once the plan is published it is replaced by the plan's own copy: th
   await flush();
   await finish();
   assert.equal(w.produced.length, 1);
-  // 测量落定,清单计划发出来(发成的时刻晚于测量)
+  // Measurement settles, manifest plan sent (sent timestamp is later than measurement)
   w.plan = { ...PLAN, at: w.now + 250 };
   await run(PAGE_STREAM_WAIT_MS + 1000);
   assert.equal(pages.debug().planId, PLAN.id);
@@ -532,7 +562,8 @@ test("PS-15 once the plan is published it is replaced by the plan's own copy: th
   await finish();
   await run(500);
   assert.equal(w.produced[2].id, "stream:rk-ka:0-7", "fill up to full density only once all sparse ones are complete");
-  // 旧的计划(发成的时刻早于测量的那一份记账)不把测量的那一份换掉:切帧率重走遮罩时手里还留着上一版计划
+  // Old plan (entry sent earlier than measurement) does not replace measurement entry:
+  // when switching frame rate and re-entering overlay, previous plan version is retained
   const old = rig({ passes: undefined });
   old.w.specs = w.specs;
   old.w.plan = { ...PLAN, at: old.w.now - 5000 };
@@ -603,7 +634,7 @@ test("PS-18 when producing only the sparse version for this page, isConfigSuppor
     isConfigSupported: async () => false,
   });
   w.specs = [specOf("clip-a", "ka", 0, 8)];
-  // 1. 闲时本页产流入口
+  // 1. Idle stream production entry point for this page
   await run(PAGE_STREAM_WAIT_MS + 1000);
   assert.equal(w.produced.length, 0, "No stream is produced when unsupported");
   const dbg = pages.debug();
@@ -611,7 +642,7 @@ test("PS-18 when producing only the sparse version for this page, isConfigSuppor
   assert.equal(dbg.counters.failed, 1);
   pages.stop();
 
-  // 2. 测量趟入口
+  // 2. Measurement pass entry point
   const measureRig = rig({
     sparseOnly: true,
     passes: undefined,
@@ -635,7 +666,7 @@ test("PS-19 when producing only the sparse version for this page, 3 consecutive 
     },
   });
   w.specs = [specOf("clip-a", "ka", 0, 8)];
-  // 连跑直到退避重试 3 次做不成
+  // Run repeatedly until failing after 3 backoff retries
   await run(PAGE_STREAM_WAIT_MS + 20_000);
   assert.equal(produceCalls, 3, "Tried 3 times in a row");
   const dbg = pages.debug();
@@ -644,7 +675,7 @@ test("PS-19 when producing only the sparse version for this page, 3 consecutive 
   assert.equal(dbg.state, "done");
   assert.equal(w.current, null);
 
-  // 测量趟中连续失败 3 次停产并回 failed
+  // 3 consecutive failures during measurement pass stop production and return failed
   let measureProduceCalls = 0;
   const measureRig = rig({
     sparseOnly: true,

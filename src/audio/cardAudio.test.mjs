@@ -8,7 +8,7 @@ const withAudio = async (fn) => {
   finally { await server.close(); }
 };
 
-/** 一份最小的音频素材效果卡项目:一个 adapter:'card' / kind:'audio' 的节点,没有输入 */
+/** Minimal audio media effect card project: one adapter:'card' / kind:'audio' node, no inputs */
 const audioProject = (nodeId = "generated") => ({
   media: [], tracks: [],
   cardNodes: [{ id: nodeId, adapter: "card", cardId: "beep", kind: "audio", inputs: {}, params: {} }],
@@ -24,7 +24,7 @@ test("card audio splits a long local range, asks exact sample blocks in page, an
   const requests = [];
   configureCardAudio({
     sourceVersionOf: () => "v1",
-    // 定义直接 mock 掉:块不再走 HTTP,`audio()` 就是求值本身
+    // Mock the definition directly: chunks no longer go over HTTP, `audio()` is the evaluation itself
     getCard: (id) => id !== "beep" ? undefined : {
       id, defaults: {},
       audio: (_sources, range) => {
@@ -41,7 +41,8 @@ test("card audio splits a long local range, asks exact sample blocks in page, an
   assert.equal(output.getChannelData(0)[0], 0);
   assert.equal(output.getChannelData(1)[CARD_AUDIO_MAX_BLOCK_FRAMES], 1);
 
-  // 拼完的块整条删掉(一块立体声 8 MB,不删就在 project 存活期内常驻):再要一次得重新求值
+  // Delete assembled chunks entirely (one stereo chunk is 8 MB; if not deleted it stays resident
+  // for the project lifetime): requesting it again requires re-evaluation
   await decodeCardAudioClip(fakeCtx(), { project, nodeId: "generated", frames: 13 });
   assert.equal(requests.length, 3, "blocks are dropped after concatenation, so the next clip re-evaluates");
 }));
@@ -55,7 +56,7 @@ test("card audio rejects a block that is not a whole number of channels and a th
       id, defaults: {},
       audio: (_sources, range) => {
         calls++;
-        // 回包没有 url,只校验 samples.length % count === 0
+        // The response has no url; only validate samples.length % count === 0
         if (mode === "short") return new Float32Array(range.count * 2 - 1);
         if (mode === "throw") throw new Error("card blew up");
         return new Float32Array(range.count * 2).fill(0.5);
@@ -64,13 +65,13 @@ test("card audio rejects a block that is not a whole number of channels and a th
   });
   await assert.rejects(() => requestCardAudio({ project, nodeId: "n", start: 0, count: 10, sampleRate: 48000 }), /not a whole number of channels|invalid card audio descriptor/);
 
-  // 取消:求值前就抛 AbortError,`audio()` 一次都不该跑
+  // Cancellation: throw AbortError before evaluation; `audio()` should not run even once
   const controller = new AbortController(); controller.abort();
   const before = calls;
   await assert.rejects(() => requestCardAudio({ project, nodeId: "n", start: 10, count: 10, sampleRate: 48000 }, controller.signal), /aborted/);
   assert.equal(calls, before, "an already-aborted request never evaluates the card");
 
-  // audio() 抛错 → pending.catch 把键删掉,下一次照样能算出来(缓存没被毒化)
+  // audio() throws → pending.catch deletes the key; next time it still computes (cache not poisoned)
   mode = "throw";
   await assert.rejects(() => requestCardAudio({ project, nodeId: "n", start: 10, count: 10, sampleRate: 48000 }), /card blew up/);
   mode = "ok";
@@ -81,7 +82,7 @@ test("card audio rejects a block that is not a whole number of channels and a th
   assert.equal(good.samples[0], 0.5);
   assert.equal(good.url, undefined, "Blocks stay in memory; only a preview lease builds a blob: WAV");
 
-  // 同一个键第二次直接命中缓存,不再求值
+  // The same key hits the cache directly the second time and is not re-evaluated
   const after = calls;
   await requestCardAudio({ project, nodeId: "n", start: 10, count: 10, sampleRate: 48000 });
   assert.equal(calls, after);
@@ -135,7 +136,8 @@ test("preview selects generated-only and video-backed audio once and mutes their
     assert.equal(generated.find(x => x.clip.id === "generated-only").media, undefined);
     assert.equal(shouldMuteNativeAudio(project, project.tracks[0].clips[0]), true);
     assert.equal(shouldMuteNativeAudio(project, project.tracks[0].clips[2]), false);
-    // 只看节点:kind 不是 audio 的素材效果卡节点不算音频卡(Node 侧的 mux-audio.mjs 用同一条判据)
+    // Only look at nodes: media effect card nodes whose kind is not audio do not count as audio cards
+    // (Node side mux-audio.mjs uses the same criterion)
     assert.equal(isCardAudioNode(project, "visual-node"), false);
     assert.equal(isCardAudioNode(project, "bare-node"), true);
 }));
@@ -154,10 +156,14 @@ test('virtual AV nodes use current params and source version for repeated block 
 }));
 
 /* ------------------------------------------------------------------ *
- * 声画一体卡挂在变速素材段上(2026-10-23 用户定「出声。」,推翻〔裁〕V21-28)
+ * Audio-visual card attached to speed-changed media clip
+ * (user decision, 2026-10-23: "Produce sound.", overruling [ruling] V21-28)
  * ------------------------------------------------------------------ */
 
-/** /@media/<hash>/pcm 的假服务端:回一条斜坡,第 k 帧(素材上的绝对帧号)两个声道都是 k(线性插值在斜坡上是精确的) */
+/**
+ * Mock server for /@media/<hash>/pcm: returns a ramp where frame k (absolute frame number on the
+ * asset) has k in both channels (linear interpolation is exact on a ramp)
+ */
 function rampFetch() {
   globalThis.fetch = async (url) => {
     const query = new URL(url, "http://local").searchParams;
@@ -169,7 +175,10 @@ function rampFetch() {
 }
 
 const AV_HASH = "b".repeat(64);
-/** 声画一体卡:左声道交出卡片时钟(audio() 拿到的 range.start 那一格),右声道交出读自己这段素材的那一路 */
+/**
+ * Audio-visual card: left channel outputs card clock (the tick at range.start received by audio()),
+ * right channel outputs the stream reading its own section of the asset
+ */
 const avProbe = { id: "av-probe", defaults: {}, kind: "animation", Component() {},
   async audio(sources, range) {
     const input = await sources.source.block(range.start, range.count);
@@ -182,7 +191,10 @@ const avProject = (speed, mediaOffset = 1) => ({
   cardNodes: [{ id: "avn", adapter: "card", cardId: "av-probe", kind: "animation", embeddedAudio: true, params: {}, inputs: { source: { nodeId: "@clip/c/source" } } }],
   tracks: [{ id: "t", clips: [{ id: "c", cardId: "av-probe", mediaId: "m", nodeId: "avn", embeddedAudio: true, mediaOffset, start: 0, end: 4, params: {}, ...(speed === 1 ? {} : { speed }) }] }],
 });
-/** 和 store 的 splitClip 同一个做法:后半段的素材起点按倍率推进(mediaOffsetAfter),节点按 cloneCardClipInstance 复制 */
+/**
+ * Same approach as splitClip in store: the second half's asset start point advances by playback
+ * rate (mediaOffsetAfter), and the node is cloned via cloneCardClipInstance
+ */
 async function splitAt(project, d) {
   const { mediaOffsetAfter } = await import("../kernel/clipTime.mjs");
   const { cloneCardClipInstance } = await import("../kernel/cardAuthoring.mjs");
@@ -227,7 +239,8 @@ test("Audio-visual card on a speed-changed media clip: generated sound still cov
   for (const speed of [2, 0.5]) {
     const whole = avProject(speed);
     const clip = whole.tracks[0].clips[0];
-    // 和 cardAudioGeneration.ts 记的一样:区间起点 = 生成时的源时钟,长度 = 片段的时间轴长度
+    // Same as recorded in cardAudioGeneration.ts: range start = source clock at generation time,
+    // length = clip's timeline length
     const cardAudio = { version: 1, cardId: "av-probe", mediaId: "wav", sampleRate: SR, frames: 4 * SR, channels: 2,
       sourceOffset: cardAudioSourceOffset(whole, clip), identity: cardAudioIdentity(whole, clip, hooks) };
     assert.equal(cardAudio.sourceOffset, 1 / speed, "Source clock of a speed-changed clip = mediaOffset ÷ speed");

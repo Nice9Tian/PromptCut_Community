@@ -1,11 +1,14 @@
 /**
- * 镜头切换识别。
+ * Shot transition detection.
  *
- * 两条路,能力不同,界面要说清楚用户拿到的是哪一条：
- *   - 装了拓展库包 → TransNetV2(ONNX)。硬切和溶解都认，溶解还能给出跨度。
- *   - 没装 → 回退到 ffmpeg 的 scdet 滤镜。只认硬切，溶解一个都看不见。
+ * Two paths with different capabilities; the UI must make clear which one the user gets:
+ *   - Extension package installed → TransNetV2(ONNX). Detects both hard cuts and dissolves,
+ *     and can even provide spans for dissolves.
+ *   - Not installed → Falls back to ffmpeg's scdet filter. Only recognizes hard cuts,
+ *     completely blind to dissolves.
  *
- * 检测比较慢(5 分钟素材约 36 秒)，所以一律走后台作业 + 轮询，和听写同一套路。
+ * Detection is relatively slow (~36 seconds for 5 minutes of media), so always use background
+ * jobs + polling, following the same pattern as speech-to-text.
  */
 import type { Plugin, Connect, ViteDevServer } from "vite";
 import type { ServerResponse } from "http";
@@ -21,9 +24,10 @@ import { mediaSourceOf } from "./vision/ffmpeg-frames";
 import { pythonInput, resolveMediaSource } from "./perception-source.mjs";
 
 /**
- * 素材记录 → 素材服务上的 HTTP 地址(ffprobe / ffmpeg / Python 的输入)。和看画面的素材层、音频测量同一条
- * (`mediaSourceOf`,本地素材服务的 `/@media/<hash>` 在共享项目里会向远程素材服务拉)。请求体里的 `path` 不看,
- * 见 `server/perception-source.mjs`。
+ * Asset record -> HTTP URL on the asset service (input to ffprobe / ffmpeg / Python). Same route
+ * as the asset layer for viewing video and audio measurement (`mediaSourceOf`; `/@media/<hash>` on
+ * the local asset service pulls from the remote asset service in a shared project). The `path`
+ * in the request body is ignored; see `server/perception-source.mjs`.
  */
 const resolveSource = createAssetSourceResolver({ origin: assetServiceOrigin, toUrl: (m, origin) => mediaSourceOf(m, origin) });
 
@@ -31,13 +35,13 @@ export type TransitionKind = "cut" | "dissolve";
 
 export interface Transition {
   kind: TransitionKind;
-  /** 转场的真实起止(秒)。硬切上两者几乎相等；溶解是整段渐变 */
+  /** Actual start and end of transition (seconds). On hard cuts both are almost equal; a dissolve spans the entire fade */
   start: number;
   end: number;
-  /** 置信度最高的那一帧,画标记时对准它 */
+  /** The frame with the highest confidence; align with it when drawing markers */
   time: number;
   confidence: number;
-  /** 缩略图文件名,画到时间轴上用。溶解有两张(渐变前后各一),叠着画 */
+  /** Thumbnail filename, used when drawing on the timeline. Dissolves have two (one each before and after the fade), drawn stacked */
   thumbs?: string[];
 }
 
@@ -69,7 +73,7 @@ function sendJson(res: ServerResponse, code: number, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 
-/** 从 ffprobe 拿帧率和时长。检测要用真实 fps 把帧号换算成秒。 */
+/** Get frame rate and duration from ffprobe. Detection needs actual fps to convert frame numbers to seconds. */
 async function probeVideo(env: NodeJS.ProcessEnv, video: string): Promise<{ fps: number; duration: number }> {
   return new Promise((resolve, reject) => {
     const child = spawn("ffprobe", [
@@ -99,11 +103,13 @@ async function probeVideo(env: NodeJS.ProcessEnv, video: string): Promise<{ fps:
 }
 
 /**
- * 没装拓展时的兜底：ffmpeg scdet。
+ * Fallback when the extension is not installed: ffmpeg scdet.
  *
- * 实测只认硬切——1 秒交叉溶解在任何阈值下都检不出来，把阈值压到能看见渐变时，
- * 硬切开始虚报、单镜头内高速运动误报 12 次。所以这里就用默认阈值 10 老老实实
- * 只报硬切，别假装能干 TransNetV2 的活。
+ * In testing, it only recognizes hard cuts: a 1-second crossfade cannot be detected under any
+ * threshold; when lowering the threshold enough to see the fade, hard cuts start reporting false
+ * positives and high-speed motion within a single shot triggers 12 false detections. So we stick
+ * to the default threshold of 10 here and honestly only report hard cuts, without pretending it
+ * can do TransNetV2's job.
  */
 function detectWithScdet(env: NodeJS.ProcessEnv, video: string, onLine: (t: number) => void): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -125,17 +131,18 @@ function detectWithScdet(env: NodeJS.ProcessEnv, video: string, onLine: (t: numb
 }
 
 /**
- * 给每个转场抓缩略图。
+ * Capture thumbnails for each transition.
  *
- * 硬切抓一张（切换之后的画面）；溶解抓两张（渐变开始前 + 结束后），时间轴上
- * 叠着画就能一眼看出是「两张画面在交融」。
+ * Capture one for hard cuts (the frame after the switch); capture two for dissolves (before the
+ * fade starts + after it ends); drawing them stacked on the timeline makes it clear at a glance
+ * that "two frames are blending together".
  */
 async function grabThumbs(env: NodeJS.ProcessEnv, video: string, outDir: string,
                           jobId: string, transitions: Transition[]): Promise<void> {
   await fs.mkdir(outDir, { recursive: true });
   for (let i = 0; i < transitions.length; i++) {
     const t = transitions[i];
-    // 硬切取转场之后那一帧；溶解取渐变两端，正好是参与叠画的两个镜头
+    // Hard cuts take the frame after the transition; dissolves take both ends of the fade, which are precisely the two shots involved in the overlay
     const stamps = t.kind === "dissolve"
       ? [Math.max(0, t.start - 0.04), t.end + 0.04]
       : [t.end + 0.04];
@@ -159,8 +166,10 @@ async function grabThumbs(env: NodeJS.ProcessEnv, video: string, outDir: string,
 }
 
 /**
- * 跑一次检测。优先 TransNetV2，不可用就退回 scdet。
- * video 是素材服务上的 HTTP 地址:ffprobe、scdet、抓缩略图直接吃地址;Python 那一半按包认不认地址决定递地址还是临时文件。
+ * Run a detection pass. Prefer TransNetV2; fall back to scdet if unavailable.
+ * video is an HTTP URL on the asset service: ffprobe, scdet, and thumbnail capture consume the
+ * URL directly; the Python side passes either the URL or a temporary file depending on whether
+ * the package accepts URLs.
  */
 async function runDetection(root: string, job: ShotsJob, video: string, ref: Record<string, string>): Promise<void> {
   const python = findPython(root);
@@ -223,12 +232,12 @@ async function runDetection(root: string, job: ShotsJob, video: string, ref: Rec
               job.status = "error";
               job.message = ev.message;
             }
-          } catch { /* 不是 JSON 的行忽略 */ }
+          } catch { /* Ignore lines that are not JSON */ }
         }
       });
-      // stderr 也要留着。Python 侧的 emit_error 走 stdout，但解释器自己崩了
-      // (import 失败、段错误、被杀) 只会往 stderr 吐 traceback；只读 stdout 的话
-      // 用户拿到的就是一个空 message，什么都查不出来。
+      // Keep stderr as well. emit_error on the Python side goes to stdout, but if the interpreter
+      // itself crashes (import failure, segfault, killed), it only dumps tracebacks to stderr;
+      // if we only read stdout, the user gets an empty message and cannot diagnose anything.
       const stderrTail: string[] = [];
       child.stderr?.on("data", (d) => {
         for (const line of d.toString().split(/\r?\n/)) {
@@ -239,7 +248,8 @@ async function runDetection(root: string, job: ShotsJob, video: string, ref: Rec
       });
       child.on("error", (e) => { job.status = "error"; job.message = e.message; resolve(); });
       child.on("close", (code) => {
-        // 没拿到结果、也没收到 error 事件，就靠退出码和 stderr 说明发生了什么
+        // If no result was obtained and no error event was received, rely on the exit code and stderr
+        // to explain what happened
         if (code !== 0 && job.status !== "error" && !job.transitions) {
           job.status = "error";
           job.message = stderrTail.join("\n").trim() || tr("Shot detection process exited abnormally (code {0})", code);
@@ -259,7 +269,8 @@ async function runDetection(root: string, job: ShotsJob, video: string, ref: Rec
       job.message = (e as Error).message;
       return;
     }
-    // scdet 只给一个时间点,没有跨度,所以起止相同、一律算硬切
+    // scdet only gives a single timestamp with no span, so start and end are identical and it is
+    // always treated as a hard cut
     job.transitions = times.map((t) => ({ kind: "cut" as const, start: t, end: t, time: t, confidence: 1 }));
     let cursor = 0;
     job.shots = [];
@@ -277,7 +288,7 @@ async function runDetection(root: string, job: ShotsJob, video: string, ref: Rec
   if (job.transitions?.length) {
     try {
       await grabThumbs(env, video, shotsDir(root), job.id, job.transitions);
-    } catch { /* 缩略图抓不到不影响检测结果 */ }
+    } catch { /* Failure to capture thumbnails does not affect detection results */ }
   }
   job.percent = 100;
   job.status = "done";
@@ -294,7 +305,7 @@ export function shotsPlugin(options: { projectStores?: any; projectAccess?: any 
         if (!req.url?.startsWith("/api/shots")) return next();
         const url = req.url.split("?")[0];
 
-        // GET /api/shots/status —— 拓展装没装
+        // GET /api/shots/status: whether the extension is installed
         if (req.method === "GET" && url === "/api/shots/status") {
           const python = findPython(root);
           if (!python) return sendJson(res, 200, { ok: true, ready: false, engine: "scdet", reason: "No usable Python" });
@@ -315,7 +326,7 @@ export function shotsPlugin(options: { projectStores?: any; projectAccess?: any 
           return;
         }
 
-        // POST /api/shots/install —— 装 onnxruntime,SSE 流式回日志
+        // POST /api/shots/install: install onnxruntime, stream logs via SSE
         if (req.method === "POST" && url === "/api/shots/install") {
           const python = findPython(root);
           if (!python) return sendJson(res, 400, { ok: false, error: tr("No usable Python") });
@@ -323,8 +334,9 @@ export function shotsPlugin(options: { projectStores?: any; projectAccess?: any 
           return pipeToSse(spawnPython(python, ["-m", "promptcut_shots", "install"], env), res);
         }
 
-        // POST /api/shots/detect { mediaId, media: { id, name, kind, url, hash } } —— 起一个后台作业。
-        // 素材经素材服务取(见 server/perception-source.mjs):没有这份素材回 404,素材服务不可达回 502;请求体里的 path 不看。
+        // POST /api/shots/detect { mediaId, media: { id, name, kind, url, hash } }: start a background job.
+        // Assets are fetched via the asset service (see server/perception-source.mjs): returns 404 if the
+        // asset does not exist, 502 if the asset service is unreachable; path in the request body is ignored.
         if (req.method === "POST" && url === "/api/shots/detect") {
           try {
             const body = JSON.parse((await readBody(req)).toString("utf-8") || "{}");
@@ -339,7 +351,7 @@ export function shotsPlugin(options: { projectStores?: any; projectAccess?: any 
               percent: 0,
             };
             jobs.set(job.id, job);
-            // 不 await：立刻把 jobId 回给前端，进度靠轮询
+            // Do not await: return jobId to the frontend immediately; progress is polled
             void runDetection(root, job, video, source.media).catch((e) => {
               job.status = "error";
               job.message = e instanceof Error ? e.message : String(e);
@@ -358,11 +370,12 @@ export function shotsPlugin(options: { projectStores?: any; projectAccess?: any 
           return sendJson(res, 200, { ok: true, job });
         }
 
-        // GET /api/shots/thumb/<文件名> —— 时间轴上的缩略图
+        // GET /api/shots/thumb/<filename>: thumbnail on the timeline
         const thumbMatch = !options.projectStores && req.method === "GET" && url.match(/^\/api\/shots\/thumb\/([\w.-]+)$/);
         if (thumbMatch) {
           const file = path.join(shotsDir(root), thumbMatch[1]);
-          // 文件名已经被正则限死,这里再确认一次没跑出目录
+          // The filename is already strictly constrained by regex; verify once more here that it did not
+          // escape the directory
           if (!file.startsWith(shotsDir(root) + path.sep)) return sendJson(res, 400, { ok: false });
           try {
             const data = await fs.readFile(file);

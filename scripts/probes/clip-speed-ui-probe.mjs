@@ -1,21 +1,30 @@
 /**
- * 片段速度的界面探针(手机版「速度」入口、桌面编辑分区的「速度」一栏、预览里变速段不出原声、舞台视频按倍率放)。
- * 环境同 `mobile-entries-probe.mjs`:本机托管组合 + 仿 nginx 代理 + 在线构建,不连任何远端。
+ * UI probe for clip speed (mobile app "Speed" entry, desktop edit section "Speed" field, preview
+ * speed-changed clips without original audio, stage video playing at multiplier rate).
+ * Environment matches `mobile-entries-probe.mjs`: local hosted suite + mock nginx proxy + online
+ * build, without connecting to any remotes.
  *
  *   npx vite build --mode online
  *   node scripts/probes/clip-speed-ui-probe.mjs [--dist dist-online] [--out out/clip-speed-ui] [--base-port 5930] [--doc-port 5936] [--asset-port 5937]
  *
- * 断言:
- *  P1 手机版:时间轴分页选中视频段,子导航栏有「速度」(在「静音」之后、「调整」之前,同演示稿);
- *  P2 点「速度」打开速度面板,写明「变速后这一段不出原声」;点 2× → 片段 speed = 2、起点与素材起点不动、时长减半;
- *  P3 完整时间轴上这一段标出「2× 无原声」;
- *  P4 预览的声音层:变速前主文档里有这一段的 <audio>,变速后没有(变速段原声不出);
- *  P5 播放中舞台里放这一段的 <video> 的 playbackRate ≈ 2(纠偏 ±10% 以内);
- *  P6 撤销一步回到 1×,speed 字段删掉(不是 speed: 1);
- *  D1 桌面版(在线页面的桌面布局):选中视频段,编辑分区有「速度」一栏和同一句说明;选 0.5× → speed = 0.5、时长翻倍不截断,
- *     后面的段被推开并有说明;撤销一步速度和被推开的段一起退回;
- *  D2 时间轴片段名后带「· 0.5×」,静音标记的说明写明「变速段不出原声」。
- * 最后一行是一行 JSON。
+ * Assertions:
+ *  P1 Mobile app: select video clip on timeline tab, sub-navigation bar has "Speed" (after "Mute",
+ *     before "Adjust", same as demo);
+ *  P2 Click "Speed" to open speed panel, stating "Original audio will not play after changing speed";
+ *     click 2× → clip speed = 2, start point and media start point unchanged, duration halved;
+ *  P3 Clip on full timeline is labeled "2× no original audio";
+ *  P4 Preview audio layer: main document has this clip's <audio> before speed change, none after
+ *     (speed-changed clip original audio does not play);
+ *  P5 During playback, <video> playing this clip on stage has playbackRate ≈ 2 (within ±10%
+ *     correction);
+ *  P6 Undo one step reverts to 1×, deleting speed field (not speed: 1);
+ *  D1 Desktop app (desktop layout of online page): select video clip, edit section has "Speed"
+ *     field and the same description; select 0.5× → speed = 0.5, duration doubles without
+ *     truncation, subsequent clips are pushed back with a notice; undoing one step reverts both
+ *     speed and pushed clips;
+ *  D2 Timeline clip name is suffixed with "· 0.5×", mute indicator notice states "Speed-changed clip
+ *     does not play original audio".
+ * The last line is a single JSON line.
  */
 import puppeteer from 'puppeteer';
 import fs from 'node:fs';
@@ -53,7 +62,7 @@ const rect = (page, sel) => page.evaluate((s) => { const e = document.querySelec
 const tap = async (page, sel) => { await gateClear(page); const r = await rect(page, sel); if (!r) throw new Error(`Cannot click ${sel}`); await page.touchscreen.tap(r.x + r.w / 2, r.y + r.h / 2); await sleep(400); };
 const store = (page, src, ...a) => page.evaluate((s, a2) => new Function('S', 'args', s)(window.__pcStore, a2), src, a);
 const clipOf = (page, id) => store(page, 'return S.getState().project.tracks.flatMap((t) => t.clips).find((x) => x.id === args[0]) ?? null;', id);
-/** 关掉所有打开着的面板(点面板头的「关闭」,点到没有为止) */
+/** Close all open panels (click "Close" on the panel header until none remain) */
 const closeSheet = async (page) => {
   for (let i = 0; i < 5; i++) {
     const n = await page.evaluate(() => { const bs = [...document.querySelectorAll('.sheet-head button[aria-label="Close"]')]; bs.forEach((b) => b.click()); return bs.length; });
@@ -75,7 +84,7 @@ try {
   await env.enter(A, { username: 'yi' });
   await A.waitForSelector('[data-pcm="editor"]', { visible: true });
 
-  /* ---------- 素材:6 秒带声音的视频 ---------- */
+  /* ---------- Asset: 6-second video with audio ---------- */
   const mp4 = path.join(OUT, 'tone.mp4');
   execFileSync('ffmpeg', ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=320x180:r=30:d=6', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=6',
     '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-g', '30', '-c:a', 'aac', '-shortest', '-movflags', '+faststart', mp4], { windowsHide: true });
@@ -88,16 +97,17 @@ try {
   const placed = await until('Video clip placed on the timeline', () => store(A, 'return S.getState().project.tracks.flatMap((t) => t.clips).find((c) => c.mediaId === args[0]) ?? null;', vid.id));
   step('placed', placed && { id: placed.id, start: placed.start, end: placed.end, mediaOffset: placed.mediaOffset ?? 0 });
 
-  /* ---------- P4 前半:变速前主文档里有这一段的声音层 ---------- */
+  /* ---------- P4 first half: main document has sound layer for this clip before speed change ---------- */
   await store(A, 'S.actions.seek(args[0]); return true;', placed.start + 1);
   const audioBefore = await until('Sound layer present before the speed change', async () => (await A.$(`audio[data-pc-audio-clip="${placed.id}"]`)) ? true : null, 20_000);
   step('P4-before', { audioLayer: !!audioBefore });
 
-  /* ---------- P1 时间轴分页选中 → 子导航栏有「速度」 ---------- */
+  /* ---------- P1 Selected on timeline tab → sub-navigation bar has "Speed" ---------- */
   await closeSheet(A);
   await tap(A, '[data-pcm="pg-timeline"]');
   await A.waitForSelector(`[data-pcm="clip"][data-id="${placed.id}"]`, { visible: true, timeout: 20_000 });
-  // 点时间轴上的这一段选中它(选中态在 store 的 selection 里;点不中就直接选)
+  // Click this clip on the timeline to select it (selection state is in store selection; select
+  // directly if clicking misses)
   await tap(A, `[data-pcm="clip"][data-id="${placed.id}"]`);
   if (!(await A.$('[data-pcm="sub-speed"]'))) await store(A, 'S.actions.select([args[0]]); return true;', placed.id);
   await until('Clip tools appear in the sub-navigation bar', async () => (await A.$('[data-pcm="sub-speed"]')) ? true : null, 10_000);
@@ -107,12 +117,13 @@ try {
   check(tools.includes('sub-speed'), 'P1 after selecting the video clip, the sub-navigation bar has "Speed"', tools);
   check(tools.indexOf('sub-mute') < tools.indexOf('sub-speed') && tools.indexOf('sub-speed') < tools.indexOf('sub-adjust'), 'P1 order matches the prototype: mute, speed, adjust', tools);
 
-  /* ---------- P2 速度面板 ---------- */
-  // 直接点元素(按坐标点时子导航栏可能刚好在重排,会点到别的项)
+  /* ---------- P2 Speed panel ---------- */
+  // Click element directly (sub-navigation bar may happen to be reflowing when clicking by
+  // coordinates, hitting other items)
   await closeSheet(A);
   await A.$eval('[data-pcm="sub-speed"]', (b) => b.click());
   await A.waitForSelector('[data-pcm="speed-presets"]', { visible: true, timeout: 10_000 });
-  await sleep(700); // 面板滑入动画走完再点
+  await sleep(700); // Click only after panel slide-in animation finishes
   const note = await A.$eval('[data-pcm="speed-note"]', (e) => e.textContent);
   const presets = await A.$$eval('[data-pcm="speed-preset"]', (bs) => bs.map((b) => [b.dataset.speed, b.getAttribute('aria-pressed')]));
   await shot(A, 'P2-sheet-before');
@@ -124,7 +135,8 @@ try {
   step('P2', { note, presets, after: fast && { start: fast.start, end: fast.end, mediaOffset: fast.mediaOffset ?? 0, speed: fast.speed } });
   check(!!fast && fast.start === placed.start && (fast.mediaOffset ?? 0) === (placed.mediaOffset ?? 0), 'P2 clip start and media start do not move', fast);
   check(!!fast && Math.abs((fast.end - fast.start) - (placed.end - placed.start) / 2) < 1e-6, 'P2 duration is halved', fast && [fast.start, fast.end]);
-  // P2b 手动输入倍率:超出 0.25～4 拒绝并提示、不改;1.5 照改(用户 2026-10-23 定可以手动输入)
+  // P2b Manual speed multiplier input: reject with notice outside 0.25-4, no change; 1.5 changes
+  // normally (manual input allowed, user decision, 2026-10-23)
   const typeSpeed = async (v) => {
     await A.evaluate((x) => { const el = document.querySelector('[data-pcm="speed-input"]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(el, x); el.dispatchEvent(new Event('input', { bubbles: true })); }, String(v));
     await tap(A, '[data-pcm="speed-apply"]');
@@ -143,24 +155,27 @@ try {
   await until('Back to 2×', async () => ((await clipOf(A, placed.id))?.speed === 2 ? true : null), 5000);
   await closeSheet(A);
 
-  /* ---------- P3 完整时间轴的标记 ---------- */
+  /* ---------- P3 Full timeline indicator ---------- */
   const badge = await A.$eval(`[data-pcm="clip"][data-id="${placed.id}"] [data-pcm="clip-speed"]`, (e) => e.textContent).catch(() => null);
   await shot(A, 'P3-timeline-badge');
   step('P3', { badge });
   check(/2×\s*no original sound/.test(badge ?? ''), 'P3 the full timeline shows "2× no original sound"', badge);
 
-  /* ---------- P4 后半:变速后没有声音层 ---------- */
+  /* ---------- P4 second half: no sound layer after speed change ---------- */
   await store(A, 'S.actions.seek(args[0]); return true;', placed.start + 0.8);
   await sleep(1500);
   const audioAfter = await A.$(`audio[data-pc-audio-clip="${placed.id}"]`);
   step('P4-after', { audioLayer: !!audioAfter });
   check(!!audioBefore && !audioAfter, 'P4 after a speed change the preview plays no original sound (the sound layer is gone)', { before: !!audioBefore, after: !!audioAfter });
 
-  /* ---------- P5 播放中舞台视频按 2 倍放 ---------- */
-  // 等到舞台里有视频在放(起播有延迟);**播放头跑出这一段就回到段首重放**。
-  // 原先每 12 次迭代才回 seek 一次:提速之后这一段在时间轴上只占「原时长 ÷ 倍率」,
-  // 一次迭代要 200 ms 加上跨 frame 的 evaluate,12 次很容易整段错过 —— P5 偶发翻就是这么来的,
-  // 而且偏偏倍率越大越容易翻(可观察窗口被倍率除了一次)。改成按播放头实际位置判。
+  /* ---------- P5 Stage video plays at 2× during playback ---------- */
+  // Wait until video is playing on stage (playback start has latency); **seek back to clip start and
+  // replay once playhead leaves this clip**.
+  // Previously it only sought back once every 12 iterations: after speeding up, this clip occupies
+  // only "original duration ÷ multiplier" on the timeline; each iteration takes 200 ms plus
+  // cross-frame evaluate, so 12 iterations easily miss the whole clip: this is why P5 occasionally
+  // failed, and higher multipliers failed even more easily (observable window divided by the
+  // multiplier). Changed to judge by actual playhead position.
   let rates = [];
   for (let k = 0; k < 60 && !rates.length; k++) {
     const inSeg = await store(A, 'const s = S.getState(); const c = s.project.tracks.flatMap((t) => t.clips).find((x) => x.id === args[0]); return !!c && s.playing && s.t >= c.start && s.t < c.end - 0.05;', placed.id).catch(() => false);
@@ -180,16 +195,20 @@ try {
   }
   await store(A, 'S.actions.pause(); return true;');
   step('P5', { rates, playState, allVideos });
-  // 判据按**速率**，不按取样那一刻停没停:舞台的视频是走走停停地跟帧(每帧 seek 后暂停),
-  // 只统计「此刻没暂停」的话，取样撞上暂停的那一刻就空手而归 —— 这正是 P5 以前偶发翻的原因。
-  // 2026-10-23 实测：翻的那一次舞台视频 playbackRate = 1.9457(≈2×，1.9～2.2 是 ±10% 的纠偏范围)，产品侧没问题。
+  // Criterion is based on **rate**, not whether it is paused at sampling time: stage video follows
+  // frames in a start-and-stop manner (paused after seeking each frame); if only checking "not paused
+  // at this moment", sampling right at a pause returns empty-handed: this was precisely why P5
+  // previously failed intermittently.
+  // Tested on 2026-10-23: during that failure, stage video playbackRate = 1.9457 (≈2×, 1.9-2.2 is ±10%
+  // correction range); product side is fine.
   const playing = rates.flatMap((x) => x.r);
   const anyRate = allVideos.flatMap((x) => (Array.isArray(x.r) ? x.r : [])).filter((v) => typeof v.rate === 'number' && v.rate >= 1.8 && v.rate <= 2.2);
   check(playing.length > 0 ? playing.every((v) => v.rate >= 1.8 && v.rate <= 2.2) : anyRate.length > 0,
     'P5 the video of the speed-changed clip plays at 2× on the stage (±10%)', { rates, anyRate });
 
-  /* ---------- P6 撤销:一步只退一次改动;退到底回到 1×、不留 speed 字段 ---------- */
-  // 这之前改过三次速度:1→2(P2)、2→1.5、1.5→2(P2b;输入 5 被拒绝,不算一步)
+  /* ---------- P6 Undo: one step reverts one change; reverting fully returns to 1×, leaving no speed field ---------- */
+  // Speed was changed three times before this: 1→2 (P2), 2→1.5, 1.5→2 (P2b; entering 5 was rejected,
+  // not counted as a step)
   await store(A, 'S.actions.undo(); return true;');
   const undo1 = await clipOf(A, placed.id);
   await store(A, 'S.actions.undo(); S.actions.undo(); return true;');
@@ -198,7 +217,8 @@ try {
   check(undo1?.speed === 1.5 && Math.abs(undo1.end - 4) < 1e-6, 'P6 one undo step goes back only to the previous change (1.5×)', undo1 && [undo1.speed, undo1.end]);
   check(!!undone && !('speed' in undone) && undone.end === placed.end, 'P6 undoing all the way returns to 1×, leaving no speed field', undone);
 
-  /* ---------- P7 挂着转场改速度:装不下时转场跟着缩短,弹气泡说清楚(用户 2026-10-23 定) ---------- */
+  /* ---------- P7 Change speed with attached transition: transition shortens when it does not fit,
+     popping up a bubble to explain (user decision, 2026-10-23) ---------- */
   const added = await store(A, 'return S.actions.addTransition({ kind: "fadeOut", clipId: args[0], dur: 2.5 }).ok;', placed.id);
   await store(A, 'S.actions.select([args[0]]); return true;', placed.id);
   await until('Sub-navigation bar has Speed', async () => (await A.$('[data-pcm="sub-speed"]')) ? true : null, 10_000);
@@ -218,13 +238,13 @@ try {
   await closeSheet(A);
   await store(A, 'S.actions.undo(); S.actions.undo(); return true;');
 
-  /* ---------- D1 / D2 桌面布局 ---------- */
+  /* ---------- D1 / D2 Desktop layout ---------- */
   B = await env.newPage(browser, 'desktop');
   await env.enter(B, { username: 'er' });
   await until('Desktop page synced to the video clip', () => clipOf(B, placed.id), 60_000);
   await store(B, 'S.actions.select([args[0]]); return true;', placed.id);
   await sleep(1500);
-  // 左栏切到「编辑」分区
+  // Switch left rail to "Edit" section
   await B.evaluate(() => { const b = [...document.querySelectorAll('[data-pc="left-rail"] button, [data-pc="left-rail"] [role="tab"]')].find((x) => x.textContent.trim() === 'Edit'); b?.click(); });
   await sleep(800);
   await shot(B, 'D0-selected');
@@ -232,7 +252,7 @@ try {
   const form = await until('Speed row appears in the edit section', async () => (await B.$('[data-pc="clip-speed"]')) ? true : null, 20_000);
   if (form) {
     const dnote = await B.$eval('[data-pc="clip-speed-note"]', (e) => e.textContent);
-    // 手动输入超出范围:拒绝并提示
+    // Manual input out of range: reject with notice
     await B.evaluate(() => { const el = document.querySelector('[data-pc="clip-speed-input"]'); el.focus(); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(el, '9'); el.dispatchEvent(new Event('input', { bubbles: true })); el.blur(); });
     await sleep(600);
     const dBadMsg = await B.$eval('[data-pc="clip-speed-msg"]', (e) => e.textContent).catch(() => null);
@@ -249,7 +269,8 @@ try {
     step('D1', { note: dnote, after: slow && { start: slow.start, end: slow.end, speed: slow.speed } });
     step('D2', { label, badgeTitle });
     check(/no original sound/.test(dnote ?? ''), 'D1 the desktop edit section states that speed-changed clips play no original sound', dnote);
-    // 0.5× 要 2 倍时长,不截断;同一序列后面的段碰到了就整体往后推(用户 2026-10-23 定),面板说清推了多少
+    // 0.5× requires 2× duration without truncation; subsequent clips on the same track are pushed back
+    // as a whole upon collision (user decision, 2026-10-23), with the panel explaining how much was pushed
     const nextId = await store(B, 'const t = S.getState().project.tracks.find((tr) => tr.clips.some((c) => c.id === args[0])); const n = t.clips.filter((c) => c.id !== args[0] && c.start >= args[1] - 1e-9).sort((x, y) => x.start - y.start)[0]; return n ? n.id : null;', placed.id, placed.end);
     const nextAfter = nextId ? await clipOf(B, nextId) : null;
     const pushMsg = await B.$eval('[data-pc="clip-speed-msg"]', (e) => e.textContent).catch(() => null);
@@ -259,7 +280,7 @@ try {
       check(nextAfter.start >= slow.end - 1e-6, 'D1 the following clips are pushed back, no overlap', [slow.end, nextAfter.start]);
       check(/pushed back/.test(pushMsg ?? ''), 'D1 the panel explains when later clips are pushed back', pushMsg);
     }
-    // 一步撤销:速度和推开的段一起退回
+    // One-step undo: speed and pushed clips revert together
     await store(B, 'S.actions.undo(); return true;');
     const backV = await clipOf(B, placed.id), backN = nextId ? await clipOf(B, nextId) : null;
     step('D1-undo', { v: backV && [backV.start, backV.end, backV.speed ?? null], next: backN && [backN.start, backN.end] });
@@ -269,7 +290,7 @@ try {
     await sleep(800);
     check(/0\.5×/.test(label ?? ''), 'D2 the timeline clip name carries "0.5×"', label);
     check(/Speed-changed clips play no original sound/.test(badgeTitle ?? ''), 'D2 the mute badge states the reason', badgeTitle);
-    // 手机页同步到同一个速度
+    // Mobile page syncs to the same speed
     const synced = await until('Mobile page synced to 0.5×', async () => { const c = await clipOf(A, placed.id); return c?.speed === 0.5 ? true : null; }, 30_000);
     step('D-sync', { phoneSeesHalf: !!synced });
   }

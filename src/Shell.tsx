@@ -15,34 +15,47 @@ import { CODE_VERSION } from "./online/boot";
 import { tr } from "./i18n/index.ts";
 
 /**
- * 开始页和编辑器之间的门。
+ * The gate between the start page and the editor.
  *
- * 编辑器本身不知道有开始页这回事 —— 它照旧渲染 store 里的当前项目。开始页在
- * 切过来之前就已经把项目 load 进 store 了,所以这里只管换视图。
+ * The editor itself knows nothing about the start page: it just renders the current project in the
+ * store. The start page has already loaded the project into the store before switching over, so
+ * all that is left to do here is swap the view.
  *
- * 几个启动参数:
- *   `?editor`          直接进编辑器:导出、自动化脚本和老书签都还指着这条路;
- *   `?draft=<id>`      打开某份草稿再进编辑器;
- *   `?open=<路径>`     按磁盘路径打开一份 .proc(桌面壳双击文件时带过来),会先复制一份再读;
- *   `?join=<项目号>`   局域网里的第二块屏:同一个本机项目的第二个页面,直接进编辑器,内容以本机文档服务为准
- *                      (`product/platforms.md`「桌面应用」的「局域网里的第二块屏」;接上文档服务那一步在
- *                      `editor/sync/syncManager.ts` 的 `startSync`)。
- *   `?headless=1`      自动化页面(探针、测试):不塞演示卡、不接文档服务、不弹素材迁移框(各处自己认这个参数)。
+ * Launch parameters:
+ *   `?editor`          go straight to the editor: export, automation scripts and old bookmarks
+ *                      all still point at this path;
+ *   `?draft=<id>`      open a draft, then enter the editor;
+ *   `?open=<path>`     open a .proc by disk path (passed in when the desktop shell opens a file by
+ *                      double-click); it copies the file first, then reads the copy;
+ *   `?join=<project id>`   second screen on the LAN: a second page for the same local project, goes
+ *                      straight to the editor, and the content follows the local document service
+ *                      (`product/platforms.md`, "Desktop app", "Second screen on the LAN"; the step
+ *                      that connects to the document service is `startSync` in
+ *                      `editor/sync/syncManager.ts`).
+ *   `?headless=1`      automation pages (probes, tests): no demo cards, no document service, no
+ *                      media migration dialog (each place recognizes this parameter on its own).
  *
- * 在线浏览器模式(C10a 契约第 2 节)不认这几个参数:它们都要编辑器进程(草稿、磁盘路径);
- * 打开就是开始页,从「加入别人的项目」进编辑器。在线构建里这几条连同草稿、按路径打开一起剪掉
- * (`ONLINE_BUILD`,写法与用意见 `src/online/pageFlag.ts` 的「在线构建剪枝」;M8 遗留 L24)。
+ * Online browser mode (C10a contract, section 2) does not recognize these parameters: they all need
+ * an editor process (drafts, disk paths). Opening it lands on the start page, and you enter the
+ * editor from "Join someone else's project". In the online build these parameters, along with
+ * drafts and open-by-path, are pruned (`ONLINE_BUILD`; for how it is written and why, see
+ * "Online build pruning" in `src/online/pageFlag.ts`; M8 leftover L24).
  */
 const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
 
 /**
- * 界面跟身份走(`product/platforms.md`「身份」):身份为手机的用手机版界面(`src/mobile/`),其余用桌面界面。
- * **不看文档服务在哪**:局域网里的手机打开本机项目(`?join=`,见下)时同样是手机版界面
- * (`product/platforms.md`「桌面应用」的「局域网里的第二块屏」)。桌面应用自己的窗口报桌面声明,照旧是桌面界面。
- * 页面载入时判一次,同一个地址;`?layout=mobile|desktop` 只给开发和验收用(`src/online/deviceKind.ts` 的 `pickLayout`)。
- * 在线页面的 iPad 身份看舞台闸门(`src/online/stageGate.ts` 的 `predictIdentity`:停在第一级的算手机);
- * 本机页面没有闸门记录,按浏览器声明判(`currentDeviceKind`)。
- * 手机版按需载入,桌面界面不下载它。
+ * The UI follows the identity (`product/platforms.md`, "Identity"): an identity of phone gets the
+ * mobile app UI (`src/mobile/`), everything else gets the desktop UI.
+ * **It does not look at where the document service is**: a phone on the LAN opening a local project
+ * (`?join=`, see below) also gets the mobile app UI
+ * (`product/platforms.md`, "Desktop app", "Second screen on the LAN"). The desktop app's own window
+ * declares itself as desktop, so it is still the desktop UI.
+ * It is decided once when the page loads, for the same address; `?layout=mobile|desktop` is only for
+ * development and acceptance checks (`pickLayout` in `src/online/deviceKind.ts`).
+ * The iPad identity of an online page is decided by the stage gate (`predictIdentity` in
+ * `src/online/stageGate.ts`: a device that stays at the first tier counts as a phone);
+ * a local page has no gate record, so it goes by what the browser declares (`currentDeviceKind`).
+ * The mobile app is loaded on demand; the desktop UI does not download it.
  */
 const LAYOUT = pickLayout({ kind: ONLINE_BUILD ? predictIdentity(CODE_VERSION ?? "dev") : currentDeviceKind().kind, search: typeof location !== "undefined" ? location.search : "" });
 const MobileApp = lazy(() => import("./mobile/MobileApp"));
@@ -52,12 +65,13 @@ export function Shell(): JSX.Element {
   // The title bar is outside both routes, so its colors stay synchronized.
   useSkin();
   const [inEditor, setInEditor] = useState(() => {
-    // 在线页面打开就是开始页;只有在线模式的**开发服务**(探针用)认 `?editor`,
-    // 在线构建(vite build --mode online)里 DEV 为假,这一支被剪掉
+    // An online page opens on the start page; only the **dev server** in online mode (for probes)
+    // recognizes `?editor`. In the online build (vite build --mode online) DEV is false, and this
+    // branch is pruned
     if (ONLINE_BUILD) return !!import.meta.env.DEV && new URLSearchParams(location.search).has("editor");
     try {
       const q = new URLSearchParams(location.search);
-      // `?join=` 是局域网里的第二块屏:那张页面只为进这个项目,不经开始页
+      // `?join=` is a second screen on the LAN: that page exists only to enter this project, skipping the start page
       return q.has("editor") || q.has("join");
     } catch {
       return false;
@@ -65,10 +79,10 @@ export function Shell(): JSX.Element {
   });
   const [bootError, setBootError] = useState("");
 
-  // 顶栏的「回到首页」在 window 上派发这个事件,免得给 Editor 加一层 props
+  // The "Back to home" button in the top bar dispatches this event on window, to avoid adding another layer of props to Editor
   useEffect(() => {
     const back = () => {
-      // 回开始页之后再刷新就留在开始页;在线页面的地址从项目直达地址换回 `/editor/`(`product/platforms.md`「项目直达地址」)
+      // After going back to the start page, a refresh stays on the start page; for an online page, the address changes from the project's direct address back to `/editor/` (`product/platforms.md`, "Project direct address")
       forgetSharedResume();
       const url = new URL(location.href);
       if (ONLINE_BUILD) url.pathname = import.meta.env.BASE_URL;
@@ -81,9 +95,12 @@ export function Shell(): JSX.Element {
   }, []);
 
   /*
-   * 刷新之后回到刷新前打开的共享项目(C10a r2):这个标签页记着(syncManager 的 resumeShared)就照「加入别人的项目」
-   * 那样先换一份空项目、再进去,进去了直接进编辑器;没进去(离线、凭证失效)留在开始页。
-   * 打开的是邀请链接(`#invite=`)时以链接为准,不回旧项目。`?editor` 的页面由编辑器自己接(Editor.tsx)。
+   * After a refresh, return to the shared project that was open before the refresh (C10a r2): if this
+   * tab remembers it (`resumeShared` in syncManager), it first swaps in an empty project and then
+   * enters, just like "Join someone else's project", and once in it goes straight to the editor; if
+   * it cannot get in (offline, credentials expired) it stays on the start page.
+   * When the page was opened from an invite link (`#invite=`), the link wins and the old project is
+   * not restored. A page with `?editor` is handled by the editor itself (Editor.tsx).
    */
   useEffect(() => {
     if (inEditor || !hasSharedResume() || peekCapturedInvite()) return;
@@ -96,11 +113,11 @@ export function Shell(): JSX.Element {
       }
     });
     return () => { live = false; };
-    // 启动时只看一次
+    // Only checked once at startup
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 启动参数只看一次
+  // Launch parameters are only checked once
   useEffect(() => {
     if (ONLINE_BUILD) return;
     let q: URLSearchParams;
@@ -125,9 +142,9 @@ export function Shell(): JSX.Element {
     }
   }, []);
 
-  // 桌面壳在已经开着的窗口上又收到一个 .proc(双击了文件):走同一条「复制再打开」的路
+  // The desktop shell received another .proc on an already open window (a file was double-clicked): take the same "copy, then open" path
   useEffect(() => {
-    if (ONLINE_BUILD) return; // 在线页面不在桌面壳里
+    if (ONLINE_BUILD) return; // An online page is not inside the desktop shell
     const tauri = (window as unknown as {
       __TAURI__?: { event?: { listen?: (e: string, cb: (ev: { payload: unknown }) => void) => Promise<() => void> } };
     }).__TAURI__;

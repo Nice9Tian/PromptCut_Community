@@ -1,6 +1,6 @@
-// 安装进度解析。喂的是真实形状的 pip 输出,重点是别把「有进度」和「不知道进度」
-// 搞混 —— 编出来的百分比比没有百分比更糟。
-// 跑法:node --test server/test/stt-install.test.mjs
+// Installation progress parsing. Fed with realistic pip output shape; key point is not confusing
+// "has progress" with "unknown progress": fabricated percentages are worse than no percentages.
+// Run: node --test server/test/stt-install.test.mjs
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,12 +14,13 @@ const ts = require_('typescript');
 const ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-stt-test-'));
 
-// 转译产物落在临时目录,解析不到 node_modules,所以把 react 换成绝对 URL
+// Transpiled artifacts land in temp directory and cannot resolve node_modules,
+// so replace react with absolute URL
 const reactUrl = pathToFileURL(require_.resolve('react')).href;
 const i18nUrl = pathToFileURL(path.join(ROOT, 'src/i18n/index.ts')).href;
 let src = fs.readFileSync(path.join(ROOT, 'src/ai/sttInstallStore.ts'), 'utf8')
   .replace('from "react"', `from '${reactUrl}'`)
-  // tr() 来自 src/i18n:同理换成绝对 URL
+  // tr() comes from src/i18n: likewise replace with an absolute URL
   .replace('from "../i18n/index.ts"', `from '${i18nUrl}'`);
 const js = ts.transpileModule(src, {
   compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext },
@@ -28,7 +29,7 @@ const file = path.join(OUT, 'store.mjs');
 fs.writeFileSync(file, js);
 const store = await import(pathToFileURL(file).href);
 
-/** 真实 pip 装 faster-whisper 时的输出形状 */
+/** Realistic output shape of pip installing faster-whisper */
 const PIP_LINES = [
   'Collecting faster-whisper>=1.0.3',
   '  Downloading faster_whisper-1.0.3-py3-none-any.whl.metadata (14 kB)',
@@ -147,7 +148,7 @@ test('The log tail has a cap, so a long install does not exhaust memory', () => 
   assert.ok(store.getJob(id).logTail.length <= 60);
 });
 
-// ── 工具调用 ↔ 安装任务的匹配 ────────────────────────────────
+// ── Matching tool calls ↔ installation tasks ────────────────────────────────
 const A = { jobId: 'install-faster-whisper-abc123', engine: 'faster-whisper', phase: 'done', downloaded: 3, startedAt: 1, logTail: [] };
 const B = { jobId: 'install-faster-whisper-xyz789', engine: 'faster-whisper', phase: 'downloading', downloaded: 1, startedAt: 2, logTail: [] };
 

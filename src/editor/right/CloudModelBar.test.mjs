@@ -1,6 +1,8 @@
 /**
- * 云端工具条(CloudModelBar)渲染出来的样子:模型下拉在托管方配了多个模型时才有;思考强度下拉在节点报了档位时才有,
- * 存着的档位不在清单里就显示「默认」。跑:node --test src/editor/right/CloudModelBar.test.mjs
+ * Rendered appearance of the cloud toolbar (CloudModelBar): model dropdown only appears when the
+ * host configures multiple models; thinking effort dropdown only appears when the node reports
+ * tiers; if the stored tier is not in the manifest, display "Default".
+ * Run: node --test src/editor/right/CloudModelBar.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

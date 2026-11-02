@@ -1,12 +1,15 @@
 /**
- * E1 的两个新口子 + 事件来源过滤的单测。跑:node --test src/editor/stageBridge.test.mjs
+ * Unit tests for E1's two new entry points + event source filtering.
+ * Run: node --test src/editor/stageBridge.test.mjs
  *
- * 钉三件事:
- *   1. `whenStageReady(role)` —— 先叫后到、先到后叫都能拿到客户端,客户端换了就是一个新的
- *      Promise(拿着旧 Promise 的人不会被偷偷换到新 iframe 上);
- *   2. `pushProject` 和 `syncProject` **共用同一份基线** —— 这是 E0 点名的坑:绕过基线
- *      直接发 setProject,之后的 syncProject 会因为「和基线比没变」静默不发;
- *   3. `onStageEvent` 按角色过滤:front 的 iframe 发 probe、back 的 iframe 发 frame 都丢掉。
+ * Pin down three things:
+ *   1. `whenStageReady(role)`: gets the client whether called before or after arrival; when the
+ *      client changes, it is a new Promise (holders of the old Promise will not be silently
+ *      switched to the new iframe);
+ *   2. `pushProject` and `syncProject` **share the same baseline**: this is the trap called out in
+ *      E0: bypassing the baseline to send setProject directly causes subsequent syncProject calls
+ *      to silently skip sending because "unchanged compared to baseline";
+ *   3. `onStageEvent` filters by role: drops probe from front iframe and frame from back iframe.
  */
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
@@ -14,7 +17,7 @@ import assert from "node:assert/strict";
 const bridge = await import("./stageBridge.ts");
 const { setStageClient, whenStageReady, pushProject, syncProject, pushedProject, onStageEvent, resetStageBridge, backRole, backStage, frontStage } = bridge;
 
-/** 最小的假 RPC 客户端:只记下收到的 setProject,并能往外发事件 */
+/** Minimal fake RPC client: only records received setProject, and can emit events */
 function fakeClient(name) {
   const listeners = new Set();
   return {
@@ -93,11 +96,11 @@ test("Bypassing pushProject makes the baseline inaccurate, so it must share the 
   const c = fakeClient("A");
   setStageClient("back", c);
   const full = project("full");
-  await syncProject("back", full);          // 基线 = full
+  await syncProject("back", full);          // baseline = full
   const shrunk = project("shrunk");
-  await pushProject("back", shrunk, { reset: true });  // 探针灌缩水项目,基线跟着换
+  await pushProject("back", shrunk, { reset: true });  // Feed reduced project to probe, baseline updates accordingly
   assert.equal(pushedProject("back"), shrunk);
-  await syncProject("back", full);          // 量完换回来:基线是 shrunk,所以真的会发
+  await syncProject("back", full);          // Switch back after measuring: baseline is shrunk, so it will actually send
   assert.equal(c.calls.length, 3, "The switch back to the full project must really be sent");
   assert.equal(pushedProject("back"), full);
 });
@@ -122,14 +125,14 @@ test("onStageEvent filters by role: front events are accepted only from the fron
   const got = [];
   onStageEvent((e, role) => got.push(`${role}:${e.type}`));
 
-  f.emit({ type: "frame", sec: 1 });         // 收
-  f.emit({ type: "probe-frame", clipId: "c", localFrame: 0, html: "" }); // 丢:probe-frame 只认 back
-  b.emit({ type: "probe-frame", clipId: "c", localFrame: 0, html: "" }); // 收
-  b.emit({ type: "frame", sec: 2 });         // 丢:frame 只认 front
-  f.emit({ type: "ended", sec: 3 });         // 收
-  b.emit({ type: "mediaReady", sec: 0 });    // 收
-  f.emit({ type: "demote", clipId: "c" });   // 收
-  b.emit({ type: "settled", sec: 1, clipIds: [] }); // 丢:settled 只认 front
+  f.emit({ type: "frame", sec: 1 });         // Accept
+  f.emit({ type: "probe-frame", clipId: "c", localFrame: 0, html: "" }); // Drop: probe-frame only recognizes back
+  b.emit({ type: "probe-frame", clipId: "c", localFrame: 0, html: "" }); // Accept
+  b.emit({ type: "frame", sec: 2 });         // Drop: frame only recognizes front
+  f.emit({ type: "ended", sec: 3 });         // Accept
+  b.emit({ type: "mediaReady", sec: 0 });    // Accept
+  f.emit({ type: "demote", clipId: "c" });   // Accept
+  b.emit({ type: "settled", sec: 1, clipIds: [] }); // Drop: settled only recognizes front
 
   assert.deepEqual(got, ["front:frame", "back:probe-frame", "front:ended", "back:mediaReady", "front:demote"]);
 });
@@ -162,7 +165,7 @@ test("releaseStageClient: the client of an unmounted iframe is removed wherever 
   const b = fakeClient("B");
   setStageClient("front", a);
   setStageClient("back", b);
-  // K5 互换之后 A 可能在 back 位置上:按客户端找位置,不按实例名猜角色
+  // After K5 swap, A may be in back position: find position by client, do not guess role by instance name
   bridge.releaseStageClient(b);
   assert.equal(frontStage(), a);
   assert.equal(backRole(), "front", "back is empty, fall back to front");

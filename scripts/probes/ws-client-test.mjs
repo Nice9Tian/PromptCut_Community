@@ -1,20 +1,29 @@
 /**
- * 文档服务骨架的连通性探针：真正发起一条 WebSocket 连接，按渲染节点、发布方的身份报到，逐项断言回包。
+ * Connectivity probe for document service skeleton: genuinely initiates a WebSocket connection,
+ * checks in as a render node or publisher identity, and asserts each response item by item.
  *
- * 跑：node scripts/probes/ws-client-test.mjs [ws://host:port]      缺省 ws://127.0.0.1:8787
- * 只用 Node 内置的 WebSocket 与 fetch（Node >= 22），不装依赖。全过退出码 0，有失败 1，连不上 2。
- * 退出前先等连接的 close 事件（最多 CLOSE_WAIT_MS）：关闭握手没完成就 process.exit，Windows 上 libuv 会断言
- * `!(handle->flags & UV_HANDLE_CLOSING)` 崩掉（远端多一个往返时必现）。
+ * Run: node scripts/probes/ws-client-test.mjs [ws://host:port]      default ws://127.0.0.1:8787
+ * Uses only Node built-in WebSocket and fetch (Node >= 22), without installing dependencies. Exit
+ * code 0 if all pass, 1 on failure, 2 if unreachable.
+ * Wait for connection close event before exiting (at most CLOSE_WAIT_MS): calling process.exit
+ * before closing handshake finishes causes libuv on Windows to crash with assertion
+ * `!(handle->flags & UV_HANDLE_CLOSING)` (reliably reproduced when remote side has an extra round
+ * trip).
  *
- * 凭证（M6a，`docs/plan/auth-contract.md` 第 5、11 节；集群令牌已退出数据面，本探针不再读它）：
- * - 设了环境变量 PROMPTCUT_SHARED_CONFIG（指向共享项目配置 JSON）：取它的第一项，凭项目证明以 `render` 角色进入
- *   （node.hello 只许 render 连接），并断言服务端只回显 `promptcut.v1`；没给地址参数时连配置里的 `url`；
- * - 没设：不带子协议（旧客户端）。连本机回环时是本机身份；连别的机器会被 401。
- * 配置文件里的口令、派生密钥与证明都不打印。
+ * Credentials (M6a, `docs/plan/auth-contract.md` sections 5 and 11; cluster tokens have exited the
+ * data plane and are no longer read by this probe):
+ * - If environment variable PROMPTCUT_SHARED_CONFIG is set (pointing to shared project config
+ *   JSON): take its first entry, enter with `render` role using project proof (node.hello only
+ *   allows render connections), and assert server only echoes `promptcut.v1`; connect to `url` in
+ *   the config when no address argument is provided;
+ * - If not set: without subprotocol (legacy client). Resolves to local identity when connecting to
+ *   local loopback; gets 401 when connecting to other machines.
+ * Passphrases, derived keys, and proofs in config files are never printed.
  *
- * 断言依据：`docs/plan/render-queue-contract.md` A.6（node.hello → node.welcome、publisher.hello → publisher.welcome、
- * queue.watch → queue.snapshot、格式错误 → error bad-message），以及 server/docservice/service.mjs 的 /healthz
- * （G.4：有 protocol === 'promptcut.v1' 和模块名数组 modules）。
+ * Assertion basis: `docs/plan/render-queue-contract.md` A.6 (node.hello → node.welcome,
+ * publisher.hello → publisher.welcome, queue.watch → queue.snapshot, malformed → error
+ * bad-message), and server/docservice/service.mjs /healthz (G.4: has protocol === 'promptcut.v1'
+ * and module name array modules).
  */
 let sharedEntry = null;
 let sharedProtocolsOf = null;
@@ -28,7 +37,7 @@ const TIMEOUT_MS = 10_000;
 const CLOSE_WAIT_MS = 3_000;
 const nodeId = `probe-node-${process.pid}`;
 const publisherId = `probe-page-${process.pid}`;
-/** 这一次握手的子协议：共享项目配置的每次现取（nonce 只能用一次） */
+/** Subprotocol for this handshake: fetched fresh each time for shared project configs (nonce can only be used once) */
 let protocols;
 
 const results = [];
@@ -37,7 +46,7 @@ function check(name, ok, detail) {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  ${detail}` : ''}`);
 }
 
-/** 连接失败时也要拿到这条 socket，好等它关干净 */
+/** Also obtain this socket when connection fails to wait for it to close cleanly */
 let socket;
 async function connect() {
   if (sharedProtocolsOf) protocols = await sharedProtocolsOf();
@@ -50,7 +59,7 @@ async function connect() {
   });
 }
 
-/** 发一条带 reqId 的消息，等 reqId 相同的回包；返回 { msg, rttMs } */
+/** Send a message with reqId, wait for response with matching reqId; return { msg, rttMs } */
 function request(ws, message) {
   return new Promise((resolve, reject) => {
     const sentAt = performance.now();
@@ -68,7 +77,7 @@ function request(ws, message) {
   });
 }
 
-/** 关连接并等 close 事件，最多 CLOSE_WAIT_MS；已经关上的直接返回 */
+/** Close connection and wait for close event, at most CLOSE_WAIT_MS; return directly if already closed */
 function closeAndWait(ws, code, reason) {
   if (!ws || ws.readyState === WebSocket.CLOSED) return Promise.resolve();
   return new Promise((resolve) => {
@@ -76,12 +85,12 @@ function closeAndWait(ws, code, reason) {
     t.unref();
     ws.addEventListener('close', () => { clearTimeout(t); resolve(); }, { once: true });
     if (ws.readyState !== WebSocket.CLOSING) {
-      try { if (code === undefined) ws.close(); else ws.close(code, reason); } catch { /* 已在关 */ }
+      try { if (code === undefined) ws.close(); else ws.close(code, reason); } catch { /* Already closing */ }
     }
   });
 }
 
-/** 跑一遍，返回退出码；每条出口都先等连接关干净 */
+/** Run once, return exit code; each exit path first waits for connection to close cleanly */
 async function run() {
   console.log(`target ${url}  credential ${sharedEntry ? 'shared-project' : 'none'}`);
   let ws;
@@ -97,7 +106,7 @@ async function run() {
   if (protocols) check('Subprotocol echoes only promptcut.v1', ws.protocol === 'promptcut.v1', `protocol=${JSON.stringify(ws.protocol)}`);
 
   try {
-    // 1. 渲染节点报到
+    // 1. Render node checks in
     const hello = {
       type: 'node.hello', reqId: 'hello-1', nodeId, profile: 'host',
       capabilities: { transcode: false }, codeVersions: [], maxConcurrent: 1,
@@ -110,25 +119,26 @@ async function run() {
     check('welcome carries resumed / lost arrays', Array.isArray(welcome.resumed) && Array.isArray(welcome.lost));
     check('welcome carries the queue epoch', typeof welcome.epoch === 'string' && welcome.epoch.length > 0);
 
-    // 2. 同一连接再以发布方报到（契约 A.5：一条连接可以两者都是）
+    // 2. Same connection checks in again as publisher (contract A.5: one connection can be both)
     const { msg: pub } = await request(ws, { type: 'publisher.hello', reqId: 'hello-2', publisherId });
     check('publisher.hello → publisher.welcome', pub.type === 'publisher.welcome' && pub.publisherId === publisherId);
 
-    // 3. 节点订阅队列
+    // 3. Node subscribes to queue
     const { msg: snap } = await request(ws, { type: 'queue.watch', reqId: 'watch-1', projects: 'all' });
     check('queue.watch → queue.snapshot', snap.type === 'queue.snapshot' && Array.isArray(snap.tasks), `tasks=${snap.tasks?.length}`);
 
-    // 4. 格式错误的消息
+    // 4. Malformed message
     const { msg: bad } = await request(ws, { type: 'node.hello', reqId: 'bad-1', nodeId, profile: 'toaster' });
     check('Malformed message → error bad-message', bad.type === 'error' && bad.reason === 'bad-message', bad.detail);
 
-    // 5. 服务端记下了这条连接的身份（HTTP 同端口）
+    // 5. Server recorded the identity of this connection (HTTP same port)
     const health = await fetch(url.replace(/^ws/, 'http').replace(/\/?$/, '/healthz')).then((r) => r.json());
     console.log(`healthz ${JSON.stringify(health)}`);
     check('healthz records the node and the publisher', health.ok === true && health.nodes >= 1 && health.publishers >= 1);
     check('healthz.protocol is promptcut.v1', health.protocol === 'promptcut.v1', `protocol=${JSON.stringify(health.protocol)}`);
     check('healthz.modules is an array of module names', Array.isArray(health.modules) && health.modules.every((m) => typeof m === 'string'), JSON.stringify(health.modules));
-    // 按空间各起一份队列（auth-contract 第 6 节）：/healthz 的 epoch 是本机（local）空间那一份；凭共享项目进入时 welcome 是项目空间的
+    // Start one queue per space (auth-contract section 6): /healthz epoch is from the local space;
+    // welcome when entering via a shared project is from the project space
     if (sharedEntry) check('healthz carries the queue epoch', typeof health.epoch === 'string' && typeof welcome.epoch === 'string');
     else check('healthz carries the queue epoch', health.epoch === welcome.epoch);
     if (protocols) check('healthz does not contain the proof', !JSON.stringify(health).includes(protocols[1]));
@@ -142,8 +152,9 @@ async function run() {
   return failed ? 1 : 0;
 }
 
-// 不用 process.exit 抢在句柄关完之前退出：设退出码，让事件循环自然结束；
-// 万一还有别的句柄挡着，再用 unref 的计时器兜底（没东西挡时它不会触发）
+// Do not use process.exit to race out before handles finish closing: set exit code and let the event
+// loop end naturally; if other handles are still blocking, fall back to an unref timer (it will
+// not fire if nothing is blocking)
 const code = await run();
 process.exitCode = code;
 setTimeout(() => process.exit(code), 0).unref();

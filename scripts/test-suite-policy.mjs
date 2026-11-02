@@ -1,6 +1,7 @@
 /**
- * scripts/test-suite.mjs 的纯判定逻辑：从最小报告事件识别文件级原生异常，
- * 并用 Node 根 test:summary 的总数确认没有其它失败被重跑掩盖。
+ * Pure judgment logic for scripts/test-suite.mjs: identify file-level native exceptions from
+ * minimal reporter events, and use totals from Node root test:summary to confirm no other
+ * failures were masked by reruns.
  */
 import path from 'node:path';
 
@@ -58,7 +59,7 @@ export function retryReason(file) {
   const failure = file.processFailure;
   if (!failure || file.assertionFailures > 0) return null;
   const { exitCode, signal } = failure;
-  // 启动阶段已经打印明确的 JS/模块错误时，不把它当作进程异常掩盖。
+  // When explicit JS/module errors have already been printed during startup, do not mask them as process exceptions.
   if (file.testCases === 0 && /(?:^|\n)(?:Error(?: \[[A-Z_]+\])?|SyntaxError|TypeError|ReferenceError|RangeError):|ERR_UNKNOWN_FILE_EXTENSION|Cannot find module/.test(file.stderr)) return null;
   if (signal) return 'signal';
   if (typeof exitCode === 'number' && (exitCode >>> 0) >= 0xC0000000) return 'ntstatus';

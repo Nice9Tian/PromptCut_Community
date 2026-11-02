@@ -8,10 +8,12 @@ import { NumberField } from "../fields/NumberField";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 组合卡的参数面板:一棵部件实例树,每个实例可以改参数、框、进场时机、次序,也能加减部件。
+ * Parameters panel for a composite card: a tree of part instances; each instance can have its parameters,
+ * frame, entrance timing and order changed, and parts can be added or removed.
  *
- * 和 ParamsForm 的区别:ParamsForm 面对的是「一张卡的扁平参数」,这里面对的是「一棵树」。
- * 所有改动都走 kernel/parts.ts 的纯函数算出新树再 setClipParts,和 Agent 的 add_part / set_part 一条路。
+ * Difference from ParamsForm: ParamsForm deals with "the flat parameters of one card", while this deals with
+ * "a tree". All changes compute a new tree with the pure functions in kernel/parts.ts and then call
+ * setClipParts, the same path as the Agent's add_part / set_part.
  */
 export function PartsForm({ clip }: { clip: TrackClip }) {
   const tree = clip.parts ?? [];
@@ -125,7 +127,7 @@ function PartRow({ clip, tree, inst, index, count, depth, commit }: { clip: Trac
   );
 }
 
-/** 一行控件:和 ParamsForm 同一套类型,但值的读写走部件实例而不是 clip.params */
+/** One row of controls: same types as ParamsForm, but values are read and written through the part instance rather than clip.params */
 function ControlRow({ ctrl, value, onChange }: { ctrl: Control; value: unknown; onChange: (v: unknown) => void }) {
   const cls = "flex-1 pc-left-input is-sm";
   return (

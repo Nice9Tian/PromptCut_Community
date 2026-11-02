@@ -1,4 +1,4 @@
-// node --test src/kernel/space3d.test.mjs —— 三维换算的唯一口子
+// node --test src/kernel/space3d.test.mjs: sole gateway for 3D conversion
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -85,7 +85,7 @@ test("Projection: pushing toward the viewer makes it larger, pushing inward make
   const farther = projectStage({ x: 300, y: 200, z: -400 }, HD, 40);
   assert.ok(nearer.scale > 1, `The nearer one should scale up, got ${nearer.scale}`);
   assert.ok(farther.scale < 1, `The farther one should scale down, got ${farther.scale}`);
-  // 中心点无论 z 多少都不动
+  // Center point does not move regardless of z value
   assert.deepEqual(projectStage({ x: 960, y: 540, z: 500 }, HD, 40), { x: 960, y: 540, scale: projectStage({ x: 960, y: 540, z: 500 }, HD, 40).scale });
 });
 
@@ -97,29 +97,33 @@ test("Projection: returns null when the point is at or behind the camera, withou
 });
 
 /*
- * 下面这一组数是**从真 Chrome 里量回来的**,不是照公式再算一遍。
+ * The numbers below are **measured back from real Chrome**, not recalculated from formulas.
  *
- * 这条链有三段:layout.ts 拼 transform 字符串 → 浏览器按 perspective 做透视 →
- * space3d.ts 的 projectStage 预测它落在哪。中间任何一段改了,画面不会报错,
- * 只会"看着不太对"。所以拿浏览器当基准钉死一次。
+ * This chain has three stages: layout.ts builds transform string → browser applies perspective →
+ * projectStage in space3d.ts predicts where it lands. If any stage in the middle changes, visuals
+ * will not error, it will only "look slightly off". So we pin it down once using the browser as
+ * baseline.
  *
- * 量法(scripts 下跑过一次性探针,puppeteer + getBoundingClientRect):
- *   舞台 800×450、fov 40(perspective 618.18px)、卡片 200×120 锚点居中放在 (400,225)、rotateY 35°。
- *   量卡片左右两条边的中心 x 和高度,和 projectStage 的预测逐位对齐,四项差都是 0.0000px。
+ * Measurement method (ran a one-off probe under scripts, puppeteer + getBoundingClientRect):
+ *   Stage 800×450, fov 40 (perspective 618.18px), card 200×120 anchor centered at (400,225),
+ *   rotateY 35°.
+ *   Measure center x and height of card left and right edges, aligned bit-for-bit with projectStage
+ *   predictions, all four differences are 0.0000px.
  */
 test("Reconcile with a real browser: the transform assembled by frameCss lands exactly where projectStage predicts", () => {
   const STAGE = { width: 800, height: 450 };
   const FOV = 40, W = 200, H = 120, CX = 400, CY = 225, THETA = 35;
 
-  // 第一段:layout.ts 真的把三维那几项拼进去了,而且 perspective 值对得上
+  // Stage 1: layout.ts really concatenated the 3D items, and perspective values match
   const css = frameCss({ x: CX, y: CY, w: W, h: H, anchor: [0.5, 0.5], rotateY: THETA }, STAGE);
   assert.equal(css.transform, "rotateY(35deg)");
   assert.equal(css.transformStyle, "preserve-3d");
   near(perspectivePx(STAGE, FOV), 618.18242, 1e-4);
 
   /*
-   * 第三段:rotateY(θ) 把局部 x = ∓W/2 的两条边送到 world (∓W/2·cosθ, 0, ±W/2·sinθ) ——
-   * θ 为正时**左边朝观众来**(z 为正)、右边往里去。这个正负实测过,别照直觉改。
+   * Stage 3: rotateY(θ) maps the two local edges x = ∓W/2 to world (∓W/2·cosθ, 0, ±W/2·sinθ):
+   * when θ is positive, **the left side comes toward the viewer** (z is positive), and the right side
+   * goes inward. This sign was empirically verified; do not change it by intuition.
    */
   const rad = (THETA * Math.PI) / 180;
   const edge = (sign) => projectStage(
@@ -128,12 +132,12 @@ test("Reconcile with a real browser: the transform assembled by frameCss lands e
   );
   const L = edge(-1), R = edge(+1);
 
-  // 浏览器量回来的四个数
+  // Four numbers measured back from the browser
   near(L.x, 309.70702, 1e-4);
   near(H * L.scale, 132.27285, 1e-4);
   near(R.x, 474.96008, 1e-4);
   near(H * R.scale, 109.81124, 1e-4);
 
-  // 近的那条边必须更高 —— 这就是"有没有透视"的判据
+  // The nearer edge must be taller: this is the criterion for \"whether perspective is present\"
   assert.ok(L.scale > 1 && R.scale < 1, `Left should be near and right far, got ${L.scale} / ${R.scale}`);
 });

@@ -1,10 +1,12 @@
 /**
- * 轨道流分段封装的单测。跑:node --test src/render/streamMux.test.mjs
+ * Unit tests for track stream segment muxing. Run: node --test src/render/streamMux.test.mjs
  *
- * 三件事:
- *   1. 封出来的初始化段、分段,页面侧的解封装(`streamPlayer.ts`)读得回来,样本逐字节相同;
- *   2. 服务端核对分段用的那几个函数(`server/frame-stream.mjs`)也认;
- *   3. 用 ffmpeg 造一段真的 H.264,封装后 ffprobe 读得出、帧数对(没有 ffmpeg 的机器跳过并报原因)。
+ * Three things:
+ *   1. Muxed initialization segments and media segments can be read back by page-side demuxing
+ *      (`streamPlayer.ts`), with byte-for-byte identical samples;
+ *   2. Functions used by server to verify segments (`server/frame-stream.mjs`) also accept them;
+ *   3. Create real H.264 using ffmpeg; after muxing, ffprobe can read it and frame count matches
+ *      (machines without ffmpeg skip and report reason).
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -88,14 +90,14 @@ test('rejected: segment not starting with a keyframe, empty segment, empty sampl
   assert.throws(() => buildStreamInit({ width: 70000, height: 656, fps: 30, avcC: AVCC }), /width\/height/);
 });
 
-/* ---------------------------------------------------------------- 真的 H.264:ffmpeg 造、ffprobe 读 */
+/* ---------------------------------------------------------------- Real H.264: created with ffmpeg, read with ffprobe */
 
 let ffmpeg = null;
 try { ffmpeg = await (await import('../../server/bakery/ffmpeg.mjs')).findFfmpeg(); } catch { ffmpeg = null; }
 const ffprobe = ffmpeg ? ffmpeg.replace(/ffmpeg(\.exe)?$/i, (m) => (m.toLowerCase().endsWith('.exe') ? 'ffprobe.exe' : 'ffprobe')) : null;
 const skip = ffmpeg && ffprobe && spawnSync(ffprobe, ['-version'], { windowsHide: true }).status === 0 ? false : 'ffmpeg / ffprobe not found on this machine';
 
-/** Annex B(起始码分隔)→ NAL 单元 */
+/** Annex B (start code delimited) → NAL units */
 function nalUnits(buf) {
   const starts = [];
   for (let i = 0; i + 3 <= buf.length; i++) {
@@ -114,7 +116,8 @@ test('real H.264: two segments of 15 frames each, after muxing ffprobe reads 30 
       '-x264-params', 'aud=1', '-pix_fmt', 'yuv420p', '-bsf:v', 'h264_mp4toannexb', '-f', 'h264', raw], { windowsHide: true });
     assert.equal(made.status, 0, String(made.stderr));
 
-    // 按访问单元分隔符(类型 9)切帧;参数集(7、8)抽出来拼 avcC,样本里只留图像数据,改成长度前缀
+    // Split frames by Access Unit Delimiter (type 9); extract parameter sets (7, 8) to construct
+    // avcC, keep only picture data in samples, convert to length-prefixed
     let sps = null, pps = null;
     const frames = [];
     let cur = null;
@@ -154,7 +157,7 @@ test('real H.264: two segments of 15 frames each, after muxing ffprobe reads 30 
     assert.equal(Number(stream.nb_read_frames), FRAMES);
     assert.equal(stream.r_frame_rate, `${FPS}/1`);
 
-    // 单独一段配上初始化段也解得出(播放器就是一段一段取的)
+    // A single segment paired with initialization segment can also be decoded (player fetches segment by segment)
     const one = path.join(tmp, 'one.mp4');
     fs.writeFileSync(one, Buffer.concat([Buffer.from(init), Buffer.from(segs[1])]));
     const p2 = spawnSync(ffprobe, ['-v', 'error', '-count_frames', '-select_streams', 'v:0', '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', one], { encoding: 'utf8', windowsHide: true });

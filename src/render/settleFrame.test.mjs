@@ -1,18 +1,30 @@
 /**
- * 最低一档的显示与单舞台「停下追一帧」页面一侧的单测(编号沿用 c10a 契约第 17 节的 C10A-L17-…;原文件 `c10a-l17-lowmem.test.mjs`,
- * 2026-10-22 随旧档位撤销改名,语义见 `product/platforms.md`「在线浏览器」的「最低一档」与「停下」):
+ * Unit test on the page side for lowest tier display and single-stage "settle and catch up one frame"
+ * (numbering follows C10A-L17-… in section 17 of c10a contract; original file `c10a-l17-lowmem.test.mjs`,
+ * renamed on 2026-10-22 when legacy tiers were removed, semantics in `product/platforms.md`
+ * under "Online browser" -> "Lowest tier" and "Stop"):
  *
- *   H1 全部按重卡(`allHeavy`):最低一档播放时不做任何即时渲染,所有卡(包括声明为 direct、实测很轻的)在每个位置都判重、整段进预渲染集合
- *   H2 分派表下发:`planDispatch.setPlanLowest` 打开后,父页显示用的这一份表(`currentPlan`,发给舞台)里所有卡判重;关上回到按成本记录
- *      (只有一个舞台时的判定的表另见 `c10-cost-plan.test.mjs`)
- *   S1 停下追一帧:直接定位的先、推帧卡要推的帧少的先;**不设时限**(2026-10-07 用户定),给了时限(测试与诊断)才截
- *   S2 给了时限而时限到了:还没画好的层维持兜底(记进 timedOut),没开始画的一并算;画好的记下耗时
- *   S3 本页跑不了的用户卡、素材效果卡不追:单列 skipped;有这一帧的预渲染结果就贴着,没有就是沙漏、等渲染节点
- *      (unsupported 占位,进显隐调度;2026-09-29 用户改语义)。同步来的用户卡没有定义也认
- *   S4 被新的跳转 / 播放打断:回 ok: false,没画的层照样算没画
- *   S5 舞台 RPC:settleLayers 不设时限时父页按上限 `SETTLE_RPC_CAP_MS` 判超时;给了时限按「它的时限 + 余量」,别的调用不变
+ *   H1 All treated as heavy cards (`allHeavy`): no on-demand render during playback in lowest tier;
+ *      all cards (including those declared direct or measured very light) are classified as heavy at
+ *      every position, entering prerender set for the entire clip
+ *   H2 Dispatch table distribution: when `planDispatch.setPlanLowest` is enabled, all cards in the table
+ *      used for parent page display (`currentPlan`, sent to stage) are classified as heavy; when disabled,
+ *      reverts to cost record
+ *      (for evaluation table with only a single stage, see also `c10-cost-plan.test.mjs`
+ *   S1 Settle and catch up one frame: direct positioning first, frame-push cards with fewer frames to push
+ *      first; **no time limit** (user decision, 2026-10-07), truncated only when a time limit is provided
+ *      (testing and diagnostics)
+ *   S2 Time limit provided and expired: layers not yet rendered maintain fallback (recorded in timedOut),
+ *      those not started rendering are counted together; record elapsed time for completed ones
+ *   S3 User cards and media effect cards that cannot run on this page are not caught up: listed separately
+ *      as skipped; pasted if prerender output for this frame exists, otherwise show hourglass and wait for
+ *      render node (unsupported placeholder, enters visibility scheduling; user changed semantics, 2026-09-29).
+ *      Synced user cards are recognized even without definitions
+ *   S4 Interrupted by new seek / playback: returns ok: false, unrendered layers are still counted as unrendered
+ *   S5 Stage RPC: when settleLayers has no time limit, parent page determines timeout by upper bound
+ *      `SETTLE_RPC_CAP_MS`; when time limit is provided, uses "its time limit + margin", other calls unchanged
  *
- * 跑:npm test -- src/render/settleFrame.test.mjs
+ * Run: npm test -- src/render/settleFrame.test.mjs
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import { test, mock } from "node:test";
@@ -31,12 +43,12 @@ const light = (id) => ({ identityKey: `key-${id}`, fps: FPS, device: "d", measur
 test("C10A-L17-H1 lowest tier dedupes all cards: ignores cost records and declarations, dedupes every position, the whole segment goes into the prerender set", () => {
   const clips = [{ id: "a", start: 0, end: 4 }, { id: "b", start: 1, end: 3 }, { id: "c", start: 2, end: 6 }];
   const p = project(clips);
-  const costs = [light("a"), light("b")];                     // a、b 实测很轻;c 没测过
+  const costs = [light("a"), light("b")];                     // a, b measured very light; c not tested
   const opts = { identityKeys: { a: "key-a", b: "key-b", c: "key-c" }, frameModes: { a: "direct", b: "stateful", c: "direct" } };
-  // 别的档:按实测与声明,三张都判轻
+  // Other tiers: all three classified as light based on measurement and declaration
   const normal = planPipelines(p, costs, FPS, opts);
   assert.deepEqual([...normal.prerenderSet], []);
-  // 最低一档:全部判重
+  // Lowest tier: all classified as heavy
   const low = planPipelines(p, costs, FPS, { ...opts, allHeavy: true });
   assert.deepEqual([...low.prerenderSet], ["a", "b", "c"]);
   for (const seg of low.segments) {
@@ -50,7 +62,8 @@ test("C10A-L17-H1 lowest tier dedupes all cards: ignores cost records and declar
 test("C10A-L17-H2 dispatch table: with the lowest tier on, every card in the table used by the parent page display is judged heavy (playback does not live render); off, it returns to the cost record", async () => {
   mock.module(srcUrl("editor/stageBridge.ts"), { exports: { frontStage: () => null, backStage: () => null } });
   mock.module(srcUrl("editor/costIdentity.ts"), { exports: { clipIdentityOf: () => ({ identityKeys: {}, frameModes: { a: "direct", b: "direct" } }) } });
-  // 夹具里的卡要在注册表里有定义:两边都没有定义的「未知卡片」不进分派表(2026-09-29 起,舞台不画它们)
+  // Cards in fixture must be defined in registry: "unknown cards" defined on neither side do not
+  // enter dispatch table (starting from 2026-09-29, the stage does not render them)
   (await import(srcUrl("kernel/registry.ts"))).registerCards(["a", "b"].map((id) => ({ id: `card-${id}`, name: id, defaults: {}, controls: [], frameMode: "direct", Component: () => null })));
   const d = await import(srcUrl("editor/planDispatch.ts"));
   d.resetPlanDispatch();
@@ -73,7 +86,7 @@ test("C10A-L17-H2 dispatch table: with the lowest tier on, every card in the tab
 
 const S = await import(srcUrl("render/settleFrame.ts"));
 
-/** 假时钟 + 每层要画多久(ms);`Infinity` = 画不完 */
+/** Fake clock + render duration for each layer (ms); `Infinity` = cannot finish rendering */
 function fakeDraw(costs) {
   let now = 0;
   const calls = [];
@@ -108,7 +121,8 @@ test("C10A-L17-S1 stop and catch up one frame: no timeout; direct-positioned car
   ];
   const { queue } = S.orderSettle(items);
   assert.deepEqual(queue.map((i) => i.clipId), ["d1", "d2", "short", "long"]);
-  // 推帧卡要推很久(原来 5 秒时限会截掉的):不设时限时一直画到全部画好,画好一层替换一层
+  // Frame-push card takes long to push (previously cut off by 5s limit): renders until all are done
+  // when no time limit is set, replacing layer by layer as each finishes rendering
   const f = fakeDraw({ d1: 5, d2: 5, short: 400, long: 120_000 });
   const r = await S.runSettle({ sec: 3, items, now: f.now, draw: f.draw });
   assert.equal(r.ok, true);
@@ -123,8 +137,8 @@ test("C10A-L17-S2 with a timeout given (tests, diagnostics) and the timeout reac
   const items = [
     { clipId: "d1", kind: "direct", frames: 0 },
     { clipId: "c1", kind: "catchup", frames: 30 },
-    { clipId: "c2", kind: "catchup", frames: 600 },      // 推到一半到时限
-    { clipId: "c3", kind: "catchup", frames: 900 },      // 轮不到
+    { clipId: "c2", kind: "catchup", frames: 600 },      // Time limit reached halfway through pushing
+    { clipId: "c3", kind: "catchup", frames: 900 },      // Never reached
   ];
   const f = fakeDraw({ d1: 10, c1: 1000, c2: 60_000, c3: 10 });
   const r = await S.runSettle({ sec: 8, items, timeoutMs: 5000, now: f.now, draw: f.draw });
@@ -133,7 +147,8 @@ test("C10A-L17-S2 with a timeout given (tests, diagnostics) and the timeout reac
   assert.deepEqual(r.timedOut, ["c2", "c3"], "c2 drew up to the timeout, c3 never started: both keep the placeholder");
   assert.deepEqual(f.calls, ["d1", "c1", "c2"], "No new layer starts drawing after the timeout");
   assert.equal(r.ms, 5000, "Elapsed time is capped at the timeout");
-  // 时限可调:同样的层,给 70 秒(夹到上界 60 秒)就都画完
+  // Adjustable time limit: for the same layers, giving 70s (clamped to 60s upper bound)
+  // finishes all rendering
   const g = fakeDraw({ d1: 10, c1: 1000, c2: 50_000, c3: 10 });
   const r2 = await S.runSettle({ sec: 8, items, timeoutMs: 70_000, now: g.now, draw: g.draw });
   assert.deepEqual(r2.timedOut, []);
@@ -159,7 +174,7 @@ test("C10A-L17-S3 user cards and media effect cards that cannot run on this mach
     const f = fakeDraw({ b: 100 });
     const r = await S.runSettle({ sec: 2, items, timeoutMs: 5000, now: f.now, draw: f.draw });
     assert.deepEqual(r.skipped, ["g", "u"], "Not caught up: the stage shows the prerender output, and if there is none it is an hourglass (the result comes from a render node; since 2026-10-21 there is no \"requires local PC render helper\")");
-    // 同步来的用户卡:本机没有定义,缺省判法查注册表的同步表
+    // Synced user card: no definition locally, default evaluation queries sync table in registry
     const R = await import(srcUrl("kernel/registry.ts"));
     R.setSyncedUserCards([{ id: "synced-card", name: "Synced card" }]);
     try {
@@ -173,7 +188,7 @@ test("C10A-L17-S3 user cards and media effect cards that cannot run on this mach
   } finally {
     H.setOnlineBrowserMode(false);
   }
-  // 桌面(不是在线浏览器模式)不拦
+  // Desktop (not online browser mode) does not block
   assert.equal(H.unsupportedHere("my-user-card", plainDef, isUser), false);
 });
 
@@ -189,7 +204,7 @@ test("C10A-L17-S4 interrupted by a new seek / playback: returns ok: false, undra
   assert.equal(r.reason, "superseded");
   assert.deepEqual(r.drawn.map((d) => d.clipId), ["a"]);
   assert.deepEqual(r.timedOut, ["b", "c"]);
-  // draw 自己回 aborted(舞台那一层被打断)同样收摊
+  // draw itself returns aborted (that layer interrupted on stage), likewise wrapping up
   const r2 = await S.runSettle({ sec: 1, items, timeoutMs: 5000, now: () => 0, draw: async () => "aborted" });
   assert.equal(r2.ok, false);
   assert.deepEqual(r2.timedOut, ["a", "b", "c"]);

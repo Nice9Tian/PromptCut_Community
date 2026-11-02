@@ -4,10 +4,12 @@
  * beginFrame capture rather than a DOM/unit-test stand-in. Evidence lives under
  * work/frame-scene-order and is safe to keep between runs.
  *
- * 仓库里没有「注册」函数，素材效果卡只能是文件：脚本先把那张不透明红色素材效果卡写成临时文件
- * `src/cards/user/__probe-opaque-red.tsx`（**写在 createServer 之前**，别和 vite 的
- * 文件发现抢时间），再用 `server.ssrLoadModule` 加载、包成 `getCard` 传给
- * `applyCardDefinition`（`ssrLoadModule` 回的是模块命名空间，不是函数）。跑完删掉。
+ * There is no "register" function in the repository, so media effect cards can only be files: the
+ * script first writes that opaque red media effect card to a temporary file
+ * `src/cards/user/__probe-opaque-red.tsx` (**written before createServer** to avoid racing vite's
+ * file discovery), then loads it with `server.ssrLoadModule`, wraps it into `getCard`, and passes it
+ * to `applyCardDefinition` (`ssrLoadModule` returns a module namespace, not a function). Deleted
+ * after the run.
  */
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -42,7 +44,8 @@ fsSync.mkdirSync(path.dirname(cardFile), { recursive: true });
 fsSync.writeFileSync(cardFile, CARD_SOURCE);
 
 process.env.PROMPTCUT_ROLE = "prerender";
-// 端口可以用 PC_VERIFY_PORT 换掉:同一台机器上并行跑几个验证脚本时别互相抢
+// Port can be overridden with PC_VERIFY_PORT: avoid collisions when running multiple verification
+// scripts in parallel on the same machine
 const port = Number(process.env.PC_VERIFY_PORT) || 5203, origin = `http://127.0.0.1:${port}`;
 const output = path.join(root, "work", "frame-scene-order");
 await fs.mkdir(output, { recursive: true });
@@ -63,7 +66,7 @@ let bakery;
 try {
   await server.listen();
   const mod = await server.ssrLoadModule(`/src/cards/user/${CARD_ID}.tsx`);
-  // ssrLoadModule 回的是模块命名空间,不是函数 —— 取出里面那个 CardDef 再包成 getCard
+  // ssrLoadModule returns a module namespace, not a function: extract CardDef inside and wrap it as getCard
   const definition = Object.values(mod).find((value) => value && typeof value === "object" && value.id === CARD_ID);
   assert.ok(definition, `The temporary media effect card does not export a CardDef with id ${CARD_ID}`);
   const getCard = (id) => (id === definition.id ? definition : undefined);
@@ -80,8 +83,9 @@ try {
     return bytes;
   };
 
-  // 素材效果卡片段排在 DOM 卡之前时必须待在它下面。反过来必须是不透明的红 ——
-  // 层序来自 tr.clips,不是「素材效果卡一律排在 Stage 前面」那种固定桶。
+  // A media effect card clip must stay below a DOM card when ordered before it. In reverse, it must
+  // be opaque red: layer order comes from tr.clips, not a fixed bucket like "media effect cards are
+  // always ordered in front of Stage".
   const graphFirst = makeGraph("graph-first");
   graphFirst.tracks[0].clips.push(native);
   const first = center(await capture("graph-before-native", graphFirst));
@@ -101,9 +105,10 @@ try {
   assert.ok(!same(cacheBelow, blue), `native card was not above earlier cache: ${cacheBelow}`);
 
   /*
-   * 三维素材效果卡的透视挂在**包裹层的父元素**上,不在包裹层自己身上:`Stage` 把 perspective
-   * 写在 `AnimClock` 那一层(`Stage.tsx` 的 `<AnimClock style={{ perspective }}>`),
-   * `[data-pc-clip]` 是它的孩子。perspective 不继承,所以量包裹层自己恒为 "none"。
+   * Perspective of 3D media effect cards is attached to the **parent element of the wrapper layer**,
+   * not on the wrapper layer itself: `Stage` writes perspective at the `AnimClock` layer
+   * (`<AnimClock style={{ perspective }}>` in `Stage.tsx`), and `[data-pc-clip]` is its child.
+   * perspective is not inherited, so measuring the wrapper layer itself always yields "none".
    */
   const threeD = makeGraph("graph-3d", { x: 320, y: 180, w: 260, h: 160, anchor: [0.5, 0.5], rotateY: 35 });
   threeD.camera3dFov = 40;

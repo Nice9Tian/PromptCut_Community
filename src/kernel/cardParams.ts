@@ -2,16 +2,18 @@ import type { CardDef, Control } from "./types";
 import { allCards } from "./registry.ts";
 
 /**
- * 卡片参数的校验。
+ * Validation for card parameters.
  *
- * 为什么需要它:clip.params 是稀疏覆盖层,渲染时才和 CardDef.defaults 合并
- * (见 Stage.tsx)。这个设计让「不写的参数用默认值」很自然,但也意味着
- * **参数写错了不会报错** —— 键名拼错就当没写、缺了关键参数就播默认值。
- * 字幕轨曾经因此把三行演示文案当成用户字幕播出去,而没有任何一处报错。
+ * Why it is needed: clip.params is a sparse overlay layer, merged with CardDef.defaults only
+ * during rendering (see Stage.tsx). This design makes "unspecified parameters use defaults" very
+ * natural, but also means **incorrect parameters will not throw errors**: misspelled key names are
+ * treated as unwritten, and missing key parameters play defaults. The caption track once played
+ * three lines of demo copy as user captions because of this, without throwing an error anywhere.
  *
- * 所以在 MCP 这一层(AI 建卡改卡的必经之路)把错误挡住:键名不认识、
- * 必填项为空、select 取值不在选项里 —— 都直接抛错并告诉它正确的取值,
- * 让 AI 当场知道错在哪,而不是等用户看画面才发现。
+ * So errors are blocked at the MCP layer (the required path for AI card creation and edits):
+ * unrecognized key names, empty required fields, select values not in options: all throw errors
+ * directly and indicate the correct values, letting the AI know immediately where the error is
+ * rather than waiting for the user to notice on screen.
  */
 
 export function findCard(cardId: string): CardDef<any> {
@@ -23,7 +25,10 @@ export function findCard(cardId: string): CardDef<any> {
   return card;
 }
 
-/** 控件是否算「填了东西」。空串和纯空白都算没填。 */
+/**
+ * Whether a control is considered to have "filled-in content". Empty strings and pure whitespace
+ * both count as unfilled.
+ */
 function isFilled(value: unknown): boolean {
   if (value === undefined || value === null) return false;
   if (typeof value === "string") return value.trim() !== "";
@@ -39,14 +44,15 @@ function describeControl(c: Control): string {
 }
 
 /**
- * 校验一次参数写入。
+ * Validate a parameter write.
  *
- * @param patch     这次要写进去的参数(稀疏)
- * @param existing  clip 上已有的参数;新建卡时留空
- * @returns         合并了 defaults 和 existing 之后的完整参数,供调用方参考
+ * @param patch     Parameters to write this time (sparse)
+ * @param existing  Existing parameters on clip; empty when creating a new card
+ * @returns         Complete parameters after merging defaults and existing, for caller reference
  *
- * 校验的是**合并后**的结果:改一张已经填好 lines 的字幕卡的颜色时,
- * 不该因为这次 patch 里没带 lines 就报「必填项为空」。
+ * Validates the **merged** result: when changing the color of a caption card that already has lines
+ * filled in, it should not report "required field cannot be empty" just because this patch omits
+ * lines.
  */
 export function validateCardParams(
   cardId: string,
@@ -60,7 +66,8 @@ export function validateCardParams(
   for (const [key, value] of Object.entries(patch || {})) {
     const control = known.get(key);
     if (!control) {
-      // 键名写错是最常见的静默失败:合并时它只是多出来的一项,谁也不读。
+      // Misspelled key names are the most common silent failure: during merging it is merely an extra
+      // entry that nobody reads.
       problems.push(`Parameter "${key}" is not a parameter of ${cardId}. It accepts: ${card.controls.map(describeControl).join(", ")}`);
       continue;
     }

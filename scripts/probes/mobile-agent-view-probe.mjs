@@ -1,21 +1,34 @@
 /**
- * 手机版 Agent 分页「对话页怎么画」的验收探针(配合 `mobile-agent-probe.mjs`:那支在真页面上测开始页、引用、标签,这支用假消息测对话页的画法)。
- * 不接云端、不接项目:`src/mobile/agent-harness.tsx` 把对话页(`AgentChatView`)和标签行单独画出来,vite 中间件模式服务它;
- * 同尺寸(375×812、触屏)打开演示稿 `prototypes/mobile-ui-demo/` 的 Agent 页并排对照。
+ * Acceptance check probe for mobile app Agent tab "How chat view is rendered" (paired with
+ * `mobile-agent-probe.mjs`: that one tests start page, quotes, and tabs on real pages; this one
+ * tests how chat view is rendered using mock messages).
+ * No cloud connection, no project connection: `src/mobile/agent-harness.tsx` renders the chat view
+ * (`AgentChatView`) and tab row in isolation, served via vite middleware mode;
+ * Opens the Agent page of demo `prototypes/mobile-ui-demo/` at the same dimensions (375×812,
+ * touchscreen) for side-by-side comparison.
  *
- *   node scripts/probes/mobile-agent-view-probe.mjs [--out <截图目录>] [--port 5985]
+ *   node scripts/probes/mobile-agent-view-probe.mjs [--out <screenshot directory>] [--port 5985]
  *
- * 验收(每项一行进最后那行 JSON 的 `fails`):
- *   V1 我的气泡靠右、Agent 的气泡靠左、气泡最宽 88%;消息开头的引用画成标记(「@ 名字」),只读、没有 ✕;
- *   V2 操作卡片:「Agent 操作」标签 + 「第 N 轮 · M 项操作」,最新一轮与在跑的一轮默认展开、旧的一轮折叠,点标题能折起 / 展开;
- *      条目状态:完成(绿)、失败(红)、在做(青蓝在闪)、还没做(灰);小结的已完成 / 待办 / 问题变成卡片里的行;
- *   V3 还在跑的一轮末尾有三点「正在做什么」;出错的一轮显示原因;云端还没收下的消息显示发送状态;
- *   V4 引用标记条:在输入框上方、底边 ≤ 输入框顶边,尺寸同演示稿(标记高、✕ 18×18);带引用时输入框的提示是「@名字 想怎么改?」;
- *   V5 开始页:刚进项目有光点 + 箭头(减少动态效果时动画关掉),输入框带引导描边;点预设后发送钮带引导;手动清空后没有光点和箭头;
- *   V6 对话标签行:每个会话标签都有 ✕;忙着的会话有闪动的小点;长标题被截断不撑宽;没有会话时只有一项「开始」没有 ✕;
- *   V7 发送钮:在跑且输入框空时换成停止钮;
- *   V8 375 宽无横向溢出,没有页面报错。
- * 截图:`view-*.png`,与演示稿并排的 `side-view-*.png`。结果最后一行是一行 JSON(`ok`、`fails`、各项数字)。
+ * Acceptance check (each failure enters `fails` in the final JSON line as one item per line):
+ *   V1 My bubble aligned right, Agent bubble aligned left, max bubble width 88%; quotes at message
+ *      start rendered as badge ("@ name"), read-only, no ✕;
+ *   V2 Operation card: "Agent operations" label + "Round N · M operations", latest round and active
+ *      round expanded by default, earlier rounds collapsed, clicking title toggles collapse / expand;
+ *      Item status: completed (green), failed (red), in progress (cyan flashing), not started (gray);
+ *      summary completed / pending / issues become rows in the card;
+ *   V3 Three dots "what it is currently doing" at end of running round; failed round displays reason;
+ *      messages not yet accepted by cloud show sending status;
+ *   V4 Quote bar: above input box, bottom edge ≤ input box top edge, dimensions match demo (badge
+ *      height, ✕ 18×18); when quote present, input box placeholder is "@name how would you like to edit?";
+ *   V5 Start page: upon entering project, has light dot + arrow (animation turned off when reduce
+ *      motion is enabled), input box has guide outline; after clicking preset, send button has guide;
+ *      after manual clearing, no light dot and arrow;
+ *   V6 Chat tab row: each session tab has ✕; busy sessions have flashing dot; long titles truncated
+ *      without expanding width; when no sessions, only one "Start" item without ✕;
+ *   V7 Send button: swapped to stop button when running and input box is empty;
+ *   V8 No horizontal overflow at 375 width, no page errors.
+ * Screenshots: `view-*.png`, side-by-side `side-view-*.png` with demo. Final line of results is a
+ * single line of JSON (`ok`, `fails`, each metric).
  */
 import http from 'node:http';
 import fs from 'node:fs';
@@ -25,7 +38,8 @@ import net from 'node:net';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import puppeteer from 'puppeteer';
 import { createServer as createViteServer } from 'vite';
-// 这台 vite 不走 vite.config.ts，别名要自己挂（漏了的话浏览器侧 transform 500，页面打不开）
+// This vite instance does not use vite.config.ts, aliases must be attached manually (if omitted,
+// browser-side transform 500, page fails to open)
 import { cloudSeamsPlugin } from '../../server/vite-plugin-cloud-seams.ts';
 import react from '@vitejs/plugin-react';
 import { PNG } from 'pngjs';
@@ -119,7 +133,7 @@ try {
   const rects = (sel) => A.evaluate((s) => [...document.querySelectorAll(s)].map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height, r: r.right, b: r.bottom }; }), sel);
   const shot = (name) => A.screenshot({ path: path.join(OUT, `${name}.png`) });
 
-  /* ================================================================ V1~V3 对话 */
+  /* ================================================================ V1~V3 chat */
   await render({ ...base, messages: MSGS });
   await shot('view-chat');
   {
@@ -143,7 +157,7 @@ try {
     out.V2 = cards;
     check(cards.length === 2 && cards[0].tag === 'Agent actions' && cards[0].title === 'Agent actions round 1 · 4 actions' && cards[1].title === 'Agent actions round 2 · 2 actions', 'V2 action card: "Agent actions" + round N · M actions', cards.map((c) => c.title));
     check(cards[1].open === true && cards[0].open === false, 'V2 the running round (the latest) is expanded by default, the older round is collapsed', cards.map((c) => c.open));
-    // 点标题展开旧的一轮
+    // Click title to expand an earlier round
     const sum0 = (await rects('[data-pcm="ops-card"] summary'))[0];
     await A.touchscreen.tap(sum0.x + 40, sum0.y + sum0.h / 2);
     await sleep(300);
@@ -165,7 +179,7 @@ try {
     check(typing.dots === 3 && typing.text === 'Reading the current timeline and the clip you referenced', 'V3 the round still running ends with three dots and "what it is doing now"', typing);
     await shot('view-chat-open');
   }
-  // 出错、发送状态
+  // Errors, sending status
   await render({ ...base, messages: [
     { id: 'u1', role: 'user', text: 'Hello', sendState: 'sending' },
     { id: 'u2', role: 'user', text: 'One more', sendState: 'accepted' },
@@ -182,7 +196,7 @@ try {
     await shot('view-chat-states');
   }
 
-  /* ================================================================ V4 引用标记条 */
+  /* ================================================================ V4 quote bar */
   await render({ ...base, quotes: [{ id: 'c-9', label: 'beach-run.mp4' }] });
   await shot('view-quote');
   {
@@ -191,7 +205,7 @@ try {
     out.V4 = { bar, ta, chip, x, ph };
     check(bar && ta && bar.b <= ta.y + 0.5, 'V4 quote chip bar is above the input box', { bar, ta });
     check(ph === '@Beach run.mp4 how do you want to change it?', 'V4 with a quote, the input placeholder is "@name how do you want to change it?"', ph);
-    // 演示稿在 prototypes/,社区版没有
+    // Demo is under prototypes/, not in community edition
     if (fs.existsSync(DEMO)) {
       const D = await phone();
       await D.goto(pathToFileURL(DEMO).href, { waitUntil: 'load' });
@@ -210,7 +224,7 @@ try {
     }
   }
 
-  /* ================================================================ V5 开始页 */
+  /* ================================================================ V5 start page */
   const startBase = { ...base, tabs: [{ id: 't0', title: 'Agent 1', draft: true }], activeId: 't0', messages: [], draft: true };
   await render({ ...startBase, animated: true, guide: 'input' });
   await shot('view-start');
@@ -236,7 +250,7 @@ try {
     check(!st.orb && !st.cue && !st.guide && st.preset && st.input && st.title === 'Start', 'V5 after manual clear: no orb or arrow, no guide outline, only the presets and the input box', st);
     await shot('view-start-cleared');
   }
-  // 减少动态效果:动画全关,只留静态描边
+  // Reduce motion: all animations off, only static outline remains
   await A.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
   await render({ ...startBase, animated: true, guide: 'input' });
   {
@@ -246,7 +260,7 @@ try {
   }
   await A.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
 
-  /* ================================================================ V6 标签行 */
+  /* ================================================================ V6 Tab row */
   await render({ ...base, tabs: [{ id: 't1', title: 'Agent 1', busy: true }, { id: 't2', title: 'Cut1->Track2 this scope name is very very long long long long long' }, { id: 't3', title: 'Agent 3' }], messages: [] });
   {
     const st = await A.evaluate(() => ({
@@ -266,7 +280,7 @@ try {
     check(st.length === 1 && st[0].t === 'Start' && !st[0].x && st[0].draft === '1', 'V6 with no sessions there is only one item, "Start", and no ✕', st);
   }
 
-  /* ================================================================ V7 停止钮 */
+  /* ================================================================ V7 Stop button */
   await render({ ...base, streaming: true, inputText: '' });
   {
     const st = await A.evaluate(() => ({ stop: !!document.querySelector('[data-pcm="chat-stop"]'), send: !!document.querySelector('[data-pcm="chat-send"]') }));
@@ -279,7 +293,7 @@ try {
     check(!st.stop && st.send, 'V7 while running with text in the input box: still the send button (queued send)', st);
   }
 
-  /* ================================================================ V8 溢出与报错 */
+  /* ================================================================ V8 Overflow and error */
   for (const [label, s] of [['chat', base], ['quote', { ...base, quotes: [{ id: 'c-9', label: 'A very very very very very very very very long media name.mp4' }] }], ['start', { ...startBase, animated: true }]]) {
     await render(s);
     const w = await A.evaluate(() => ({ doc: document.documentElement.scrollWidth, pcm: document.querySelector('.pcm').scrollWidth, vw: innerWidth }));

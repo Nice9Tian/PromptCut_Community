@@ -1,27 +1,41 @@
 /**
- * 舞台源跨文档通道守卫(`scopeGuard.ts`、`harden.ts` 的 6c/6d 步)与换项目重建舞台 iframe 在真实无头 Chrome 里的核对。
- * 不进 `npm test`(文件名不是 `*.test.mjs`)。
+ * Verification in real headless Chrome of stage origin cross-document channel guards
+ * (`scopeGuard.ts`, steps 6c/6d of `harden.ts`) and stage iframe rebuilding on project switch.
+ * Not included in `npm test` (filename is not `*.test.mjs`).
  *
- * 搭法:本机两个端口,`127.0.0.1:<port>` 当编辑页,`localhost:<port+1>` 当舞台源(带在线舞台同一份内容安全策略
- * `stageCspHeader` 与 `Origin-Agent-Cluster`),舞台 iframe 带 `sandbox="allow-scripts allow-same-origin"`,与在线页面相同。
- * `harden.ts` 与 `scopeGuard.ts` 用 rolldown 打成压缩过的 iife 送进舞台(核守卫经压缩后仍自足),由编辑页把一段段「卡片代码」送进舞台执行。
+ * Setup: two ports on this machine, `127.0.0.1:<port>` as editor page, `localhost:<port+1>` as stage
+ * origin (carrying the same Content Security Policy `stageCspHeader` and `Origin-Agent-Cluster` as
+ * the online stage); stage iframe has `sandbox="allow-scripts allow-same-origin"`, identical to
+ * online pages. `harden.ts` and `scopeGuard.ts` are bundled with rolldown into a minified IIFE and
+ * sent into the stage (verifying the guard remains self-contained after minification), with the editor
+ * page sending snippets of "card code" into the stage for execution.
  *
- * 核:装上加固之后
- *   - 卡片不能自己起后台线程:无论用本页建的 blob 地址(经典脚本或模块)、同源脚本、`data:`、撤销了的 blob,
- *     还是经 `Worker.prototype.constructor`、`class extends Worker`、`Reflect.construct`,一律抛 `PromptCut 舞台:不能起后台线程`;
- *   - 舞台运行时自己的专用后台线程(经模块闭包的 `spawnRuntimeWorker` 起,同 `spawnGlWorker` / `spawnSoundWorker`)照常跑;
- *   - 声音线程入口先后调 `denyPersistentStorage(self)` 与 `installScopeGuard(self)` 不报错,里面 IndexedDB、Cache Storage、
- *     源私有文件系统、BroadcastChannel、SharedWorker、再起 Worker 全部收走或拒绝,Web Locks 照常按前缀隔离;
- *   - `window.name` 在重载前写的,重载后是空的;没装加固时写进去的,装上加固时清掉;
- *   - 原地换项目时重建舞台 iframe 元素(对应 `Preview.tsx` 的 `stageFrameGen` key):即使上一个项目的卡片改过 `location.search` /
- *     `location.hash` 在旧 iframe 里留下了会话历史条目,重建后的新 iframe 是全新浏览上下文(`history.length === 1`、`entries` 只有新条目、
- *     `activation.from === null`),后退也不会回到上一个项目留下的地址;
- *   - BroadcastChannel、SharedWorker 在文档里没有;`cookieStore.set` 拒绝;
- *   - 锁名按文档隔开:别的文档看不见、占不住本文档的锁;
- *   - 别的文档写真实 localStorage 的 storage 事件收不到;`navigator.storage.persist()` 回 false。
- * 另有对照:没装加固的舞台文档里同样的写法能起线程、能存、能广播、锁名看得见(证明这些检查能测出泄漏)。
+ * Verification: after hardening is installed:
+ *   - Cards cannot spawn background threads themselves: whether using blob URLs created on this page
+ *     (classic scripts or modules), same-origin scripts, `data:`, or revoked blobs, or via
+ *     `Worker.prototype.constructor`, `class extends Worker`, or `Reflect.construct`, all throw
+ *     `PromptCut stage: cannot spawn background threads`;
+ *   - Stage runtime's own dedicated background threads (spawned via module closure `spawnRuntimeWorker`,
+ *     like `spawnGlWorker` / `spawnSoundWorker`) run as usual;
+ *   - Sound thread entry calls `denyPersistentStorage(self)` and then `installScopeGuard(self)` without
+ *     errors, where IndexedDB, Cache Storage, Origin Private File System, BroadcastChannel,
+ *     SharedWorker, and spawning further Workers are all revoked or rejected, and Web Locks are
+ *     isolated by prefix as usual;
+ *   - Values written to `window.name` before reload are empty after reload; values written when
+ *     hardening was not installed are cleared when hardening is installed;
+ *   - Stage iframe element rebuilding on in-place project switch (corresponding to `stageFrameGen` key
+ *     in `Preview.tsx`): even if previous project cards modified `location.search` / `location.hash`
+ *     leaving session history entries in the old iframe, the rebuilt new iframe is a brand-new
+ *     browsing context (`history.length === 1`, `entries` contains only new entry,
+ *     `activation.from === null`), and navigating back will not return to URLs left by previous project;
+ *   - BroadcastChannel and SharedWorker are absent in document; `cookieStore.set` rejects;
+ *   - Lock names are isolated per document: other documents cannot see or acquire locks of this document;
+ *   - Storage events from other documents writing to real localStorage are not received;
+ *     `navigator.storage.persist()` returns false.
+ * Also includes controls: in stage documents without hardening, the same patterns can spawn threads,
+ * store data, broadcast, and see lock names (proving that these checks detect leaks).
  *
- * 跑:node src/online/isolation/scopeGuard.browser-check.mjs [--port 6440] [--no-minify]
+ * Run: node src/online/isolation/scopeGuard.browser-check.mjs [--port 6440] [--no-minify]
  */
 import http from 'node:http';
 import fs from 'node:fs';
@@ -44,7 +58,7 @@ const STAGE = `http://localhost:${PORT + 1}`;
 let pass = 0; const fails = [];
 const check = (label, ok, detail) => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${detail === undefined ? '' : `  [${typeof detail === 'string' ? detail : JSON.stringify(detail)}]`}`); if (ok) pass++; else fails.push(label); };
 
-/* ---------- 打包 ---------- */
+/* ---------- Bundle ---------- */
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-scope-guard-'));
 async function bundle(input, name) {
   const b = await rolldown({ input, platform: 'browser', logLevel: 'silent' });
@@ -84,7 +98,7 @@ const s = installScopeGuard(self, { strict: true });
 const HARDEN_JS = await bundle(hardenEntry, 'PCH');
 const DPS_JS = await bundle(dpsEntry, 'PCD');
 
-/* ---------- 舞台页里的代理:记下载入时的原始状态,执行编辑页送来的代码 ---------- */
+/* ---------- Proxy in stage page: records original state at load time, executes code sent from editor page ---------- */
 const AGENT_JS = `
 (() => {
   const raw = { name: window.name, state: history.state, hash: location.hash, search: location.search, href: location.href, historyLength: history.length,
@@ -157,11 +171,12 @@ try {
   const call = async (id, code) => { const r = await page.evaluate((i, c) => window.callFrame(i, c), id, code); if (r.error) throw new Error(`${id}: ${r.error}`); return r.value; };
   const raw = (id, n) => page.evaluate((i, k) => window.loads[i][k], id, n);
 
-  // A、C:装加固的舞台;D:没装加固的对照(同一个源)
+  // A, C: stages with hardening installed; D: control without hardening (same origin)
   for (const id of ['A', 'C', 'D']) await page.evaluate((i) => window.addFrame(i), id);
   for (const id of ['A', 'C', 'D']) check(`Stage ${id} loaded`, await waitLoad(id, 1));
 
-  // A 先在没装加固时往 window.name 里写(模拟旧文档留下的东西),整页重载后再装
+  // A first writes to window.name before hardening is installed (simulating leftovers from old
+  // documents), then installs after full-page reload
   await call('A', `window.name = 'pre-leak-sid'; return window.name;`);
   await page.evaluate(() => window.reloadFrame('A'));
   check('A reload (window.name written before hardening)', await waitLoad('A', 2));
@@ -174,7 +189,7 @@ try {
   console.log(`      scopeGuarded: ${repA.scopeGuarded.join(', ')}`);
   check('Installing hardening cleared the real window.name', await call('A', `return window.name;`) === '');
 
-  /* ---------- 文档里的通道 ---------- */
+  /* ---------- Channels in document ---------- */
   const docChannels = `return { BC: typeof BroadcastChannel, SW: typeof SharedWorker, idb: typeof indexedDB, caches: typeof caches, sharedStorage: typeof window.sharedStorage,
     workerFn: typeof Worker, ctorOk: Worker.prototype.constructor === Worker };`;
   const dA = await call('A', docChannels);
@@ -193,7 +208,7 @@ try {
   const persist = await call('A', `return { persist: await navigator.storage.persist(), estimate: typeof (await navigator.storage.estimate()).quota };`);
   check('navigator.storage.persist() returns false, estimate unchanged', persist.persist === false && persist.estimate === 'number', persist);
 
-  /* ---------- 后台线程:卡片不能起,运行时专用线程照常起,声音线程装守卫 ---------- */
+  /* ---------- Background threads: cards cannot spawn, runtime dedicated threads spawn as usual, sound thread installs guard ---------- */
   const cardWorkerAttempts = await call('A', `const out = {};
     const tryW = (k, f) => {
       try { f(); out[k] = 'constructed'; }
@@ -243,7 +258,7 @@ try {
     dps.t === 'dps' && dps.errors.length === 0 && dps.idb === 'undefined' && dps.caches === 'undefined' && dps.BC === 'undefined' && dps.SW === 'undefined'
     && dps.opfs === 'denied' && dps.idbOpen === 'denied' && /PromptCut stage: cannot start background thread/.test(dps.subWorker) && dps.locks === 'pc-sound-probe', dps);
 
-  /* ---------- 锁名 ---------- */
+  /* ---------- Lock names ---------- */
   await call('A', `navigator.locks.request('sid-lock-0123', () => new Promise(() => {})); await new Promise((r) => setTimeout(r, 100)); return 1;`);
   const lockA = await call('A', `const q = await navigator.locks.query();
     const own = await navigator.locks.request('sid-lock-0123', { ifAvailable: true }, (l) => l ? 'got' : 'blocked');
@@ -256,7 +271,7 @@ try {
   const lockD = await call('D', `const q = await navigator.locks.query(); return q.held.map((l) => l.name);`);
   check('Control (no hardening): the real lock name carries the document prefix, not the name the card chose', lockD.some((n) => /^pc-[0-9a-f]{32}:sid-lock-0123$/.test(n)) && !lockD.includes('sid-lock-0123'), lockD);
 
-  /* ---------- storage 事件 ---------- */
+  /* ---------- storage events ---------- */
   for (const id of ['C', 'D']) await call(id, `window.__se = []; addEventListener('storage', (e) => window.__se.push(e.key)); window.onstorage = (e) => window.__se.push('on:' + e.key); return 1;`);
   await call('A', `localStorage.setItem('pc.playable.1:' + 'a'.repeat(64), '1'); return 1;`);
   await sleep(600);
@@ -264,7 +279,7 @@ try {
   check('Another document writes real localStorage: the hardened document receives no storage event', seC.length === 0, seC);
   check('Control (no hardening): it is received', seD.length > 0, seD);
 
-  /* ---------- 重载与换项目重建 iframe:window.name、history.state、location.hash、会话历史 ---------- */
+  /* ---------- Reload and stage iframe rebuild on project switch: window.name, history.state, location.hash, session history ---------- */
   const before = await call('A', `window.name = 'leak-sid-A'; history.pushState({ sid: 'leak-sid-A' }, '', '?sid=leak-sid-A'); location.hash = '#leak-sid-A';
     const out = { name: window.name, state: history.state, search: location.search, hash: location.hash, nav: typeof navigation, len: history.length };
     history.back(); history.go(-1); await new Promise((r) => setTimeout(r, 300)); out.stillHere = location.hash; return out;`);
@@ -282,8 +297,9 @@ try {
   const afterInstall = await call('A', install.replace('return {', 'return { nav: typeof navigation, len: history.length,'));
   check('A: hardening installed again after reload: no errors, no navigation', afterInstall.errors.length === 0 && afterInstall.nav === 'undefined', afterInstall.errors.join('; '));
 
-  // 原地换项目重建舞台 iframe(对应 Preview.tsx 的 stageFrameGen key):
-  // 先让项目 A 的卡片自导航改 location.search(往旧 iframe 会话历史里塞一条带路径号的记录),再按换项目的做法重建 iframe 元素
+  // Rebuild stage iframe element on in-place project switch (corresponding to stageFrameGen key in Preview.tsx):
+  // First have card in project A self-navigate to change location.search (inserting an entry with
+  // path id into old iframe session history), then rebuild iframe element per project switch procedure
   const loadsBeforeNav = await loads('A');
   await call('A', `setTimeout(() => { location.search = '?f=A&sid=leak-from-project-A'; }, 10); return 1;`);
   check('A: loaded after the card navigated itself by changing location.search', await waitLoad('A', loadsBeforeNav + 1));
@@ -305,7 +321,7 @@ try {
   check('After recreating the stage iframe on project switch, browser back: the new iframe does not go back to the address changed by the old project\'s card',
     !afterBack.href.includes('leak-from-project-A') && afterBack.search === '?f=A' && afterBack.hash === '', afterBack);
 
-  // 对照:没装加固的 D 同样写,看哪些会留下
+  // Control: D without hardening writes the same way to see which remain
   await call('D', `window.name = 'ctl'; history.replaceState({ sid: 'ctl' }, ''); navigation.updateCurrentEntry({ state: { sid: 'ctl-nav' } }); location.hash = '#ctl'; return 1;`);
   await page.evaluate(() => window.reloadFrame('D'));
   check('D: reload', await waitLoad('D', 2));
@@ -314,12 +330,14 @@ try {
   check('Control: without hardening, window.name persists (this channel really exists)', ctl.name === 'ctl', ctl.name);
   check('Control: without hardening, the new document can read the previous document\'s address hash and state via navigation.activation.from (this channel really exists)',
     ctl.from && String(ctl.from.url).includes('#ctl') && ctl.from.state?.sid === 'ctl-nav', ctl.from);
-  // 地址带 # 载入的舞台文档(只可能是退回到上一个文档自己加的条目):装加固时去掉
+  // Stage documents loaded with # in URL (can only be navigating back to an entry added by
+  // previous document): stripped when installing hardening
   await page.evaluate(() => window.addFrame('E', '#leak-sid-E'));
   check('E: loaded', await waitLoad('E', 1));
   const hashE = await call('E', `const before = location.hash; PCH.installStageHardening({}); return { before, after: location.hash, href: location.href };`);
   check('Document loaded with #… in the address: stripped when hardening is installed', hashE.before === '#leak-sid-E' && hashE.after === '', hashE);
-  // 卡片自己 location.reload():history.state 会不会留(只影响同一个项目的同一个文档,记结论)
+  // When cards call location.reload() themselves: whether history.state persists (only affects same
+  // document in same project; records conclusion)
   await call('C', `history.replaceState({ sid: 'self-reload' }, ''); setTimeout(() => location.reload(), 10); return 1;`);
   check('C: reloads itself', await waitLoad('C', 2));
   const selfReload = await raw('C', 1);
@@ -329,7 +347,7 @@ try {
 } finally {
   await browser.close();
   for (const s of servers) s.close();
-  try { fs.rmSync(tmp, { recursive: true, force: true }); fs.rmSync(profile, { recursive: true, force: true }); } catch { /* 留着也无妨 */ }
+  try { fs.rmSync(tmp, { recursive: true, force: true }); fs.rmSync(profile, { recursive: true, force: true }); } catch { /* Harmless to keep */ }
 }
 console.log(`\nscopeGuard browser check (${MINIFY ? 'minified' : 'not minified'}): ${pass} passed, ${fails.length} failed`);
 if (fails.length) { for (const f of fails) console.log(`  FAILED: ${f}`); process.exitCode = 1; }

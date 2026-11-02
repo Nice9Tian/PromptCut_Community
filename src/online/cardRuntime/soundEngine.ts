@@ -1,14 +1,20 @@
 /**
- * 声音线程里求一段采样(`docs/plan/online-card-exec-contract.md` 3.5)。纯逻辑:不碰 Worker 的消息、不碰网络,
- * 所以声音线程(`soundWorker.ts`)与单测用同一份。
+ * Computes a sample range in the sound thread (`docs/plan/online-card-exec-contract.md` 3.5).
+ * Pure logic: does not touch Worker messages or the network, so the sound thread (`soundWorker.ts`)
+ * and unit tests share the same implementation.
  *
- * 同步来的用户卡与素材效果卡的 `audio()` 只在这里执行(舞台起的专用后台线程里)。求值照桌面那一套:
- * `projectCardGraph` 把项目摊成图 → `evaluateCardAudio` 找节点、调定义的 `audio(sources, range, params)`,上游素材效果卡递归。
+ * `audio()` of synced user cards and media effect cards runs only here (in the dedicated background
+ * thread spawned by the stage). Evaluation follows the desktop setup: `projectCardGraph` flattens
+ * the project into a graph → `evaluateCardAudio` finds nodes and calls defined
+ * `audio(sources, range, params)`, recursing into upstream media effect cards.
  *
- * 不做的(本期范围,见契约 3.5 与第 13 节第 4 条):
- *   - 读素材采样的输入(片段素材、素材节点):远程素材服务没有取采样块的路由,浏览器解码与桌面的 ffmpeg 不逐样本相同;
- *     这类节点求值前就拒掉,编辑页面那一侧本来也不会把它派过来(`cardAudio.ts` 的 `onlineCardAudioSynthesizable`);
- *   - 上游是内置卡的节点:声音线程里只有载入的同步卡,没有内置卡的定义(内置卡的模块一载入就要 DOM)。
+ * Excluded (current scope, see contract 3.5 and Section 13 Item 4):
+ *   - Inputs reading media samples (clip media, media nodes): remote asset service has no route
+ *     to fetch sample chunks, and browser decoding is not sample-identical to desktop ffmpeg;
+ *     such nodes are rejected before evaluation, and the editor page would not dispatch them
+ *     anyway (`onlineCardAudioSynthesizable` in `cardAudio.ts`);
+ *   - Nodes whose upstream is a built-in card: the sound thread only contains loaded synced cards,
+ *     not built-in card definitions (built-in card modules require DOM as soon as they load).
  */
 import type { CardDef } from "../../kernel/types.ts";
 import { projectCardGraph } from "../../kernel/cardGraph.mjs";
@@ -16,7 +22,7 @@ import { withMediaRates } from "../../kernel/clipTime.mjs";
 import { evaluateCardAudio, type AudioSourceContext } from "../../render/cards/audioSources.ts";
 
 export interface SoundRenderRequest {
-  /** 项目(时间轴、素材表、卡片图);同一个 `projectKey` 只传一次 */
+  /** Project (timeline, asset table, card graph); same `projectKey` is transferred only once */
   project: unknown;
   nodeId: string;
   start: number;
@@ -24,13 +30,13 @@ export interface SoundRenderRequest {
   sampleRate: number;
 }
 
-/** 一次最多求多少帧(同编辑页面 `CARD_AUDIO_MAX_BLOCK_FRAMES`) */
+/** Maximum frames computed per batch (same as editor page `CARD_AUDIO_MAX_BLOCK_FRAMES`) */
 export const SOUND_MAX_BLOCK_FRAMES = 1_048_576;
 export const SOUND_NEEDS_MEDIA = "This card needs to read the media's audio samples, which the online page cannot get";
 
 interface GraphNode { id: string; adapter?: string; cardId?: string; inputs?: Record<string, unknown> }
 
-/** 这个节点连同上游:全是有定义的素材效果卡节点才求得了;不行回原因 */
+/** This node and its upstream: computable only if all are defined media effect card nodes; returns reason on failure */
 export function soundBlocker(nodes: readonly GraphNode[], nodeId: string, getCard: (id: string) => CardDef<any> | undefined): string | null {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const seen = new Set<string>();
@@ -55,12 +61,12 @@ export function soundBlocker(nodes: readonly GraphNode[], nodeId: string, getCar
 
 export interface SoundEngine {
   render(req: SoundRenderRequest, signal?: AbortSignal): Promise<Float32Array>;
-  /** 卡片换代了:丢掉记着的图(图里有按旧定义算的默认参数与能力) */
+  /** Card generation changed: discard cached graph (graph contains default parameters and capabilities computed from old definitions) */
   reset(): void;
 }
 
 export function createSoundEngine(getCard: (id: string) => CardDef<any> | undefined): SoundEngine {
-  /** 最近一个项目的图(同一个项目对象连着求很多块) */
+  /** Graph of the most recent project (same project object computing multiple chunks consecutively) */
   let last: { project: unknown; ctx: AudioSourceContext } | null = null;
   return {
     reset() { last = null; },
@@ -68,7 +74,8 @@ export function createSoundEngine(getCard: (id: string) => CardDef<any> | undefi
       if (!req || typeof req.nodeId !== "string" || !Number.isSafeInteger(req.start) || !Number.isSafeInteger(req.count) || req.count < 1 || req.count > SOUND_MAX_BLOCK_FRAMES
         || !Number.isFinite(req.sampleRate) || req.sampleRate < 8000 || req.sampleRate > 192_000) throw new Error("Sound request is out of range");
       if (!last || last.project !== req.project) {
-        // 与编辑页面同一份图(`audio/cardAudio.ts` 的 audioGraphOf):变速素材段上的声画一体卡按卡片时钟走(kernel/clipTime.mjs 的 cardClockOffset)
+        // Same graph as editor page (audioGraphOf in `audio/cardAudio.ts`): audio-visual cards on
+        // speed-changed media clips follow card clock (cardClockOffset in kernel/clipTime.mjs)
         const graph = withMediaRates(req.project, projectCardGraph(req.project, getCard));
         last = { project: req.project, ctx: { graph, project: req.project as AudioSourceContext["project"], getCard, sampleRate: req.sampleRate } };
       }

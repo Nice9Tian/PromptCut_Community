@@ -1,18 +1,31 @@
 /**
- * 桌面应用自动成为共享项目的渲染节点:预渲染进程一侧的状态机(`server/auto-render-node.mjs`)与编辑器进程一侧的中转
- * (`server/render-node-relay.mjs`)。报告 `docs/archive/agent-reports/AGENT-desktop-auto-node.md`。
- * 跑:node --test server/test/auto-render-node.test.mjs
+ * Desktop app automatically becomes a render node for shared projects: state machine on the prerender
+ * process side (`server/auto-render-node.mjs`) and relay on the editor process side
+ * (`server/render-node-relay.mjs`). Report `docs/archive/agent-reports/AGENT-desktop-auto-node.md`.
+ * Run: node --test server/test/auto-render-node.test.mjs
  *
- *   ARN-01 开关与环境变量:缺省接;PROMPTCUT_AUTO_RENDER_NODE=0 / 无头 / PUSH=0 / host 档 / 环境变量已配节点 不接
- *   ARN-02 共享配置的校验(地址、项目 id、素材基址),错误信息里不带票据
- *   ARN-03 交接:起一次;第一次建会话用页面交来的票据,不向页面要
- *   ARN-04 票据往返:手里的不新鲜了才要;两条连接同时要只要一次;要到的票据缓存到快过期
- *   ARN-05 要不到票据(页面没了):protocols 抛错、状态「等页面」;页面回来(同项目再交接带票据)就续上,不重建
- *   ARN-06 同一个项目重复交接只换素材基址与项目文档 id,不重建;换了项目先撤旧的再起新的,旧链接失效
- *   ARN-07 撤掉:只撤同一个项目的;撤完状态回空;起步期间撤掉,起完就收
- *   RLY-01 中转:经 HMR 发 { type: 'ticket', reqId, projectId },页面交回就兑现;交回错误 / 不合格 → 失败
- *   RLY-02 没有页面连着 HMR:立即失败,不发;页面 10 秒没交回:超时失败;不认识的 reqId 不算
- *   RLY-03 配置记忆:不记票据;撤的时候给了项目 id 只撤同一个项目的
+ *   ARN-01 Switches and environment variables: connects by default; does not connect if
+ *          PROMPTCUT_AUTO_RENDER_NODE=0 / headless / PUSH=0 / host tier / node already configured via
+ *          environment variable
+ *   ARN-02 Shared configuration validation (address, project id, asset base URL), error messages do
+ *          not include tickets
+ *   ARN-03 Handoff: start once; first session creation uses ticket handed over by page, does not ask
+ *          page
+ *   ARN-04 Ticket round-trip: only request when current one is stale; request only once when two
+ *          connections request simultaneously; cache acquired ticket until near expiration
+ *   ARN-05 Ticket unobtainable (page is gone): protocols throws, state "waiting for page"; when page
+ *          returns (same project handoff with ticket), resume without recreating
+ *   ARN-06 Repeated handoffs for the same project only change asset base URL and project doc id,
+ *          without recreating; when switching projects, tear down old first then start new, old link
+ *          invalidated
+ *   ARN-07 Tear down: only tear down for the same project; state resets to empty after teardown; torn
+ *          down during startup, tear down once startup finishes
+ *   RLY-01 Relay: send { type: 'ticket', reqId, projectId } via HMR, fulfill once returned by page;
+ *          returned error / unqualified → failure
+ *   RLY-02 No page connected to HMR: fail immediately, do not send; page not returned in 10 s:
+ *          timeout failure; unrecognized reqId is ignored
+ *   RLY-03 Configuration retention: do not remember tickets; when tearing down with project id, only
+ *          tear down for the same project
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,7 +33,7 @@ import { autoRenderNodeOffReason, createAutoRenderNode, normalizeBinding, TICKET
 import { createBindingMemory, createTicketRelay } from '../render-node-relay.mjs';
 
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
-/** 形状对的假票据(只看有效期,不验签) */
+/** Well-shaped fake ticket (only checks expiration, does not verify signature) */
 const fakeTicket = (exp, tag = 'x') => `v1.${b64({ k: 'conn', r: 'render', p: 'P1', u: 'u@d', exp, iat: exp - 120_000, tag })}.sig${tag}`;
 const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r)); };
 
@@ -53,7 +66,7 @@ test('ARN-01 switch and environment variables', () => {
   assert.equal(autoRenderNodeOffReason({ PROMPTCUT_SHARED_CONFIG: 'x.json' }), 'env-configured');
   assert.equal(autoRenderNodeOffReason({ PROMPTCUT_QUEUE_NODE: '1' }), 'env-configured');
   assert.equal(autoRenderNodeOffReason({ PROMPTCUT_PUSH: '1' }), 'env-configured');
-  // 开关优先于其它
+  // Switch takes precedence over others
   assert.equal(autoRenderNodeOffReason({ PROMPTCUT_AUTO_RENDER_NODE: '0', PROMPTCUT_QUEUE_NODE: '1' }), 'disabled');
 });
 
@@ -95,7 +108,7 @@ test('ARN-04 ticket round trip: ask only when it is no longer fresh, ask only on
   h.ctl.bind(BIND, { ticket: fakeTicket(h.now() + 120_000, 'page') });
   await h.ctl.settled();
   const link = h.started[0];
-  h.advance(120_000 - TICKET_MIN_LEFT_MS + 1); // 页面那张只剩不到 30 s
+  h.advance(120_000 - TICKET_MIN_LEFT_MS + 1); // The one on the page has less than 30 s left
   const [a, b] = await Promise.all([link.protocols(), link.protocols()]);
   assert.equal(h.requests.length, 1, 'Two connections creating sessions at the same time ask the page only once');
   assert.deepEqual(a, b);
@@ -122,7 +135,7 @@ test('ARN-05 cannot get a ticket: wait for the page; when the page comes back, r
   assert.equal(n, 2);
   assert.equal(h.ctl.status().waitingPage, true);
   assert.equal(h.logs.filter((l) => l.event === 'render-node.waiting-page').length, 1, 'The log for waiting on the page does not flood the output');
-  // 页面回来:同一个项目再交接一次(带票据)
+  // Page returns: hand off the same project again (with ticket)
   const again = fakeTicket(h.now() + 120_000, 'back');
   assert.equal(h.ctl.bind(BIND, { ticket: again }).action, 'same');
   assert.equal(h.ctl.status().waitingPage, false);
@@ -140,15 +153,16 @@ test('ARN-06 same project: only swap the base URL and document id; for a differe
   const first = h.started[0];
   assert.equal(h.ctl.bind({ ...BIND, assetBase: 'https://other.example/api/asset', contentId: 'doc-2' }).action, 'same');
   assert.equal(first.assetBase(), 'https://other.example/api/asset');
-  // push-scope:link 上的 contentId 现取(推送与发布的范围按它判,页面晚交来的 id 要看得到)
+  // push-scope: contentId on link is fetched on demand (push and publish scope is determined by it;
+  // id handed over late from page must be visible)
   assert.equal(first.contentId, 'doc-2', 'The contentId on the link changes with a handoff within the same project');
   assert.equal(h.ctl.status().contentId, 'doc-2');
-  // 同项目但没给基址:沿用原来的
+  // Same project but no base URL provided: reuse the previous one
   h.ctl.bind({ url: BIND.url, projectId: 'P1' });
   assert.equal(first.assetBase(), 'https://other.example/api/asset');
   await h.ctl.settled();
   assert.equal(h.started.length, 1);
-  // 换项目
+  // Switch project
   assert.equal(h.ctl.bind({ ...BIND, projectId: 'P2' }).action, 'rebind');
   assert.equal(first.alive(), false, 'The old link is invalidated on the spot');
   await h.ctl.settled();
@@ -156,7 +170,7 @@ test('ARN-06 same project: only swap the base URL and document id; for a differe
   assert.equal(h.started.length, 2);
   assert.equal(h.started[1].projectId, 'P2');
   await assert.rejects(first.protocols(), /revoked/);
-  // 换文档服务地址也算换项目
+  // Changing document service address also counts as switching projects
   h.ctl.bind({ ...BIND, projectId: 'P2', url: 'ws://192.168.1.5:5190/docservice' });
   await h.ctl.settled();
   assert.equal(h.started.length, 3);
@@ -175,7 +189,7 @@ test('ARN-07 revoke: only revoke the same project\'s; if revoked during startup,
   assert.equal(h.started[0].alive(), false);
   assert.equal((await h.ctl.unbind({})).action, 'none');
 
-  // 起步期间撤掉
+  // Tear down during startup
   let release;
   h.gate(new Promise((r) => { release = r; }));
   h.ctl.bind(BIND, {});

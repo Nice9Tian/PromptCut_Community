@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-// 出错留痕:失败的一轮,「Agent 操作」面板不能只写「这一轮没有操作」,气泡里的原因要带 data-pc 以便探针取到
+// Error trail: on a failed round, "Agent actions" panel cannot only state
+// "No actions in this round"; reason in bubble must have data-pc so probe can retrieve it
 const panel = fs.readFileSync(new URL('./ActivityPanel.tsx', import.meta.url), 'utf8');
 const bubble = fs.readFileSync(new URL('./AgentBubble.tsx', import.meta.url), 'utf8');
 

@@ -1,15 +1,24 @@
 /**
- * 云端对话的「断网待发」(2026-10-22 用户定,`docs/semantics/workflow/production.md`「云端对话」):
- * 断网时发的消息先排在这里,气泡照常显示、下面写「等网络恢复后发出」;网络恢复后自动发出。
- * 发出之前**向服务端现问一次**这个对话里最近一条用户消息,和排队时页面看到的那一条不一样(离线期间有别人或自己的其它设备发过)就不发,
- * 气泡标「发送失败」、带「重新发送」。没有 React,Node 里有单测(`outbox.test.mjs`)。
+ * The cloud chat "offline outbox" (user decision, 2026-10-22; `docs/semantics/workflow/production.md`
+ * "Cloud chat"):
+ * a message sent while offline is queued here first; its bubble is shown as usual with "Will send
+ * once the network is back" beneath it, and it is sent automatically when the network returns.
+ * Before sending, it **asks the server afresh** for the most recent user message in this chat; if
+ * that differs from the one the page saw at queue time (someone else, or another device of the
+ * user's own, sent something while offline), it is not sent, and the bubble is marked "Send
+ * failed" with a "Resend" button. No React; there are Node unit tests (`outbox.test.mjs`).
  *
- * 三样东西:
- *   - `createOutbox`:待发清单。按账号、项目存进浏览器本地存储(跨页面刷新存活,〔裁〕见 AGENT 报告),同一个对话里按排队先后发;
- *   - `outboxVerdict`:拿服务端的消息清单和排队时看到的「最近一条用户消息」比,定发 / 不发 / 已经到了;
- *   - `createOutboxRunner`:什么时候试着发、发不出去等多久再试(退避),一次只跑一遍。
+ * Three things:
+ *   - `createOutbox`: the pending list. Stored per account and project in the browser's local
+ *     storage (survives a page refresh, [ruling] see the AGENT report), sent in queue order within
+ *     the same chat;
+ *   - `outboxVerdict`: compares the server's message list with the "most recent user message" seen
+ *     at queue time and decides send / do not send / already arrived;
+ *   - `createOutboxRunner`: when to try sending, and how long to wait before trying again after a
+ *     failure (backoff), running only one pass at a time.
  *
- * 只管云端对话的账号模式;桌面版本机 Agent 不走这里。
+ * Covers only the account mode of cloud chats; the desktop app's local Agent does not go through
+ * here.
  */
 import type { ChatAttachment } from "./types.ts";
 import { tr } from "../i18n/index.ts";
@@ -35,9 +44,11 @@ function isCloudError(err: unknown): err is CloudErrorShape {
 }
 
 /**
- * 排队那一刻,页面上这个对话里最近一条用户消息是哪一条。
- * `messageId`:服务端已有的那条(文档服务的消息号);`requestId`:这一页更早排着、还没发出的那条(发出后服务端的记录上带着同一个请求号)。
- * `null`:那时对话里还没有任何用户消息。
+ * At the moment of queuing, which was the most recent user message in this chat on the page.
+ * `messageId`: the one the server already has (the document service's message number); `requestId`:
+ * an earlier one queued on this page and not yet sent (once sent, the server's record carries the
+ * same request id).
+ * `null`: there was no user message in the chat at that time.
  */
 export interface OutboxBaseline { messageId?: string; requestId?: string }
 
@@ -46,60 +57,94 @@ export interface OutboxOptions { model?: string; effort?: string; creativity?: s
 export type OutboxState = "queued" | "sending" | "failed";
 
 export interface OutboxItem {
-  /** 发送的请求号。同一条消息重试、重新发送都用它(文档服务按请求号去重:丢了回包的那次真到了,再发不会多出一条) */
+  /**
+   * The request id of the send. Retries and resends of the same message all use it (the document
+   * service deduplicates by request id: if the response of an attempt was lost but it did arrive,
+   * sending again does not create an extra one)
+   */
   requestId: string;
-  /** 它在对话里那个本地气泡的号;缺省 `local-<requestId>`(先在线发、断网后才排进来的那条沿用点发送时那个气泡) */
+  /**
+   * The number of its local bubble in the chat; defaults to `local-<requestId>` (a message that was
+   * first sent online and only queued after going offline keeps the bubble from when send was clicked)
+   */
   localId?: string;
   conversationId: string;
   text: string;
   attachments?: ChatAttachment[];
-  /** 模型、思考强度、创造力按点发送那一刻的办(2026-10-18 用户定:排队的消息按发出时点的办) */
+  /**
+   * Model, thinking effort and creativity level are taken as they were when send was clicked (user
+   * decision, 2026-10-18: a queued message uses the settings from the time it was sent)
+   */
   options: OutboxOptions;
   baseline: OutboxBaseline | null;
   state: OutboxState;
-  /** `failed` 时给用户看的话(已带「发送失败：」) */
+  /** Text shown to the user when `failed` ("Send failed:" is already prepended) */
   error?: string;
-  /** 试过几次都因为连不上没发出去;0 次时正在发的气泡写「发送中…」,试过以后一直写「等网络恢复后发出」(不来回闪) */
+  /**
+   * How many attempts have failed to send because the connection could not be made; at 0 the bubble
+   * being sent reads "Sending…", and after an attempt it keeps reading "Will send once the network is
+   * back" (so it does not flicker back and forth)
+   */
   tries?: number;
   createdAt: number;
 }
 
-/** 服务端消息清单里的一条(文档服务 `get` 回的 `messages`,只用这几个字段) */
+/**
+ * One entry in the server's message list (from the `messages` returned by the document service's
+ * `get`; only these fields are used)
+ */
 export interface OutboxServerMessage { messageId?: unknown; requestId?: unknown; arrivalSeq?: unknown }
 
 export type OutboxVerdict = "send" | "delivered" | "conflict";
 
-/** 用户看得到的几句话(一级语义的文字;出错对照表要补的行见 AGENT 报告) */
 /**
- * 「发送失败」气泡上的「重新发送」:气泡发这个窗口事件(带气泡号),由持有待发清单的云端对话页接
- * (桌面 `CloudAiPanel`、手机 `AgentChat`)。走事件不走 props:气泡组件是 memo 的,不多传一个会变的函数。
+ * The few sentences the user can see (level-1 semantics text; for the rows to add to the error
+ * lookup table see the AGENT report)
+ */
+/**
+ * The "Resend" on a "Send failed" bubble: the bubble dispatches this window event (carrying the
+ * bubble number), picked up by the cloud chat page that holds the pending list (desktop
+ * `CloudAiPanel`, mobile `AgentChat`). It goes through an event rather than props: the bubble
+ * component is memoized, and no extra changing function should be passed to it.
  */
 export const OUTBOX_RESEND_EVENT = "pc-cloud-resend";
 
 export const OUTBOX_TEXT = {
-  /** 排着的气泡下面那一行 */
+  /** The line under a queued bubble */
   queued: tr("Will be sent when the network is back"),
-  /** 不发了的气泡:离线期间这个对话里有了新消息 */
+  /** A bubble that is not sent after all: new messages appeared in this chat while offline */
   conflict: tr("Send failed: new messages arrived in this chat while offline, so this one was not sent."),
-  /** 其它原因没发出去(没权限、对话被删等):后面接原因 */
+  /** Not sent for other reasons (no permission, chat deleted, etc.): the reason follows */
   failed: (reason: string) => tr("Send failed: {0}", reason),
   resend: tr("Resend"),
 } as const;
 
-/** 一个账号、一个项目的待发清单最多留这么多条(〔裁〕三级,AGENT 报告数字表) */
+/**
+ * At most this many entries are kept in the pending list of one account and one project ([ruling]
+ * level 3, AGENT report number table)
+ */
 export const OUTBOX_MAX_ITEMS = 100;
-/** 退避:第 n 次没发出去后等多久再试。2 秒起、每次翻倍、封顶 30 秒(〔裁〕三级,AGENT 报告数字表) */
+/**
+ * Backoff: how long to wait before retrying after the nth failed send. Starts at 2 seconds, doubles
+ * each time, capped at 30 seconds ([ruling] level 3, AGENT report number table)
+ */
 export const outboxBackoff = (attempt: number) => Math.min(30_000, 2000 * 2 ** Math.max(0, attempt - 1));
 
-/** 这条在对话里那个本地气泡的号 */
+/** The number of this message's local bubble in the chat */
 export const outboxLocalId = (item: Pick<OutboxItem, "requestId" | "localId">) => item.localId ?? `local-${item.requestId}`;
 
-/** 本地存储的键:按账号、项目分。和项目改动的离线存储(冲突合并那一套)不共用键 */
+/**
+ * Local storage key: split by account and project. It does not share keys with the offline storage
+ * of project changes (the conflict merge machinery)
+ */
 export const outboxKey = (accountId: string, projectId: string, tabId: string) => `pc.cloudOutbox:${accountId}:${projectId}:${tabId}`;
 
 /**
- * 点发送那一下的错是不是「断网」:连不上云端 Agent 服务(`network`),或和文档服务的连接断着(取票据、取委托失败)。
- * 只有这一类在点发送时转成排着;别的错照旧当场标「没有发出去」。
+ * Whether the error at the moment of clicking send is an "offline" one: the Cloud Agent service
+ * cannot be reached (`network`), or the connection to the document service is down (fetching the
+ * ticket or the delegation failed).
+ * Only this kind is turned into queuing at send time; other errors are still marked "not sent" on
+ * the spot.
  */
 export function isOfflineError(err: unknown, browserOffline = false): boolean {
   if (browserOffline) return true;
@@ -108,8 +153,11 @@ export function isOfflineError(err: unknown, browserOffline = false): boolean {
 }
 
 /**
- * 已经排着的那条试发时遇到的错,是不是等一等还能发:断网一类,加上服务端暂时不可用(5xx)、太忙(429 / busy)。
- * 这些留着按退避再试;别的(没权限、对话被删、满额、告知没确认)不再试,标「发送失败」。
+ * Whether the error met when trying to send an already queued message is one that waiting could
+ * fix: the offline kind, plus the server being temporarily unavailable (5xx) or too busy
+ * (429 / busy).
+ * These are kept and retried with backoff; others (no permission, chat deleted, quota full, notice
+ * not confirmed) are not retried and are marked "Send failed".
  */
 export function isTransientError(err: unknown, browserOffline = false): boolean {
   if (isOfflineError(err, browserOffline)) return true;
@@ -141,7 +189,8 @@ function cleanItem(v: unknown): OutboxItem | null {
     ...(str(o.effort) ? { effort: o.effort } : {}),
     ...(typeof o.creativity === "string" || o.creativity === null ? { creativity: o.creativity as string | null } : {}),
   };
-  // 刷新前正在发的那条:不知道发没发到,当排着的办(发之前现问服务端,已经到了就不会再多一条)
+  // The one being sent before the refresh: it is unknown whether it arrived, so handle it as a queued
+  // one (ask the server right before sending; if it already arrived, no extra copy is created)
   const state: OutboxState = x.state === "failed" ? "failed" : "queued";
   return {
     requestId: x.requestId, ...(str(x.localId) ? { localId: x.localId } : {}), conversationId: x.conversationId, text: x.text,
@@ -154,8 +203,10 @@ function cleanItem(v: unknown): OutboxItem | null {
 }
 
 /**
- * 待发清单。`storage` 给了就存进去(刷新页面后还在),没给只在内存里。
- * 顺序就是排队的先后;同一个对话里的几条按这个顺序发。改动一律换新数组(订阅方按引用判断变没变)。
+ * The pending list. If `storage` is given it is saved there (still present after a page refresh);
+ * otherwise it lives in memory only. The order is the queue order; several messages in the same chat
+ * are sent in this order. Every change replaces the array with a new one (subscribers judge by
+ * reference whether it changed).
  */
 export function createOutbox(opts: { storage?: StorageLike | null; key?: string } = {}) {
   const { storage, key } = opts;
@@ -175,7 +226,7 @@ export function createOutbox(opts: { storage?: StorageLike | null; key?: string 
     try {
       if (items.length) storage.setItem(key, JSON.stringify(items));
       else storage.removeItem?.(key);
-    } catch { /* 存不了:只在这次页面里有效 */ }
+    } catch { /* Cannot save: only effective within this page */ }
   }
   function set(next: OutboxItem[]) {
     items = next;
@@ -186,7 +237,10 @@ export function createOutbox(opts: { storage?: StorageLike | null; key?: string 
     get items() { return items; },
     subscribe(l: () => void) { listeners.add(l); return () => { listeners.delete(l); }; },
     get(requestId: string) { return items.find((x) => x.requestId === requestId) ?? null; },
-    /** 同一个页签在别的浏览器标签页里改了清单(`storage` 事件):重读,正在发的那几条保持「正在发」 */
+    /**
+     * The same tab changed the list in another browser tab (`storage` event): re-read it; the ones
+     * currently being sent stay "sending"
+     */
     reload() {
       const sending = new Set(items.filter((x) => x.state === "sending").map((x) => x.requestId));
       items = load().map((x) => (sending.has(x.requestId) && x.state === "queued" ? { ...x, state: "sending" as const } : x));
@@ -206,8 +260,10 @@ export function createOutbox(opts: { storage?: StorageLike | null; key?: string 
       }));
     },
     /**
-     * 重新发送:把这条挪到清单末尾(它现在是最新的一条)、换上新的「看到的最近一条」、改回排着。
-     * 核对以点重新发送这一刻页面上的为准(语义:这时最近一条用户消息已经是新的了)。
+     * Resend: move this entry to the end of the list (it is now the newest), replace its "most recent
+     * message seen" with the new one, and set it back to queued.
+     * The check is based on what is on the page at the moment Resend is clicked (semantics: by then the
+     * most recent user message is already a new one).
      */
     requeue(requestId: string, baseline: OutboxBaseline | null) {
       const cur = items.find((x) => x.requestId === requestId);
@@ -223,8 +279,10 @@ export function createOutbox(opts: { storage?: StorageLike | null; key?: string 
 export type Outbox = ReturnType<typeof createOutbox>;
 
 /**
- * 排一条新消息时,它「看到的最近一条用户消息」:
- * 这一页在同一个对话里更早排着、还没发出(也没失败)的那条优先(用户看着它在气泡里);没有就是页面上最近一条已发出的用户消息。
+ * When queuing a new message, the "most recent user message" it sees:
+ * the one queued earlier on this page in the same chat that has not been sent yet (and has not
+ * failed) takes priority (the user is looking at it in a bubble); if there is none, it is the most
+ * recent already-sent user message on the page.
  */
 export function baselineFor(items: readonly OutboxItem[], conversationId: string, lastSeen: OutboxBaseline | null, exclude?: string): OutboxBaseline | null {
   for (let i = items.length - 1; i >= 0; i--) {
@@ -236,11 +294,15 @@ export function baselineFor(items: readonly OutboxItem[], conversationId: string
 }
 
 /**
- * 发不发:拿服务端此刻的消息清单(文档服务的记录,都是用户消息)和排队时看到的比。
- * - 清单里已经有这条的请求号:它其实早到了(丢了回包、或别的标签页先发了)→ `delivered`(用同一个请求号再发一次只会拿回原来的结果,不会多一条);
- * - 最近一条和看到的是同一条(消息号对得上,或请求号对得上 = 这一页更早排的那条已经发出)→ `send`;
- * - 都没有消息、排队时也没看到任何消息 → `send`;
- * - 其它 → `conflict`,不发。
+ * Send or not: compare the server's message list as of now (the document service's records, all
+ * user messages) with what was seen at queue time.
+ * - The list already contains this message's request id: it actually arrived earlier (the response
+ *   was lost, or another browser tab sent it first) → `delivered` (sending again with the same
+ *   request id only returns the original result and does not create an extra one);
+ * - The most recent message is the same one that was seen (the message number matches, or the
+ *   request id matches = the one queued earlier on this page has been sent) → `send`;
+ * - There are no messages, and none were seen at queue time either → `send`;
+ * - Anything else → `conflict`, do not send.
  */
 export function outboxVerdict(messages: readonly OutboxServerMessage[] | null | undefined, item: Pick<OutboxItem, "requestId" | "baseline">): OutboxVerdict {
   const list = (messages ?? []).filter((m) => m && typeof m === "object");
@@ -259,19 +321,22 @@ export function outboxVerdict(messages: readonly OutboxServerMessage[] | null | 
   return "conflict";
 }
 
-/** 一条排着的消息试发一次的结果 */
+/** The result of one attempt to send a queued message */
 export type OutboxAttempt =
   | { kind: "sent" }
-  /** 还连不上(断网、服务暂时不可用):留着,退避后再试 */
+  /** Still cannot connect (offline, service temporarily unavailable): keep it and retry after backoff */
   | { kind: "retry" }
-  /** 不发了:`error` 是给用户看的整句(已带「发送失败：」) */
+  /** Not sent after all: `error` is the full sentence shown to the user ("Send failed:" already prepended) */
   | { kind: "failed"; error: string };
 
 export interface OutboxRunnerDeps {
   outbox: Outbox;
-  /** 试发一条:核对 + 发送都在里面(见 useCloud.ts)。同一时刻只会有一条在试 */
+  /** Try to send one: both the check and the send are inside (see useCloud.ts). Only one is tried at a time */
   attempt: (item: OutboxItem) => Promise<OutboxAttempt>;
-  /** 浏览器说自己断网了(`navigator.onLine === false`):不试,等 `online` 事件或下一次退避 */
+  /**
+   * The browser says it is offline (`navigator.onLine === false`): do not try; wait for the `online`
+   * event or the next backoff
+   */
   offline?: () => boolean;
   backoff?: (attempt: number) => number;
   setTimer?: (fn: () => void, ms: number) => unknown;
@@ -279,9 +344,12 @@ export interface OutboxRunnerDeps {
 }
 
 /**
- * 什么时候试着发:`kick()`(网络恢复、事件流重新连上、页面回到前台、刚排了一条)就马上跑一遍;
- * 这一遍里有没发出去的(`retry`)就按退避排下一遍。同一时刻只跑一遍,跑的时候又被叫就跑完再来一遍。
- * 同一个对话里前一条还没发出去,后面的不越过它。
+ * When to try sending: `kick()` (network restored, event stream reconnected, page back in the
+ * foreground, or a message just queued) runs a pass immediately; if some were not sent in this pass
+ * (`retry`), the next pass is scheduled with backoff. Only one pass runs at a time; if it is called
+ * again while running, another pass follows after it finishes.
+ * Within the same chat, if the previous message has not been sent, the ones behind it do not jump
+ * ahead of it.
  */
 export function createOutboxRunner(deps: OutboxRunnerDeps) {
   const backoff = deps.backoff ?? outboxBackoff;
@@ -338,14 +406,17 @@ export function createOutboxRunner(deps: OutboxRunnerDeps) {
   }
 
   return {
-    /** 马上跑一遍(退避中的也提前):网络恢复、连上了、回到前台、刚排了一条 */
+    /**
+     * Run a pass immediately (also cutting short any backoff in progress): network restored, connected,
+     * back in the foreground, a message just queued
+     */
     kick() {
       if (timer !== null) { clearTimer(timer); timer = null; }
       failures = 0;
       return run();
     },
     stop() { stopped = true; if (timer !== null) { clearTimer(timer); timer = null; } },
-    /** 单测用 */
+    /** For unit tests */
     get busy() { return running; },
   };
 }

@@ -1,44 +1,58 @@
 /**
- * 卡片源码归「数据管理」(docs/archive/topics/decoupling-plan.md 第 3.2 节「数据管理 → 卡片」,阶段 5)。
+ * Card source code belongs to "Data management" (`docs/archive/topics/decoupling-plan.md`
+ * Section 3.2 "Data management → Cards", Stage 5).
  *
- * # 改动层
+ * # Overlay layer
  *
- * 安装版里仓库那一份卡片源码在 `runtime/app/src/...`,而更新补丁会**整个覆盖** runtime/app ——
- * Agent 或用户改过的内置卡,升一次级就回到原样(after-0.4-plan.md P0 第 1 条)。
- * 所以装机版的改动不写回原文件,写进数据目录里的改动层:
+ * In the installed version, the repository copy of card source code is in `runtime/app/src/...`,
+ * but update patches **completely overwrite** runtime/app: built-in cards modified by an Agent
+ * or user revert to their original state after an upgrade (`after-0.4-plan.md` P0 item 1).
+ * Therefore, modifications in the installed version are not written back to original files, but
+ * into the overlay layer inside the data directory:
  *
- *     <PROMPTCUT_DATA_DIR>/card-overrides/src/cards/...   (相对路径和原文件一一对应)
+ *     <PROMPTCUT_DATA_DIR>/card-overrides/src/cards/...   (relative paths match original files one-to-one)
  *
- * 加载时优先用改动层(vite-plugin-cards 的 load 钩子),原文件当只读底版。补丁只换底版。
- * 有改动层时检出目录一个文件都不写:本机原来没有的用户卡(create_card、打开 .proc、内容库同步)也只写进改动层,
- * 用户卡装载入口经 `src/cards/userOverlay.ts` 收到它们(卡片插件在加载时列出、并替它们解析导入)。
- * 独立渲染主机、桌面版都有改动层,所以两者都不写检出目录。
- * 开发期(没有 PROMPTCUT_DATA_DIR)照旧直接改仓库里的文件 —— 那时候改的就是源码本身。
- * `PROMPTCUT_CARD_OVERRIDES` 可以显式指定改动层目录(测试用)。
+ * During loading, the overlay layer takes priority (`load` hook of `vite-plugin-cards`), with
+ * original files serving as a read-only base. Patches only replace the base. When an overlay
+ * layer exists, not a single file is written to the checkout directory: user cards not originally
+ * on this machine (`create_card`, opening `.proc`, content store synchronization) are also written
+ * only into the overlay layer, and the user card loading entry receives them via
+ * `src/cards/userOverlay.ts` (the card plugin lists them at load time and resolves imports for them).
+ * Both standalone render hosts and desktop apps have overlay layers, so neither writes to the
+ * checkout directory. During development (without `PROMPTCUT_DATA_DIR`), files in the repository
+ * are modified directly as before: what is modified then is the source code itself.
+ * `PROMPTCUT_CARD_OVERRIDES` can explicitly specify the overlay layer directory (for testing).
  *
- * # 卡片代码的哈希
+ * # Card code hash
  *
- * 渲染缓存的键里要带上「这张卡此刻的代码」:以前键里只有片段参数,改了卡片源码,
- * 预渲染的旧图照样命中,3D 视图里贴的一直是改之前的样子。哈希按「卡片定义文件 + 它一路 import
- * 到的卡片 / 部件文件」的**生效内容**(改动层优先)算,由 vite-plugin-cards 注入算法
- * (它手里有依赖闭包),这里不反向 import 它,免得两个插件互相引用。
+ * Render cache keys must include "this card's code at this moment": previously keys only had clip
+ * parameters; when card source code was modified, old prerendered images still hit the cache, and
+ * the 3D view kept pasting the pre-modification appearance. The hash is computed from the
+ * **effective content** (overlay layer preferred) of "the card definition file + all card / part
+ * files it imports along the way", with the algorithm injected by `vite-plugin-cards` (which holds
+ * the dependency closure); it is not inversely imported here to avoid mutual references between the
+ * two plugins.
  *
- * # 变更通知
+ * # Change notifications
  *
- * 卡片源码一变(不管改的是仓库文件还是改动层),订阅者都会收到:渲染 worker 据此扔掉备用页 ——
- * 备用页是提前开好的,里面加载的是改之前的模块。
+ * Whenever card source code changes (whether modifying a repository file or the overlay layer),
+ * subscribers receive notice: render workers drop standby pages accordingly: standby pages are
+ * opened in advance, loading pre-modification modules.
  */
 import fs from "node:fs";
 import path from "node:path";
 
-/** 改动层根目录;没有就是 null(开发期直接改仓库文件) */
+/**
+ * Overlay layer root directory; null if absent (files in repository are modified directly
+ * during development).
+ */
 export function overridesRoot() {
   if (process.env.PROMPTCUT_CARD_OVERRIDES) return path.resolve(process.env.PROMPTCUT_CARD_OVERRIDES);
   if (process.env.PROMPTCUT_DATA_DIR) return path.join(process.env.PROMPTCUT_DATA_DIR, "card-overrides");
   return null;
 }
 
-/** 只有卡片和部件进改动层;内核、编辑器、服务端一律不开放 */
+/** Only cards and parts enter the overlay layer; kernel, editor, and server are never exposed */
 export function isOverridable(rel) {
   const r = String(rel).replace(/\\/g, "/");
   return r.startsWith("src/cards/") || r.startsWith("src/parts/");
@@ -48,7 +62,10 @@ function relOf(root, abs) {
   return path.relative(root, abs).replace(/\\/g, "/");
 }
 
-/** 这个仓库文件在改动层里对应哪个文件(不管存不存在);不可改或没有改动层时是 null */
+/**
+ * Which file in the overlay layer corresponds to this repository file (regardless of existence);
+ * null if unmodifiable or no overlay layer exists.
+ */
 export function overrideFileFor(root, abs) {
   const top = overridesRoot();
   if (!top) return null;
@@ -57,33 +74,39 @@ export function overrideFileFor(root, abs) {
   return path.join(top, rel);
 }
 
-/** 生效的那个文件:改动层有就用改动层,否则原文件 */
+/** The effective file: uses overlay layer if present, otherwise original file */
 export function effectivePath(root, abs) {
   const o = overrideFileFor(root, abs);
   return o && fs.existsSync(o) ? o : abs;
 }
 
-/** 读生效内容 */
+/** Reads effective content */
 export function readEffective(root, abs) {
   return fs.readFileSync(effectivePath(root, abs), "utf8");
 }
 
-/** 这个仓库文件生效时是不是一个文件:底版有,或改动层有(本机原来没有、只装进改动层的用户卡就是后一种) */
+/**
+ * Whether this repository file is a file when effective: present in the base or in the overlay
+ * layer (user cards not originally on this machine and installed only into the overlay layer
+ * are the latter).
+ */
 export function effectiveIsFile(root, abs) {
   try { return fs.statSync(effectivePath(root, abs)).isFile(); } catch { return false; }
 }
 
-/** 用户卡目录(相对仓库根) */
+/** User card directory (relative to repository root) */
 export const USER_CARD_DIR = "src/cards/user";
 
 /**
- * 用户卡目录一层里的文件名:底版与改动层取并集,升序。
- * 有改动层时,本机原来没有的用户卡只写进改动层、不写检出目录(见文件头),所以按目录收卡的地方都要两边一起看。
+ * File names directly within the user card directory: union of base and overlay layer, in ascending order.
+ * When an overlay layer exists, user cards not originally on this machine are written only to the overlay
+ * layer and not to the checkout directory (see file header), so places collecting cards by directory must
+ * inspect both sides together.
  */
 export function userCardDirEntries(root) {
   const names = new Set();
   const read = (dir) => {
-    try { for (const e of fs.readdirSync(dir, { withFileTypes: true })) if (e.isFile()) names.add(e.name); } catch { /* 目录不存在 */ }
+    try { for (const e of fs.readdirSync(dir, { withFileTypes: true })) if (e.isFile()) names.add(e.name); } catch { /* Directory does not exist */ }
   };
   read(path.join(root, USER_CARD_DIR));
   const top = overridesRoot();
@@ -92,9 +115,11 @@ export function userCardDirEntries(root) {
 }
 
 /**
- * 改动层里有、底版没有的用户卡目录文件(递归),相对用户卡目录、正斜杠、升序。
- * 用户卡装载入口(`src/cards/user/index.ts`)按目录 glob 收卡,只看得见真实目录;这些文件由卡片插件另列给它
- * (`src/cards/userOverlay.ts`)。没有改动层时是空表。
+ * Files in user card directory present in overlay layer but absent from base (recursive),
+ * relative to user card directory, forward slashes, in ascending order.
+ * The user card loading entry (`src/cards/user/index.ts`) collects cards via directory glob and only sees
+ * real directories; these files are listed separately for it by the card plugin
+ * (`src/cards/userOverlay.ts`). Returns an empty list when there is no overlay layer.
  */
 export function overlayOnlyUserFiles(root) {
   const top = overridesRoot();
@@ -117,8 +142,9 @@ export function overlayOnlyUserFiles(root) {
 }
 
 /**
- * 写一个卡片 / 部件文件。有改动层就写改动层(原文件不动),没有就写原文件。
- * 返回实际写到的路径。
+ * Writes a card / part file. Writes to overlay layer if present (original file untouched),
+ * otherwise writes to original file.
+ * Returns the path actually written to.
  */
 export function writeCardFile(root, abs, content) {
   const o = overrideFileFor(root, abs);
@@ -128,7 +154,7 @@ export function writeCardFile(root, abs, content) {
   return target;
 }
 
-/** 改动层里的文件 → 它对应的仓库文件;不在改动层里就是 null */
+/** File in overlay layer → its corresponding repository file; null if not in overlay layer */
 export function repoFileForOverride(root, file) {
   const top = overridesRoot();
   if (!top) return null;
@@ -138,12 +164,18 @@ export function repoFileForOverride(root, file) {
 }
 
 let hasher = null;
-/** vite-plugin-cards 注入:cardId → 这张卡生效代码的哈希(找不到卡返回空串) */
+/**
+ * Injected by vite-plugin-cards: cardId → hash of this card's effective code
+ * (returns empty string if card not found).
+ */
 export function setCardHasher(fn) {
   hasher = fn;
 }
 
-/** 这张卡此刻代码的哈希。没有注入算法(老调用方、测试)时是空串 —— 键里少一项,行为同以前 */
+/**
+ * Hash of this card's code at this moment. Empty string when no algorithm is injected
+ * (legacy callers, tests): one less entry in the key, behaving as before.
+ */
 export function cardCodeHash(cardId) {
   if (!hasher || !cardId) return "";
   try { return hasher(String(cardId)) || ""; } catch { return ""; }
@@ -151,14 +183,19 @@ export function cardCodeHash(cardId) {
 
 let identifier = null;
 /**
- * vite-plugin-cards 注入:cardId → 这张卡的代码身份 `{ version, custom }`(c66-host-cards,`server/card-code.mjs`)。
- * 和 `setCardHasher` 同一个理由放在这里:帧管线要用,但不反向 import 卡片插件。
+ * Injected by vite-plugin-cards: cardId → code identity of this card `{ version, custom }`
+ * (c66-host-cards, `server/card-code.mjs`).
+ * Placed here for the same reason as `setCardHasher`: needed by the frame pipeline, but avoids
+ * inversely importing the card plugin.
  */
 export function setCardIdentifier(fn) {
   identifier = typeof fn === 'function' ? fn : null;
 }
 
-/** 这张卡此刻的代码身份;找不到定义回 null,算法还没注入回 undefined(调用方不缓存) */
+/**
+ * Code identity of this card at this moment; returns null if definition not found,
+ * undefined if algorithm is not yet injected (caller does not cache).
+ */
 export function cardCodeIdentityOf(cardId) {
   if (!identifier) return undefined;
   if (!cardId) return null;
@@ -166,14 +203,14 @@ export function cardCodeIdentityOf(cardId) {
 }
 
 const listeners = new Set();
-/** 卡片源码变了时通知(参数是变了的那个文件) */
+/** Notifies when card source code changes (parameter is the changed file) */
 export function onCardSourceChange(fn) {
   listeners.add(fn);
   return () => listeners.delete(fn);
 }
-/** vite-plugin-cards 在文件监听里调 */
+/** Called by vite-plugin-cards in file watcher */
 export function emitCardSourceChange(file) {
   for (const fn of listeners) {
-    try { fn(file); } catch { /* 一个订阅者出错不影响别的 */ }
+    try { fn(file); } catch { /* An error in one subscriber does not affect others */ }
   }
 }

@@ -1,15 +1,25 @@
 /**
- * 有声动效卡(画面是组件、另写了 `audio()`,如 `av-pulse`)的画面成本身份(2026-10-06 用户定:自动、即时补测,不默认判重)。
- * 跑:node --experimental-test-module-mocks --test src/editor/avCardCost.test.mjs
+ * Visual cost identity of audio motion cards (visual is a component and writes `audio()` separately,
+ * like `av-pulse`) (user decision, 2026-10-06: automatic, on-demand catch-up measurement, do not
+ * classify as heavy by default).
+ * Run: node --experimental-test-module-mocks --test src/editor/avCardCost.test.mjs
  *
- *   AVC-01 `clipCostNodes` / `clipCostIndex`:片段自己的素材效果卡节点只在调用方说算时才当成本身份节点;键与预渲染进程按输出节点算的
- *          `costKey` 相同;图里的节点不动(不写 `clipId`,预渲染结果的键不变);不给 `ownNode` 与以前逐字相同
- *   AVC-02 `clipIdentityOf`:有声动效卡(就地合成的节点、物化过的节点)有身份、有声明的帧模式、有能力表;桌面与在线双舞台都如此;
- *          画面由 `card()` 出的素材效果卡、只有 `audio()` 的音频素材效果卡照旧没有
- *   AVC-03 分派:没有成本记录时按声明兜底(`direct` 判轻;别的在测完之前判重),记录到了按记录判 —— 判轻就不在预渲染集合里
- *   AVC-04 测量:有声动效卡第一次出现就测一次(只测这一张),测量期间不调它的 `audio()`;记录写进去之后分派表判轻;
- *          重开(记录还在)不重测
- *   AVC-05 卡片图里有悬空输入(摊图会抛):普通卡与有声动效卡照样有身份、照样测,键与图没坏时相同
+ *   AVC-01 `clipCostNodes` / `clipCostIndex`: a clip's own media effect card nodes count as cost
+ *          identity nodes only when caller says so; key matches `costKey` calculated by prerender
+ *          process based on output nodes; nodes in graph remain untouched (do not write `clipId`,
+ *          prerender output keys unchanged); omitting `ownNode` is verbatim identical to before
+ *   AVC-02 `clipIdentityOf`: audio motion cards (nodes synthesized in place, materialized nodes) have
+ *          identity, declared frame mode, and capability table; holds for both desktop and online
+ *          dual stage; media effect cards whose visual comes from `card()` and audio media effect
+ *          cards with only `audio()` have none as usual
+ *   AVC-03 Dispatch: fallback to declaration when there is no cost record (`direct` is classified as
+ *          light; others classified as heavy before measurement completes); judge by record once
+ *          recorded: classified as light means not in prerender set
+ *   AVC-04 Measurement: measure once when an audio motion card first appears (measure this card only),
+ *          do not call its `audio()` during measurement; dispatch table classifies as light after
+ *          record is written; reopen (record still exists) does not remeasure
+ *   AVC-05 Dangling inputs in card graph (flattening graph throws): regular cards and audio motion
+ *          cards still have identity and are measured as usual; keys match when graph is not broken
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import { registerHooks } from "node:module";
@@ -28,7 +38,7 @@ const hook = registerHooks({ load(url, context, next) {
 } });
 after(() => hook.deregister());
 
-/** 后台舞台的替身:每推一次缩水项目记一笔;`setTime` 回一个很小的耗时(判轻) */
+/** Mock for background stage: records an entry each time a reduced project is pushed; `setTime` returns a very small duration (classify as light) */
 const pushed = [];
 let stepMs = 1;
 const stage = { setTime: async () => ({ stepMs, snapshot: { inlineMs: 0.1, rasterMs: 0.1, serializeMs: 0.1 } }),
@@ -60,12 +70,12 @@ const FPS = 30;
 let audioCalls = 0;
 const audio = () => { audioCalls++; return new Float32Array(2); };
 const base = (id, extra = {}) => ({ id, name: `Name-${id}`, source: "native", defaults: { n: 1 }, controls: [], kind: "animation", inputs: {}, ...extra });
-/** 形状照 `src/cards/native/av-pulse.tsx`:画面组件加 `audio()`,声明 `direct` */
+/** Shape follows `src/cards/native/av-pulse.tsx`: visual component plus `audio()`, declares `direct` */
 const avDirect = base("av-direct", { frameMode: "direct", Component: () => null, audio });
-/** 没声明 `direct` 的有声动效卡:没有记录时按声明是重卡,要靠测量才判得了轻 */
+/** Audio motion card without `direct` declared: classified as heavy card by declaration when there is no record; relies on measurement to be classified as light */
 const avStateful = base("av-stateful", { Component: () => null, audio });
 const plain = base("plain", { Component: () => null });
-/** 画面由 `card()` 出的素材效果卡(带声音)、只有 `audio()` 的音频素材效果卡 */
+/** Media effect card whose visual comes from `card()` (with sound), audio media effect card with only `audio()` */
 const gpuCard = base("gpu-card", { frameMode: "direct", card: () => ({}), audio });
 const audioOnly = base("audio-only", { kind: "audio", audio });
 
@@ -86,7 +96,7 @@ const project = (extra = {}) => ({ version: 1, id: "p", name: "p", width: 1920, 
   tracks: [{ id: "t", name: "t", clips: [
     clip("a", "av-direct", 0, 2), clip("s", "av-stateful", 2, 4), clip("p", "plain", 4, 6),
     clip("g", "gpu-card", 6, 8), clip("o", "audio-only", 8, 10),
-    // 物化过的有声动效卡:片段指着 cardNodes 里的真节点
+    // Materialized audio motion card: clip points to the real node in cardNodes
     clip("m", "av-stateful", 10, 12, { nodeId: "n-m" }),
   ] }],
   cardNodes: [{ id: "n-m", adapter: "card", cardId: "av-stateful", kind: "animation", embeddedAudio: true, timeOffset: 0, inputs: {}, params: { n: 1 } }],
@@ -116,7 +126,7 @@ test("AVC-01 clipCostNodes / clipCostIndex: a clip's own media effect card node 
 
   const version = (node) => `builtin:v-${node.cardId}`;
   const index = P.clipCostIndex(p, graph, version, own);
-  // 预渲染进程那一端(`server/card-cache.mjs`):按**输出节点**算 costKey
+  // Prerender process side (`server/card-cache.mjs`): compute costKey by **output node**
   for (const id of ["a", "s", "m"]) {
     const out = graph.outputs.find((o) => o.clipId === id);
     const node = graph.nodes.find((n) => n.id === out.nodeId);
@@ -125,7 +135,7 @@ test("AVC-01 clipCostNodes / clipCostIndex: a clip's own media effect card node 
   assert.equal(index.frameModes.a, "direct");
   assert.equal(index.frameModes.s, "stateful");
 
-  // 不给 ownNode:与以前逐字相同(只认带 clipId 的节点)
+  // Do not provide ownNode: verbatim identical to before (only recognizes nodes with clipId)
   const old = P.clipCostIndex(p, graph, version);
   assert.deepEqual(Object.keys(old.identityKeys).sort(), ["p"]);
   assert.equal(old.identityKeys.p, index.identityKeys.p, "The key of a regular card is unaffected");
@@ -163,7 +173,7 @@ test("AVC-03 Dispatch: with no record, fall back to the declaration; once a reco
   assert.equal(at(plan, "a", 1), "light", "An audio motion card declared direct: classified as light even with no record (previously it had no identity and no frame mode, and was classified as heavy)");
   assert.equal(plan.prerenderSet.has("a"), false);
   assert.equal(at(plan, "s", 3), "heavy", "One not declared direct: falls back to the declaration until measurement finishes (same rule as other cards)");
-  // 测量写进一条很轻的记录
+  // Measurement writes in a very light record
   const keys = CI.clipIdentityOf(p).identityKeys;
   const light = (identityKey) => ({ identityKey, device: "test-device", fps: FPS, kind: "stepped", stepMs: 1, catchUpMs: 5, seekOk: true, seekMs: 1, demoted: false });
   D.mergePlanCosts([light(keys.s)]);
@@ -171,10 +181,10 @@ test("AVC-03 Dispatch: with no record, fall back to the declaration; once a reco
   plan = D.currentPlan();
   assert.equal(at(plan, "s", 3), "light", "Record arrived: classified as light, live render");
   assert.equal(plan.prerenderSet.has("s"), false, "Not in the prerender set (does not wait for prerender)");
-  // 同一张卡的另一个片段(物化过的)时长相同、参数相同 → 同一个键,一起判轻
+  // Another clip (materialized) of the same card with the same duration and parameters → same key, classified as light together
   assert.equal(keys.m, keys.s);
   assert.equal(at(plan, "m", 11), "light");
-  // 素材效果卡照旧按重
+  // Media effect cards are classified as heavy as usual
   assert.equal(at(plan, "g", 7), "heavy");
 });
 
@@ -183,7 +193,7 @@ test("AVC-04 Measurement: measure on first appearance, only once, without callin
   const records = [];
   PR.setCostBackend(memoryBackend(records));
   try {
-    // 先只有普通卡,测完
+    // Initially only regular cards, measurement completed
     const p0 = project();
     p0.tracks[0].clips = p0.tracks[0].clips.filter((c) => c.id === "p");
     p0.cardNodes = [];
@@ -192,7 +202,7 @@ test("AVC-04 Measurement: measure on first appearance, only once, without callin
     await until(() => PR.probeSettledFor(p0), "First measurement round finished");
     assert.deepEqual(PR.probeRunDiag().probed.map((e) => e.cardId), ["plain"]);
 
-    // 有声动效卡第一次出现
+    // Audio motion card appears for the first time
     const p1 = { ...p0, tracks: [{ ...p0.tracks[0], clips: [...p0.tracks[0].clips, clip("a", "av-direct", 0, 2), clip("s", "av-stateful", 2, 4)] }] };
     pushed.length = 0;
     D.setPlanProject(p1);
@@ -211,7 +221,7 @@ test("AVC-04 Measurement: measure on first appearance, only once, without callin
       assert.equal(plan.prerenderSet.has(id), false, `${id} is not in the prerender set`);
     }
 
-    // 重开:记录还在(同一份存放处),一张都不重测
+    // Reopen: records still exist (same storage location), not a single card is remeasured
     PR.resetProbeRunner();
     CI.resetClipIdentityCache();
     PR.setCostBackend(memoryBackend(records));
@@ -229,7 +239,7 @@ test("AVC-05 The card graph has a dangling input: regular cards and audio motion
   setup();
   const good = project();
   const goodKeys = CI.clipIdentityOf(good).identityKeys;
-  // 一个指向不存在节点的素材效果卡节点:完整的图摊不出来
+  // A media effect card node pointing to a non-existent node: complete graph cannot be flattened
   const broken = project({ cardNodes: [...good.cardNodes, { id: "dangling", adapter: "card", cardId: "gpu-card", inputs: { source: { nodeId: "gone" } }, params: {} }] });
   assert.throws(() => G.projectCardGraph(broken, R.getCard), "Building the complete graph throws");
   CI.resetClipIdentityCache();
@@ -252,7 +262,7 @@ test("AVC-06 3D mode (setPlan3DView / plan3DView): when enabled, standalone ligh
   setup();
   const p = project();
   D.setPlanProject(p);
-  // 注入轻记录，让 "s" 和 "a" 都判轻
+  // Inject light records so that both "s" and "a" are classified as light
   const keys = CI.clipIdentityOf(p).identityKeys;
   const light = (identityKey) => ({ identityKey, device: "test-device", fps: FPS, kind: "stepped", stepMs: 1, catchUpMs: 5, seekOk: true, seekMs: 1, demoted: false });
   D.mergePlanCosts([light(keys.s)]);
@@ -260,20 +270,20 @@ test("AVC-06 3D mode (setPlan3DView / plan3DView): when enabled, standalone ligh
 
   assert.equal(D.plan3DView(), false);
   let plan = D.currentPlan();
-  // 正常模式下，轻卡不在 prerenderSet
+  // In normal mode, light cards are not in prerenderSet
   assert.equal(plan.prerenderSet.has("a"), false);
   assert.equal(plan.prerenderSet.has("s"), false);
 
-  // 开启 3D 模式
+  // Enable 3D mode
   D.setPlan3DView(true);
   assert.equal(D.plan3DView(), true);
   await settle();
   plan = D.currentPlan();
-  // 3D 模式下，作为独立轻卡的 "a" 和 "s" 均被纳入 prerenderSet
+  // In 3D mode, both "a" and "s" as standalone light cards are included in prerenderSet
   assert.equal(plan.prerenderSet.has("a"), true);
   assert.equal(plan.prerenderSet.has("s"), true);
 
-  // 关闭 3D 模式后恢复
+  // Restored after disabling 3D mode
   D.setPlan3DView(false);
   assert.equal(D.plan3DView(), false);
   await settle();

@@ -2,11 +2,15 @@ import { useSyncExternalStore } from "react";
 import { parseProgressReport, type ProgressReport } from "./progressReport.ts";
 
 /**
- * 桌面 APP 会话在 AI 栏里的分组(计划 `docs/plan/agent-workflow-plan.md` A4;语义 `user-workflow.md`「Agent 接入方式」
- * 「进度可见」):每个会话单独一组,标明厂商和正在进行的操作,它用 report_progress 交的进度条目按 AI 栏的报告卡显示。
+ * Grouping of desktop app sessions in the AI panel (plan `docs/plan/agent-workflow-plan.md` A4;
+ * semantics `user-workflow.md` "Agent connection type", "Progress visibility"): each session has its
+ * own group, indicating vendor and ongoing operation; progress items submitted via report_progress
+ * are displayed as report cards in the AI panel.
  *
- * 数据来自编辑器进程(`server/agent/desktop-activity.mjs`):经 SSE 的 `agent.desktop` 整份推来(页面一连上就推一份),
- * 这里只存最新一份、给订阅者。页面不主动请求 —— 在线构建里也就没有多出来的 /api 调用。
+ * Data comes from the editor process (`server/agent/desktop-activity.mjs`): pushed entirely via SSE
+ * `agent.desktop` (one copy pushed as soon as the page connects); here only the latest copy is
+ * stored for subscribers. The page does not actively request: avoiding extra /api calls in online
+ * builds.
  */
 
 export interface DesktopCall {
@@ -18,16 +22,16 @@ export interface DesktopCall {
 }
 
 export interface DesktopSession {
-  /** 会话身份(`desk-…`),也是它在文档服务、公告板里的对话 ID */
+  /** Session identity (`desk-…`), also its chat ID in document service and bulletin board */
   id: string;
-  /** 厂商 id(claude-code、codex…)与给人看的名字(Claude Code、Codex…) */
+  /** Vendor id (claude-code, codex…) and human-readable name (Claude Code, Codex…) */
   vendor: string | null;
   label: string | null;
   client: { name: string; version: string } | null;
   firstSeen: number;
   lastSeen: number;
   calls: number;
-  /** 正在跑的调用;没有是 null */
+  /** Running invocation; null if none */
   current: { tool: string; since: number } | null;
   last: DesktopCall | null;
   recent: DesktopCall[];
@@ -45,7 +49,7 @@ function callOf(v: any): DesktopCall | null {
   return { tool: v.tool, ok: v.ok !== false, ...(typeof v.error === "string" ? { error: v.error } : {}), at: num(v.at), ms: num(v.ms) };
 }
 
-/** 服务端推来的一份(不信任形状:逐项校验,坏的丢掉) */
+/** Copy pushed by the server (untrusted shape: validated item by item, discarding invalid ones) */
 export function normalizeDesktopSessions(list: unknown): DesktopSession[] {
   if (!Array.isArray(list)) return [];
   const out: DesktopSession[] = [];
@@ -94,7 +98,7 @@ export function useDesktopSessions(): DesktopSession[] {
   return useSyncExternalStore(subscribeDesktopSessions, getDesktopSessions, getDesktopSessions);
 }
 
-/** 会话的短名:`desk-AbCdEf12` → `AbCd` */
+/** Session short name: `desk-AbCdEf12` → `AbCd` */
 export function shortSessionId(id: string): string {
   return id.replace(/^desk-/, "").slice(0, 4);
 }

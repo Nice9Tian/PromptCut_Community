@@ -1,17 +1,26 @@
 /**
- * 云端 Agent 不切换激活剪辑、就地改停放剪辑里的片段(线上 2026-10-21:每轮 switch_cut 过去、改、再切回来,
- * 一次必败的 update_clip + 两次多余的写入,activeCutId 是共享字段,所有成员的界面一起翻)。
+ * Cloud Agent modifies clips in a parked cut in place without switching active cuts (production
+ * 2026-10-21: each round switches over with switch_cut, edits, then switches back: one doomed
+ * update_clip + two redundant writes, activeCutId is a shared field, so all members' UIs flip
+ * together).
  *
- * 真的文档服务 + 真的执行器(vite ssrLoadModule 载入页面那一套工具实现与 store),Agent 一侧经路由表跑 handler:
- *   PK-1 update_clip 改停放剪辑里的片段:只提交一次,activeCutId 与激活剪辑原样,
- *        回包标明在哪条剪辑;文档服务里的真身与 Agent 副本一致;
- *   PK-2 set_rect / get_clip / list_cuts({cutId}) 同样不切换;紧接着对激活剪辑里的片段写入不被拒(没有 stale);
- *   PK-3 删除停放剪辑里的片段:明确的原因(在哪条剪辑、要 switch_cut),什么都不提交;
- *   PK-4 模型只读 get_project(云端副本)里的 parkedCuts 就找到并改好停放剪辑里的片段,全程没有 switch_cut(线上 2026-10-21:
- *        新对话里模型因为只在 get_project 里看得到激活剪辑,两次都 switch_cut -> update_clip -> switch_cut);
- *   PK-5 list_cuts 不带参数也列出停放剪辑的片段;switch_cut 的回包说明切换会让所有成员的界面一起翻。
+ * Real document service + real executor (vite ssrLoadModule loads the page's tool implementations
+ * and store), Agent side runs handlers via routing table:
+ *   PK-1 update_clip edits clips in a parked cut: submitted only once, activeCutId and active
+ *        cut kept as-is, response specifies which cut; real copy in document service matches
+ *        Agent replica;
+ *   PK-2 set_rect / get_clip / list_cuts({cutId}) likewise do not switch; subsequent writes to
+ *        clips in active cut are not rejected (no stale);
+ *   PK-3 Delete clips in a parked cut: explicit reason (which cut, requires switch_cut), submits
+ *        nothing;
+ *   PK-4 Model finds and edits clips in parked cuts solely by reading parkedCuts in get_project
+ *        (cloud replica), no switch_cut throughout (production 2026-10-21: in new chats the model
+ *        only saw active cut in get_project, so both times did switch_cut -> update_clip ->
+ *        switch_cut);
+ *   PK-5 list_cuts without args also lists clips in parked cuts; switch_cut response explains
+ *        switching flips all members' UIs together.
  *
- * 跑:node --test server/test/agent-parked-cut-edit.test.mjs
+ * Run: node --test server/test/agent-parked-cut-edit.test.mjs
  */
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -36,7 +45,7 @@ async function startEnv(t) {
   const vite = await createVite({ configFile: false, root: ROOT, logLevel: 'silent', server: { middlewareMode: true, hmr: false, ws: false, watch: null }, appType: 'custom', optimizeDeps: { noDiscovery: true, include: [] } });
   const closers = [];
   t.after(async () => {
-    for (const c of closers.reverse()) { try { c(); } catch { /* 已关 */ } }
+    for (const c of closers.reverse()) { try { c(); } catch { /* Closed */ } }
     await vite.close();
     await built.service.close();
     await new Promise((resolve) => server.close(resolve));
@@ -44,7 +53,7 @@ async function startEnv(t) {
   const load = (id) => vite.ssrLoadModule(id);
   const { createEmptyProject } = await load('/src/kernel/project.ts');
 
-  /** A 激活:t1 上一张 c1(0~5);B 停放:tb 上一张 cb1(0~4) */
+  /** A active: one c1(0~5) on t1; B parked: one cb1(0~4) on tb */
   function project(projectId) {
     const p = createEmptyProject('parked-test');
     p.id = projectId;
@@ -170,7 +179,7 @@ test('PK-4 the model finds and fixes a clip in a parked cut by reading only park
   const env = await startEnv(t);
   const probe = await env.seeded('proj-pk4');
   const ag = env.agent('proj-pk4');
-  /** 照着工具回包办事的「模型」:不认识 clipId,只能读 get_project 的回包找;找不到才会想到 switch_cut(线上的做法) */
+  /** A "model" acting on tool responses: does not know clipId, can only look by reading get_project responses; only thinks of switch_cut when not found (production behavior) */
   const called = [];
   const run = (tool, args) => { called.push(tool); return ag.call(tool, args); };
 

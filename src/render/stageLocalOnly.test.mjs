@@ -1,12 +1,19 @@
 /**
- * 舞台(`Stage.tsx`)上这台设备跑不了的卡(C10 契约第 9 节,2026-09-29 用户改语义)。服务端渲染出 HTML 来核,跑:
+ * Cards that this device cannot run on the stage (`Stage.tsx`) (C10 contract section 9, user
+ * changed semantics, 2026-09-29). Server-side render HTML to verify; run:
  *   node --test src/render/stageLocalOnly.test.mjs
  *
- *   SL-01 在线浏览器模式:构建时就在包里的用户卡照常挂组件(2026-10-21 用户定「暂停时渲染出精确的帧」,
- *         不按档挡本页能运行的卡);同步来的用户卡没有定义时不挂组件,包裹层照内置重卡的路子挂流平面与抑制占位
- *         (撤快照后无快照平面);占位槽位默认 `hidden`(进显隐调度),一律是沙漏(`awaiting`),预览缩到多小都没有
- *         「需要本地 PC 渲染辅助」(2026-10-21 用户定撤掉);沙漏按预览缩放补偿(`fit`);两边都没有的 id 不画
- *   SL-02 模式关着(桌面、导出、预渲染):用户卡、素材效果卡照常挂组件,同步表不起作用,没有 `unsupported`
+ *   SL-01 Online browser mode: user cards bundled at build time mount components as usual
+ *         (user decision, 2026-10-21: "render exact frame when paused", no longer blocking cards
+ *         executable on this page by tier); synced user cards without definitions do not mount
+ *         components, and wrapper layers mount stream planes and suppression placeholders like
+ *         built-in heavy cards (no snapshot plane after snapshot removal); placeholder slots
+ *         default to `hidden` (entering visibility scheduling) and are always hourglasses
+ *         (`awaiting`), with no "Requires local PC rendering assistance" no matter how small the
+ *         preview zooms (removed by user decision, 2026-10-21); hourglasses compensate for preview
+ *         zoom (`fit`); ids missing on both sides are not drawn
+ *   SL-02 Mode disabled (desktop, export, prerender): user cards and media effect cards mount
+ *         components as usual, sync table has no effect, no `unsupported`
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -44,7 +51,7 @@ async function withStage(fn) {
   }
 }
 
-/** 某个片段的包裹层(到下一个包裹层为止) */
+/** Wrapper layer for a clip (up to the next wrapper layer) */
 const wrapOf = (html, id) => html.match(new RegExp(`<div data-pc-clip="${id}"[\\s\\S]*?(?=<div data-pc-clip=|$)`))?.[0] ?? null;
 
 test("SL-01 online: cards that cannot run on this page get no component, but still get the stream plane and the suppressed placeholder, and the placeholder is always an hourglass; runnable user cards mount as usual; unknown ids are not drawn", () => withStage(async ({ R, H, render, marker }) => {
@@ -55,11 +62,14 @@ test("SL-01 online: cards that cannot run on this page get no component, but sti
     const html = render(props);
     const b = wrapOf(html, "b"), s = wrapOf(html, "s"), v = wrapOf(html, "v");
     assert.match(b, /data-test-component="builtin"/, "Built-in cards mount their component as usual");
-    // 2026-10-06(online-card-exec-contract.md 第 6 节):构建时就在包里的用户卡是页面自己的代码,照内置卡挂组件
+    // 2026-10-06 (online-card-exec-contract.md section 6): user cards bundled at build time are page's
+    // own code and mount components like built-in cards
     assert.match(wrapOf(html, "u"), /data-test-component="mine"/, "Build-time user cards mount their component as usual");
-    // 2026-10-21 起不按档挡本页能运行的用户卡(停下时要画出精确的帧);原来那道按档的开关 2026-10-22 删掉
+    // From 2026-10-21, do not block user cards runnable on this page by tier (must draw exact frames
+    // when paused); the original tier-based switch was removed on 2026-10-22
     const lowHtml = render(props);
-    // 同步来的卡在舞台里载入成功(运行时注册表里有定义):照常挂组件;没载入的(v)照旧不挂
+    // Synced cards loaded successfully in stage (defined in runtime registry): mount components as
+    // usual; unloaded ones (v) do not mount as before
     R.setRuntimeCards([{ id: "synced-card", name: "Synced card", defaults: {}, controls: [], frameMode: "direct", Component: marker("synced") }]);
     const live = render({ snapshots: new Map(), suppressed: new Set(), awaiting: new Set(), settling: new Map() });
     assert.match(wrapOf(live, "s"), /data-test-component="synced"/, "Synced cards that loaded successfully mount their component");
@@ -67,7 +77,8 @@ test("SL-01 online: cards that cannot run on this page get no component, but sti
     R.setRuntimeCards([]);
     assert.doesNotMatch(v, /data-test-component/, "Synced cards with no definition do not mount a component");
     assert.match(v, /data-pc-stream-plane=""/, "Cards that cannot run still get the stream plane");
-    // 撤快照后:没有流的同步卡(没有定义)由 suppressed 占位接管,不再挂快照平面
+    // After snapshot removal: synced cards without streams (no definitions) are taken over by
+    // suppressed placeholders and no longer mount snapshot planes
     assert.doesNotMatch(s, /data-pc-snapshot-plane/, "Synced cards have the snapshot plane removed");
     assert.match(s, /class="pc-suppressed"/, "Synced cards (no definition) are taken over by the suppressed placeholder");
     for (const w of [s, v]) {
@@ -75,7 +86,8 @@ test("SL-01 online: cards that cannot run on this page get no component, but sti
       assert.doesNotMatch(w, /data-pc-placeholder-fixed/, "Not a permanent slot");
       assert.match(w, /data-pc-placeholder-reason="awaiting"/, "Cards that cannot run show an hourglass (the result comes from the render node)");
     }
-    // 预览缩放 25%:沙漏屏幕上保持原大小(28 × 4 舞台像素);任何情况下都没有「需要本地 PC 渲染辅助」
+    // Preview scale 25%: hourglass maintains original size on screen (28 × 4 stage pixels);
+    // "Requires local PC rendering assistance" is absent in all cases
     H.setPlaceholderViewScale(0.25);
     const html2 = render(props);
     for (const id of ["s", "v", "b"]) {
@@ -85,7 +97,7 @@ test("SL-01 online: cards that cannot run on this page get no component, but sti
     for (const doc of [html, lowHtml, html2]) assert.doesNotMatch(doc, /unsupported|requires local PC render helper/);
     H.setPlaceholderViewScale(1);
     assert.equal(wrapOf(html, "x"), null, "An id that exists on neither side is not drawn");
-    // 后台舞台(占位关着):照样不挂组件,也没有槽位
+    // Background stage (placeholders disabled): still mounts no components and has no slots
     H.setPlaceholdersEnabled(false);
     const back = render({ snapshots: new Map(), suppressed: new Set() });
     assert.doesNotMatch(wrapOf(back, "v"), /data-test-component|data-pc-placeholder-slot/);
@@ -106,7 +118,8 @@ test("SL-02 mode off: user cards mount their component as usual, the sync table 
     assert.equal(wrapOf(html, "s"), null, "Synced card with no definition on this machine: the desktop app does not draw it");
     assert.doesNotMatch(html, /unsupported/);
   }
-  // 桌面预览也按预览缩放补偿沙漏(屏幕上约 28 像素),不补偿这一层自己的缩放
+  // Desktop preview also compensates hourglass by preview zoom (~28 pixels on screen), without
+  // compensating this layer's own scale
   H.setPlaceholdersEnabled(true);
   H.setPlaceholderViewScale(0.5);
   try {

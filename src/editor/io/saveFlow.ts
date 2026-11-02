@@ -1,17 +1,25 @@
 /**
- * 顶栏「保存项目」「打包保存」的流程(从 `TopBar.tsx` 搬出来,好在 node 里测;界面只管按钮和提示)。
- * 语义:`docs/semantics/mechanism/document-service.md`「保存基准与修改状态检查」——
- * 「保存暂时禁用前台编辑，等待本机写完；失败不覆盖上次有效保存，并恢复编辑」。
+ * The flow for the top bar's "Save project" and "Pack and save" (moved out of `TopBar.tsx` so it can
+ * be tested in node; the UI only handles the buttons and messages).
+ * Semantics: `docs/semantics/mechanism/document-service.md`, "Save baseline and modified-state
+ * check":
+ * "Saving temporarily disables foreground editing and waits for this machine to finish writing; a
+ * failure does not overwrite the last valid save, and editing is restored".
  *
- * 两条规矩照旧:
- *   - 「另存为」要用户手势,挑落点必须是点击后的第一个 await;
- *   - 用户在「另存为」里点取消就整个不算保存:草稿不写、脏标记不清。
+ * Two rules as before:
+ *   - "Save as" needs a user gesture, so picking the location must be the first await after the click;
+ *   - If the user clicks cancel in "Save as", the whole thing does not count as a save: the draft is
+ *     not written and the dirty flag is not cleared.
  *
- * 顺序:挑落点 → 上锁(`../saveLock.ts`,前台编辑暂停)→ 等本机写完(`localWrites.ts`,到时限没完就不写、说明在等什么)
- * → 序列化 → 写盘(`proc.ts`:收预渲染快照、写临时副本,出错丢掉临时副本,原文件不动)→ 草稿、脏标记 → 解锁。
- * 结束(成功、超时、失败)都解锁、恢复编辑。
+ * Order: pick the location → lock (`../saveLock.ts`, foreground editing paused) → wait for this
+ * machine to finish writing (`localWrites.ts`; if it is not done by the time limit, do not write and
+ * explain what is being waited on) → serialize → write to disk (`proc.ts`: collect prerender
+ * snapshots, write the temporary copy, discard it on error, the original file is untouched) → draft,
+ * dirty flag → unlock.
+ * At the end (success, timeout, failure) always unlock and restore editing.
  *
- * 依赖都从参数进来(`SaveDeps`),缺省接真东西的那一份在 TopBar 里拼。
+ * All dependencies come in as parameters (`SaveDeps`); the default wiring to the real ones is
+ * assembled in TopBar.
  */
 import type { SaveOutcome } from "./proc";
 import { beginSaveLock, isSaveLocked, type SaveKind, type SaveLock } from "../saveLock";
@@ -27,36 +35,36 @@ export interface PackResultLike {
 }
 
 export interface SaveDeps {
-  /** 写 `.proc`:挑落点(或沿用上次的),再调 `produce` 取内容,写盘。即 `proc.ts` 的 `writeProcToDisk` */
+  /** Write `.proc`: pick the location (or reuse the last one), then call `produce` to get the content and write it to disk. That is `writeProcToDisk` in `proc.ts` */
   writeProc(produce: () => Promise<string>, fileName: string): Promise<SaveOutcome>;
-  /** 等文档服务确认完所有本地修改,超时抛错(即 syncManager 的 `whenSaved`) */
+  /** Wait for the document service to confirm all local changes; throw on timeout (that is `whenSaved` in syncManager) */
   settle(timeoutMs: number): Promise<void>;
-  /** 其余几样本机写入(素材导入、本机 Agent……),`localWrites.ts`;不给就只等文档服务确认与后台写入停下 */
+  /** The other local writes on this machine (media import, the local Agent, ...), `localWrites.ts`; if not given, only wait for the document service confirmation and for background writes to stop */
   probes?: readonly LocalWriteProbe[];
-  /** 等本机写完的总时限,缺省 `LOCAL_WRITES_TIMEOUT_MS`(测试用) */
+  /** Total time limit for waiting for this machine to finish writing, default `LOCAL_WRITES_TIMEOUT_MS` (for tests) */
   waitTimeoutMs?: number;
-  /** 当前项目(对象身份):序列化之后项目又被本机改了,就不能标「已保存」 */
+  /** The current project (object identity): if the project was changed locally after serialization, it cannot be marked "saved" */
   currentProject?(): unknown;
-  /** 当前项目 → `.proc` 文本 */
+  /** Current project → `.proc` text */
   serialize(): string;
-  /** 本地草稿跟着更新 */
+  /** The local draft is updated too */
   saveDraft(): Promise<void>;
-  /** 清脏标记、记下文件名 */
+  /** Clear the dirty flag, remember the file name */
   markSaved(fileName: string): void;
-  /** 给用户的一句话:`error` 是这次没保存成的原因,`info` 是保存成了但要告诉用户的事 */
+  /** One sentence for the user: `error` is why this save failed, `info` is something the user needs to know about a save that succeeded */
   notify(message: string, tone?: "error" | "info"): void;
 }
 
 export interface PackDeps extends Omit<SaveDeps, "writeProc" | "serialize" | "saveDraft" | "markSaved" | "currentProject"> {
-  /** 挑 `.procp` 的落点;没有文件系统访问 API 时回 null(退回浏览器下载)。用户取消抛 AbortError */
+  /** Pick the save target for `.procp`; returns null when there is no file system access API (falls back to a browser download). Throws AbortError if the user cancels */
   pick(fileName: string): Promise<FileSystemFileHandle | null>;
-  /** 装包 */
+  /** Pack */
   pack(): Promise<PackResultLike>;
-  /** 写进挑好的落点;缺省 `safeWrite.ts` 的 `writeToHandle`(出错丢掉临时副本,原文件不动) */
+  /** Write to the picked target; defaults to `writeToHandle` in `safeWrite.ts` (on error the temp copy is discarded and the original file is untouched) */
   writeHandle?(handle: FileSystemFileHandle, data: Blob): Promise<void>;
-  /** 没有落点时退回浏览器下载 */
+  /** Fall back to a browser download when there is no save target */
   download(blob: Blob, fileName: string): void;
-  /** 包里缺了哪些素材的那句话 */
+  /** The sentence saying which media are missing from the package */
   missingMessage(missing: readonly unknown[]): string;
 }
 
@@ -66,15 +74,15 @@ export const CHANGED_DURING_SAVE_TEXT = tr("The project was changed again on thi
 
 export const SNAPSHOTS_SKIPPED_TEXT = tr("The prerender snapshots could not be included in the file this time (the render service did not respond in time). The project content was saved in full, and it will be prerendered again when reopened.");
 
-/** `busy`:上一次保存还没结束,这一次不另起 */
+/** `busy`: the previous save has not finished, so this one does not start another */
 export type SaveResult = "saved" | "downloaded" | "cancelled" | "failed" | "busy";
 
-/** 保存进行中又点了一次:不另起,也不报错(「正在保存」那一层还在) */
+/** Clicked again while a save is in progress: do not start another, and do not report an error (the "saving" layer is still up) */
 class SaveBusy extends Error {
   constructor() { super(tr("Saving")); this.name = "SaveBusy"; }
 }
 
-/** 锁放在一个小盒子里:上锁发生在交给 writeProc 的回调里,外面的 finally 要拿得到 */
+/** The lock lives in a small box: it is taken inside the callback handed to writeProc, and the outer finally needs to reach it */
 interface LockBox { lock: SaveLock | null }
 
 function lockFor(box: LockBox, kind: SaveKind): SaveLock {
@@ -84,7 +92,7 @@ function lockFor(box: LockBox, kind: SaveKind): SaveLock {
   return lock;
 }
 
-/** 等本机写完;到时限没完抛错(说法里列出在等什么) */
+/** Wait for the local write to finish; throw on timeout (the message lists what we are waiting for) */
 async function waitLocal(deps: Pick<SaveDeps, "settle" | "probes" | "waitTimeoutMs">, lock: SaveLock): Promise<void> {
   await waitForLocalWrites({
     settle: (ms) => deps.settle(ms),
@@ -94,7 +102,7 @@ async function waitLocal(deps: Pick<SaveDeps, "settle" | "probes" | "waitTimeout
   });
 }
 
-/** 保存 `.proc` */
+/** Save `.proc` */
 export async function saveProcFile(fileName: string, deps: SaveDeps): Promise<SaveResult> {
   if (isSaveLocked()) return "busy";
   const box: LockBox = { lock: null };
@@ -112,14 +120,17 @@ export async function saveProcFile(fileName: string, deps: SaveDeps): Promise<Sa
     if (outcome.kind === "cancelled") return "cancelled";
     await deps.saveDraft();
     const infos: string[] = [];
-    // 存完就不脏了,否则「首页」「新建项目」每次都要多问一句。但序列化之后项目又变了(本机的 Agent、后台任务,
-    // 或协作者),文件里没有那几笔:不能标「已保存」。是本机改的就告诉用户;协作者的修改本来就随时把项目标脏,不另说
+    // Once saved it is no longer dirty, otherwise "Home" and "New project" would ask one extra question
+    // every time. But if the project changed after serialization (local Agent, background tasks, or
+    // collaborators), the file does not contain those edits: it must not be marked "saved". If the change
+    // came from this machine, tell the user; collaborators' edits always mark the project dirty anyway,
+    // so we do not mention them
     const changed = !!deps.currentProject && deps.currentProject() !== serialized;
     if (changed) {
       if (localCommitSeq() !== commitsAtSerialize) infos.push(CHANGED_DURING_SAVE_TEXT);
     } else deps.markSaved(fileName);
     if (outcome.kind === "downloaded") {
-      // 这个 WebView 没有文件选择 API,至少告诉用户文件去哪了
+      // This WebView has no file picker API; at least tell the user where the file went
       infos.unshift(tr("This environment does not support choosing a folder, saved to the browser's download location: {0}", outcome.where));
     } else if (outcome.snapshotsSkipped) {
       infos.push(SNAPSHOTS_SKIPPED_TEXT);
@@ -136,9 +147,10 @@ export async function saveProcFile(fileName: string, deps: SaveDeps): Promise<Sa
 }
 
 /**
- * 打包保存:.procp = 编排 + 项目用到的素材(A1)。
+ * Pack and save: .procp = arrangement + the media the project uses (A1).
  *
- * 和保存项目同一条规矩 —— 挑落点必须是第一个 await,装包(从本地内容库按哈希取素材)只能排在挑好落点之后。
+ * Same rule as saving a project: picking the save target must be the first await; packing (fetching
+ * media by hash from the local content store) may only come after the target is picked.
  */
 export async function savePackedFile(fileName: string, deps: PackDeps): Promise<SaveResult> {
   if (isSaveLocked()) return "busy";
@@ -146,7 +158,7 @@ export async function savePackedFile(fileName: string, deps: PackDeps): Promise<
   try {
     target = await deps.pick(fileName);
   } catch (e) {
-    if ((e as Error)?.name === "AbortError") return "cancelled"; // 用户取消,不是错误
+    if ((e as Error)?.name === "AbortError") return "cancelled"; // The user cancelled, not an error
     deps.notify(String((e as Error).message));
     return "failed";
   }
@@ -155,13 +167,14 @@ export async function savePackedFile(fileName: string, deps: PackDeps): Promise<
     const lock = lockFor(box, "procp");
     await waitLocal(deps, lock);
     lock.writing();
-    // 没有哈希的老素材先补入库;补完仍进不了包的(文件真的不在了)在最后列给用户,不许悄悄漏掉
+    // Old media without a hash are added to the store first; anything that still cannot go into the package
+    // after that (the file is really gone) is listed to the user at the end, never silently dropped
     const { blob, missing } = await deps.pack();
     let result: SaveResult = "saved";
-    // 保存成了但要告诉用户的几件事合成一张卡片说(以前是接连两个 alert)
+    // The several things the user needs to know about a successful save are merged into one card (it used to be two alerts in a row)
     const infos: string[] = [];
     if (target) {
-      // 写临时副本、close 才替换原文件;出错 abort 丢掉临时副本,原来的包不变(`safeWrite.ts`)
+      // Write a temp copy and only replace the original file on close; on error, abort discards the temp copy and the original package is unchanged (`safeWrite.ts`)
       await (deps.writeHandle ?? writeToHandle)(target, blob);
     } else {
       deps.download(blob, fileName);

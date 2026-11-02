@@ -1,16 +1,26 @@
 /**
- * C10 其余第 3 节(界限搜索的完整规则;原「低内存档」,2026-10-22 改为「只有一个舞台时按界限搜索判」与「最低一档」两样)
- * 接进分派与导出:用例 CP-01～CP-06(CP-03 随预渲染重试发布方撤销删掉,见下)。
+ * C10 Remaining Section 3 (complete rules for bounds search; originally "low-memory tier",
+ * changed on 2026-10-22 to "judge by bounds search when there is only one stage" and "lowest tier")
+ * integrated into dispatch and export: test cases CP-01-CP-06 (CP-03 was deleted along with
+ * revocation of prerender retry publisher, see below).
  *
- *   CP-01 planPipelines 的 searchLight:集合里的卡每个位置都判轻(不受预算挤出),其余(含没有身份的)每个位置都判重
- *   CP-02 planDispatch:按界限搜索判时判定表按它的结果;搜索完成前全部判重、searchJudged 为 false;不是最低一档时显示用的表就是判定的表,
- *         最低一档显示用的表一直全部判重
- *   CP-03 预渲染重试只对判重又缺产物的层:判轻的卡不发
- *   CP-04 导出:按判定的表只核对、只取判重卡的预渲染原尺寸,判轻的卡(层表里有也)本机渲
- *   CP-05 桌面不受影响:两样开关都关时判定表就是显示表,planPipelines 不给新选项时结果与原来逐字段相同
- *   CP-06 searchLight 与 allHeavy 同时给:allHeavy 优先(显示用)
+ *   CP-01 planPipelines searchLight: cards in the set are classified as light at every
+ *         position (not pushed out by budget), others (including those without identity) are
+ *         classified as heavy at every position
+ *   CP-02 planDispatch: when judging by bounds search, the judgment table follows its results;
+ *         before search completes, all are classified as heavy and searchJudged is false;
+ *         when not the lowest tier, the display table is the judgment table; in the lowest tier,
+ *         the display table is always entirely classified as heavy
+ *   CP-03 Prerender retry only for layers classified as heavy and lacking outputs: cards classified
+ *         as light are not sent
+ *   CP-04 Export: based on the judgment table, only verify and only fetch prerender original size
+ *         for cards classified as heavy; cards classified as light (even if in the layer table)
+ *         are rendered locally
+ *   CP-05 Desktop unaffected: when both switches are off, the judgment table is the display table;
+ *         when planPipelines is given no new options, results are identical field-by-field to original
+ *   CP-06 searchLight and allHeavy given simultaneously: allHeavy takes precedence (for display)
  *
- * 跑:node --experimental-test-module-mocks --test src/render/c10-cost-plan.test.mjs
+ * Run: node --experimental-test-module-mocks --test src/render/c10-cost-plan.test.mjs
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import { test, mock } from "node:test";
@@ -42,7 +52,8 @@ test("CP-01 searchLight: cards judged light are judged light at every position (
 test("CP-02 planDispatch: the judgment table follows the search result; before the search completes everything is judged heavy and searchJudged=false; the display table at the lowest tier is always all judged heavy", async () => {
   mock.module(srcUrl("editor/stageBridge.ts"), { exports: { frontStage: () => null, backStage: () => null } });
   mock.module(srcUrl("editor/costIdentity.ts"), { exports: { clipIdentityOf: () => ({ identityKeys: { a: "ka", b: "kb", c: "kc" }, frameModes: { a: "direct", b: "direct", c: "direct" } }) } });
-  // 夹具里的卡要在注册表里有定义:两边都没有定义的「未知卡片」不进分派表(2026-09-29 起,舞台不画它们)
+  // Cards in fixture must be defined in registry: "unknown cards" defined on neither side do not
+  // enter dispatch table (starting from 2026-09-29, the stage does not render them)
   (await import(srcUrl("kernel/registry.ts"))).registerCards(["a", "b", "c"].map((id) => ({ id: `card-${id}`, name: id, defaults: {}, controls: [], frameMode: "direct", Component: () => null })));
   const d = await import(srcUrl("editor/planDispatch.ts"));
   d.resetPlanDispatch();
@@ -76,8 +87,11 @@ test("CP-02 planDispatch: the judgment table follows the search result; before t
 });
 
 /*
- * CP-03(预渲染重试只对判重又缺产物的层)删了:`lowMemoryBackfill.ts` 随「为弱设备预渲染任务」撤销(2026-10-07 用户定,在线页面发布的任务
- * 一律普通优先级),只有一个舞台的页面与别的页面一样发清单计划,清单就是判定的表里判重的片段(`Preview.tsx` 的 `heavyCardClips`)。
+ * CP-03 (prerender retry only for layers classified as heavy and lacking outputs) was deleted:
+ * `lowMemoryBackfill.ts` was revoked along with "prerender tasks for weak devices" (user decision,
+ * 2026-10-07, tasks published by online pages always have normal priority); pages with only one stage
+ * send manifest plans just like other pages, and the manifest is the clips classified as heavy in
+ * the judgment table (`heavyCardClips` in `Preview.tsx`).
  */
 
 const O = await import(srcUrl("export/originals.ts"));
@@ -91,7 +105,7 @@ test("CP-04 export: by the judgment table, only check and only fetch the prerend
   const request = async (msg) => {
     if (msg.key === "layers:proj") return { type: "content.item", body: map };
     if (msg.key === "rk-h:0-3") return { type: "content.item", body: { frames: [[0, H], [1, H], [2, H], [3, H]] } };
-    return { type: "content.item", missing: true }; // 判轻的卡原尺寸缺
+    return { type: "content.item", missing: true }; // Original size is missing for cards classified as light
   };
   const deps = { request, assetBase: () => "http://x/api/asset", authHeaders: async () => ({}) };
   const normal = await O.loadOriginalsIndex("proj", deps);

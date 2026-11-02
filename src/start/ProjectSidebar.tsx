@@ -1,33 +1,50 @@
 /**
- * 左侧栏:全部项目,三级结构(用户 2026-10-23 定的形状)。
+ * Left sidebar: all projects, a three-level structure (the shape decided by the user on 2026-10-23).
  *
- *   分组
- *     ├ 项目
- *     │   └ 项目 Agent(这个项目里的 Agent 对话)
- *     └ 分组 Agent(跨这个分组里几个项目的对话)
+ *   Group
+ *     ├ Project
+ *     │   └ Project Agent (Agent chats in this project)
+ *     └ Group Agent (chats spanning several projects in this group)
  *
- * 三种东西各有自己的前置图标:分组是叠起来的方块,项目是取景框,Agent 是一颗星芒并染上 Agent 专属色
- * (`--ui-agent`,和编辑器 rail 上的 Agent 头像同一个色)。层级用缩进和一条竖导线表示,不画逐行的拐角 ——
- * 拐角要分「最后一个」和「中间的」,行一多就容易错位。
+ * Each of the three kinds has its own leading icon: a group is stacked squares, a project is a
+ * viewfinder, and an Agent is a starburst tinted with the Agent-specific color
+ * (`--ui-agent`, the same color as the Agent avatar on the editor rail). Levels are shown with
+ * indentation and one vertical guide line; no per-row corner connectors are drawn, because corners
+ * must distinguish "last" from "middle" and are easily misaligned once there are many rows.
  *
- * 每一行都能右键(重命名 / 置顶 / 归档 / 删除,见 `RowMenu.tsx`)、都能拖着排序。**置顶和排序都只在
- * 自己同级里生效**:分组里的项目 A 置顶,只在那个分组里顶上去(规则与纯函数在 `treeState.ts`)。
- * 右边那条缝能拖,改侧栏宽度,记在本机(`sideWidth.ts`)。
+ * Every row can be right-clicked (rename / pin / archive / delete, see `RowMenu.tsx`) and dragged to
+ * reorder. **Pinning and ordering only take effect among siblings**: pinning project A in a group only
+ * moves it to the top within that group (rules and pure functions are in `treeState.ts`).
+ * The seam on the right can be dragged to change the sidebar width, which is stored locally
+ * (`sideWidth.ts`).
  *
- * 点分组把右边那排筛成这个分组里的项目;点项目名进这个项目(连上云端文档服务,`OnlineStart.tsx` 的 `openProject`),
- * 它底下列出当前账号看得到的项目 Agent(云端 Agent 对话)和一行「新对话」;点 Agent 进聊天页。
+ * Clicking a group filters the row on the right down to the projects in that group; clicking a project
+ * name enters that project (connects to the cloud document service, `openProject` in
+ * `OnlineStart.tsx`). Below it are listed the project Agents the current account can see (Cloud Agent
+ * chats) and a "New chat" row; clicking an Agent goes to the chat page.
  *
- * **展开和打开是两回事**(issue #15,2026-10-26):行首那颗小三角只管展开 / 收起,不切换当前项目,
- * 想同时展开几个项目就展开几个;点项目名才是打开。没打开的项目底下列的是只读的一份(`browseChats.ts` 现取一次
- * 那个项目的委托票据去要列表),那些对话只能点进去 —— 点了就是打开那个项目并进那条对话。
- * 给了 `browse` 才有这套行为:桌面版的本机项目没有这条路(对话在当前打开的那个项目的本机状态里),照旧只有打开的那个能展开。
- * 搜索只筛这一栏(右边那排跟着当前分组走,不跟搜索走),免得一边打字一边整页都在跳;
- * 搜得到的只有已经展开过的项目,这一点在搜索框底下写明。
+ * **Expanding and opening are two different things** (issue #15, 2026-10-26): the small triangle at
+ * the start of a row only expands / collapses and does not switch the current project; to expand
+ * several projects, expand several. Clicking the project name is what opens it. Under a project that
+ * is not open, a read-only copy is listed (`browseChats.ts` fetches that project's delegation ticket
+ * once to request the list), and those chats can only be clicked into: clicking opens that project and
+ * enters that chat.
+ * This behavior exists only when `browse` is given: local projects in the desktop app have no such
+ * path (chats live in the local state of the currently open project), so as before only the open one
+ * can be expanded.
+ * Search only filters this column (the row on the right follows the current group, not the search), so
+ * the whole page does not jump while typing; search finds only projects that have been expanded, which
+ * is stated under the search box.
  *
- * 2026-10-23 接业务层:项目来自云端项目列表(桌面版是本机草稿),对话来自云端 Agent 服务(桌面版是本机 Agent)。
- * 分组分两套、互相放不进:本地分组装本机草稿项目、存本机;云端分组装云端项目、存云端(`vibeOrg.ts` 文件头)。
- * 每个分组、每个项目都带 `realm`,右键「移到分组」里另一套的分组置灰并说明。「分组 Agent」语义里没有,这一版不做。
- * 归档的东西收在最下面「已归档」那一段里,右键能取消归档。
+ * 2026-10-23 connected to the business layer: projects come from the cloud project list (local drafts
+ * in the desktop app), and chats come from the cloud Agent service (local Agents in the desktop app).
+ * Groups come in two sets that cannot hold each other's items: local groups hold local draft projects
+ * and are stored locally; cloud groups hold cloud projects and are stored in the cloud (file header of
+ * `vibeOrg.ts`). Every group and every project carries `realm`; in the right-click "Move to group"
+ * menu, groups of the other set are grayed out with an explanation. "Group Agent" does not exist in
+ * the semantics, so this version does not implement it.
+ * Archived items are collected at the bottom in the "Archived" section, and right-click can unarchive
+ * them.
  */
 import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
@@ -42,46 +59,53 @@ import { moveTargetsFor } from "./vibeOrg";
 import { tr } from "../i18n/index.ts";
 
 /**
- * 整块筛选用的那两行(「全部项目」和「没放进分组」)先归档,默认不显示 —— **用户 2026-10-23 要求的**:
- * 「这个块不需要,归档他」「这两个也不需要,直接按条目显示项目」。代码留着,改回 true 就回来;
- * 记录另见 `docs/plan/user-decisions-2026-10-23.md`。
+ * The two rows used for the whole-block filter ("All projects" and "Not in a group") are archived
+ * first and hidden by default -- **requested by the user on 2026-10-23**:
+ * "This block is not needed, archive it", "These two are not needed either, just show projects as
+ * items". The code is kept; set it back to true and they return.
+ * See also the record in `docs/plan/user-decisions-2026-10-23.md`.
  *
- * 它们没了之后:没放进分组的项目在「项目」那张卡里直接一条条列出来;要筛回「全部」靠顶栏那颗房子
- * (`OnlineStart.tsx` 的 `onHome` 一并把作用域设回 all)。
+ * Without them: projects not in a group are listed one by one directly in the "Projects" card; to
+ * filter back to "all", use the house icon in the top bar
+ * (`onHome` in `OnlineStart.tsx` also resets the scope to all).
  */
 const SHOW_SCOPE_ROWS = false;
 
-/** 右边那排现在显示哪一堆 */
+/** Which set the row on the right currently shows */
 export type Scope = { kind: "all" } | { kind: "group"; id: string } | { kind: "loose" };
 
 export const scopeKeyOf = (s: Scope): string => (s.kind === "group" ? `group:${s.id}` : s.kind);
 
-/** 侧栏对外要的一组改动。全由 `OnlineStart` 拿着状态去做,这一栏只管什么时候调 */
+/** The set of changes the sidebar needs from outside. `OnlineStart` holds the state and performs all
+ * of them; this column only decides when to call */
 export interface TreeOps {
   rename: (kind: TreeKind, id: string, name: string) => void;
   pin: (kind: TreeKind, id: string) => void;
-  /** 归档 / 取消归档(按它现在的状态切) */
+  /** Archive / unarchive (toggled according to its current state) */
   archive: (kind: TreeKind, id: string) => void;
   remove: (kind: TreeKind, id: string) => void;
   reorder: (kind: TreeKind, dragId: string, overId: string, place: Place) => void;
-  /** 项目移到某个分组(null 是移出分组) */
+  /** Move a project to a group (null means move out of the group) */
   move: (projectId: string, groupId: string | null) => void;
-  /** 这一行哪几项做不了、为什么 */
+  /** Which items of this row cannot be done, and why */
   blocked: (kind: TreeKind, id: string) => { rename?: MenuBlock; remove?: MenuBlock; pin?: MenuBlock; archive?: MenuBlock };
 }
 
 /**
- * 展开没打开的项目时,它底下那一份对话从哪来(`browseChats.ts`;给了才允许展开没打开的项目)。
- * 桌面版不给:那边的对话在当前打开项目的本机状态里,没有这条路
+ * Where the chats under a project that is not open come from when it is expanded (`browseChats.ts`;
+ * expanding a project that is not open is only allowed when this is given).
+ * Not given in the desktop app: there the chats live in the local state of the currently open
+ * project, so there is no such path
  */
 export interface BrowseSide {
-  /** 用户展开了一个没打开的项目:该去取它的对话列表了 */
+  /** The user expanded a project that is not open: time to fetch its chat list */
   open: (projectId: string) => void;
-  /** 这一支底下写的那一行(正在取、取不到、这个项目没有云端 Agent…);没有就不写 */
+  /** The line written under this branch (loading, cannot be loaded, this project has no Cloud Agent...);
+   * if none, nothing is written */
   note: (projectId: string) => { text: string; retry?: () => void } | null;
 }
 
-/** 分组:两片叠起来的方块 */
+/** Group: two stacked squares */
 function GroupIcon(): JSX.Element {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
@@ -91,7 +115,7 @@ function GroupIcon(): JSX.Element {
   );
 }
 
-/** 项目:取景框 */
+/** Project: viewfinder */
 function ProjectIcon(): JSX.Element {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
@@ -101,7 +125,7 @@ function ProjectIcon(): JSX.Element {
   );
 }
 
-/** Agent:星芒 */
+/** Agent: starburst */
 function AgentIcon(): JSX.Element {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -111,7 +135,7 @@ function AgentIcon(): JSX.Element {
   );
 }
 
-/** 全部项目:网格 */
+/** All projects: grid */
 function AllIcon(): JSX.Element {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
@@ -123,7 +147,7 @@ function AllIcon(): JSX.Element {
   );
 }
 
-/** 置顶的那个小图钉 */
+/** The little pin for pinned items */
 function PinIcon(): JSX.Element {
   return (
     <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -132,20 +156,23 @@ function PinIcon(): JSX.Element {
   );
 }
 
-/** 一行要的全部东西。三种行共用这一个渲染器,否则右键、拖动、重命名要抄三遍 */
+/** Everything one row needs. The three kinds of rows share this one renderer; otherwise right-click,
+ * dragging and renaming would have to be copied three times */
 interface RowSpec {
   kind: TreeKind;
   id: string;
   name: string;
   pinned: boolean;
-  /** 同级的键:只有键相同的两行之间才允许拖动排序 */
+  /** Sibling key: drag-to-reorder is only allowed between two rows with the same key */
   sib: string;
   icon: JSX.Element;
-  /** 有下一层时给箭头;`undefined` 是叶子(位置仍然留着,好对齐) */
+  /** Gives the arrow when there is a next level; `undefined` is a leaf (the slot is still kept, for
+   * alignment) */
   expanded?: boolean;
   /**
-   * 给了的话,行首那颗小三角是一颗**单独的键**:点它只展开 / 收起,不触发 `onClick`(issue #15)。
-   * 不给就还是一个纯标记(分组那种点整行就展开的)
+   * If given, the small triangle at the start of the row is a **separate button**: clicking it only
+   * expands / collapses and does not trigger `onClick` (issue #15).
+   * If not given, it is still a plain marker (as with groups, where clicking the whole row expands it)
    */
   onToggle?: () => void;
   count?: number;
@@ -159,58 +186,74 @@ interface RowSpec {
 export function ProjectSidebar(props: {
   groups: VibeGroup[];
   projects: VibeProject[];
-  /** 看得到的对话:此刻连着那个项目的实时一份,加上展开过的别的项目那份只读的(`browse`) */
+  /** Visible chats: the live copy of the project connected right now, plus the read-only copies of other
+   * projects that have been expanded (`browse`) */
   chats: VibeChat[];
-  /** 此刻连着的项目;它那一行标成当前项,缺省展开 */
+  /** The project connected right now; its row is marked as the current item and expanded by default */
   connectedId: string | null;
-  /** 没打开的项目底下那一份对话打哪来;不给就只有打开的那个项目能展开(桌面版) */
+  /** Where the chats under a project that is not open come from; if not given, only the open project can
+   * be expanded (desktop app) */
   browse?: BrowseSide;
   scope: Scope;
   onScope: (s: Scope) => void;
   onCreate: () => void;
-  /** 新建项目做不了(没登录、游客已经建过)时的说明 */
+  /** Explanation for when creating a project is not possible (not logged in, the guest has already
+   * created one) */
   createBlocked?: string | null;
   onOpen: (id: string) => void;
   onOpenChat: (chat: VibeChat) => void;
   onNewChat: (projectId: string) => void;
-  /** 某个项目底下的「新对话」开不了（游客每个项目只能开一个对话）时的说明；有说明的那一行置灰、悬停写它，点一下仍交给 `onNewChat`（由它把这句话摆出来） */
+  /** Explanation for when "New chat" under a project cannot be opened (a guest can only open one chat per
+   * project); the row with an explanation is grayed out and hover shows it, and a click is still passed
+   * to `onNewChat` (which displays this sentence) */
   newChatBlocked?: (projectId: string) => string | null;
   onNewGroup: () => void;
   /**
-   * 「新建分组」那一行悬停时说的话:这一套分组存在哪、装什么(本地分组 / 云端分组,见 `vibeOrg.ts` 文件头)
+   * Text shown when hovering the "New group" row: where this set of groups is stored and what it holds
+   * (local groups / cloud groups, see the file header of `vibeOrg.ts`)
    */
   groupNote?: string;
-  /** 新建分组做不了(游客没有分组)时的说明;给了就置灰并挂在悬停上 */
+  /** Explanation for when creating a group is not possible (guests have no groups); if given, the row is
+   * grayed out and the text is attached to hover */
   newGroupBlocked?: string | null;
-  /** 「分组」那张卡里「新建分组」下面的一行状态(云端分组没同步上时);没有就不显示 */
+  /** The status line under "New group" in the "Groups" card (when cloud groups are not synced); if none,
+   * not shown */
   groupStatus?: string | null;
-  /** 「项目」那张卡顶上的一行状态(正在取列表、取不到、重试);没有就不显示 */
+  /** The status line at the top of the "Projects" card (loading the list, cannot be loaded, retry); if
+   * none, not shown */
   notice?: ReactNode;
-  /** 聊天页正开着的那条对话:它那一行标成当前项 */
+  /** The chat currently open on the chat page: its row is marked as the current item */
   openChatId: string | null;
-  /** 收起来了没有。收起时整条滑出去、宽度收到 0,收起键在顶栏上 */
+  /** Whether it is collapsed. When collapsed, the whole thing slides out and the width shrinks to 0; the
+   * collapse button is on the top bar */
   collapsed: boolean;
   ops: TreeOps;
   width: number;
   onWidth: (px: number) => void;
   onWidthCommit: (px: number) => void;
   /**
-   * 在当前宽度上加减。方向键必须走这一条,不能自己算 `width + step` ——
-   * 按住方向键时连发的几下都在同一帧里,每一下读到的 `width` 都还是旧的,算出来是同一个数,宽度就卡住不动了。
+   * Add or subtract on the current width. Arrow keys must go through this one; do not compute
+   * `width + step` yourself --
+   * when an arrow key is held, the repeated presses all land in the same frame, and each one reads the
+   * old `width`, computes the same number, and the width gets stuck.
    */
   onWidthNudge: (delta: number) => void;
 }): JSX.Element {
   const [open, setOpen] = useState<Record<string, boolean>>({});
-  /** 每张卡收起来没有(用户 2026-10-23:每一个块都可以收起,和右边那条拓展栏一样)。缺省都是开的 */
+  /** Whether each card is collapsed (user, 2026-10-23: every block can be collapsed, same as the side
+   * panel on the right). All open by default */
   const [cards, setCards] = useState<Record<string, boolean>>({});
   const cardOpen = (k: string) => cards[k] !== false;
   const toggleCard = (k: string) => setCards((c) => ({ ...c, [k]: !cardOpen(k) }));
   const [query, setQuery] = useState("");
-  /** 搜索框是不是正被用着(点进去了);打了字的话松开焦点也不收 —— 收回去就看不见自己搜的是什么了 */
+  /** Whether the search box is in use (clicked into); if text has been typed, it does not collapse on
+   * blur either -- collapsing would hide what you searched for */
   const [typing, setTyping] = useState(false);
   /**
-   * 「新建项目」那颗键有多宽。搜索框平时就停在它左边(`right` 给到这个数),展开时 `right` 走到 0 盖住它。
-   * 量出来而不是写死:键上的字、字号、皮肤换了都不用回来改这个数。
+   * How wide the "New project" button is. The search box normally sits to its left (`right` is set to
+   * this number), and when expanded `right` goes to 0 and covers it.
+   * Measured rather than hard-coded: if the button's text, font size or skin changes, this number does
+   * not need to be revisited.
    */
   const [newW, setNewW] = useState(0);
   const newBtn = useRef<HTMLButtonElement>(null);
@@ -226,27 +269,30 @@ export function ProjectSidebar(props: {
   }, []);
   const [menu, setMenu] = useState<MenuAt | null>(null);
   const [renaming, setRenaming] = useState<{ kind: TreeKind; id: string; name: string } | null>(null);
-  /** 正在拖的那一行;dragover 时读它判同级(dataTransfer 在 dragover 里读不到内容) */
+  /** The row being dragged; read it on dragover to check siblings (dataTransfer content cannot be read
+   * during dragover) */
   const drag = useRef<{ kind: TreeKind; id: string; sib: string } | null>(null);
   const [dropAt, setDropAt] = useState<{ id: string; place: Place } | null>(null);
 
   const q = query.trim().toLowerCase();
   const hit = (text: string) => !q || text.toLowerCase().includes(q);
-  /** 搜索框展开着没有:点进去了,或者里面还有字 */
+  /** Whether the search box is expanded: clicked into, or still has text in it */
   const searchOpen = typing || query !== "";
 
-  // 归档的不进树;显示顺序由 ordered 定(置顶的在自己这一段的最前面)
+  // Archived items do not go into the tree; display order is decided by ordered (pinned items come first
+  // in their own section)
   const groups = ordered(visible(props.groups));
   const allProjects = visible(props.projects);
   const allChats = visible(props.chats);
 
   const chatsOfProject = (id: string) => ordered(allChats.filter((c) => c.projectId === id));
-  /** 项目自己名字命中,或它底下哪条对话命中,都算要显示 */
+  /** A match on the project's own name, or on any chat under it, counts as one to show */
   const projectShows = (p: VibeProject) => hit(p.name) || chatsOfProject(p.id).some((c) => hit(c.name));
   const projectsOf = (groupId: string | null) =>
     ordered(allProjects.filter((p) => p.groupId === groupId && projectShows(p)));
 
-  /** 同级的键:分组一级,同一分组里的项目一级,挂在同一个项目(或分组)上的对话各一级 */
+  /** Sibling key: groups are one level, projects in the same group are one level, and chats attached to
+   * the same project (or group) are one level each */
   const chatSib = (c: VibeChat) => `chat:p:${c.projectId}`;
   const projectSib = (p: VibeProject) => `project:${p.realm}:${p.groupId ?? "loose"}`;
   const archivedGroups = props.groups.filter((g) => g.archived);
@@ -259,8 +305,10 @@ export function ProjectSidebar(props: {
     s.kind === current.kind && (s.kind !== "group" || (current.kind === "group" && s.id === current.id));
 
   /**
-   * 一段的头:和右边那条拓展栏的段头同一套(`.ps-card-*`),点了收起里面那一截。
-   * 整栏是**一张**面板,段与段之间不再各自成卡(issue #5,形状在 `start.css` 的 `.ps-side-scroll`)。
+   * Section header: the same set as the section headers of the side panel on the right (`.ps-card-*`);
+   * clicking it collapses the part inside.
+   * The whole column is **one** panel, and sections no longer each become a card (issue #5, shape in
+   * `.ps-side-scroll` of `start.css`).
    */
   const cardHead = (key: string, title: string, count: number): JSX.Element => (
     <div className="ps-card-head">
@@ -279,7 +327,8 @@ export function ProjectSidebar(props: {
     </div>
   );
 
-  /** 一行。右键、拖动、重命名都在这儿,三种行只是传进来的 spec 不同 */
+  /** One row. Right-click, dragging and renaming all live here; the three kinds of rows differ only in
+   * the spec passed in */
   const row = (spec: RowSpec): JSX.Element => {
     const isRenaming = renaming?.kind === spec.kind && renaming.id === spec.id;
     const dropping = dropAt?.id === spec.id ? dropAt.place : null;
@@ -289,7 +338,8 @@ export function ProjectSidebar(props: {
     };
 
     if (isRenaming) {
-      // 改名时那一行换成输入框。<input> 不能放在 <button> 里,所以整行换成 div
+      // While renaming, the row is replaced with an input. <input> cannot go inside <button>, so the whole
+      // row becomes a div
       return (
         <div key={spec.id} className={`ps-row is-renaming${spec.className ? ` ${spec.className}` : ""}`} data-pc={spec.pc} {...common}>
           <span className="ps-row-caret" data-empty={spec.expanded === undefined} aria-hidden="true">›</span>
@@ -310,7 +360,8 @@ export function ProjectSidebar(props: {
                 setRenaming(null);
               }
             }}
-            // 点到别处就当改完了(和改名框里按回车一致);按 Esc 走上面那一支,不会走到这里
+            // Clicking elsewhere counts as done (consistent with pressing Enter in the rename box); pressing Esc
+            // takes the branch above and never gets here
             onBlur={(e) => {
               props.ops.rename(spec.kind, spec.id, e.currentTarget.value);
               setRenaming(null);
@@ -321,10 +372,13 @@ export function ProjectSidebar(props: {
     }
 
     /*
-     * 一行是**一个 div 里的两颗键**(issue #15):左边小三角只管展开 / 收起,右边整条是「点进去」。
-     * 不做成「一颗键里套一个 span、点它时 stopPropagation」—— 那样拖拽的 `onMouseDown` 拦不住,
-     * 键盘也走不到小三角上。右键菜单、放下(drop)挂在外面这个 div 上(位置按整行算),
-     * 拖起(dragstart)挂在主键上,和原来一行一颗键时的手感一样。
+     * A row is **two buttons in one div** (issue #15): the small triangle on the left only expands /
+     * collapses, and the whole strip on the right is "click to enter".
+     * It is not made as "one button with a span inside, calling stopPropagation when it is clicked":
+     * that way the drag `onMouseDown` cannot be intercepted, and the keyboard cannot reach the small
+     * triangle. The context menu and drop are attached to the outer div (position is computed over the
+     * whole row), and dragstart is attached to the main button, which feels the same as when a row was
+     * one button.
      */
     return (
       <div
@@ -339,7 +393,8 @@ export function ProjectSidebar(props: {
         }}
         onDragOver={(e) => {
           const d = drag.current;
-          // 只许同级之间排序:别的一律不接(不 preventDefault 就是不允许放)
+          // Only reordering among siblings is allowed: accept nothing else (without preventDefault, dropping is
+          // not allowed)
           if (!d || d.id === spec.id || d.kind !== spec.kind || d.sib !== spec.sib) return;
           e.preventDefault();
           e.dataTransfer.dropEffect = "move";
@@ -391,7 +446,7 @@ export function ProjectSidebar(props: {
           onDragStart={(e) => {
             drag.current = { kind: spec.kind, id: spec.id, sib: spec.sib };
             e.dataTransfer.effectAllowed = "move";
-            // 有的浏览器不带数据就不开始拖
+            // Some browsers do not start dragging without data
             e.dataTransfer.setData("text/plain", spec.id);
           }}
           onDragEnd={() => {
@@ -423,7 +478,7 @@ export function ProjectSidebar(props: {
       onClick: () => props.onOpenChat(chat),
     });
 
-  /** 一个项目,连同它底下的项目 Agent */
+  /** One project, together with the project Agents under it */
   const newChatRow = (projectId: string) => {
     const blocked = props.newChatBlocked?.(projectId) ?? null;
     return (
@@ -441,16 +496,20 @@ export function ProjectSidebar(props: {
     const connected = props.connectedId === p.id;
     const browse = props.browse;
     /*
-     * 搜索时自动展开命中的那一支:不然搜到了却看不见在哪。
-     * 平时:用户自己点过小三角的听他的;没点过时,连着的那个缺省展开,别的缺省收着(issue #15)。
-     * `browse` 不给(桌面版)时只有连着的那个展得开 —— 别的项目底下没有东西可列。
+     * While searching, automatically expand the branch that matched: otherwise you find it but cannot see
+     * where it is.
+     * Otherwise: if the user has clicked the small triangle, follow that; if not, the connected one is
+     * expanded by default and the others are collapsed by default (issue #15).
+     * When `browse` is not given (desktop app), only the connected one can be expanded -- there is
+     * nothing to list under the other projects.
      */
     const expanded = q ? chats.some((c) => hit(c.name)) : (open[p.id] ?? connected);
     const canExpand = !!browse || connected;
     const toggle = () => {
       const next = !(open[p.id] ?? connected);
       setOpen((o) => ({ ...o, [p.id]: next }));
-      // 展开一个没打开的项目:这时才去取它的对话(收起、已经打开着的那个都不取)
+      // Expanding a project that is not open: only now fetch its chats (collapsing, or the one already open,
+      // does not fetch)
       if (next && browse && !connected) browse.open(p.id);
     };
     const note = canExpand && expanded && browse && !connected ? browse.note(p.id) : null;
@@ -488,7 +547,8 @@ export function ProjectSidebar(props: {
     );
   };
 
-  /** 「已归档」那张卡里的一行:点了、右键都出菜单(取消归档、删除),不进去 */
+  /** A row in the "Archived" card: clicking and right-clicking both bring up the menu (unarchive, delete);
+   * it does not enter */
   const archivedRow = (kind: TreeKind, id: string, name: string, icon: JSX.Element) => (
     <button key={`${kind}:${id}`} type="button" className={`ps-row is-archived${kind === "chat" ? " is-agent" : ""}`} data-pc="start-side-archived-row"
       data-kind={kind} data-id={id} aria-label={tr("Archived {0} {1}", kind === "group" ? tr("Group") : kind === "project" ? tr("Project") : tr("chat"), name)} title={tr("{0} (right-click to unarchive)", name)}
@@ -505,17 +565,20 @@ export function ProjectSidebar(props: {
       className="ps-side"
       data-pc="start-side"
       data-collapsed={props.collapsed}
-      /* 收起就是把 flex-basis 收到 0;宽度本来就是行内样式给的,收起也得走行内,不然类选择器压不过它 */
+      /* Collapsing means shrinking flex-basis to 0; the width is given by an inline style to begin with, so
+         collapsing must also go inline, otherwise a class selector cannot override it */
       style={{ flexBasis: props.collapsed ? 0 : `${props.width}px` }}
     >
-      {/* 里面这一层钉住原来的宽度:收的时候内容整块滑出去,不会先被挤成一条再消失 */}
+      {/* This inner layer pins the original width: when collapsing, the content slides out as one block and
+   is not first squeezed into a strip and then gone */}
       <div className="ps-side-inner" style={{ width: `${props.width}px` }}>
-      {/* 面板只有一张(issue #5):搜索与新建那一行、下面的列表,都在这张里面 */}
+      {/* There is only one panel (issue #5): the search-and-create row and the list below it are both inside this one */}
       <div className="ps-side-panel" data-pc="start-side-panel">
       {/*
-        头一行:左边搜索、右边「新建项目」。点进搜索框,它向右长出去**盖住**新建那颗键(用户 2026-10-24),
-        动画只动一个 `right`(240ms,和侧栏收起同一条缓动),没有位移抖动;收回去时新建键原样露出来 ——
-        它一直在原地,只是被盖着。
+        Top row: search on the left, "New project" on the right. Focusing the search box expands it to the
+        right to **cover** the new project button (user decision, 2026-10-24); the animation only changes
+        `right` (240ms, same easing as sidebar collapse) without positional jitter; when collapsing, the
+        new project button is revealed unchanged: it stays in place the whole time, simply covered.
       */}
       <div className="ps-side-head" data-searching={searchOpen}>
         <button ref={newBtn} type="button" className="ps-side-new" data-pc="start-side-new" disabled={!!props.createBlocked}
@@ -533,19 +596,21 @@ export function ProjectSidebar(props: {
             ref={searchBox}
             type="search"
             value={query}
-            /* 收着的时候只有一小条,长的那句放不下;展开了再写全 */
+            /* When collapsed there is only a small strip, and the long sentence does not fit; write it in full once expanded */
             placeholder={searchOpen ? tr("Search projects and chats") : tr("Search")}
             aria-label={tr("Search projects and chats")}
             data-pc="start-side-search"
             onFocus={() => setTyping(true)}
             onBlur={() => setTyping(false)}
-            /* Esc:清空并退出,搜索框收回去,新建键露出来 */
+            /* Esc: clear and exit, the search box retracts, the new-project button shows again */
             onKeyDown={(e) => { if (e.key === "Escape") { setQuery(""); searchBox.current?.blur(); } }}
             onChange={(e) => setQuery(e.target.value)}
           />
           {/*
-            清空那一颗:搜完了点它,搜索框收回去、新建键露出来。只有有字的时候在。
-            `onMouseDown` 要拦掉 —— 它在 <label> 里,不拦的话按下去会把焦点送进输入框,清完又算「正在用」,收不回去。
+            The clear button: click it after searching to collapse the search box and reveal the new project
+            button. Only present when there is text. Intercept `onMouseDown`: it is inside <label>; without
+            intercepting, clicking sends focus to the input box, treating it as "in use" after clearing so it
+            cannot collapse.
           */}
           {query && (
             <button type="button" className="ps-search-clear" data-pc="start-side-search-clear" aria-label={tr("Clear search")}
@@ -558,7 +623,8 @@ export function ProjectSidebar(props: {
       </div>
 
       <div className="ps-side-scroll">
-        {/* 搜索搜得到的只有已经取回来的对话:没展开过的项目底下是什么,这一页还不知道(issue #15) */}
+        {/* Search only finds chats that have already been fetched: what is under a project that was never
+   expanded is not known to this page yet (issue #15) */}
         {q && props.browse && (
           <p className="ps-side-hint" data-pc="start-side-search-scope">{tr("Search only covers projects you have expanded.")}</p>
         )}
@@ -643,14 +709,15 @@ export function ProjectSidebar(props: {
           </button>
           )}
           {props.notice && <div className="ps-side-hint" role="status" data-pc="start-side-notice">{props.notice}</div>}
-          {/* 没放进分组的项目直接一条条列,不再套在「没放进分组」那一行底下(用户 2026-10-23) */}
+          {/* Projects not in any group are listed directly one by one, no longer nested under an "Ungrouped" row
+   (user decision, 2026-10-23) */}
           {projectsOf(null).map(projectBlock)}
           </div>}
         </div>
 
         {archivedCount > 0 && (
           <div className="ps-side-group" data-open={cards.archived === true} data-pc="start-side-archived">
-            {/* 已归档缺省收着:平时不占地方,要找回来才点开 */}
+            {/* Archived is collapsed by default: it takes no space normally and is opened only when you want something back */}
             <div className="ps-card-head">
               <button type="button" className="ps-card-toggle" data-pc="start-side-card" data-card="archived" aria-expanded={cards.archived === true}
                 onClick={() => setCards((c) => ({ ...c, archived: c.archived !== true }))}>
@@ -672,7 +739,8 @@ export function ProjectSidebar(props: {
 
       </div>
 
-      {/* 右边那条缝:平时不画线,鼠标压上来才亮(`WidthGrip.tsx`)。收起时没有 */}
+      {/* The divider on the right: no line is drawn normally, it lights up only when the mouse presses on it
+   (`WidthGrip.tsx`). Absent when collapsed */}
       {!props.collapsed && (
         <WidthGrip
           spec={SIDE_WIDTH}
@@ -691,7 +759,8 @@ export function ProjectSidebar(props: {
         const project = menu.kind === "project" ? props.projects.find((p) => p.id === menu.id) : undefined;
         const archived = menu.kind === "group" ? !!props.groups.find((g) => g.id === menu.id)?.archived
           : menu.kind === "project" ? !!project?.archived : !!props.chats.find((c) => c.id === menu.id)?.archived;
-        // 别的套的分组也列,置灰并说明(本地项目放不进云端分组,云端项目放不进本地分组)
+        // Groups of the other realm are listed too, grayed out with an explanation (a local project cannot go
+        // into a cloud group, and a cloud project cannot go into a local group)
         const moveTargets = project && !archived ? moveTargetsFor(project, props.groups) : undefined;
         return (
           <RowMenu

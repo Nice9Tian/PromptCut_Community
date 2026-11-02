@@ -7,11 +7,15 @@ const globbed = import.meta.glob([
 ], { query: '?raw', import: 'default', eager: true });
 
 /*
- * 热更新的边界(C6.6 集成 3b):卡片、部件、render、kernel 下任何一个文件改了,这张源码表就要重算。
- * 以前它不接热更新,于是沿「本模块 → costIdentity → probeRunner → ProbeGate / Preview」一路冒到编辑器,
- * Preview 的 effect 在 Fast Refresh 里重跑、清掉舞台的 RPC 客户端。
- * 现在本模块自己接住:重跑时把新表**原地**写进第一次导出的那个对象(引用它的模块手里拿的一直是那一个),
- * 所以不用通知谁换引用,下次算源码版本 / 身份键时读到的就是新的。
+ * Hot reload boundary (C6.6 integration 3b): if any file under cards, parts, render, or kernel
+ * changes, this source code table must be recomputed. Previously it did not handle hot reload,
+ * bubbling all the way to the editor along
+ * "this module → costIdentity → probeRunner → ProbeGate / Preview",
+ * causing Preview's effect to rerun during Fast Refresh and clear the stage's RPC client.
+ * Now this module catches it directly: on rerun, it writes the new table **in place** into the object
+ * exported the first time (referencing modules always hold that same instance), so no one needs
+ * to be notified to swap references, and the next source version / identity key calculation reads
+ * the updated table.
  */
 const kept = import.meta.hot?.data?.files;
 if (kept) {
@@ -26,8 +30,10 @@ if (import.meta.hot) {
 }
 
 /**
- * 源码表换过几次(首次装载 0,热更新重跑一次加一)。按源码表记忆化的一方(`costIdentity.ts` 的源码版本表)拿它当键。
- * 读的是 `import.meta.hot.data`(同一模块的各次执行共用这一份),所以引用方手里旧实例的这个函数也读得到新值。
+ * Number of times the source code table has changed (0 on initial load, incremented by one for each
+ * hot reload rerun). Callers memoizing on the source code table (the source version table in
+ * `costIdentity.ts`) use this as their key. Reads `import.meta.hot.data` (shared across executions
+ * of the same module), so older instances of this function held by callers also read the new value.
  */
 export function cardSourceFilesVersion() {
   return import.meta.hot?.data?.version ?? 0;

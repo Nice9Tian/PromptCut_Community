@@ -1,13 +1,21 @@
 /**
- * 舞台端口的闸(`server/stage-gate.mjs` + `server/vite-plugin-stage-ports.ts`):从舞台端口来的请求缺省全拒,只放行白名单。
+ * Stage port gate (`server/stage-gate.mjs` + `server/vite-plugin-stage-ports.ts`): requests from
+ * stage ports are all rejected by default, only whitelisted requests are allowed.
  *
- * 舞台窗口里跑的是卡片代码(含用户自己写的、别的成员写的),舞台端口对它是同源。这里钉三件事:
- *   1. 判据:白名单里的放行;各类本机接口、项目根下的文件、想跳出前缀的写法一律不放行;
- *      服务端源码里写着的每一条 `/api/…` 路由,除白名单点名的那几条只读的以外,从舞台端口来都不放行(新加的接口缺省就是拒的)。
- *   2. 代理:真的起两个舞台端口的代理,不在白名单里的请求当场 403、编辑器进程一个字节都没收到;WebSocket 升级同理。
- *   3. 编辑器端口:直连的请求不经过这道闸,原样往下走;带着舞台端口那个头的,编辑器进程自己再拒一次。
+ * The stage window runs card code (including what the user writes and what other members write),
+ * and the stage port is same-origin to it. Pin down three things here:
+ *   1. Criteria: allow those on the whitelist; disallow all local endpoints, files under the
+ *      project root, and patterns attempting to escape the prefix; every `/api/…` route written
+ *      in the server source code is disallowed when coming from stage ports, except for the few
+ *      read-only routes explicitly named on the whitelist (newly added endpoints are rejected by
+ *      default).
+ *   2. Proxies: actually start two stage port proxies; requests not on the whitelist receive 403
+ *      on the spot, and the editor process does not receive a single byte; the same applies to
+ *      WebSocket upgrades.
+ *   3. Editor port: direct connection requests bypass this gate and proceed as-is; for requests
+ *      carrying the stage port header, the editor process itself rejects them once more.
  *
- * 跑法:npm test -- server/test/stage-gate.test.mjs
+ * Run: npm test -- server/test/stage-gate.test.mjs
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -25,7 +33,7 @@ import { freePortRange } from './free-ports.mjs';
 const ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 const HMR = { upgrade: true, headers: { 'sec-websocket-protocol': 'vite-hmr' } };
 
-/* ------------------------------------------------------------------ 1. 判据 */
+/* ------------------------------------------------------------------ 1. Criteria */
 
 test('On the allowlist: stage pages and scripts, media, the motion graphics asset catalog, two read-only endpoints, hot-reload upgrades', () => {
   const allowed = [
@@ -65,52 +73,52 @@ test('every allowlist entry says who uses it and why it is needed, and all of th
   }
 });
 
-/** 有代表性的一批本机接口:[方法, 地址]。从舞台端口来一律不放行 */
+/** A representative batch of local endpoints: [method, url]. None are allowed from stage ports */
 const DENIED = [
-  // Agent 绑定与对话
+  // Agent binding and chat
   ['POST', '/api/agent/bind'], ['POST', '/api/agent/unbind'], ['POST', '/api/agent/ticket'], ['GET', '/api/agent/status'], ['GET', '/api/agent/inbox'],
   ['POST', '/api/agent/editing'], ['GET', '/api/agent/tabs'], ['POST', '/api/agent/spawned'],
   ['POST', '/api/ai/chat'], ['POST', '/api/ai/abort'], ['GET', '/api/ai/config'], ['POST', '/api/ai/config'], ['POST', '/api/ai/config/clear-key'], ['GET', '/api/ai/providers'],
   ['GET', '/api/ai/auth-state'], ['POST', '/api/ai/setup'], ['POST', '/api/ai/install'], ['GET', '/api/ai/machine-code'], ['POST', '/api/ai/diagnostics/save'], ['GET', '/api/ai/visual/x.png'],
   ['GET', '/api/chats/list'], ['GET', '/api/chats/get?id=x'], ['POST', '/api/chats/save'], ['POST', '/api/chats/delete'], ['POST', '/api/chats/attach/import'], ['POST', '/api/chats/attach/upload?name=x'],
-  // 数据镜像、成本记录
+  // Data mirror, cost record
   ['GET', '/api/data/project'], ['PUT', '/api/data/project'], ['POST', '/api/data/diff'], ['POST', '/api/data/playhead'], ['GET', '/api/data/ready-session'], ['GET', '/api/data/costs'], ['PUT', '/api/data/costs'],
-  // 项目写入
+  // Project write
   ['GET', '/api/projects'], ['GET', '/api/projects/x'], ['PUT', '/api/projects/x'], ['DELETE', '/api/projects/x'], ['GET', '/api/project-backups'], ['POST', '/api/project-backups/x/restore'],
-  // 素材写入(读只放行 /api/media/file 这一条)
+  // Asset writes (reads only allow the single route /api/media/file)
   ['POST', '/api/media/upload/x.mp4'], ['POST', '/api/media/adopt'], ['GET', '/api/media/local?hashes=a'], ['GET', '/api/media/originals'], ['POST', '/api/media/prefetch'], ['GET', '/api/media/remote'],
   ['GET', '/api/media/tiers'], ['POST', '/api/media/tiers/backfill'], ['GET', '/api/media/upload-queue'], ['POST', '/api/media/upload-queue/enqueue'], ['POST', '/api/media/upload-queue/target'],
   ['POST', '/api/media/file?path=x'], ['PUT', `/@media/${'a'.repeat(64)}`], ['DELETE', `/@media/${'a'.repeat(64)}`],
   ['PUT', `/api/asset/media/${'a'.repeat(64)}`], ['GET', `/api/asset/media/${'a'.repeat(64)}`], ['POST', `/api/asset/snap/${'a'.repeat(64)}/complete`],
-  // 帧、预渲染与导出的写口
+  // Write endpoints for frames, prerender, and export
   ['POST', '/api/frames/preload'], ['POST', '/api/frames/yield'], ['POST', '/api/frames/render-node'], ['POST', '/api/frames/render-node/unbind'], ['GET', '/api/frames/ready'],
   ['GET', '/api/frames/snapshot/html/k/0'], ['GET', '/api/frames/stream/k/manifest'], ['POST', '/api/frames/export'],
   ['POST', '/api/export'], ['GET', '/api/export/x/status'], ['POST', '/api/export/media/x'], ['POST', '/api/export/audio-mix/x'], ['GET', '/api/exports'], ['DELETE', '/api/exports/x'],
   ['GET', '/api/storage'], ['POST', '/api/storage/cap'], ['POST', '/api/storage/clear-cache'], ['GET', '/api/prerender/health'], ['POST', '/api/prerender/info'],
   ['POST', '/api/vision/bake'], ['POST', '/api/vision/bake-batch'], ['POST', '/api/vision/snapshot'], ['POST', '/api/vision/sheet'], ['POST', '/api/ui-render/bake-batch'], ['GET', '/api/ui-render/status'],
-  // MCP、Skill、文件系统类
+  // MCP, Skill, and filesystem categories
   ['POST', '/api/mcp/call'], ['GET', '/api/mcp/events'], ['POST', '/api/mcp/result'], ['GET', '/api/mcp/status'],
   ['POST', '/api/skill/open-path'], ['POST', '/api/skill/desktop-register'], ['GET', '/api/skill'], ['POST', '/api/skill-mode/open'], ['GET', '/api/skill-mode'], ['POST', '/api/skill-lock/release'], ['GET', '/api/skill-lock'],
-  // 卡片写入与同步、渲染节点
+  // Card write and sync, render nodes
   ['POST', '/api/cards/create'], ['POST', '/api/cards/edit'], ['GET', '/api/cards/source?id=x'], ['POST', '/api/cards/install'], ['POST', '/api/cards/dom'], ['POST', '/api/cards/audio'], ['GET', '/api/cards/guide'],
   ['POST', '/api/cards/layout'], ['POST', '/api/cards/scopes'], ['GET', '/api/cards/scopes/x'],
   ['POST', '/api/cards/sync/bind'], ['POST', '/api/cards/sync/unbind'], ['POST', '/api/cards/sync/ticket'], ['GET', '/api/cards/sync/status'],
   ['POST', '/api/render-node/bind'], ['POST', '/api/render-node/unbind'], ['POST', '/api/render-node/ticket'], ['POST', '/api/render-node/ticket-request'], ['GET', '/api/render-node/status'],
-  // 采集、网页工具、听写、镜头、抠像、跟踪、配音、声音测量
+  // Collection, web tools, speech-to-text, shots, keying, tracking, voiceover, sound measurement
   ['GET', '/api/collect/cookies'], ['POST', '/api/collect/download'], ['POST', '/api/collect/login'], ['GET', '/api/collect/qr/svg'], ['POST', '/api/web/open'], ['POST', '/api/web/type'], ['GET', '/api/web/view'],
   ['POST', '/api/stt/transcribe'], ['POST', '/api/stt/upload/j/x.wav'], ['GET', '/api/stt/status'], ['POST', '/api/shots/detect'], ['POST', '/api/subject/detect'], ['POST', '/api/track/track'],
   ['GET', '/api/voice/config'], ['POST', '/api/voice/generate'], ['POST', '/api/voice/clear-key'], ['POST', '/api/audio/measure'],
-  // 文档服务、协作、舞台端口自己的查询口
+  // Document service, collaboration, stage port's own query endpoint
   ['GET', '/api/docservice/device'], ['GET', '/api/docservice/healthz'], ['GET', '/api/docservice/lan-discover'], ['POST', '/api/collaboration/move-hosted'], ['POST', '/docservice/shared/create'], ['GET', '/docservice'],
   ['GET', '/api/stage/ports'],
-  // 导出页、看画面用的内部地址
+  // Export page, internal URLs for viewing video
   ['GET', '/@cards-dom/abc/project.json'], ['GET', '/@export/abc/project.json'], ['GET', '/__open-in-editor?file=src/main.tsx'], ['GET', '/@id/__x00__virtual:x'],
-  // 项目根下的文件(开发服务器的静态服务会按路径发)
+  // Files under the project root (dev server static service serves by path)
   ['GET', '/package.json'], ['GET', '/vite.config.ts'], ['GET', '/index.html'], ['GET', '/docs/local.md'], ['GET', '/out/cookies/bilibili.txt'], ['GET', '/out/docservice/x'], ['GET', '/.pc-chats/x.json'],
   ['GET', '/.pc-projects/x.proc'], ['GET', '/.env'], ['GET', '/.git/config'], ['GET', '/desktop/src-tauri/tauri.conf.json'], ['GET', '/scripts/test-suite.mjs'],
-  // /@fs/:不带 /node_modules/ 的任意文件
+  // /@fs/: Any file not containing /node_modules/
   ['GET', '/@fs/C:/Windows/win.ini'], ['GET', '/@fs/C:/Users/someone/repo/docs/local.md'], ['GET', '/@fs/C:/Users/someone/AppData/Local/PromptCut/ai.json'],
-  // 白名单路径上的写方法
+  // Write methods on whitelisted paths
   ['POST', '/'], ['POST', '/src/main.tsx'], ['PUT', '/server/stage-gate.mjs'], ['DELETE', '/node_modules/x'], ['POST', '/catalog/lottie/x.json'], ['OPTIONS', '/api/cards/scopes'], ['PATCH', '/api/prerender/info'],
 ];
 
@@ -128,7 +136,7 @@ test('Case changes, repeated slashes, dot segments, and encoded dots and slashes
     ['GET', '/api/cards/scopes/'], ['GET', '/api/prerender/info/x'], ['GET', '/api/media/files'], ['GET', '/srcx/main.tsx'], ['GET', '/@react-refreshx'],
   ];
   for (const [m, u] of sneaky) assert.equal(stageRequestAllowed(m, u), false, `${m} ${JSON.stringify(u)} should not be allowed`);
-  // 空地址 Node 会当成 "/":那是舞台文档,GET 放行、别的方法不放行
+  // Empty path is treated as "/" by Node: that is the stage document, GET allowed, other methods disallowed
   assert.equal(stageRequestAllowed('POST', undefined), false);
 });
 
@@ -141,7 +149,7 @@ test('WebSocket upgrade: only the hot-reload one is recognized; other upgrades s
   assert.equal(stageRequestAllowed('GET', '/', proto('xvite-hmr')), false);
   assert.equal(stageRequestAllowed('GET', '/src/main.tsx', proto('vite-hmr')), false);
   assert.equal(stageRequestAllowed('GET', '/', proto('promptcut.v1, vite-hmr')), true, 'the hot-reload one is in the subprotocol list');
-  // 反过来:热更新那条规则不让普通的 POST 混进来
+  // Conversely: the hot reload rule does not allow regular POST to slip in
   assert.equal(stageRequestAllowed('POST', '/', HMR), false);
 });
 
@@ -163,9 +171,9 @@ test('Every /api route written in the server source, except those named in the a
   assert.deepEqual(leaked, [], 'an endpoint outside the allowlist was allowed, or one on the allowlist was rejected');
 });
 
-/* ------------------------------------------------------------------ 2、3. 真的代理 */
+/* ------------------------------------------------------------------ 2, 3. Real proxies */
 
-/** 把插件转译出来(同 `api-guard.test.mjs` 的做法),兄弟模块换成绝对地址 */
+/** Transpile the plugin (same approach as `api-guard.test.mjs`), replace sibling modules with absolute paths */
 async function loadPlugin() {
   const ts = createRequire(import.meta.url)('typescript');
   const out = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-stage-gate-test-'));
@@ -177,7 +185,7 @@ async function loadPlugin() {
   return { ...(await import(pathToFileURL(file).href)), dir: out };
 }
 
-/** 发一个请求,回状态码、响应头与正文 */
+/** Send a request, return status code, response headers, and body */
 function send(port, { method = 'GET', path: p = '/', headers = {}, body } = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request({ host: '127.0.0.1', port, method, path: p, headers, agent: false }, (res) => {
@@ -191,7 +199,7 @@ function send(port, { method = 'GET', path: p = '/', headers = {}, body } = {}) 
   });
 }
 
-/** 发一次 WebSocket 升级,回服务端答的状态行里的状态码(101 = 接上了) */
+/** Send a WebSocket upgrade, return the status code in the server response status line (101 = connected) */
 function upgrade(port, p, protocol) {
   return new Promise((resolve) => {
     const socket = net.connect(port, '127.0.0.1', () => {
@@ -212,7 +220,8 @@ test('Start two real stage ports: anything outside the allowlist gets 403 on the
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const base = await freePortRange(3);
 
-  // 「编辑器进程」:一个真的 HTTP 服务,前面挂插件注册的中间件(同 connect 的顺序),后面是记流水的业务
+  // "Editor process": a real HTTP server, fronted by middleware registered by the plugin
+  // (same order as connect), followed by activity-logging business logic
   const seen = [], upgrades = [];
   const stack = [];
   const business = (req, res) => {
@@ -248,14 +257,14 @@ test('Start two real stage ports: anything outside the allowlist gets 403 on the
   plugin.configureServer(viteServer);
   await new Promise((resolve) => editor.listen(base, '127.0.0.1', resolve));
   t.after(async () => { await viteServer.close(); await new Promise((resolve) => { editor.close(resolve); editor.closeAllConnections?.(); }); });
-  // 等两个舞台端口的代理起来(插件在编辑器开始监听之后才起)
+  // Wait for the two stage port proxies to start up (the plugin starts them only after the editor starts listening)
   const ports = JSON.parse((await send(base, { path: '/api/stage/ports' })).body);
   assert.deepEqual(ports.ports, [base + 1, base + 2], 'both stage ports are up');
   seen.length = 0;
   const J = { 'content-type': 'application/json' };
 
   for (const stage of [base + 1, base + 2]) {
-    // 白名单外:403,而且编辑器进程没收到
+    // Outside whitelist: 403, and the editor process receives nothing
     const before = seen.length;
     for (const [method, url] of [['POST', '/api/agent/bind'], ['GET', '/api/agent/status'], ['POST', '/api/ai/chat'], ['PUT', '/api/data/project'], ['PUT', '/api/projects/x'],
       ['POST', '/api/media/upload/x.txt'], ['POST', '/api/frames/preload'], ['POST', '/api/export'], ['POST', '/api/mcp/call'], ['POST', '/api/skill/open-path'],
@@ -267,7 +276,8 @@ test('Start two real stage ports: anything outside the allowlist gets 403 on the
     }
     assert.equal(seen.length, before, 'the editor process received none of the rejected requests');
 
-    // 白名单里:照转,带着代理写的头(请求自己伪造的同名头被盖掉)
+    // Inside whitelist: forwarded as-is, with headers written by the proxy
+    // (headers forged by the request with the same name are overwritten)
     for (const url of ['/?stage=1&id=A', '/src/main.tsx', '/api/cards/scopes', '/api/prerender/info', `/@media/${'b'.repeat(64)}`, '/catalog/lottie/bodymovin.json']) {
       const r = await send(stage, { path: url, headers: { [STAGE_CLIENT_HEADER]: '8.8.8.8' } });
       assert.equal(r.status, 200, `GET ${url} via the stage port should be forwarded as usual`);
@@ -278,7 +288,7 @@ test('Start two real stage ports: anything outside the allowlist gets 403 on the
       assert.equal(got.host, `127.0.0.1:${stage}`, 'Host is forwarded unchanged');
     }
 
-    // 升级:热更新的接上,别的 403、编辑器进程没收到
+    // Upgrade: hot reload connected, others 403, editor process receives nothing
     const upBefore = upgrades.length;
     assert.equal(await upgrade(stage, '/docservice', 'promptcut.v1'), 403);
     assert.equal(await upgrade(stage, '/', null), 403);
@@ -287,7 +297,8 @@ test('Start two real stage ports: anything outside the allowlist gets 403 on the
     assert.equal(upgrades.at(-1).url, '/?token=t');
   }
 
-  // 编辑器端口直连:不带那个头,这道闸不管,原样到业务(包括上面被拒的那些)
+  // Editor port direct connection: without that header, this gate does not intervene,
+  // passes as-is to business logic (including those rejected above)
   for (const [method, url] of [['POST', '/api/agent/bind'], ['PUT', '/api/data/project'], ['POST', '/api/mcp/call'], ['GET', '/package.json'], ['GET', '/api/cards/scopes']]) {
     const r = await send(base, { method, path: url, headers: method === 'GET' ? {} : J, body: method === 'GET' ? undefined : '{"x":1}' });
     assert.equal(r.status, 200, `${method} ${url} directly to the editor port works as usual`);
@@ -298,7 +309,8 @@ test('Start two real stage ports: anything outside the allowlist gets 403 on the
   }
   assert.equal(await upgrade(base, '/docservice', 'promptcut.v1'), 101, 'document service upgrades on the editor port work as usual');
 
-  // 第二道:带着舞台端口那个头直连编辑器端口,白名单外的编辑器进程自己拒,白名单里的放过
+  // Second barrier: connecting directly to editor port with the stage port header,
+  // editor process rejects outside whitelist itself, allows whitelist
   const before = seen.length;
   const forged = await send(base, { method: 'POST', path: '/api/agent/bind', headers: { ...J, [STAGE_CLIENT_HEADER]: '127.0.0.1' }, body: '{}' });
   assert.equal(forged.status, 403);
@@ -311,7 +323,7 @@ test('Desktop app stage lockdown: reading media by hash from the stage is allowe
   const hashNotInProject = '2'.repeat(64);
   const hashes = new Set([hashInProject]);
 
-  // 当 projectMediaHashes 被配置时
+  // When projectMediaHashes is configured
   assert.equal(stageRequestAllowed('GET', `/@media/${hashInProject}`, { projectMediaHashes: hashes }), true);
   assert.equal(stageRequestAllowed('GET', `/@media/${hashInProject}.mp4`, { projectMediaHashes: hashes }), true);
   assert.equal(stageRequestAllowed('GET', `/@media/${hashInProject}/pcm`, { projectMediaHashes: hashes }), true);

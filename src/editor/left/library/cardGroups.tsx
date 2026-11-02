@@ -15,14 +15,16 @@ import { tr } from "../../../i18n/index.ts";
 type AnyCard = CardDef<any>;
 
 /**
- * 卡片库的唯一数据源:可见性三档(CardScopeBar)、归属表、按搜索词过滤、按来源分组。
- * 「动画」分区(AnimationsSection)只调一次,几个卡片组共用 —— 归属表只加载一次,筛选一改所有组一起变。
+ * The single data source of the card library: three visibility tiers (CardScopeBar), the ownership
+ * table, filtering by search text, grouping by origin.
+ * The "Animations" section (AnimationsSection) calls it only once and several card groups share it:
+ * the ownership table loads only once, and when the filter changes all groups change together.
  */
 export interface CardLibrary {
   vis: CardVisibility;
   setVis: (v: CardVisibility) => void;
   scopes: Record<string, ScopeEntry>;
-  /** 右键改完档位后重新拉归属表 */
+  /** Reload the ownership table after a tier change from the right-click menu */
   reloadScopes: () => void;
   user: AnyCard[];
   magic: AnyCard[];
@@ -31,7 +33,7 @@ export interface CardLibrary {
   particles: AnyCard[];
 }
 
-/** 按名字、说明、id 搜;素材封装卡还按标签搜:「雪花」「星空」这种词在 tags 里,不在 name / description 里 */
+/** Search by name, description, id; media wrapper cards are also searched by tag: words like "snowflake" and "starry sky" are in tags, not in name / description */
 function cardMatches(c: AnyCard, q: string): boolean {
   if (!q) return true;
   return (
@@ -42,9 +44,9 @@ function cardMatches(c: AnyCard, q: string): boolean {
   );
 }
 
-/** q 是已经 trim + 小写的搜索词 */
+/** q is a search term that has already been trimmed and lowercased */
 export function useCardLibrary(q: string): CardLibrary {
-  // 三档筛选。scopes 是服务端那张归属表(哪张定制卡属于哪个项目)
+  // Three-tier filter. scopes is the server-side ownership table (which custom card belongs to which project)
   const [vis, setVis] = useState<CardVisibility>(() => readVisibility());
   const [scopes, setScopes] = useState<Record<string, ScopeEntry>>({});
   useEffect(() => {
@@ -54,26 +56,26 @@ export function useCardLibrary(q: string): CardLibrary {
     loadScopes(true).then(setScopes).catch(() => {});
   }, []);
 
-  // 归属认项目自己的 id(跟着 .proc 走),再加上「时间轴上正用着」这一条 ——
-  // 以前认的是草稿 id,从桌面打开的 .proc 没有草稿 id,片子里正用着的定制卡在这里一张都看不到。
-  // 用到的卡拼成字符串做依赖:项目每改一下都会换对象,卡表不必跟着每次重算
+  // Ownership goes by the project's own id (it follows the .proc), plus the extra condition "currently used on the timeline" ...
+  // previously it went by the draft id, and a .proc opened from the desktop app has no draft id, so custom cards in use in the video were not visible here at all.
+  // The cards in use are joined into a string used as a dependency: the project object changes on every edit, and the card list should not be recomputed each time
   const projectId = useStore((s) => s.project.id ?? null);
   const usedKey = useStore((s) => [...usedCardIds(s.project)].sort().join("\n"));
 
   const lists = useMemo(() => {
     const used = new Set(usedKey ? usedKey.split("\n") : []);
     const all = allCards()
-      // 音频素材效果卡不进卡片面板:拖进去的音频素材效果卡没有 nodeId,既不出声也不出画,是个空片段。
-      // 它只能经 apply_card 挂到片段上。
+      // Audio media effect cards do not go into the card panel: an audio media effect card dragged in has no nodeId, so it produces neither sound nor picture and is an empty clip.
+      // It can only be attached to a clip via apply_card.
       .filter((c) => c.kind !== "audio")
       .filter((c) => isCardVisible(c, vis, scopes, projectId, used))
       .filter((c) => cardMatches(c, q));
     return {
-      // AI 或用户现场建的卡:刚建出来的东西要立刻看得见,否则建完只有 AI 知道有这张卡
+      // Cards built on the spot by the AI or the user: something just created must be visible immediately, otherwise only the AI knows the card exists after it is built
       user: all.filter((c) => c.source === "user"),
       magic: all.filter((c) => c.source === "magicui"),
       native: all.filter((c) => c.source === "native"),
-      // 素材封装卡:素材目录翻译出来的 Lottie / 粒子卡(src/cards/assets),按种类分两组
+      // Media wrapper cards: Lottie / particle cards translated from the asset catalog (src/cards/assets), split into two groups by kind
       lottie: all.filter((c) => assetCardKind(c) === "lottie"),
       particles: all.filter((c) => assetCardKind(c) === "particles"),
     };
@@ -82,7 +84,7 @@ export function useCardLibrary(q: string): CardLibrary {
   return { vis, setVis, scopes, reloadScopes, ...lists };
 }
 
-/** 部件库:组合卡的零件。按名字、说明、id、标签搜 */
+/** Parts library: the pieces of composite cards. Searched by name, description, id, tag */
 export function usePartsList(q: string): PartDef<any>[] {
   return useMemo(
     () =>
@@ -100,11 +102,11 @@ export function usePartsList(q: string): PartDef<any>[] {
 
 const THUMBS = 8;
 
-/** 卡片没悬停时就是「名字 + 说明」,缩略也照这个样子画 */
+/** A card that is not hovered is just "name + description", and the thumbnail is drawn the same way */
 const cardThumbs = (list: { id: string; name: string; description: string }[]): GroupItem[] =>
   list.slice(0, THUMBS).map((def) => ({ id: def.id, node: <ThumbTile name={tr(def.name)} desc={def.description && tr(def.description)} /> }));
 
-/** 六个卡片类组的内容(定制卡片 / Magic UI / 自家卡片 / 部件库 / Lottie / 粒子背景) */
+/** Contents of the six card groups (custom cards / Magic UI / built-in cards / parts library / Lottie / particle backgrounds) */
 export function useCardGroups(
   lib: CardLibrary,
   parts: PartDef<any>[],
@@ -124,7 +126,7 @@ export function useCardGroups(
       "user-cards": {
         items: user.map((def) => ({
           id: def.id,
-          // 右键换档:项目素材 ⇄ 自定义素材(见 UserCardMenu,菜单本身由分区常驻渲染)
+          // Right-click to change tier: project media ⇄ custom media (see UserCardMenu; the menu itself is rendered persistently by the section)
           node: (
             <div className="pc-lib-fill" onContextMenu={(e) => onUserMenu(e, def.id)}>
               <CardCell def={def} fill />
@@ -142,7 +144,7 @@ export function useCardGroups(
         emptyDetail: <div className="pc-left-note">{searching ? tr("No matching parts") : tr("The parts library is empty")}</div>,
       },
       lottie: { items: cards(lottie), thumbs: cardThumbs(lottie), emptyDetail: none },
-      // 粒子卡多(五十多种):总览只露精选,详情和计数都是全部;搜索时精选里没命中就露命中的前几个
+      // There are many particle cards (fifty-plus): the overview shows only the featured ones, while the details and counts cover all; when searching, if no featured card matches, show the first few matches
       particles: { items: cards(particles), thumbs: cardThumbs(featured.length ? featured : particles), emptyDetail: none },
     };
   }, [user, magic, native, lottie, particles, parts, searching, onUserMenu]);

@@ -1,5 +1,6 @@
 /**
- * 自然进场与从卡中间开始播放的判据（`playEntry.mjs`）。播放态互换只给后者；规则见模块文件头。
+ * Criteria for natural entrance vs. starting playback from middle of a card (`playEntry.mjs`).
+ * Playback state swap is only for the latter; see module header for rules.
  *   node --test src/render/playEntry.test.mjs
  */
 import { test } from "node:test";
@@ -8,7 +9,7 @@ import { createPlayRun, enteredNaturally, notePlayBeat, notePlaySeam, notePlaySt
 import { mountFrameOf } from "./frameWindow.mjs";
 
 const FPS = 30;
-/** 从 `fromFrame` 起播，逐拍报到 `toFrame`（含） */
+/** Start playback from `fromFrame`, check in tick-by-tick up to `toFrame` (inclusive) */
 function playFrames(run, fromFrame, toFrame) {
   notePlayStart(run, fromFrame / FPS, FPS);
   const kinds = [];
@@ -27,7 +28,7 @@ test("ST-C-01 playback starts before the card and steps through the mount frame 
 
 test("ST-C-02 playback starts mid-card (seek into the card then play, open the page parked mid-card then play): not a natural entrance", () => {
   const run = createPlayRun();
-  playFrames(run, 90, 100);   // 卡 59 起挂载,从第 90 帧起播
+  playFrames(run, 90, 100);   // Card mounted starting from frame 59, playback starts from frame 90
   assert.equal(enteredNaturally(run, 59), false);
 });
 
@@ -44,10 +45,10 @@ test("ST-C-04 resuming mid-card after a pause: the start of the new playback run
   const run = createPlayRun();
   playFrames(run, 0, 90);
   assert.equal(enteredNaturally(run, 59), true);
-  // 暂停在 90,继续播
+  // Pause at 90, resume playback
   playFrames(run, 90, 100);
   assert.equal(enteredNaturally(run, 59), false);
-  // 这一轮之后才挂载的卡照样是自然进场
+  // Cards mounted only after this round are still natural entrances
   playFrames(run, 90, 130);
   assert.equal(enteredNaturally(run, 120), true);
 });
@@ -55,7 +56,8 @@ test("ST-C-04 resuming mid-card after a pause: the start of the new playback run
 test("ST-C-05 dropped frames: the stage waits on slow frames, tick numbers still increase one by one (just arriving late), counts as continuous", () => {
   const run = createPlayRun();
   notePlayStart(run, 0, FPS);
-  // 父页主线程卡了一下:第 50～65 拍的事件一口气到,拍序号不缺
+  // Parent page main thread stuttered: events for ticks 50~65 arrived all at once,
+  // without missing tick sequence numbers
   for (let f = 1; f <= 70; f++) assert.equal(notePlayBeat(run, f / FPS, FPS), "continuous");
   assert.equal(run.breaks, 0);
   assert.equal(enteredNaturally(run, 59), true);
@@ -65,7 +67,7 @@ test("ST-C-06 tick number really jumps (gap > 1) counts as a break: cards mounte
   const run = createPlayRun();
   notePlayStart(run, 0, FPS);
   for (let f = 1; f <= 55; f++) notePlayBeat(run, f / FPS, FPS);
-  // 55 → 62:跨过了挂载帧 59
+  // 55 → 62: crossed mount frame 59
   assert.equal(notePlayBeat(run, 62 / FPS, FPS), "break");
   assert.equal(run.startFrame, 62);
   assert.equal(enteredNaturally(run, 59), false);
@@ -96,7 +98,8 @@ test("ST-C-08 never started playback (start unknown): never counts as a natural 
 test("ST-C-09 seam: the new stage swapped in by a playing-state swap keeps reporting ticks from T, counts as continuous, start unchanged", () => {
   const run = createPlayRun();
   playFrames(run, 30, 40);
-  // 旧舞台的第 41～44 拍没到父页(换角色时被过滤),新舞台在 T = 45 精确
+  // Ticks 41~44 of old stage did not reach parent page (filtered when switching roles),
+  // new stage is exact at T = 45
   notePlaySeam(run, 45 / FPS, FPS);
   assert.equal(run.startFrame, 30);
   assert.equal(notePlayBeat(run, 46 / FPS, FPS), "continuous");

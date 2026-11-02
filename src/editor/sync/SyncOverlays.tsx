@@ -1,6 +1,8 @@
 /**
- * 同步相关的浮层:撤销提示条、气泡、离线对话框、阻断弹窗(c65-undo-draft.md 第 2、3、6 节,c65-ux-draft.md 第 5 节)。
- * 文案一字不差照两份稿件的文案表;稿件里待裁定的地方按 c65-design.md 第 8、9 节的裁定。
+ * Sync-related overlays: undo notice bar, bubble, offline dialog, blocking dialog (c65-undo-draft.md
+ * sections 2, 3, 6, c65-ux-draft.md section 5). Copy follows the copy tables of the two drafts word
+ * for word; where the drafts left items to be ruled on, the rulings in c65-design.md sections 8 and
+ * 9 apply.
  */
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -27,9 +29,9 @@ import { ConflictMergeDialog } from "./ConflictMerge";
 import "./sync.css";
 import { tr } from "../../i18n/index.ts";
 
-/** 提示条停留多久(稿件:约 8 秒后消失,带关闭按钮) */
+/** How long the notice bar stays (draft: disappears after about 8 seconds, with a close button) */
 const NOTICE_MS = 8000;
-/** 多于这么多处就折叠(稿件:最多列 3 处;src/editor/undoNotice.ts) */
+/** Collapse when there are more places than this (draft: list at most 3 places; src/editor/undoNotice.ts) */
 const FOLD_AT = NOTICE_FOLD_AT;
 
 interface Item {
@@ -215,8 +217,10 @@ function BlockingDialog() {
 }
 
 /**
- * 在线页面离线且有未提交的改动(C10 契约第 10 节,表 A「常驻提示」):顶栏下方常驻一行提示,按改动存没存下来说两种话
- * (〔裁:2026-10-22 主会话〕)。只在改动只在这个页面里时挂浏览器原生的离开确认(`beforeunload`)。
+ * Online page offline with uncommitted changes (C10 contract section 10, table A "permanent
+ * notice"): a permanent line of notice below the top bar, with two messages depending on whether the
+ * changes were saved ([ruling: 2026-10-22 lead session]). The browser's native leave confirmation
+ * (`beforeunload`) is only attached when the changes exist only in this page.
  */
 function OfflineUnsentNotice() {
   const store = useSync((v) => v.offlineStore);
@@ -225,9 +229,9 @@ function OfflineUnsentNotice() {
   useEffect(() => {
     if (!atRisk) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (takeLeaveAllowance()) return; // 新版本提示条上已点过「仍要刷新」，不再问第二遍
+      if (takeLeaveAllowance()) return; // "Refresh anyway" was already clicked on the new-version notice bar, do not ask a second time
       e.preventDefault();
-      e.returnValue = ""; // 旧浏览器要设它才弹原生的离开确认
+      e.returnValue = ""; // Old browsers only show the native leave confirmation if this is set
     };
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
@@ -242,8 +246,11 @@ function OfflineUnsentNotice() {
 }
 
 /**
- * 挂在编辑器根上一次。手机版界面(`src/mobile/`)把离线对话框与冲突合并窗口换成自己的冲突合并面板(`offlineDialog: false`),
- * 其余浮层照用这里的。离线对话框(整份「加进去 / 不要了」)只在离线批次算不出逐项差异时才会出现,平时由冲突合并窗口接手。
+ * Mounted once at the editor root. The mobile app UI (`src/mobile/`) replaces the offline dialog and
+ * the conflict merge window with its own conflict merge panel (`offlineDialog: false`), and the
+ * other overlays are used from here as is. The offline dialog (the whole "Add it / Discard") only
+ * appears when the offline batch cannot compute per-item differences, and normally the conflict
+ * merge window takes over.
  */
 export function SyncOverlays(props: { offlineDialog?: boolean } = {}) {
   const notice = useSync((v) => v.notice);

@@ -1,6 +1,8 @@
 /**
- * 手机版 Agent 分页的画法小件(演示稿 `prototypes/mobile-ui-demo/index.html` 的 Agent 页:消息气泡、操作卡片、引用标记条、开始页)。
- * 只管画,数据与动作由 `AgentChat.tsx` 给;怎么把一轮回复拆成气泡和卡片见 `agentView.ts`。
+ * Drawing widgets of the mobile app Agent tab (the Agent page of the demo
+ * `prototypes/mobile-ui-demo/index.html`: message bubbles, action cards, quote bar, start page).
+ * Drawing only; data and actions are supplied by `AgentChat.tsx`; for how a round of replies is split
+ * into bubbles and cards see `agentView.ts`.
  */
 import { memo, useState } from "react";
 import { LiveMarkdown } from "../ai/Markdown";
@@ -13,7 +15,7 @@ import { Icon } from "./icons";
 import { roundView, splitQuotes, type OpItem, type QuoteRef, type ReportRow } from "./agentView";
 import { tr } from "../i18n/index.ts";
 
-/** 引用标记:气泡上是只读的小标签,输入框上方的标记条里带「✕」 */
+/** Quote marker: a read-only small tag on a bubble, with a "✕" in the quote bar above the input box */
 export function RefChip(props: { label: string; onRemove?: () => void }) {
   return (
     <span className="ref" data-pcm={props.onRemove ? "ref-chip" : "ref-tag"}>
@@ -23,7 +25,7 @@ export function RefChip(props: { label: string; onRemove?: () => void }) {
   );
 }
 
-/** 输入框上方的引用标记条:点「引用」之后出现,发送后清空 */
+/** Quote bar above the input box: appears after tapping "Quote", cleared after sending */
 export function QuoteBar(props: { quotes: readonly QuoteRef[]; onRemove: (id: string) => void }) {
   if (!props.quotes.length) return null;
   return (
@@ -33,7 +35,7 @@ export function QuoteBar(props: { quotes: readonly QuoteRef[]; onRemove: (id: st
   );
 }
 
-/** 我发的话:靠右的青蓝气泡;开头的引用画成标记;云端还没收下之前写明发送状态 */
+/** A message I sent: a cyan-blue bubble on the right; leading quotes are drawn as markers; the sending status is shown until the cloud has received it */
 export const UserBubble = memo(function UserBubble({ m }: { m: ChatMessage }) {
   const { quotes, rest } = splitQuotes(m.text);
   const failed = m.sendState === "failed";
@@ -67,7 +69,7 @@ function OpRow(props: { state: string; children: React.ReactNode }) {
   return <div className={`it ${props.state}`}><span className="mk">{MARK[props.state]}</span><span>{props.children}</span></div>;
 }
 
-/** 操作卡片:一轮的所有操作,折叠;最新一轮或还在跑的默认展开 */
+/** Action card: all actions of one round, collapsed; the latest round or one still running is expanded by default */
 function OpsCard(props: { title: string; items: OpItem[]; reports: { title: string; rows: ReportRow[] }[]; open: boolean }) {
   const [open, setOpen] = useState(props.open);
   return (
@@ -87,7 +89,7 @@ function OpsCard(props: { title: string; items: OpItem[]; reports: { title: stri
   );
 }
 
-/** 一轮 Agent 回复:动手之前说的话 → 操作卡片 → 动手之后说的话;还在跑时末尾一个「正在做什么」 */
+/** One round of Agent reply: what it said before acting → action card → what it said after acting; while still running, a "what is it doing" line at the end */
 export const AgentRound = memo(function AgentRound(props: { m: ChatMessage; ordinal: number; open: boolean; who: string }) {
   const { m, ordinal, open, who } = props;
   const v = roundView(m, ordinal);
@@ -120,9 +122,9 @@ export const AgentRound = memo(function AgentRound(props: { m: ChatMessage; ordi
   );
 });
 
-/** 开始页(没有会话时):一句话说明 + 预设按钮;刚进项目、没被手动清空过时带引导动画(光点、指向输入框的箭头) */
+/** Start page (when there is no session): a one-line description + preset buttons; right after entering the project, if not cleared manually, it shows the guide animation (light dot, arrow pointing at the input box) */
 export function StartHero(props: { animated: boolean; onPickPreset: () => void }) {
-  // 这个项目只给了只读权限(游客):不能给 Agent 发话,不放引导动画和预设,只说明为什么
+  // This project only has read-only permission (guest): cannot send messages to the Agent, so no guide animation and no presets, only an explanation of why
   const ro = useReadOnly();
   const { onPickPreset } = props;
   const animated = props.animated && !ro.locked;
@@ -152,7 +154,7 @@ export function StartHero(props: { animated: boolean; onPickPreset: () => void }
   );
 }
 
-/** 对话标签行:每个会话一个标签(Agent 1、Agent 2……,都带 ✕),没有会话时只有一项「开始」;右边「+」新开 */
+/** Chat tab row: one tab per session (Agent 1, Agent 2..., all with ✕); with no session there is only one item, "Start"; "+" on the right opens a new one */
 export interface TabItem { id: string; title: string; draft?: boolean; busy?: boolean }
 export function AgentTabsBar(props: { tabs: readonly TabItem[]; activeId: string; onActivate: (id: string) => void; onClose: (id: string, title: string) => void; onNew: () => void }) {
   return (

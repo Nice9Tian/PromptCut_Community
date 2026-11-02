@@ -1,20 +1,31 @@
 /**
- * 轨道流播放器在**暂停和拖动**时取任意一帧的单测(`streamPlayer.ts`;任务书「己三:暂停和拖动贴流」)。
- * 跑:npm test -- src/render/streamScrub.test.mjs
+ * Unit tests for track stream player retrieving arbitrary frames during **pause and scrub**
+ * (`streamPlayer.ts`; task brief "Ji-3: pause and scrub stream paste").
+ * Run: npm test -- src/render/streamScrub.test.mjs
  *
- * 真解码要浏览器(`VideoDecoder` / WebGL),端到端在 `scripts/probes/scrub-stream-probe.mjs`。这里解码器、画布、时钟是假的,
- * 分段是真的(`streamMux.ts` 封的 fMP4)、寻帧逻辑是真的,钉住:
+ * Real decoding requires a browser (`VideoDecoder` / WebGL), end-to-end in
+ * `scripts/probes/scrub-stream-probe.mjs`. Here the decoder, canvas, and clock are fake, segments
+ * are real (fMP4 muxed by `streamMux.ts`), and frame seek logic is real, pinning down:
  *
- *   - 不播放时把时间设到任意一帧(非关键帧、往回、跨分段、片段不从 15 的倍数帧开始):画出来的就是这一帧,
- *     而且是从它所在分段的关键帧一帧不缺解过来的(假解码器查依赖链);
- *   - 这一帧还没解出来时留着上一张,最多留一个分段的时长,到时清空;画面有无变了回调宿主(暂停着没有下一拍);
- *   - 连着跳(拖动)不打断在途的那一次寻帧,它解到了先画上,再去解此刻要的那一帧,中间经过的帧不解;
- *     在途太久(`SEEK_PATIENCE_MS`)照样打断;还没有画面时不拿过旧的帧当第一张;
- *   - 稀疏分段(每个分段只有一张重复的画面,或每 3 帧一张):贴的是不晚于这一帧的最近一张,只解到那一张就画;
- *     停在稀疏段上、这一段换成了满密度的文件:自己换上;
- *   - 画布换了一块(包裹层重挂载)把刚才那张原样画回去;换了流键当场清空;
- *   - 暂停着把后面几帧先解好:下一帧来的时候当场就有;
- *   - 单个解码器同时持有的帧不超过 8,停下以后全部关掉。
+ *   - Setting time to an arbitrary frame when not playing (non-keyframe, backwards, across
+ *     segments, clip not starting on a multiple of 15 frames): what is drawn is exactly this
+ *     frame, decoded without missing a single frame from the keyframe of its segment (fake decoder
+ *     checks dependency chain);
+ *   - While this frame is not yet decoded, keep the previous image for at most one segment
+ *     duration, clearing when expired; invoke host callback when image presence changes (no next
+ *     tick while paused);
+ *   - Successive jumps (scrubbing) do not interrupt an in-flight frame seek; once decoded, draw it
+ *     first, then decode the frame currently requested, skipping intermediate frames; interrupt
+ *     anyway if in-flight too long (`SEEK_PATIENCE_MS`); do not use overly stale frames as the
+ *     first image when no image exists yet;
+ *   - Sparse segments (each segment has only one repeated image, or one every 3 frames): paste the
+ *     closest image no later than this frame, decoding only to that image before drawing; when
+ *     stopped on a sparse segment and that segment is replaced with a full-density file: update
+ *     itself automatically;
+ *   - When canvas is replaced (wrapper layer remounts), redraw the previous image as-is; clear
+ *     immediately when stream key changes;
+ *   - Pre-decode subsequent frames while paused: ready immediately when next frame arrives;
+ *   - A single decoder holds at most 8 frames simultaneously, closed entirely after stopping.
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,13 +38,13 @@ const HOLD_MS = (HOLD_FRAMES * 1000) / FPS;
 const AVCC = Uint8Array.from([1, 0x64, 0x00, 0x1f, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x64, 0x00, 0x1f, 0x01, 0x00, 0x03, 0x68, 0xee, 0x3c]);
 const INIT_ID = 'i'.repeat(16);
 
-/* ---------------------------------------------------------------- 假的时钟(舞台留的两个口子) */
+/* ---------------------------------------------------------------- Fake clock (two hooks left by stage) */
 
 let now = 1_000_000;
 let timers = [];
 globalThis.__pcRealNow = () => now;
 globalThis.__pcRealSetTimeout = (fn, ms = 0) => { timers.push({ at: now + ms, fn }); return timers.length; };
-/** 走过 `ms` 毫秒,到点的定时器按时刻依次响 */
+/** Advance `ms` milliseconds, expired timers fire in sequence by time */
 async function advance(ms) {
   const until = now + ms;
   for (;;) {
@@ -47,16 +58,21 @@ async function advance(ms) {
   now = until;
 }
 
-/* ---------------------------------------------------------------- 假的解码器 */
+/* ---------------------------------------------------------------- Fake decoder */
 
 const frames = { open: 0, maxOpen: 0 };
 const decoders = [];
-/** 解码器的输出要不要先压着(`decoderGate.hold = true` 时一帧都不出,放开后接着出) */
+/**
+ * Whether decoder output should be held back first (no frames emitted when
+ * `decoderGate.hold = true`, resumes emitting once released)
+ */
 const decoderGate = { hold: false };
 
 /**
- * 假解码器:一个宏任务出一帧,按喂的顺序。照真解码器的规矩查:配置 / 重置之后第一块必须是关键帧;差分帧必须紧跟着上一块
- * (同一个分段里一帧不缺),否则这一帧记成坏的(`intact: false`)。每帧可以 `clone()`,开着的份数都算。
+ * Fake decoder: emits one frame per macrotask, in order of ingestion. Checks against real decoder
+ * rules: after config / reset, the first chunk must be a keyframe; delta frames must follow the
+ * previous chunk immediately (no frames missing within the same segment), otherwise this frame is
+ * marked bad (`intact: false`). Each frame can `clone()`, and all open copies count.
  */
 class FakeDecoder {
   constructor({ output }) {
@@ -107,22 +123,23 @@ globalThis.VideoDecoder = FakeDecoder;
 globalThis.EncodedVideoChunk = class { constructor(o) { this.type = o.type; this.timestamp = o.timestamp; this.duration = o.duration; this.data = Uint8Array.from(o.data); } };
 globalThis.CSS = { escape: (s) => s };
 
-/* ---------------------------------------------------------------- 假的画布(只记下画了哪一帧) */
+/* ---------------------------------------------------------------- Fake canvas (only records drawn frame) */
 
 /*
- * 全部流平面共用一个 WebGL 上下文,建在一块离屏画布上(`streamPlayer.ts` 的 `SharedGl`):假的只记下最近上传的是哪一帧;
- * 平面自己是 2D 画布,`drawImage` 取走时把那一帧记成它画的。
+ * All stream planes share a single WebGL context, built on an offscreen canvas (`SharedGl` of
+ * `streamPlayer.ts`): the mock only records which frame was most recently uploaded; the plane
+ * itself is a 2D canvas, and when taken by `drawImage`, records that frame as drawn by it.
  */
 const sharedGl = { last: null, contexts: 0, canvases: [], fail: 0, attempts: 0 };
 globalThis.OffscreenCanvas = class {
   constructor(w, h) { this.width = w; this.height = h; this.lost = false; this.listeners = {}; sharedGl.canvases.push(this); }
   addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); }
-  /** 丢上下文 / 浏览器还回来(用例里手动触发) */
+  /** Context loss / browser restoration (manually triggered in test cases) */
   lose() { this.lost = true; for (const fn of this.listeners.webglcontextlost ?? []) fn({ preventDefault() {} }); }
   restore() { this.lost = false; for (const fn of this.listeners.webglcontextrestored ?? []) fn({}); }
   getContext() {
     sharedGl.attempts++;
-    // 用例里让接下来的几次建不出上下文(`sharedGl.fail`)
+    // In test cases, cause next several context creations to fail (`sharedGl.fail`)
     if (sharedGl.fail > 0) { sharedGl.fail--; return null; }
     sharedGl.contexts++;
     return new Proxy({
@@ -147,18 +164,21 @@ function fakeCanvas() {
   return canvas;
 }
 const flush = async (n = 12) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
-/** 等到条件成立(每轮让出一个宏任务);等不到就照实断言失败 */
+/** Wait until condition is met (yields a macrotask each round); asserts failure if not met */
 async function until(fn, label, rounds = 400) {
   for (let i = 0; i < rounds; i++) { if (fn()) return; await new Promise((r) => setImmediate(r)); }
   assert.fail(`Timed out waiting for: ${label}`);
 }
 
-/* ---------------------------------------------------------------- 一条流 */
+/* ---------------------------------------------------------------- A stream */
 
 /**
- * 盖住项目帧 `firstFrame .. lastFrame` 的流。每个样本 4 个字节 `[0xAB, 分段号, 这个样本里是第几张画面, 文件版本]`:
- * 满密度(`stride` 1)时「第几张画面」就是样本序号;稀疏时每 `stride` 个样本是同一张(不晚于它的最近一张)。
- * `version` 区分同一段的两份文件(稀疏的那份和后来换上的满密度那份)。
+ * A stream covering project frames `firstFrame .. lastFrame`. Each sample is 4 bytes
+ * `[0xAB, segment index, which frame in this sample, file version]`:
+ * At full density (`stride` 1), "which frame" is the sample index; when sparse, every `stride`
+ * samples share the same frame (the nearest one no later than it).
+ * `version` distinguishes two files of the same segment (the sparse one and the full-density one
+ * swapped in later).
  */
 function segmentFile(n, count, stride, version) {
   const samples = Array.from({ length: count }, (_, i) => ({ data: Uint8Array.from([0xab, n, Math.floor(i / stride) * stride, version]), isSync: i === 0 }));
@@ -187,10 +207,13 @@ function streamOf(firstFrame, lastFrame, { stride = 1 } = {}) {
       init: async () => copy(init),
       segment: async (_key, file) => { asked.push(file); if (held.has(file)) await held.get(file).promise; return copy(files.get(file)); },
     },
-    /** 这一段的字节先不到货,`release` 才到 */
+    /** Bytes for this segment do not arrive initially, arriving only upon `release` */
     hold(file) { let open; const promise = new Promise((r) => { open = r; }); held.set(file, { promise, open }); },
     release(file) { held.get(file)?.open(); held.delete(file); },
-    /** 把第 n 段换成满密度的文件(生产者补密以后清单里换了文件名) */
+    /**
+     * Replace segment n with a full-density file (file name changed in manifest after producer upgrades
+     * to full density)
+     */
     densify(n) {
       const file = `${n}-s1.m4s`;
       files.set(file, segmentFile(n, countOf(n), 1, 1));
@@ -209,19 +232,22 @@ function playerFor(stream, { onShowingChange } = {}) {
   const player = new StreamPlayer({ root: () => root, source: stream.source, onShowingChange });
   player.setPlanes([stream.plane], FPS);
   const track = () => player.diag().tracks[0];
-  /** 画布上最后画的那一帧:`[分段号, 第几张画面, 文件版本]` 与它是不是从关键帧一帧不缺解过来的 */
+  /**
+   * The last frame drawn on canvas: `[segment index, which frame, file version]` and whether it was
+   * decoded from the keyframe without missing any frame
+   */
   const last = () => dom.canvas.draws.at(-1) ?? null;
   return { player, dom, track, last, seek: (f) => player.present(f / FPS) };
 }
-/** 等播放器把要的那一帧画出来 */
+/** Wait for player to draw the requested frame */
 const drawn = (h, f) => until(() => h.track()?.lastDrawn === f, `draw frame ${f} (currently ${JSON.stringify(h.track()?.lastDrawn)})`);
 
 beforeEach(() => { decoders.length = 0; frames.open = 0; frames.maxOpen = 0; now = 1_000_000; timers = []; decoderGate.hold = false; });
 
-/* ---------------------------------------------------------------- 取任意一帧 */
+/* ---------------------------------------------------------------- Retrieve arbitrary frame */
 
 test('while paused, set the time to any frame: the clip starts at frame 100 (not a multiple of 15), non-keyframes, backward, across segments; every time the frame drawn is exactly this one, decoded from the segment\'s keyframe with no frame missing', async () => {
-  const stream = streamOf(100, 189);   // 6 个分段
+  const stream = streamOf(100, 189);   // 6 segments
   const h = playerFor(stream);
   for (const f of [137, 152, 108, 185, 187, 160, 159, 100, 189, 114, 115]) {
     h.seek(f);
@@ -242,7 +268,7 @@ test('while paused, set the time to any frame: the clip starts at frame 100 (not
 test('random jump to a frame: fetch only the segment it is in, feeding from the first sample of that segment', async () => {
   const stream = streamOf(100, 189);
   const h = playerFor(stream);
-  h.seek(149);   // 第 3 段的第 4 个样本
+  h.seek(149);   // Sample 4 of segment 3
   await drawn(h, 149);
   assert.equal(stream.asked[0], '3-s1.m4s');
   const fed = decoders[0].fed.filter((c) => c.frame <= 149);
@@ -250,7 +276,7 @@ test('random jump to a frame: fetch only the segment it is in, feeding from the 
   h.player.stop();
 });
 
-/* ---------------------------------------------------------------- 留着上一张 */
+/* ---------------------------------------------------------------- Keep previous image */
 
 test('this frame is not decoded yet: keep the previous one, for at most one segment duration; clear only if there is still no new picture by then, and call the host once (no next tick while paused)', async () => {
   const stream = streamOf(100, 189);
@@ -260,7 +286,7 @@ test('this frame is not decoded yet: keep the previous one, for at most one segm
   await drawn(h, 105);
   await flush();
   assert.equal(calls, 1, 'first picture drawn asynchronously: call the host once');
-  // 往回跳到很远、往前跳到很远都一样:那一段的字节迟迟不到
+  // Jumping far back or far forward is the same: bytes for that segment are delayed indefinitely
   stream.hold('4-s1.m4s');
   h.seek(170);
   await flush();
@@ -275,7 +301,8 @@ test('this frame is not decoded yet: keep the previous one, for at most one segm
   assert.equal(h.track().lastDrawn, null, 'time is up: clear, this layer falls back to the placeholder');
   assert.deepEqual([...h.player.showingClips()], []);
   assert.equal(calls, 2, 'picture goes from present to absent: call the host once');
-  // 字节到了:要的那一帧自己画上,再叫宿主一次(占位符靠它撤)
+  // Bytes arrived: requested frame draws itself, calls host once more (placeholder dismissal relies
+  // on this)
   stream.release('4-s1.m4s');
   await drawn(h, 170);
   await flush();
@@ -318,7 +345,7 @@ test('this segment is not in the ready range: what is already drawn is kept, tim
   h.player.stop();
 });
 
-/* ---------------------------------------------------------------- 连着跳 */
+/* ---------------------------------------------------------------- Successive jumps */
 
 test('fast drag: do not interrupt the in-flight seek, draw it first once decoded, then decode the frame wanted now; segments of frames passed over in between are not fetched', async () => {
   const stream = streamOf(100, 189);
@@ -328,11 +355,11 @@ test('fast drag: do not interrupt the in-flight seek, draw it first once decoded
   const before = decoders[0].resets;
   stream.asked.length = 0;
   decoderGate.hold = true;
-  h.seek(140);            // 第 2 段:在途
+  h.seek(140);            // Segment 2: in flight
   await until(() => decoders[0].fed.some((c) => c.segment === 2), 'the in-flight one has already been fed');
-  h.seek(155);            // 第 3 段:经过,不解
-  h.seek(125);            // 第 1 段:经过,不解
-  h.seek(186);            // 第 5 段:此刻要的
+  h.seek(155);            // Segment 3: passed through, not decoded
+  h.seek(125);            // Segment 1: passed through, not decoded
+  h.seek(186);            // Segment 5: currently requested
   await flush(4);
   assert.equal(decoders[0].resets, before + 1, 'four consecutive steps reset the decoder only once');
   assert.ok(h.track().deferred >= 3);
@@ -353,7 +380,7 @@ test('in-flight seek not decoded within the patience limit: a new target still r
   const h = playerFor(stream);
   h.seek(104);
   await drawn(h, 104);
-  decoderGate.hold = true;   // 解码器收了块、迟迟不出帧
+  decoderGate.hold = true;   // Decoder received chunks, but delays emitting frames
   h.seek(140);
   await until(() => decoders[0].fed.some((c) => c.segment === 2), 'the in-flight one has already been fed');
   const resets = decoders[0].resets;
@@ -399,7 +426,7 @@ test('when there is no picture yet, an old frame decoded by an in-flight seek pa
   h.player.stop();
 });
 
-/* ---------------------------------------------------------------- 稀疏分段 */
+/* ---------------------------------------------------------------- Sparse segments */
 
 test('a sparse segment has only one repeated picture per segment: the one pasted is the nearest one not later than this frame (the first frame of this segment), drawn after decoding just one sample; only looks backward', async () => {
   const stream = streamOf(100, 189, { stride: SEGMENT_FRAMES });
@@ -416,10 +443,10 @@ test('a sparse segment has only one repeated picture per segment: the one pasted
     assert.ok(h.track().picture <= f, 'does not take a later one');
     assert.equal(h.track().level, 'sparse');
     assert.equal(h.track().stale, false, 'this picture is exactly what this frame should have, not stale');
-    await drawn(h, f);   // 后面接着解到这一帧自己(同一张画面),再做下一处
+    await drawn(h, f);   // Then continue decoding up to this frame itself (the same image), then proceed to the next location
   }
   assert.ok(h.track().standIns >= 3);
-  // 在同一个分段里挪:还是那一张,不用重画、不算缺
+  // Moving within the same segment: still the same image, no need to redraw, not counted as missing
   const draws = h.dom.canvas.draws.length;
   h.seek(121);
   assert.equal(h.track().picture, 115);
@@ -431,7 +458,7 @@ test('a sparse segment has only one repeated picture per segment: the one pasted
 test('sparse segment with one picture every 3 frames: frame F uses picture floor((F-start)/3)×3; moving within the same picture does not count as a missing picture', async () => {
   const stream = streamOf(100, 189, { stride: 3 });
   const h = playerFor(stream);
-  h.seek(122);   // 第 1 段(115 起)的第 7 个样本 → 第 6 张(第 121 帧)
+  h.seek(122);   // Sample 7 of segment 1 (from 115) → image 6 (frame 121)
   await until(() => h.track().picture === 121, 'draw the picture of frame 121');
   assert.deepEqual(h.last().mark, [1, 6, 3]);
   await drawn(h, 122);
@@ -447,7 +474,7 @@ test('sparse segment with one picture every 3 frames: frame F uses picture floor
 test('parked on a sparse segment, this segment is replaced by a full-density file: after the manifest refresh interval it swaps in the exact picture of this frame by itself, without waiting for user action', async () => {
   const stream = streamOf(100, 189, { stride: SEGMENT_FRAMES });
   const h = playerFor(stream);
-  h.seek(110);                 // 先在别处停一下:刷新的定时器从这里就排上了
+  h.seek(110);                 // First stop somewhere else: refresh timer is already scheduled from here
   await drawn(h, 110);
   await advance(MANIFEST_REFRESH_MS - 300);
   h.seek(137);
@@ -455,7 +482,8 @@ test('parked on a sparse segment, this segment is replaced by a full-density fil
   await drawn(h, 137);
   assert.deepEqual(h.last().mark, [2, 0, SEGMENT_FRAMES], 'the sparse file: this segment has only frame 0');
   stream.densify(2);
-  // 刷新的定时器是早先(拖到别的帧时)排的、到点时播放头刚停下不久:它接着排,不能就此断了
+  // The refresh timer was scheduled earlier (when scrubbing to another frame); when it fires, the
+  // playhead has just stopped recently: it keeps scheduling, and must not break off here
   await advance(MANIFEST_REFRESH_MS + 100);
   await advance(MANIFEST_REFRESH_MS + 100);
   await until(() => h.last().mark[1] === 7 && h.last().mark[2] === 1, 'the full-density file: sample 7 of segment 2');
@@ -465,7 +493,7 @@ test('parked on a sparse segment, this segment is replaced by a full-density fil
   h.player.stop();
 });
 
-/* ---------------------------------------------------------------- 画布、流键 */
+/* ---------------------------------------------------------------- Canvas, stream keys */
 
 test('canvas swapped (wrapper remounted per clip): redraw the previous frame as is, without waiting for decode, so what is visible does not change', async () => {
   const stream = streamOf(100, 189);
@@ -481,7 +509,7 @@ test('canvas swapped (wrapper remounted per clip): redraw the previous frame as 
   fresh.isConnected = true;
   fresh.parentElement = old.parentElement;
   h.dom.canvas = fresh;
-  decoderGate.hold = true;   // 解码器一帧都不出:画回去靠的是手里那一份
+  decoderGate.hold = true;   // Decoder produces no frames at all: drawing back relies on the copy in hand
   h.seek(150);
   assert.ok(fresh.draws.length >= 1, 'drawn within the same task');
   assert.ok(fresh.draws.every((d) => frameOfTimestamp(d.timestamp, FPS) === 150));
@@ -506,7 +534,7 @@ test('stream key changed on the same canvas (input changed): the old picture is 
   h.player.stop();
 });
 
-/* ---------------------------------------------------------------- 起播 */
+/* ---------------------------------------------------------------- Start playback */
 
 test('while paused, decode this frame and the next few first: on play, the first few ticks have a picture immediately, with no wait for decode', async () => {
   const stream = streamOf(100, 189);
@@ -515,7 +543,7 @@ test('while paused, decode this frame and the next few first: on play, the first
   await drawn(h, 143);
   await flush();
   const draws = h.dom.canvas.draws.length;
-  decoderGate.hold = true;   // 起播以后解码器一帧都不出
+  decoderGate.hold = true;   // After playback starts, decoder produces no frames at all
   h.seek(144);
   assert.equal(h.track().lastDrawn, 144, 'next frame is drawn synchronously');
   assert.equal(h.dom.canvas.draws.length, draws + 1);
@@ -525,7 +553,7 @@ test('while paused, decode this frame and the next few first: on play, the first
   h.player.stop();
 });
 
-/* ---------------------------------------------------------------- 全部流平面共用一个 WebGL 上下文 */
+/* ---------------------------------------------------------------- All stream planes share one WebGL context */
 
 test('the stream plane shares one WebGL context: created on an offscreen canvas, only once; no new one when the plane switches canvas', async () => {
   const before = sharedGl.contexts;
@@ -580,7 +608,8 @@ test('shared context lost: this tick cannot draw and keeps the previous frame; w
   assert.equal(sharedGl.contexts, contexts, 'the restored one is the original, no new one is created');
   assert.equal(player.diag().gl.restores, 1);
 
-  // 再丢一次,这回浏览器不还(名额被别的画布挤掉):到 GL_RETRY_MS 另建一块,这一帧自己画上
+  // Lost once more, this time browser does not restore it (quota squeezed out by another canvas):
+  // create another one at GL_RETRY_MS, and draw this frame itself
   gl.lose();
   seek(152);
   await flush();
@@ -602,7 +631,8 @@ test('manifest rectangle upper bound changed while the context is lost: canvas s
   assert.equal(h.dom.canvas.width, 64);
   const gl = sharedGl.canvases.at(-1);
   gl.lose();
-  // 父页带来一份新清单,矩形上界大了一圈(改 2D 画布的宽高会把它清空)
+  // Parent page brings a new manifest; rectangle upper bound grew larger (changing 2D canvas
+  // width and height clears it)
   const bigger = { ...stream.manifest, bound: { x: 0, y: 0, w: 128, h: 128 } };
   h.player.setPlanes([{ ...stream.plane, manifest: bigger }], FPS);
   const clears = h.dom.canvas.clears;
@@ -628,12 +658,12 @@ test('shared context cannot be created: retries by itself even while paused, wit
   await flush();
   assert.equal(h.track().lastDrawn, null);
   assert.equal(h.player.diag().gl.state, 'none');
-  // 没有任何一拍再来(暂停着)。过 GL_RETRY_MS:自己再试一次,又没建出来
+  // No ticks arrive anymore (paused). After GL_RETRY_MS: retry on its own, and failed to create again
   await advance(GL_RETRY_MS + 60);
   await flush();
   assert.equal(sharedGl.attempts, attempts + 2);
   assert.equal(h.track().lastDrawn, null);
-  // 第二次失败以后间隔加倍:再过 GL_RETRY_MS 还不试
+  // After the second failure, interval doubles: still does not retry after another GL_RETRY_MS
   await advance(GL_RETRY_MS + 60);
   await flush();
   assert.equal(sharedGl.attempts, attempts + 2, 'interval doubled, not reached yet');
@@ -641,7 +671,7 @@ test('shared context cannot be created: retries by itself even while paused, wit
   await until(() => h.track()?.lastDrawn === 150, 'created on the third attempt, this frame draws by itself');
   assert.equal(sharedGl.attempts, attempts + 3);
   assert.deepEqual({ creates: h.player.diag().gl.creates, failures: h.player.diag().gl.failures }, { creates: 1, failures: 2 });
-  // 停了以后不再排:没有流要画就不空转
+  // Do not schedule after stopping: do not idle-spin when there are no streams to draw
   sharedGl.fail = 0;
   h.player.stop();
   const pending = timers.length;

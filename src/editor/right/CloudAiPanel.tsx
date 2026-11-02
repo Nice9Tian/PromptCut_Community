@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import "./AiPanel.css";
 import "./CloudAiPanel.css";
-// 公式样式表:LiveMarkdown 用 KaTeX 渲染数学
+// Formula stylesheet: LiveMarkdown renders math with KaTeX
 import "katex/dist/katex.min.css";
 import { useCloudChat, type CloudAgentState } from "../../ai/extensions";
 import { leaveCloudTab } from "../../ai/tabMode";
@@ -29,8 +29,9 @@ import { AgentActivityPanel, useRoundSelection } from "./chat/ActivityPanel";
 import { RemoteAgentsStrip } from "./RemoteAgentsStrip";
 import { ReportDialog } from "./ReportDialog";
 import { cloudConversationReport } from "../../ai/cloudReport";
-// 代码版本走 boot.ts 的贯穿型接缝取（活 E 建的 registerBuildInfo/getBuildInfo）。
-// 这个面板是公开文件，不许直接引 cloud/online/buildInfo.ts；社区版缺省 codeVersion 是 null。
+// The code version is fetched through the cross-cutting seam in boot.ts (registerBuildInfo/getBuildInfo
+// built by workstream E). This panel is a public file and must not import cloud/online/buildInfo.ts
+// directly; in the community edition codeVersion defaults to null.
 import { getBuildInfo } from "../../online/boot";
 import { acceptCloudConsent, cloudConsentState, grantCloudConsent, onCloudConsentRequired, refreshCloudConsent, subscribeCloudConsent, type CloudConsentPermit } from "../../ai/extensions";
 import { CloudAgentConsentDialog } from "./CloudAgentConsentDialog";
@@ -48,24 +49,29 @@ type CloudControlRequest =
   | { kind: "visibility"; target: "shared" | "private"; conversationId: string; requestId: string; scope: CloudControlScopeToken }
   | { kind: "stop"; runId: string; conversationId: string; requestId: string; scope: CloudControlScopeToken };
 
-/** 从桌面版的 AI 栏嵌进来时,本机一侧要给的几样(在线页面不给) */
+/** When embedded from the desktop app's AI panel, the few things the local side must provide (the online page provides none) */
 export interface CloudDesktopSide {
   providers: ProviderInfo[];
   provider: AiProvider | null;
   config: PublicAiConfig | null;
-  /** 云端页里选了本机的某个驱动:回到本机模式 */
+  /** A local driver was picked on the cloud tab: go back to local mode */
   onLeave: (p: AiProvider) => void;
 }
 
 /**
- * 「云端」接入方式的一个 AI 助手分页(契约 9.5)。在线浏览器宽屏下它是右侧 AI 栏的全部;桌面版里,
- * 一页选了「云端」就由它接管这一页(`AiPanel` 在那时交给它),选回本机驱动再还给 `AiPanel`。
+ * One AI assistant tab for the "Cloud" connection type (contract 9.5). In the online browser at wide
+ * widths it is the whole right-side AI panel; in the desktop app, once a tab picks "Cloud" this takes
+ * over that tab (`AiPanel` hands it over at that point), and picking a local driver again gives it
+ * back to `AiPanel`.
  *
- * 与本机 Agent 的区别只在「这一轮在哪跑」:消息发到云节点的 Agent 服务(202,这一轮与本页的连接无关),
- * 页面按事件流看进展,断了自动重连补齐;关掉页面、退出软件,云端的这一轮照跑,重新打开自动接上。
- * 对话界面完全由事件重建,页面不存云端对话记录。
+ * The only difference from the local Agent is "where this turn runs": the message goes to the cloud
+ * node's Agent service (202, this turn is independent of this page's connection), the page follows
+ * progress through an event stream and reconnects automatically to catch up when it drops; if the
+ * page is closed or the app is quit, the cloud turn keeps running and is picked up again on reopen.
+ * The chat UI is rebuilt entirely from events; the page stores no cloud chat records.
  *
- * 这里不碰任何 `/api/*`:模型、对话、工具执行全在云端,页面只打 `/agent/v1/*`。
+ * This touches no `/api/*` here: model, chat and tool execution are all in the cloud, and the page
+ * only calls `/agent/v1/*`.
  */
 export function CloudAiPanel(props: {
   tabId?: string;
@@ -73,7 +79,7 @@ export function CloudAiPanel(props: {
   hotkeysOff?: boolean;
   cloud: CloudAgentState;
   desktop?: CloudDesktopSide;
-  /** 从历史列表点进来的云端对话 */
+  /** A cloud chat opened from the history list */
   initialConversation?: string | null;
 }) {
   const tabId = props.tabId ?? MAIN_TAB;
@@ -93,8 +99,10 @@ export function CloudAiPanel(props: {
     // A new account/project binding gets a fresh server result; rejecting does not trigger a loop.
   }, [cloud.accountMode, cloud.available, cloud.projectId, cloud.accountId, consent.accountId, consent.bindingVersion]);
   /**
-   * 用之前向账号服务新读一次告知。放行时回 `{ permit }`：账号模式下是这次新读取发的一次性许可，
-   * 交给同一次发送的 `chat.send`，那边当场核对仍有效就不再读第二次（一次发送只核一次告知）；不放行回 null。
+   * Before use, read the consent notice fresh from the account service. When allowed, returns `{ permit }`:
+   * in account mode it is a one-time permit issued by this fresh read, handed to `chat.send` of the same
+   * send, which checks on the spot that it is still valid and does not read a second time (one send checks
+   * the notice only once); when not allowed, returns null.
    */
   const consentForUse = async (opts?: { queueable?: boolean }): Promise<{ permit: CloudConsentPermit | null } | { queue: true } | null> => {
     if (!cloud.accountMode) return { permit: null };
@@ -107,12 +115,12 @@ export function CloudAiPanel(props: {
     try {
       const { accepted, permit } = await grantCloudConsent(expected);
       if (cloudConsentState().accountId !== expected.accountId || cloudConsentState().bindingVersion !== expected.bindingVersion) return null;
-      // 只有确实没同意才弹告知框；同意了但没拿到许可（permit 为 null）照常发，chat.send 发出前自己再读一次
+      // Only show the consent dialog when consent is truly missing; if consent was given but no permit was obtained (permit is null), send as usual, chat.send reads once more itself before sending
       if (!accepted) { setConsentError(null); setConsentOpen(true); return null; }
       return { permit };
     } catch (error) {
       if (!stillCurrent()) return null;
-      // 断网读不到告知:不弹告知框,这条消息排着等网络恢复(恢复后发出之前再核一次告知)
+      // Offline, the notice cannot be read: don't show the consent dialog; this message is queued until the network recovers (the notice is checked again before sending after recovery)
       if (opts?.queueable && chat.outbox.transient(error)) return { queue: true };
       setConsentError(error instanceof Error ? error.message : tr("The cloud account is temporarily unavailable."));
       setConsentOpen(true);
@@ -121,7 +129,7 @@ export function CloudAiPanel(props: {
   };
   const acceptConsent = () => { void acceptCloudConsent().then(() => { if (stillCurrent()) { setConsentError(null); setConsentOpen(false); } },
     error => { if (stillCurrent()) setConsentError(error instanceof Error ? error.message : tr("The cloud account is temporarily unavailable.")); }); };
-  // 断网待发(2026-10-22 用户定):断网时发的消息排着、网络恢复后自动发出;排着的带附件的,真发出去之前同样先放进素材库
+  // Offline pending send (user decision, 2026-10-22): messages sent while offline are queued and sent automatically when the network recovers; queued ones with attachments are likewise put into the media library first, before actually being sent
   const chat = useCloudChat({ tabId, cloud, enabled: true, autoAttach: true, initialConversation: props.initialConversation,
     outbox: true, prepareFiles: (files) => withLibrary(files) });
   const { view } = chat;
@@ -136,7 +144,7 @@ export function CloudAiPanel(props: {
   const stillCurrent = () => activeKeyRef.current === qKey && (!cloud.accountMode ||
     (cloudConsentState().accountId === cloud.accountId && cloudConsentState().bindingVersion === consent.bindingVersion));
   useEffect(() => { if (cloud.accountMode) { setConsentOpen(false); setConsentError(null); } }, [cloud.accountMode, qKey]);
-  // 这一页发的消息被拒在「没同意告知」上（发出前那次读取，或服务端收消息时回 consent-required）：弹告知框
+  // A message sent on this tab was rejected for "consent not given" (the read before sending, or the server replying consent-required when receiving the message): show the consent dialog
   useEffect(() => {
     if (!cloud.accountMode) return;
     return onCloudConsentRequired((binding, origin) => {
@@ -147,8 +155,8 @@ export function CloudAiPanel(props: {
   }, [cloud.accountMode, cloud.accountId, consent.bindingVersion, tabId]);
   const { tabs } = useAgentTabs();
   const tabTitle = desktop ? (tabs.find((t) => t.id === tabId)?.title ?? tr("AI assistant")) : tr("Cloud Agent");
-  // 页签上的「对话 ID」是给本机 Agent 的多 Agent 通信用的;桌面版里这一页选回本机驱动后还要用它,云端的对话 id 不往里写
-  // 开始页占位页还不是真会话(isDraft):点发送变成真页之后才记得上
+  // The "Chat ID" on the tab is used for the local Agent's multi-Agent communication; after this tab picks a local driver again in the desktop app it is still needed, so the cloud chat id is not written into it
+  // The start-page placeholder tab is not yet a real session (isDraft): it is only recorded after Send turns it into a real tab
   const isDraft = tabs.find((t) => t.id === tabId)?.draft === true;
   useEffect(() => { if (!desktop) setTabConversation(tabId, chat.conversationId); }, [tabId, chat.conversationId, desktop, isDraft]);
   const currentMeta = chat.history.items.find(item => item.id === chat.conversationId) ?? null;
@@ -173,8 +181,8 @@ export function CloudAiPanel(props: {
   // during the render before the refresh effect runs.
   const metadataAvailabilityKey = `${cloud.enabled ? "on" : "off"}:${chat.info?.enabled === false ? "off" : "on"}`;
   const metadataKey = `${qKey}:${chat.conversationId}:${metadataAvailabilityKey}`;
-  // 这个项目的对话列表(几个分页共用一份，进项目就开始读)读到过就能判断这段对话是谁的、能不能发：不必每次换对话、开分页都再等一个来回。
-  // 列表只决定界面开关；发消息、切权限、停止在服务端逐次核对。
+  // This project's chat list (shared by several tabs, read as soon as the project is entered): once read, we can tell whose this chat is and whether it can be sent to: no need to wait for a round trip on every chat switch or tab open.
+  // The list only decides UI switches; sending messages, changing permissions and stopping are checked one by one on the server.
   const metadataReady = !cloud.accountMode || chat.history.loaded || metadataReadyKey === metadataKey;
   const creatorReadOnly = controlPolicy.creatorReadOnly;
   const canSwitchVisibility = controlPolicy.canSwitchVisibility;
@@ -191,44 +199,45 @@ export function CloudAiPanel(props: {
       controlPendingRef.current = null;
       setControlPending(null);
     }
-    // 两秒内读回来过的直接用(切分页、换对话时常见)，不再等一个来回
+    // Use a read from within the last two seconds directly (common when switching tabs or chats), without waiting for a round trip
     void chat.history.refresh(false, 2000).then(ok => { if (live && ok) setMetadataReadyKey(metadataKey); });
     return () => { live = false; };
   }, [cloud.accountMode, consent.accepted, chat.conversationId, chat.history.refresh, metadataKey]);
 
-  // 新建的云端对话首次落地消息后才出现在服务器列表里；刷新会话元数据时确认其真实所有者与权限。
+  // A newly created cloud chat only appears in the server list after its first message lands; when refreshing session metadata, confirm its real owner and permissions.
   const hasMessages = chat.messages.length > 0;
   useEffect(() => {
     if (!cloud.accountMode || !hasMessages) return;
     let live = true;
-    // 断着网时(比如刚排了一条等网络恢复的)静默读:读不到不弹「连不上」,发消息这件事不报错(2026-10-22 用户定)
+    // While offline (e.g. right after queuing a message to wait for the network), read silently: if it can't be read, don't show "Can't connect", and sending a message reports no error (user decision, 2026-10-22)
     void chat.history.refresh(chat.outbox.offline()).then(ok => { if (live && ok) setMetadataReadyKey(metadataKey); });
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloud.accountMode, consent.accepted, chat.conversationId, hasMessages, chat.history.refresh, metadataKey]);
 
-  // 创建者关了开关:成员列表通知过来的(`cloud.enabled`)或 info 报的
+  // The creator turned the switch off: notified by the member list (`cloud.enabled`) or reported by info
   const off = !cloud.enabled || chat.info?.enabled === false;
   const offText = cloudErrorText("disabled");
 
-  /* ---------- 草稿、排队、发送 ---------- */
+  /* ---------- Draft, queue, send ---------- */
   const [inputText, setInputText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  // 开始页(本项目一个会话都没有):消息区换成 StartHero;点预设往输入框放那句话,点发送才把占位页变成第一个会话(云端是新建云端对话)
+  // Start page (this project has no session at all): the message area is replaced by StartHero; clicking a preset puts that sentence into the input box, and only clicking Send turns the placeholder tab into the first session (in the cloud, a new cloud chat)
   const start = useStartPage(tabId, inputText, setInputText, () => { requestAnimationFrame(() => textareaRef.current?.focus()); }, chat.messages.length > 0);
-  // 这个项目只给了只读权限(游客):输入区整个置灰(Composer 的 readOnly),发送路径也在 handleSend 里兜底
+  // This project is granted read-only access only (guest): the whole input area is greyed out (Composer's
+  // readOnly), and the send path is also guarded in handleSend
   const ro = useReadOnly();
-  // 游客每个项目只能开一个对话（2026-10-23 用户定）：他已经有一个了，「新对话」入口置灰、说明写在悬停和提示条里；
-  // 此刻看的还是一段没发过的新对话（回来时记不得上次的那个、列表里没有它），输入区也置灰、指到「对话历史」去接着聊那一个。
-  // 真正拦的是服务端（`guest-chat-limit`），这里只是不让他白写一段话
+  // A guest can only open one chat per project (user decision, 2026-10-23): they already have one, so the "New chat" entry is grayed out, with the explanation on hover and in the hint bar;
+  // what is shown right now is still a new chat that was never sent (on return it can't remember the last one, and it isn't in the list), so the input area is grayed out too, pointing to "Chat history" to continue that one.
+  // What really blocks is the server (`guest-chat-limit`); this just keeps them from writing a message in vain
   const guestChatFull = cloud.accountMode && chat.history.guest && chat.history.atLimit;
   const guestNoNewChat = guestChatFull && !chat.history.items.some((x) => x.id === chat.conversationId);
-  /* 附件:选文件 → 逐个上传到云端这个对话的工作目录(显示上传中)→ 发消息时把传好的带上。失败给出原因,可点一下重试、可移除 */
+  /* Attachments: pick files → upload one by one to this cloud chat's working directory (shown as uploading) → attach the uploaded ones when sending. On failure the reason is shown, with click-to-retry and remove */
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  /** 附件占位 id → 原始文件(失败重试用)与进行中的上传(移除时取消) */
+  /** Attachment placeholder id → original file (for retry on failure) and in-progress upload (cancelled on remove) */
   const retryFilesRef = useRef<Map<string, File>>(new Map());
-  /** 附件放进素材库的结果,按附件卡的 id 记:同一条消息重发不重复放、请求内容也不变(文档服务按请求号核内容) */
+  /** Result of putting attachments into the media library, keyed by the attachment card's id: resending the same message doesn't put them in again and the request content stays the same (the document service checks content by request number) */
   const libraryRef = useRef<Map<string, LibraryOutcome>>(new Map());
   const withLibrary = async (files: ChatAttachment[]): Promise<ChatAttachment[]> => {
     const out: ChatAttachment[] = [];
@@ -249,7 +258,7 @@ export function CloudAiPanel(props: {
     for (const upload of uploadsRef.current.values()) upload.abort();
     uploadsRef.current.clear(); retryFilesRef.current.clear(); libraryRef.current.clear();
   }, [cloud.accountMode, qKey]);
-  // 换了对话(新对话、历史里点了别的、进入时自动接上在跑的):附件只在传去的那个对话的工作目录里,不跟过去
+  // After switching chats (new chat, picked another from history, or auto-attaching to a running one on entry): attachments only exist in the working directory of the chat they were uploaded to, and don't follow
   useEffect(() => {
     setAttachments((prev) => {
       const keep = prev.filter((a) => !a.conversationId || a.conversationId === chat.conversationId);
@@ -265,7 +274,7 @@ export function CloudAiPanel(props: {
   const installJobs = useInstallJobs();
   const queue = useQueue(qKey);
 
-  // 预览右键卡片、时间轴右键片段或叠加卡的「引用到 AI」:与本机 AI 栏同一个事件(editor/quoteBus.ts)
+  // "Quote to AI" from right-clicking a card in the preview, or a clip or overlay card on the timeline: the same event as the local AI panel (editor/quoteBus.ts)
   useEffect(() => {
     const onQuote = (ev: Event) => {
       if (!active) return;
@@ -285,7 +294,8 @@ export function CloudAiPanel(props: {
     return () => window.removeEventListener("pc-quote-clip", onQuote as EventListener);
   }, [active]);
 
-  // 「发送失败」气泡上的「重新发送」(UserBubble 发出的事件,带气泡号):是这一页待发清单里的才接
+  // "Resend" on a "Failed to send" bubble (event emitted by UserBubble, carries the bubble number):
+  // only accepted if it is in this page's pending-send list
   const resendRef = useRef(chat.outbox.resend);
   resendRef.current = chat.outbox.resend;
   useEffect(() => {
@@ -298,7 +308,10 @@ export function CloudAiPanel(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** 刚发出去、服务端的 user 事件还没回来的那一小会儿也算忙(免得连发两条撞上「对话还有一轮在进行」) */
+  /**
+   * Also counts as busy for the short moment right after sending, before the server's user event has
+   * come back (avoids two quick sends hitting "a turn is still in progress in this chat")
+   */
   const echoWait = useRef(false);
   const echoTimer = useRef<number | null>(null);
   const [, bump] = useState(0);
@@ -317,7 +330,8 @@ export function CloudAiPanel(props: {
     opts?: { queueOnNetwork?: boolean }): Promise<boolean> => {
     if (off || !stillCurrent() || !controlPolicy.canSend || view.revoked) { if (staged) chat.failStaged(staged, tr("You can't send messages in this chat right now.")); return false; }
     if (!cloud.accountMode) markSent();
-    // 账号模式:图片、视频、音频附件先放进素材库,告诉 Agent 是哪一条(2026-10-18 用户定)
+    // Account mode: image, video and audio attachments go into the media library first, and the Agent is
+    // told which entry it is (user decision, 2026-10-18)
     const prepared = cloud.accountMode && files?.length ? await withLibrary(files) : files;
     if (!stillCurrent()) return false;
     const ok = await chat.send(text, prepared, staged ?? undefined, consentPermit, opts);
@@ -327,15 +341,19 @@ export function CloudAiPanel(props: {
   };
 
   const handleSend = async (text: string) => {
-    // 这个项目只给了只读权限(游客):不能给云端 Agent 发消息。输入区已置灰(Composer),这是别的发送路径(排队、重发)的兜底
+    // This project only grants read-only access (guest): messages to the Cloud Agent are not allowed. The
+    // input area is already greyed out (Composer); this is a safety net for the other send paths (queue, resend)
     if (memberReadOnlyNow()) return;
     if (creatorReadOnly || view.revoked || (!text.trim() && attachments.length === 0)) return;
     if (off) return;
-    // 开始页上点发送:这时才建第一个会话,这条消息在里面发出去
+    // Send clicked on the start page: only now create the first session, and send this message in it
     start.commit();
     if (cloud.accountMode && text.trim()) {
-      // 账号模式:点发送当场在对话里出气泡、清空输入框(乐观显示,2026-10-19 用户要求);告知确认、放进素材库、发送都在后面做,
-      // 没发出去时气泡标「没有发出去」并写原因,原文放回输入框(框里此刻是空的才放)。云端收下前气泡只写「发送中…」,不显示成已发送
+      // Account mode: clicking send immediately shows a bubble in the chat and clears the input box (optimistic
+      // display, user request 2026-10-19); the acknowledgement, adding to the media library and sending all happen later.
+      // If it was not sent, the bubble is marked "Not sent" with the reason, and the original text goes back into the
+      // input box (only if the box is empty at that moment). Until the cloud accepts it the bubble only says
+      // "Sending…" and is not shown as sent
       const { usable, skipped } = pickSendable(attachments, chat.conversationId);
       const sentAttachments = attachments;
       const staged = chat.stage(text, usable);
@@ -346,7 +364,8 @@ export function CloudAiPanel(props: {
         setInputText(previous => previous ? previous : text);
         setAttachments(previous => previous.length ? previous : sentAttachments);
       };
-      // 断网了,或这个对话里已经有排着等网络的(新发的排在它后面,顺序不乱):不报错,排着,网络恢复后自动发出
+      // Offline, or this chat already has messages queued waiting for the network (new ones go behind them, so
+      // the order stays intact): no error, just queue, and send automatically when the network is back
       if (staged && (chat.outbox.offline() || chat.outbox.mustQueue()) && chat.outbox.enqueue(text.trim(), usable, staged)) {
         if (skipped > 0) chat.notify(tr("{0} attachments are still uploading or failed to upload and were not included this time.", skipped));
         return;
@@ -369,10 +388,12 @@ export function CloudAiPanel(props: {
     }
     const admission = await consentForUse();
     if (!admission || "queue" in admission || !stillCurrent()) return;
-    // 还在上传或上传失败的附件这次先不带上,但发送本身不被挡住
+    // Attachments that are still uploading or failed to upload are left out this time, but the send itself
+    // is not blocked
     const { usable, skipped } = pickSendable(attachments, chat.conversationId);
     if (!text.trim()) {
-      // 服务端不收空消息:只有附件时留在输入框里,等用户写一句话
+      // The server does not accept empty messages: with attachments only, keep them in the input box and wait
+      // for the user to write a sentence
       chat.notify(skipped > 0 && usable.length === 0 ? tr("{0} attachments are still uploading or failed to upload. Wait for them to finish or retry before sending.", skipped) : CLOUD_ATTACH_NEED_TEXT);
       return;
     }
@@ -388,7 +409,7 @@ export function CloudAiPanel(props: {
     }
   };
 
-  // 一轮结束:空闲且没暂停就发队首
+  // A turn ended: if idle and not paused, send the head of the queue
   const flushingRef = useRef(false);
   useEffect(() => {
     if (cloud.accountMode) return;
@@ -429,7 +450,8 @@ export function CloudAiPanel(props: {
         : tr("The cloud confirmed the stop request. Syncing chat state."));
     } catch (error) {
       if (!isCurrentControl(request)) return;
-      // 重读可见性；503/fence pending 时保留原请求号，让用户安全重试同一操作。
+      // Re-read visibility; on 503/fence pending, keep the original request ID so the user can safely retry
+      // the same operation.
       const refreshed = await chat.history.refresh();
       if (!isCurrentControl(request)) return;
       if (refreshed) setMetadataReadyKey(metadataKey);
@@ -482,11 +504,12 @@ export function CloudAiPanel(props: {
     if (!admission || "queue" in admission || !stillCurrent()) return;
     if (view.streaming) {
       await chat.abort();
-      // 停止要等服务端收尾的事件回来
+      // Stopping has to wait for the event where the server finishes wrapping up
       for (let i = 0; i < 40 && stillCurrent() && chat.store.get().some((m) => m.pending); i++) await new Promise((r) => setTimeout(r, 100));
     }
     if (!stillCurrent()) return;
-    // 中间可能等过停止收尾，许可多半已过期；过期时 chat.send 会照旧再读一次
+    // It may have waited for the stop to wrap up in between, so the permit has most likely expired; when it
+    // has, chat.send will read it again as usual
     if (await sendNow(item.text, item.attachments, null, admission.permit)) removeQueued(qKey, item.id);
     else setQueuePaused(qKey, true);
   };
@@ -499,7 +522,10 @@ export function CloudAiPanel(props: {
   const resumeQueue = () => setQueuePaused(qKey, false);
   const hasDraft = () => inputText.trim().length > 0 || attachments.length > 0;
 
-  /** 真正上传:不 await 丢出去跑,跑完回填那张附件卡(保留占位 id,重试与移除还对得上) */
+  /**
+   * The actual upload: fired off without await, and when it finishes it fills the result back into that
+   * attachment card (the placeholder id is kept so retry and remove still match up)
+   */
   const runUpload = (id: string, file: File) => {
     if (!stillCurrent()) return;
     const convId = chat.conversationId;
@@ -552,7 +578,7 @@ export function CloudAiPanel(props: {
     });
   };
 
-  /* ---------- 消息行的展开状态(同 AiPanel) ---------- */
+  /* ---------- Expanded state of message rows (same as AiPanel) ---------- */
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [openRuns, setOpenRuns] = useState<Set<string>>(new Set());
   const handlersRef = useRef({
@@ -573,12 +599,15 @@ export function CloudAiPanel(props: {
     toggleChip: (k: string) => handlersRef.current.toggleChip(k),
     toggleRun: (k: string) => handlersRef.current.toggleRun(k),
   }), []);
-  /** 「Agent 操作」显示哪一轮:缺省最新一轮,点气泡切过去 */
+  /** Which round "Agent actions" shows: the latest round by default; click a bubble to switch to it */
   const round = useRoundSelection(chat.messages);
 
-  /* ---------- 诊断报告(〔用户 2026-10-07 定〕云端下照常能用) ----------
-   * 在页面里由这段云端对话的事件重建出的消息、会话状态与客户端信息生成,不请求任何 `/api/*`,不含票据、委托与模型 Key。
-   * 在线页面「保存为文件」是浏览器下载,桌面版沿用本机写盘;提交走与本机相同的收报告地址(没配就置灰并说明)。 */
+  /* ---------- Diagnostic report (user decision, 2026-10-07: works as usual in the cloud) ----------
+   * Generated in the page from the messages, session state and client info rebuilt from this cloud chat's
+   * events; it requests no `/api/*`, and contains no tickets, delegation or model keys.
+   * "Save as file" on the online page is a browser download, the desktop app keeps writing to local disk;
+   * submitting goes to the same report-collection address as on this machine (greyed out with an
+   * explanation if it is not configured). */
   const [diagOpen, setDiagOpen] = useState(false);
   const [diagReport, setDiagReport] = useState("");
   const openDiagnostics = () => {
@@ -605,7 +634,8 @@ export function CloudAiPanel(props: {
     setDiagOpen(true);
   };
 
-  /* ---------- 删除对话（2026-10-12 用户定：开对话的人删自己的，创建者删任何人的；先确认；有任务在跑先停再删） ---------- */
+  /* ---------- Delete chat (user decision, 2026-10-12: whoever opened a chat deletes their own, the creator
+   * deletes anyone's; confirm first; if a task is running, stop it before deleting) ---------- */
   const [deleteAsk, setDeleteAsk] = useState<CloudDeleteAsk | null>(null);
   const canDeleteChat = (item: CloudChatItem) => cloud.accountMode && !!cloud.accountId &&
     (item.ownerAccountId === cloud.accountId || creator);
@@ -624,8 +654,10 @@ export function CloudAiPanel(props: {
       pushToast(CLOUD_CHAT_TEXT.deleteDone, "info");
     } catch (error) {
       if (!stillCurrent()) return;
-      // 任务还没停稳(503 agent-fence-pending)或云端暂时没确认：对话还在，用同一个请求号重试
-      // 5xx 一类(含删除办成了但云端清理出错的 purge-failed)也是可重试的，但话要贴切：只有围栏没办完才说「任务还没完全停下」
+      // The task has not fully stopped (503 agent-fence-pending) or the cloud has not confirmed yet: the chat
+      // still exists, retry with the same request ID
+      // 5xx errors (including purge-failed, where the deletion went through but the cloud cleanup failed) are also
+      // retryable, but the wording must fit: only say "The task has not fully stopped" when the fence is unfinished
       const retryable = error instanceof CloudError && (error.code === "agent-fence-pending" || error.code === "agent-fence-unavailable" || error.status >= 500);
       const fencePending = error instanceof CloudError && (error.code === "agent-fence-pending" || error.code === "agent-fence-unavailable");
       setDeleteAsk({ ...ask, stage: retryable ? "pending" : "error",
@@ -634,10 +666,16 @@ export function CloudAiPanel(props: {
     }
   };
 
-  // 删到一半(任务还没停稳)就关了页面的：这位账号再打开页面时静默接着办，不等他再去点「继续删除」(2026-10-13 用户定：不给取消删除)。
-  // 文档服务那边任务一结清也会自己收尾(conversation-authority.mjs 的 completePendingDeletions)，这里只是让本页尽快看到结果。
-  // 规矩(审查 6)：同一个对话沿用同一个请求号、同时只有一次在途、失败退避(10 秒起翻倍，封顶 5 分钟)、登录失效就停、页面不可见不办；
-  // 同一个账号开了几个页签时，别的页签 20 秒内办过的这次就不办(localStorage 里留一个时间戳)。
+  // If the page was closed halfway through a deletion (task not fully stopped): when this account opens the
+  // page again, quietly carry on, without waiting for them to click "Continue deleting" (user decision,
+  // 2026-10-13: no cancelling a deletion).
+  // The document service also finishes it on its own as soon as the task settles (completePendingDeletions in
+  // conversation-authority.mjs); this just lets this page see the result sooner.
+  // Rules (review 6): the same chat keeps the same request ID, only one in flight at a time, failures back off
+  // (starting at 10 seconds, doubling, capped at 5 minutes), stop if login is invalid, do nothing while the page
+  // is not visible;
+  // when the same account has several tabs open, skip this attempt if another tab did it within the last
+  // 20 seconds (a timestamp is kept in localStorage).
   const removeChatRef = useRef(chat.removeChat);
   removeChatRef.current = chat.removeChat;
   const resumeRef = useRef(new Map<string, Poller>());
@@ -652,8 +690,8 @@ export function CloudAiPanel(props: {
       const requestId = crypto.randomUUID();
       const stampKey = `pc.cloudResume:${cloud.projectId}:${id}`;
       const poller = createPoller({ baseMs: 10_000, maxMs: 300_000, run: async () => {
-        try { const at = JSON.parse(localStorage.getItem(stampKey) ?? "null"); if (at && at.tab !== resumeTabRef.current && Date.now() - at.t < 20_000) return; } catch { /* 读不了就照办 */ }
-        try { localStorage.setItem(stampKey, JSON.stringify({ tab: resumeTabRef.current, t: Date.now() })); } catch { /* 写不了就照办 */ }
+        try { const at = JSON.parse(localStorage.getItem(stampKey) ?? "null"); if (at && at.tab !== resumeTabRef.current && Date.now() - at.t < 20_000) return; } catch { /* If it cannot be read, proceed anyway */ }
+        try { localStorage.setItem(stampKey, JSON.stringify({ tab: resumeTabRef.current, t: Date.now() })); } catch { /* If it cannot be written, proceed anyway */ }
         try { await removeChatRef.current(id, requestId); } catch (error) {
           if (error instanceof CloudError && (error.status === 401 || error.status === 403)) return "stop";
           throw error;
@@ -666,12 +704,13 @@ export function CloudAiPanel(props: {
   }, [cloud.accountMode, cloud.accountId, cloud.projectId, chat.history.items, deleteAskId]);
   useEffect(() => () => { for (const poller of resumeRef.current.values()) poller.stop(); resumeRef.current.clear(); }, []);
 
-  /* ---------- 历史列表 ---------- */
+  /* ---------- History list ---------- */
   const openHistory = () => { setHistoryOpen(true); void chat.history.refresh(); };
   const historyItems = useMemo(() => {
-    // 当前对话刚发出第一条、服务端列表还没刷新时,先把它列进去
+    // The current chat has just sent its first message and the server list has not refreshed yet: list it first
     const hit = chat.history.items.some((x) => x.id === chat.conversationId);
-    // 只算云端已经有的消息：点发送当场放的本地气泡(还在发、没发出去的，sendState)不算，没发出去的对话不能先列进历史
+    // Only count messages the cloud already has: the local bubbles placed the moment send was clicked (still
+    // sending, or not sent, sendState) do not count, and a chat that was never sent must not be listed in history first
     const landed = chat.messages.filter((m) => !m.sendState || m.id.startsWith("cq-"));
     if (hit || landed.length === 0) return chat.history.items;
     const title = landed.find((m) => m.role === "user")?.text.slice(0, 40) || tr("Cloud chat");
@@ -748,7 +787,8 @@ export function CloudAiPanel(props: {
         />
       )}
 
-      {/* 「Agent 操作」:这个对话按轮显示的操作与汇报(取代按项目频道列的「Agent 操作记录」,2026-10-20 用户定) */}
+      {/* "Agent actions": the actions and reports of this chat shown per turn (replaces the "Agent action log"
+   listed per project channel, user decision, 2026-10-20) */}
       <AgentActivityPanel messages={chat.messages} selectedId={round.id} onSelect={round.select} view={viewMode}
         installJobs={installJobs} expanded={expanded} on={rowHandlers} />
       <ThinkingStrip messages={chat.messages} streaming={streaming} />

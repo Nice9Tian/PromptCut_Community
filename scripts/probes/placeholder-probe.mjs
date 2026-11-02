@@ -3,7 +3,7 @@
  * Starts its own Vite server on 5240 and a static redirect service on 5243, launches Chrome,
  * writes screenshots under %TEMP%, and stops only the processes it started.
  */
-import '../lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import '../lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -180,7 +180,7 @@ try {
   await sleep(150);
   const layerAfter=layers.length;
   const beatDelta=Number((p90(visible)-p90(baseline)).toFixed(3));
-  check('beat_p90_recorded',Number.isFinite(beatDelta),{baselineP90:p90(baseline),visibleP90:p90(visible),deltaMs:beatDelta}); // 每拍耗时差只记录(耗时只记录,不当闸门(verification.md,2026-10-07 用户改定);2026-10-23 探针总审改)
+  check('beat_p90_recorded',Number.isFinite(beatDelta),{baselineP90:p90(baseline),visibleP90:p90(visible),deltaMs:beatDelta}); // Per-tick duration diff recorded only (duration is recorded only, not treated as gate (verification.md, user decision 2026-10-07); revised 2026-10-23 in probe audit)
   const thirtyLayers=layerCases.find(c=>c.n===30);
   check('layer_budget_30',thirtyLayers.added<=31,{cases:layerCases,before:layerBefore,after:layerAfter,limit:31});
   const layerPredictions=await page.evaluate(ns=>ns.map(n=>window.placeholderHarness.layersFor(n)),[1,10,30,60]);
@@ -196,8 +196,10 @@ try {
   const steady=events.filter(e=>e.ts>=lo&&e.ts<=hi);
   const counts=Object.fromEntries(['Paint','Layout','RecalculateStyles','UpdateLayoutTree'].map(name=>[name,steady.filter(e=>e.name===name).length]));
   check('steady_trace',counts.Paint===0&&counts.Layout===0&&counts.RecalculateStyles===0,{counts,seconds:(hi-lo)/1e6});
-  // 原先这里有一条 check('main_thread_component_script', true, …)：条件写死 true，什么也不证（2026-10-23 探针总审删）。
-  // 它想说的「占位符自己不排 JS」由上面的 steady_trace（这段里 Paint / Layout / RecalculateStyles 都是 0）证明。
+  // Previously there was a check('main_thread_component_script', true, …) here: condition was
+  // hardcoded to true, proving nothing (deleted 2026-10-23 in probe audit).
+  // What it intended to convey, "placeholders do not schedule JS themselves", is proven by
+  // steady_trace above (Paint / Layout / RecalculateStyles are all 0 in this segment).
   fs.writeFileSync(path.join(out,'metrics.json'),JSON.stringify(results,null,2));
   console.log(JSON.stringify(results,null,2));
   if(results.failed) process.exitCode=1;

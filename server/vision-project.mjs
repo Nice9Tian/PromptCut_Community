@@ -1,24 +1,30 @@
 import { createRequire } from 'node:module';
 
 /**
- * 审阅表（`src/cards/capabilities.json`）的 Node 侧加载。**表缺失不是错误**：
- * 这份文件是人工审阅的产物，装机包里可以没有它，那时每张卡都按 `unknown` 走，
- * 也就是最保守的那条路（保留下层场景），而不是让整条视觉链路加载失败。
+ * Node-side loading for the review table (`src/cards/capabilities.json`). **Missing table is not an
+ * error**: this file is the product of manual review and may be absent from the installation
+ * package. In that case, each card falls back to `unknown`, taking the most conservative path
+ * (preserving the lower scene) rather than failing to load the entire visual pipeline.
  *
- * 表里每张卡登记三样（字段与取值的说明在 `src/cards/capabilities.md`）：
- *   `writing`      哪种写法。登记的值取自卡的声明，以声明为准；表和声明对不上由守门测试拦
- *   `surface`      画在什么上，以表为准
- *   `compositing`  依不依赖下层，以表为准
- * 下面三个常量是这三样的取值表，守门测试（`src/cards/capabilities.test.mjs`）拿它们核对整张表。
+ * Each card in the table registers three aspects (field and value details in `src/cards/capabilities.md`):
+ *   `writing`      Which syntax style. Registered value comes from card declaration, which takes
+ *                  precedence; mismatches between table and declaration are caught by gatekeeper tests
+ *   `surface`      What to draw on, table takes precedence
+ *   `compositing`  Whether it depends on lower layers, table takes precedence
+ * The three constants below are value tables for these three aspects, used by gatekeeper tests
+ * (`src/cards/capabilities.test.mjs`) to verify the entire table.
  */
-/** 写法 → 卡片声明里的 `frameMode`。 */
+/** Syntax style → `frameMode` in card declaration. */
 export const CARD_WRITINGS = Object.freeze({ remotion: 'direct', motion: 'stateful' });
-/** 画在什么上：DOM（含 SVG）、2D 画布、WebGL、没有画面（只出声音的卡）。 */
+/** What to draw on: DOM (including SVG), 2D canvas, WebGL, no visuals (audio-only card). */
 export const CARD_SURFACES = Object.freeze(['dom', 'canvas2d', 'webgl', 'none']);
-/** 算画布卡的那两种。 */
+/** The two types classified as canvas cards. */
 export const CANVAS_SURFACES = Object.freeze(['canvas2d', 'webgl']);
-/** 审阅过的三个结论，加两个记号：`unknown` = 登记了但故意不审（探针要它保持未知），
- * `fromParts` = 组合卡，由部件推导。两个记号在运行时都不当审阅结论用。 */
+/**
+ * Three reviewed conclusions plus two markers: `unknown` = registered but intentionally
+ * unreviewed (probes require it to remain unknown), `fromParts` = composite card, derived from
+ * parts. Neither marker is treated as a review conclusion at runtime.
+ */
 export const REVIEWED_COMPOSITING = Object.freeze(['independent', 'sourceDependent', 'belowDependent']);
 export const CARD_COMPOSITINGS = Object.freeze([...REVIEWED_COMPOSITING, 'unknown', 'fromParts']);
 
@@ -33,7 +39,7 @@ function reviewTable() {
   return REVIEW;
 }
 
-/** 先精确 id，再取最长的 `前缀-*` 通配（和 `frameMode.mjs` 的 `reviewedCard` 同一口径）。 */
+/** Exact id first, then longest `prefix-*` wildcard (aligned with `reviewedCard` in `frameMode.mjs`). */
 export function reviewedCapabilities(cardId) {
   if (typeof cardId !== 'string' || !cardId) return undefined;
   const table = reviewTable();
@@ -49,17 +55,23 @@ export function reviewedCapabilities(cardId) {
 }
 
 /**
- * 一张卡在表里登记的三样，整理成读的一方直接能用的样子；表里没有这张卡返回 undefined。
+ * Organizes the three aspects registered for a card in the table into a form directly usable by
+ * the reader; returns undefined if the card is not in the table.
  *
  *   `writing`      'remotion' | 'motion'
- *   `frameMode`    写法对应的声明值 'direct' | 'stateful'（手里有卡片定义时以定义的声明为准，这里只是登记值）
+ *   `frameMode`    Declared value corresponding to syntax style: 'direct' | 'stateful' (when the
+ *                  card definition is on hand, the definition's declaration takes precedence; this
+ *                  is only the registered value)
  *   `surface`      'dom' | 'canvas2d' | 'webgl' | 'none'
- *   `canvas`       是不是画布卡（2D 画布或 WebGL），由 `surface` 推出；`surface` 缺了给 false
- *   `compositing`  'independent' | 'sourceDependent' | 'belowDependent'；登记成 `unknown`、`fromParts` 或写了别的值，
- *                  一律给 'unknown'（和 `frameMode.mjs` 一样，不当审阅结论）
- *   `reviewed`     轴三有没有审阅结论
+ *   `canvas`       Whether it is a canvas card (2D canvas or WebGL), inferred from `surface`;
+ *                  defaults to false if `surface` is missing
+ *   `compositing`  'independent' | 'sourceDependent' | 'belowDependent'; if registered as
+ *                  `unknown`, `fromParts`, or any other value, always returns 'unknown' (same as
+ *                  `frameMode.mjs`, not treated as a review conclusion)
+ *   `reviewed`     Whether the third axis has a review conclusion
  *
- * 字段缺了或写了不认识的值，对应那一项给 undefined，不抛错：表是随包发的数据，读的一方走保守的路。
+ * If a field is missing or contains an unrecognized value, that item is set to undefined without
+ * throwing an error: the table is shipped with the package, so the reader takes the conservative path.
  */
 export function reviewedClassification(cardId) {
   const entry = reviewedCapabilities(cardId);
@@ -82,7 +94,7 @@ export function isolateClip(project, clipId, { preserveContext = false, capabili
   const clip = targetTrack.clips[clipIndex];
   const node = (project.cardNodes || []).find(node => node.id === clip.nodeId);
   // Unknown Chrome composition must keep its lower browser scene. Reviewed
-  // independent 素材效果卡 still resolve hidden inputs through sourceProject.
+  // independent media effect cards still resolve hidden inputs through sourceProject.
   const context = preserveContext && (node ? capabilities(clip.cardId)?.compositing !== 'independent' : !!clip.cardId);
   const ids = new Set(project.tracks.map(track => track.id));
   const tracks = project.tracks.flatMap((track, index) => {

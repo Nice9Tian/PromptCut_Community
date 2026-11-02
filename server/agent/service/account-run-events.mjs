@@ -1,8 +1,9 @@
 /**
- * 账号模式一轮事件与状态本地落盘的公开侧转接入口。
+ * Public forwarding entrypoint for locally persisting events and state of an account mode round.
  *
- * 云端实现已迁至 `cloud/agent/account-run-events.mjs`，通过 `./extensions.mjs` 挂载；
- * 社区版（无 `cloud/` 目录）不加载任何 `server/account/` 或 `cloud/` 模块。
+ * Cloud implementation has moved to `cloud/agent/account-run-events.mjs`, mounted via
+ * `./extensions.mjs`; community edition (without `cloud/` directory) does not load any
+ * `server/account/` or `cloud/` modules.
  */
 import { findAgentExtension } from './extensions.mjs';
 

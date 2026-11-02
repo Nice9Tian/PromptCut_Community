@@ -1,10 +1,14 @@
 /**
- * Agent 对用户说话:send_message 的 to 填 "user"(2026-10-20 用户定:「气泡里面只展示在做什么(harness可能要改,
- * 比如加入send_message(user,xxx)的用法。)」)。
+ * Agent speaks to user: send_message with to set to "user" (user decision, 2026-10-20: "only show
+ * what is being done inside the bubble (harness may need changes, such as adding the usage of
+ * send_message(user,xxx).)").
  *
- * - harness 就地答,不经多 Agent 公告板;说过话的这一轮,最后一次空回复不算出错。
- * - 2026-10-19 起「没交收尾汇报就按文字回复代交一份汇报」已撤掉:模型只回了文字时,界面把那段文字当一句「在做什么」画进气泡
- *   (src/ai/userMessages.ts),不再另代交,免得同一段话在气泡和汇报里各出现一次。
+ * - harness answers in place without going through multi-Agent bulletin board; in a round where it
+ *   spoke, the final empty reply is not treated as an error.
+ * - As of 2026-10-19, "submitting a report on its behalf using text reply if no final report was
+ *   submitted" was removed: when the model only replied with text, the UI renders that text into
+ *   the bubble as "what is being done" (src/ai/userMessages.ts), and no longer submits on its
+ *   behalf, preventing the same text from appearing in both the bubble and the report.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -125,7 +129,7 @@ test('When a tool fails, the debug info (debug) and the error code are handed to
   assert.ok(long.debug.length < TOOL_DEBUG_CHARS + 40); assert.match(long.debug, /truncated/);
   assert.deepEqual(toolErrorResult(new Error('plain')), { error: 'plain' });
 
-  // 走一遍 Agent:模型拿到的 tool_result 里有 debug
+  // Run through Agent once: tool_result received by model contains debug
   const BOOM = { name: 'see_frames', description: 'x', inputSchema: { type: 'object', properties: {} },
     async execute() { throw Object.assign(new Error('Render timed out'), { debug: { card: 'c9', line: 7 } }); } };
   let n = 0; const seen = [];

@@ -1,10 +1,12 @@
-// GET /@media/<hash>/pcm —— 音频素材效果卡的素材输入(ffmpeg 按采样区间裁)。跑法:
+// GET /@media/<hash>/pcm: asset input for audio media effect cards (ffmpeg trims by sample interval). How to run:
 //   node --test server/test/media-pcm.test.mjs
 //
-// 和 media-hash.test.mjs 一个路数:插件是 .ts,转译到临时目录再 import,路由单独导出成
-// mediaMiddleware,直接架在一个裸 http server 上。差别是 pcm 那支会惰性 import
-// server/bakery 取 findFfmpeg,临时目录里解析不到相对路径,所以转译后把
-// 那个说明符换成仓库里的绝对 file:// —— 真的 findFfmpeg 照跑,不给生产代码留测试后门。
+// Same approach as media-hash.test.mjs: plugin is .ts, transpiled to a temp directory before import,
+// and route is exported separately as mediaMiddleware, mounted directly on a bare http server.
+// The difference is that the pcm branch lazy-imports findFfmpeg from server/bakery; relative paths
+// cannot be resolved in the temp directory, so after transpilation that specifier is replaced with
+// an absolute file:// in the repository: real findFfmpeg still runs, leaving no test backdoor in
+// production code.
 import fs from 'node:fs';
 import os from 'node:os';
 import http from 'node:http';
@@ -55,7 +57,7 @@ const SECONDS = 1;
 let hash = null, ffmpegOk = false, truth = null;
 
 before(async () => {
-  // 1 秒 1000 Hz 正弦,48 kHz 立体声 —— 每个采样点都能按公式对出来
+  // 1 s 1000 Hz sine, 48 kHz stereo: every sample point can be verified against the formula
   const ffmpeg = await findFfmpeg();
   const wav = path.join(OUT, 'sine.wav');
   try {
@@ -67,8 +69,9 @@ before(async () => {
     return;
   }
   hash = (await media.storeMediaStream(projectRoot, 'sine.wav', Readable.from(fs.createReadStream(wav)))).hash;
-  // 真值:整份素材一次解成 f32le 立体声。路由裁出来的每一块都要和它逐样本相同
-  // (不去猜 ffmpeg 的 sine 相位,直接和 ffmpeg 自己的解码结果对)
+  // Ground truth: entire asset decoded at once to f32le stereo. Every block cut by the route must
+  // match it sample by sample (without guessing ffmpeg's sine phase, directly check against ffmpeg's
+  // decoded result)
   const raw = execFileSync(ffmpeg, ['-v', 'error', '-i', wav, '-vn', '-ar', String(SR), '-ac', '2', '-f', 'f32le', 'pipe:1'],
     { windowsHide: true, timeout: 60000, maxBuffer: 64 * 1024 * 1024 });
   truth = new Float32Array(raw.buffer, raw.byteOffset, raw.length / 4);
@@ -85,7 +88,7 @@ test('Normal range: returns count × 2 × 4 bytes of f32le interleaved samples',
   const data = await floats(res);
   assert.equal(data.length, 4800 * 2);
   assert.equal(Number(res.headers.get('content-length')), 4800 * 2 * 4);
-  // 和整份素材的解码结果逐样本相同
+  // Matches the decoded result of the entire asset sample by sample
   assert.deepEqual(Array.from(data), Array.from(truth.subarray(0, 4800 * 2)));
   assert.ok(data.some((v) => v !== 0), 'Not one block of pure silence');
   for (let n = 0; n < 100; n++) assert.equal(data[n * 2], data[n * 2 + 1], 'Both channels are the same');
@@ -103,7 +106,7 @@ test('Negative start: silence is padded in front, followed by sample 0 of the as
   const data = await floats(await pcm(`start=${-lead}&count=480&sampleRate=${SR}&ch=2`));
   assert.equal(data.length, 480 * 2);
   for (let i = 0; i < lead * 2; i++) assert.equal(data[i], 0, `The first ${lead} frames must be silent`);
-  // 静音之后接的是素材的第 0 个采样点起
+  // After the silence, it starts from sample 0 of the asset
   assert.deepEqual(Array.from(data.subarray(lead * 2)), Array.from(truth.subarray(0, (480 - lead) * 2)));
 });
 

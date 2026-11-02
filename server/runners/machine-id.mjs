@@ -1,22 +1,27 @@
 /**
- * 本机识别码。
+ * Machine code.
  *
- * 分发 API 配置时,接收方先把这串码发给分发方,分发方拿它当口令加密;
- * 接收方的软件再在本机算出同一串码解密。于是密文只在那台机器上解得开,
- * 转发给别人也没用。
+ * When distributing API configs, the receiver first sends this code to the distributor, who
+ * encrypts using it as a passphrase; the receiver's software then computes the same code locally to
+ * decrypt. Thus ciphertext can only be decrypted on that machine, and forwarding it to others is
+ * useless.
  *
- * 只用机器级标识,不掺用户名——换个账号登录还是同一台机器,码不该变。
- * 原始指纹永远不出这个模块,对外只给摘要后的码。
+ * Uses only machine-level identifiers without mixing in usernames: logging in with a different
+ * account is still the same machine, and the code should not change. The raw fingerprint never
+ * leaves this module; only the digested code is provided externally.
  */
 import os from "node:os";
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 
-/** Crockford Base32:去掉了 I L O U,不会把 0/O、1/I/L 抄混 */
+/** Crockford Base32: removes I, L, O, U, avoiding copying mixups between 0/O and 1/I/L */
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
-/** 码里有多少个字符(每 5 个一组)。20 个 = 100 位,够抗碰撞和猜测 */
+/**
+ * Number of characters in the code (groups of 5). 20 chars = 100 bits, enough to resist
+ * collisions and guessing
+ */
 const CODE_LEN = 20;
 
 function base32(bytes) {
@@ -48,7 +53,10 @@ function run(cmd, args) {
   }
 }
 
-/** 网卡 MAC 兜底用:排掉回环和全零,排序后拼起来,枚举顺序变了也不影响 */
+/**
+ * Network card MAC fallback: exclude loopback and all-zeros, sort and concatenate so changes in
+ * enumeration order do not affect it
+ */
 function macAddresses() {
   const macs = [];
   for (const list of Object.values(os.networkInterfaces())) {
@@ -60,8 +68,9 @@ function macAddresses() {
 }
 
 /**
- * 取这台机器最稳定的那个标识。取不到就退回「主机名 + 平台 + 架构 + 网卡」,
- * 稳定性差一些(换网卡会变),但至少不会算不出来。
+ * Get the most stable identifier for this machine. If unavailable, fall back to
+ * "hostname + platform + arch + NIC", which is less stable (changes when replacing NIC), but at
+ * least will not fail to compute.
  */
 export function machineFingerprint() {
   if (process.platform === "win32") {
@@ -90,10 +99,11 @@ export function machineFingerprint() {
 }
 
 /**
- * 对外的本机识别码,形如 PCM-4K7QX-…(4 组 5 位)。
+ * External machine code, formatted like PCM-4K7QX-… (4 groups of 5 chars).
  *
- * 这串码就是加密口令。归一化(去分隔符、纠形近字)在浏览器侧的
- * src/ai/configShare.ts 里做——加密和解密都走那一份,不会两边算法跑偏。
+ * This code string is the encryption passphrase. Normalization (stripping delimiters, correcting
+ * lookalike characters) is done browser-side in src/ai/configShare.ts: both encryption and
+ * decryption use that same logic, preventing algorithms on the two sides from diverging.
  */
 export function machineCode(fingerprint = machineFingerprint()) {
   const digest = createHash("sha256").update(`PromptCut-machine-v1|${fingerprint}`).digest();
@@ -102,11 +112,12 @@ export function machineCode(fingerprint = machineFingerprint()) {
 }
 
 /**
- * 脱敏后的识别码,形如 PCM-4K7QX-…。
+ * Redacted identifier, shaped like PCM-4K7QX-….
  *
- * 诊断报告要发给我们,而这串码**就是**配置分发的解密口令,整串写进去等于
- * 附赠一把钥匙。首组 5 位 = 25 位熵,够在几十台机器里认出是哪一台,
- * 又远不足以反推出完整口令。
+ * Diagnostic reports are sent to us, and this string **is** the decryption passphrase for
+ * configuration distribution; writing the whole string in would be equivalent to giving away a key.
+ * The first group of 5 characters = 25 bits of entropy, which is enough to identify which machine
+ * it is among dozens of machines, yet far from enough to reverse-engineer the full passphrase.
  */
 export function redactMachineCode(code = machineCode()) {
   const head = String(code).split("-").slice(0, 2).join("-");

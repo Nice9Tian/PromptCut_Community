@@ -1,14 +1,22 @@
 /**
- * 声音线程里卡片代码能引的模块(`docs/plan/online-card-exec-contract.md` 3.5)。**只给声音线程用**(`soundWorker.ts`);
- * 靠 Vite 的 `import.meta.glob`,Node 单测载不进来(占位的行为在 `soundStub.ts`,单测核那一份)。
+ * Modules that card code can import in sound thread (`docs/plan/online-card-exec-contract.md` 3.5).
+ * **Sound thread only** (`soundWorker.ts`); relies on Vite's `import.meta.glob` and cannot be loaded
+ * in Node unit tests (placeholder behavior is in `soundStub.ts`, which unit tests verify).
  *
- * - 包:`react`、`react/jsx-runtime`、`motion`、`motion/react`、`three` 给真的(载入失败就给占位,不让一个包拖垮整张卡);
- *   `react-dom`、`lottie-web`、`@tsparticles/*` 一载入就要 DOM,给占位:引进来不报错,用到才抛「声音代码里不能用 <名字>」。
- * - 内置模块:`src/kernel/` 与 `src/render/cards/graphValues.ts` 给真的(纯计算,声音代码常用的配方、取值都在这里);
- *   `src/cards/`、`src/parts/` 下不带 JSX 的文件(`.ts` / `.mjs`,例如 `cards/native/sound-effects.ts`)**用到才载入**,
- *   载入失败给占位;带 JSX 的组件文件(`.tsx`)一律给占位 —— 它们是画面,声音代码用不着,载入它们会把样式与整棵组件树拖进线程。
+ * - Packages: provide real implementations for `react`, `react/jsx-runtime`, `motion`,
+ *   `motion/react`, `three` (provide placeholders if loading fails, so one package does not break
+ *   the whole card); `react-dom`, `lottie-web`, `@tsparticles/*` require DOM upon loading, so
+ *   provide placeholders: importing does not throw, and only using them throws "cannot use <name> in
+ *   sound code".
+ * - Built-in modules: provide real implementations for `src/kernel/` and
+ *   `src/render/cards/graphValues.ts` (pure computation: recipes and value getters commonly used in
+ *   sound code live here); non-JSX files under `src/cards/` and `src/parts/` (`.ts` / `.mjs`, e.g.
+ *   `cards/native/sound-effects.ts`) are **loaded on demand**, falling back to placeholders on
+ *   failure; component files with JSX (`.tsx`) always get placeholders: they are visuals, unneeded
+ *   in sound code, and loading them would pull styles and the entire component tree into the thread.
  *
- * 与舞台那一张(`hostModules.ts`)的包名单一一对应,只是其中几个是占位。
+ * Matches the package list on the stage side (`hostModules.ts`) one-to-one, except a few are
+ * placeholders.
  */
 import type { HostModules } from "./loader.ts";
 import { CARD_PACKAGES } from "./protocol.ts";
@@ -29,17 +37,19 @@ const packages: Record<string, () => unknown | Promise<unknown>> = {
   "@tsparticles/slim": stub("@tsparticles/slim"),
 };
 
-/** 纯计算的内置模块:随线程一起载入 */
+/** Purely computational built-in modules: loaded along with the thread */
 const pure = import.meta.glob([
   "/src/kernel/**/*.{ts,mjs}", "/src/render/cards/graphValues.ts",
   "!/src/**/*.test.{ts,tsx,mjs,js}", "!/src/**/*.d.{ts,mts}",
 ], { eager: true });
-/** 卡片与部件目录下不带 JSX 的文件:用到才载入 */
+/** Non-JSX files under cards and parts directories: loaded on demand */
 const lazy = import.meta.glob([
   "/src/cards/**/*.{ts,mjs}", "/src/parts/**/*.{ts,mjs}",
   "!/src/cards/user/**", "!/src/**/*.test.{ts,tsx,mjs,js}", "!/src/**/*.d.{ts,mts}",
-  // 汇总文件把整棵组件树连同样式一起引进来:构建产物里线程打成一个文件,样式会在线程启动时往 `document` 里注入
-  // (线程里没有 `document`,整条线程起不来)。它们是画面那一半的东西,在声音线程里给占位
+  // Barrel files import the entire component tree along with styles: in build output the thread is
+  // bundled into a single file, and styles inject into `document` on thread startup (there is no
+  // `document` in a thread, so the entire thread fails to start). They belong to the visual side,
+  // so provide placeholders in the sound thread
   "!/src/cards/**/index.ts", "!/src/parts/**/index.ts", "!/src/cards/native/batch-*.ts", "!/src/cards/userOverlay.ts", "!/src/cards/_probe/**",
 ]);
 
@@ -60,6 +70,7 @@ if (import.meta.env.DEV && (SOUND_PACKAGE_NAMES.length !== CARD_PACKAGES.length 
 
 export const soundHostModules: HostModules = {
   packages,
-  // 范围之内、表里没有的(组件文件 `.tsx`、kernel 里带 JSX 的):占位;范围之外的照旧不给引
+  // Within scope but not in the table (component files `.tsx`, files with JSX in kernel): placeholders;
+  // outside scope cannot be imported as before
   builtin: (path) => builtin.get(path) ?? (isBuiltinModulePath(path) ? stub(path) : null),
 };

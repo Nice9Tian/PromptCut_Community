@@ -1,11 +1,14 @@
 /**
- * 素材服务地址登记（契约 `docs/plan/asset-store-contract.md` 第 5 节，用例 N1～N4）。
- * 跑：node --test server/test/asset-announce.test.mjs
+ * Asset service address registration (contract `docs/plan/asset-store-contract.md` Section 5,
+ * test cases N1-N4).
+ * Run: node --test server/test/asset-announce.test.mjs
  *
- * 只照契约写，不看实现。N2、N3 用本文件里的假端点（形状照 `createWsEndpoint`：send、onMessage、onOpen、
- * onClose、close、connected）；「发」只算端点连着时送出去的消息（断线时 send 会被真端点丢弃）。
- * N4 起真文档服务（M5a 的 `createDocService` 挂 `endpointsModule`，端口 0，集群令牌模式），
- * `startAssetAnnounce` 用缺省的 `createWsEndpoint`。
+ * Written strictly against the contract, without looking at the implementation. N2 and N3 use mock
+ * endpoints in this file (shaped like `createWsEndpoint`: send, onMessage, onOpen, onClose, close,
+ * connected); "sending" counts only messages dispatched while the endpoint is connected (real
+ * endpoints discard send when disconnected).
+ * N4 starts a real document service (M5a's `createDocService` with `endpointsModule`, port 0,
+ * cluster token mode); `startAssetAnnounce` uses the default `createWsEndpoint`.
  */
 import os from 'node:os';
 import assert from 'node:assert/strict';
@@ -36,18 +39,18 @@ const IFACES = {
   wlan0: [v4('10.0.0.9'), v4('8.8.8.8'), v4('10.0.0.10')],
   vpn: [
     v4('172.16.0.1'), v4('172.31.255.254'), v4('172.32.0.1'), v4('172.15.255.255'),
-    v4('192.168.1.20'), // 重复
-    v4('169.254.3.4'), // 链路本地，不在三个私有网段里
-    v4('100.64.0.1'), // CGNAT，不在三个私有网段里
+    v4('192.168.1.20'), // Duplicate
+    v4('169.254.3.4'), // Link-local, not in the three private subnets
+    v4('100.64.0.1'), // CGNAT, not in the three private subnets
     v4('11.0.0.1'), v4('192.169.0.1'),
   ],
-  hidden: [v4('10.9.9.9', true)], // internal 的私有地址也不要
+  hidden: [v4('10.9.9.9', true)], // Exclude internal private addresses as well
 };
 
 test('N1 lanAssetUrls takes only non-internal private-range IPv4 addresses, sorted and deduplicated; returns [] when there is no port', () => {
   const { lanAssetUrls } = need();
   const urls = lanAssetUrls({ interfaces: IFACES, port: 5173 });
-  // 按地址字典序：'10.0.0.10' < '10.0.0.9'
+  // By address lexicographical order: '10.0.0.10' < '10.0.0.9'
   assert.deepEqual(urls, [
     'http://10.0.0.10:5173/api/asset',
     'http://10.0.0.9:5173/api/asset',
@@ -62,7 +65,7 @@ test('N1 lanAssetUrls takes only non-internal private-range IPv4 addresses, sort
   assert.deepEqual(lanAssetUrls({ interfaces: { lo: IFACES.lo, eth0: [v6('fe80::1')] }, port: 5173 }), [], 'only loopback and IPv6');
   assert.deepEqual(lanAssetUrls({ interfaces: { a: undefined, b: [v4('192.168.0.2')] }, port: 1 }), ['http://192.168.0.2:1/api/asset'], 'undefined entries in the network interface table are skipped');
 
-  // 缺省取本机网卡表：结果都是合法的局域网地址
+  // Defaults to getting the local network interface list: results are all valid LAN addresses
   const real = lanAssetUrls({ port: 5173 });
   assert.ok(Array.isArray(real));
   for (const u of real) assert.match(u, /^http:\/\/(10\.\d+|172\.(1[6-9]|2\d|3[01])|192\.168)\.\d+\.\d+:5173\/api\/asset$/);
@@ -70,7 +73,7 @@ test('N1 lanAssetUrls takes only non-internal private-range IPv4 addresses, sort
 });
 
 /* ------------------------------------------------------------------ *
- * 假端点
+ * Fake endpoint
  * ------------------------------------------------------------------ */
 
 function fakeFactory() {
@@ -95,7 +98,7 @@ function fakeFactory() {
       onClose(fn) { handlers.close.push(fn); },
       close() { events.push('close'); ep.closed = true; ep.connected = false; },
       stats: () => ({ opens: 0, closes: 0, sent: ep.delivered.length, received: 0, dropped: ep.dropped.length, badFrames: 0 }),
-      // 测试操纵
+      // Test manipulation
       fireOpen() { ep.connected = true; for (const fn of handlers.open) fn(); },
       fireClose(info = { code: 1006, reason: '' }) { ep.connected = false; for (const fn of handlers.close) fn(info); },
       fireMessage(m) { for (const fn of handlers.message) fn(m); },
@@ -131,14 +134,14 @@ test('N2 startAssetAnnounce with a fake endpoint: sends service.announce once pe
   await new Promise((r) => setImmediate(r));
   assert.deepEqual(announces(ep).map(pickAnnounce), [{ type: 'service.announce', announcerId: 'asset:pc-1', kind: 'asset', urls: URLS }]);
 
-  // 断线、重连：再登记一次
+  // Disconnect, reconnect: register once more
   ep.fireClose();
   ep.fireOpen();
   await new Promise((r) => setImmediate(r));
   assert.equal(announces(ep).length, 2, 'once per onOpen');
   assert.deepEqual(pickAnnounce(announces(ep)[1]), pickAnnounce(announces(ep)[0]));
 
-  // 收到 error：打日志，不重试
+  // Received error: log, do not retry
   const before = ep.delivered.length;
   const logsBefore = logs.length;
   ep.fireMessage({ type: 'error', reason: 'bad-message', detail: 'x' });
@@ -146,7 +149,7 @@ test('N2 startAssetAnnounce with a fake endpoint: sends service.announce once pe
   await new Promise((r) => setTimeout(r, 30));
   assert.equal(ep.delivered.length, before, 'no resend on receiving error');
   assert.ok(logs.length > logsBefore, 'logs on receiving error');
-  // 别的消息（回执、推送）不引起重发
+  // Other messages (receipts, pushes) do not trigger resends
   ep.fireMessage({ type: 'service.announced', announcerId: 'asset:pc-1', kind: 'asset', urls: URLS });
   await new Promise((r) => setTimeout(r, 10));
   assert.equal(ep.delivered.length, before);
@@ -179,7 +182,7 @@ test('N2 announcerId defaults to asset:<hostname> (contract section 8, item 1); 
 test('N3 empty urls are not registered (logs one line); stop() sends service.withdraw first, then closes', async () => {
   const { startAssetAnnounce } = need();
 
-  // urls 为空
+  // urls is empty
   const f = fakeFactory();
   const logs = [];
   const h = startAssetAnnounce({ url: 'ws://10.0.0.1:8787', token: randomToken(), urls: [], createEndpoint: f.createEndpoint, log: (...a) => logs.push(a) });
@@ -189,7 +192,7 @@ test('N3 empty urls are not registered (logs one line); stop() sends service.wit
   assert.ok(logs.length >= 1, 'logs one line of explanation');
   h.stop();
 
-  // stop()：连着时先 withdraw 再 close
+  // stop(): when connected, withdraw first, then close
   const g = fakeFactory();
   const s = startAssetAnnounce({ url: 'ws://10.0.0.1:8787', token: randomToken(), announcerId: 'asset:n3', urls: URLS, createEndpoint: g.createEndpoint, log: () => {} });
   const ep = g.made[0];
@@ -201,7 +204,7 @@ test('N3 empty urls are not registered (logs one line); stop() sends service.wit
   assert.deepEqual({ type: w.type, announcerId: w.announcerId, kind: w.kind }, { type: 'service.withdraw', announcerId: 'asset:n3', kind: 'asset' });
   assert.equal(ep.closed, true);
 
-  // 断着时 stop()：不发 withdraw，照样关
+  // stop() while disconnected: do not send withdraw, close as usual
   const k = fakeFactory();
   const t = startAssetAnnounce({ url: 'ws://10.0.0.1:8787', token: randomToken(), urls: URLS, createEndpoint: k.createEndpoint, log: () => {} });
   const e2 = k.made[0];
@@ -232,7 +235,7 @@ test('N4 against the real document service (port 0, with the service address reg
 
   const urls = ['http://10.0.0.9:5173/api/asset', 'http://192.168.1.20:5173/api/asset'];
   const logs = [];
-  // announcerId 不传：走缺省值，和 mediaPlugin 接线时一样（契约第 5 节）
+  // announcerId omitted: uses default value, same as when wiring mediaPlugin (contract section 5)
   handle = startAssetAnnounce({ url, token, urls, log: (...a) => logs.push(a) });
   let push;
   try {
@@ -246,7 +249,7 @@ test('N4 against the real document service (port 0, with the service address reg
   assert.equal(id, `asset:${os.hostname()}`, 'default announcerId (contract section 8, item 1)');
   assert.deepEqual({ kind: push.endpoints[0].kind, urls: push.endpoints[0].urls }, { kind: 'asset', urls });
 
-  // 新来的订阅者在 watch 的回包里就能看到
+  // New subscribers can see it in the watch response
   const late = wsClient(url, ['promptcut.v1', `promptcut.token.${token}`]);
   t.after(() => late.close());
   await late.opened;
@@ -254,7 +257,7 @@ test('N4 against the real document service (port 0, with the service address reg
   const seen = (await late.next(byType('service.endpoints'))).endpoints;
   assert.deepEqual(seen.map((e) => [e.announcerId, e.urls]), [[id, urls]]);
 
-  // stop()：撤回，订阅者收到空表
+  // stop(): withdraw, subscribers receive an empty list
   handle.stop();
   handle = null;
   const gone = await watcher.next(byType('service.endpoints'), 5000);

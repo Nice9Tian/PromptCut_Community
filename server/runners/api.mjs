@@ -6,8 +6,9 @@ import { Agent } from '../harness/agent.mjs';
 import { runReviewLoop, presentLoopEvent } from '../harness/loop.mjs';
 
 /**
- * 审查环路的教训跨运行保存:judger 在改写时认可的教训,下一次运行开场交给 judger 和 worker。
- * 放在 ai.json 同目录(不放 %TEMP%,那里会被清理)。只留最近 30 条,多了会稀释注意力。
+ * Persist review loop lessons across runs: lessons accepted by judger during rewriting are passed
+ * to judger and worker at the start of the next run. Stored in the same directory as ai.json (not
+ * %TEMP%, which gets cleaned up). Keep only the latest 30 entries; more will dilute attention.
  */
 export function lessonsStore() {
   const dir = process.env.PROMPTCUT_AI_CONFIG
@@ -37,8 +38,10 @@ import { outputSpeedBookFor, withOutputSpeed } from '../harness/output-speed.mjs
 import { BUILTIN_SKILLS_DIR, loadSkillCatalog, skillCatalogPrompt } from '../tools/agent-skills.mjs';
 
 /**
- * 本机用户自己放的技能在哪(server/tools/agent-skills.mjs):ai.json 同目录的 skills/。
- * `opts.skillsDir` 写 'local' 时用它(本机编辑器那条路这样传);云端宿主给自己的绝对路径;都没给就只有内置技能。
+ * Where custom skills placed by the local user live (server/tools/agent-skills.mjs): skills/ in the
+ * same directory as ai.json. Used when `opts.skillsDir` is 'local' (passed this way along the local
+ * editor path); cloud hosts provide their own absolute paths; if neither is provided, only
+ * built-in skills are available.
  */
 export function localSkillsDir() {
   const dir = process.env.PROMPTCUT_AI_CONFIG
@@ -48,8 +51,10 @@ export function localSkillsDir() {
 }
 
 /**
- * 本机的速度记录放哪(按速度设单次输出上限,harness/output-speed.mjs):和 ai.json、审查教训同目录。
- * `opts.outputSpeedFile` 写 'local' 时用它(本机编辑器那条路这样传);云端宿主给自己的绝对路径;都没给就只记在内存里。
+ * Where local speed records are stored (sets per-output limit based on speed,
+ * harness/output-speed.mjs): in the same directory as ai.json and review lessons. Used when
+ * `opts.outputSpeedFile` is 'local' (passed this way along the local editor path); cloud hosts
+ * provide their own absolute paths; if neither is provided, only recorded in memory.
  */
 export function localOutputSpeedFile() {
   const dir = process.env.PROMPTCUT_AI_CONFIG
@@ -59,30 +64,33 @@ export function localOutputSpeedFile() {
 }
 
 /**
- * 还没收到任何数据就被网关断开的那几句(流已经出过数据的按截断处理,不会走到这里,见 providers/base.mjs):
- * 和超时一样可以接着说 —— 上下文都在历史里,只是这一次没拿到回复。
+ * Messages disconnected by the gateway before receiving any data (streams that already emitted data
+ * are treated as truncated and do not reach here; see providers/base.mjs): can be resumed just like
+ * timeouts: context is preserved in history, only no reply was received this time.
  */
 const STREAM_DROPPED = /upstream stream ended|before the response was complete|response stream ended early|terminated|other side closed|socket hang up/i;
 import { withIdleTimeout } from '../harness/idle-timeout.mjs';
 import { tr } from '../i18n.mjs';
 
 /**
- * 把「有 tool_use、没有配对 tool_result」的半截回合补平,再落盘。
+ * Pad partial turns with "tool_use without matching tool_result" before persisting to disk.
  *
- * # 为什么需要
+ * # Why it is needed
  *
- * agent.mjs 是先把带 tool_use 的 assistant 消息入历史(:71),跑完工具才把
- * tool_result 入历史(:134)。中间那一段有三道 checkAbort —— 用户在工具执行途中点停止,
- * 就会在历史里留下一个悬空的 tool_use。
+ * agent.mjs first appends assistant messages with tool_use to history (:71), and only appends
+ * tool_result after tool execution completes (:134). The section in between has three checkAbort
+ * calls: if the user clicks stop while a tool is executing, a dangling tool_use is left in history.
  *
- * 以前这不要紧:出错那条路根本不落盘。而现在「中断也落历史」之后,这份不配对的历史
- * 会被写进 `%TEMP%/promptcut/harness-sessions/<sessionId>.json`,下次原样读回 ——
- * 于是发出去的消息里会出现「带 tool_calls 的 assistant 紧跟一条纯文本 user、
- * 中间没有任何 role:"tool"」,Anthropic 和 OpenAI 都按规范拒绝。
- * **这个 sessionId 从此每次都 400**,而用户根本不知道有这么个文件可以删。
+ * Previously this did not matter: the error path never persisted to disk. Now that "interruptions
+ * also persist to history", this unmatched history gets written to
+ * `%TEMP%/promptcut/harness-sessions/<sessionId>.json` and read back as is next time: outgoing
+ * messages then contain "assistant with tool_calls followed directly by plain-text user, with no
+ * role:\"tool\" in between", which both Anthropic and OpenAI reject according to spec. **From then
+ * on, this sessionId hits 400 every time**, and the user has no idea such a file even exists to
+ * delete.
  *
- * 补一条 is_error 的 tool_result 而不是把 tool_use 删掉:让模型下次能看见
- * 「刚才那一步被打断了」,而不是莫名其妙少了一段。
+ * Appending an is_error tool_result instead of deleting tool_use lets the model see next time that
+ * "that step was interrupted just now", rather than mysteriously missing a section.
  */
 function healDanglingToolUse(messages) {
   if (!Array.isArray(messages)) return messages;
@@ -92,7 +100,8 @@ function healDanglingToolUse(messages) {
     if (m?.role !== 'assistant' || !Array.isArray(m.content)) continue;
     const ids = m.content.filter(b => b?.type === 'tool_use' && b.id).map(b => b.id);
     if (!ids.length) continue;
-    // 配对的 tool_result 只可能在紧随其后的那条 user 消息里(agent.mjs 就是这么拼的)
+    // The matching tool_result can only be in the immediately following user message (that is how
+    // agent.mjs constructs it)
     const next = out[i + 1];
     const done = new Set(
       next?.role === 'user' && Array.isArray(next.content)
@@ -114,7 +123,7 @@ function healDanglingToolUse(messages) {
   return out;
 }
 
-// 对应 13.3 及获取配置接口
+// Corresponds to 13.3 and the config retrieval endpoint
 export async function getApiProvider() {
   let configModule;
   try {
@@ -164,7 +173,7 @@ export async function getApiProvider() {
   }
 }
 
-// 对应 4.1 与 14.3 Harness 入口
+// Corresponds to 4.1 and 14.3 Harness entry point
 export function startRun(opts) {
   const sessionId = opts.sessionId || `api-${crypto.randomUUID().substring(0, 8)}`;
   let isAborted = false;
@@ -208,27 +217,32 @@ export function startRun(opts) {
       return;
     }
 
-    // 配置里的 model 允许写成 `a|b|c` 一串备选,面板上让用户挑。
-    // 这一次跑哪个由 opts.model 决定;没挑就用清单里第一个。
+    // The model in config can be written as alternatives like `a|b|c` for users to pick on the panel.
+    // Which one runs this time is determined by opts.model; if none is picked, use the first in the list.
     const modelList = String(cfg.model || '').split('|').map(s => s.trim()).filter(Boolean);
     const picked = opts.model && modelList.includes(opts.model) ? opts.model : modelList[0] || '';
-    // 参数兼容模式:'on' / 'off' 是用户(或前端按模型名锁定)的决定;'auto' / 没传 就按厂商和模型名推 ——
-    // 走 OpenAI 兼容接口的 Router 也可能接的是 Gemini,厂商字段靠不住,模型名里有 gemini 就开
+    // Parameter compatibility mode: 'on' / 'off' is decided by the user (or locked by frontend based
+    // on model name); 'auto' / omitted infers from provider and model name: Routers using
+    // OpenAI-compatible endpoints may also connect to Gemini, so the provider field is unreliable;
+    // enable if gemini is in the model name
     const schemaCompat = opts.schemaCompat === 'on' ? true
       : opts.schemaCompat === 'off' ? false
       : (cfg.vendor === 'gemini' || /gemini/i.test(picked));
     /*
-     * 思考强度。CLI 那三条路各自翻译成命令行参数(claude 的 --effort、codex 的
-     * -c model_reasoning_effort、agy 的 --effort),而 API 直连这条路以前**根本没读过它** ——
-     * 面板上的档位对 API 是死的。走 OpenAI 兼容口径的中转是收 `reasoning_effort` 的,
-     * 具体怎么发交给各 provider 自己决定(每家字段名不一样)。
-     * 空值不覆盖:让模型 / 网关按自己的默认来。
+     * Thinking effort. The three CLI paths each translate into command-line arguments (claude's
+     * --effort, codex's -c model_reasoning_effort, agy's --effort), but the direct API path previously
+     * **never read it at all**: tiers on the panel were inactive for API. Relays using
+     * OpenAI-compatible conventions accept `reasoning_effort`, and how it is sent is left to each
+     * provider to decide (field names differ across vendors). Empty values are not overridden: let the
+     * model / gateway use its own default.
      */
     cfg = { ...cfg, model: picked, schemaCompat, effort: opts.effort || '' };
 
     /*
-     * 历史文件放哪:缺省按 sessionId 放系统临时目录(桌面:一台机器一个用户)。`opts.historyFile` 给了就用它 ——
-     * 托管档的 Agent 服务按「项目、主人、对话」自己定路径,不认请求里的 sessionId(契约 cloud-agent-contract.md 第 3.2 节第 32 项)。
+     * Where history files are stored: by default placed in the system temp directory by sessionId
+     * (desktop: one user per machine). Use `opts.historyFile` if provided: Agent services on the hosted
+     * tier determine paths by "project, owner, chat", ignoring sessionId in the request (contract
+     * cloud-agent-contract.md section 3.2, item 32).
      */
     const historyDir = path.join(os.tmpdir(), 'promptcut', 'harness-sessions');
     const historyFile = typeof opts.historyFile === 'string' && opts.historyFile ? opts.historyFile : path.join(historyDir, `${sessionId}.json`);
@@ -239,19 +253,23 @@ export function startRun(opts) {
       try {
         const parsed = JSON.parse(fs.readFileSync(historyFile, 'utf8'));
         if (Array.isArray(parsed)) initialMessages = parsed;
-        // 是合法 JSON 但不是消息数组(文件被外部改过)。静默丢空的话,用户看到的是
-        // 「它忘了刚才说过的话」而没有任何线索 —— 说一声,至少知道往哪儿查。
+        // Valid JSON but not a message array (file modified externally). If silently dropped as empty, the
+        // user sees "it forgot what was just said" without any clues: emit a notice so they at least know
+        // where to investigate.
         else safeOnEvent({ type: 'status', text: tr("The history file of this session has a bad format, starting from empty.") });
       } catch {}
     }
     
     /*
-     * 读回来的也要治一道。落盘那一处(saveHistory)已经补过悬空的 tool_use,
-     * 但盘上可能躺着**在那之前**写坏的历史:那时候中断是不落盘的,后来改成落盘了,
-     * 于是开发机上留下过一批带悬空 tool_use 的文件。只治写不治读的话,
-     * 这种脏会话会先撞一次 400、靠 catch 里的 saveHistory 自愈,下一条才正常。
+     * Data read back must also be sanitized. The persist-to-disk step (saveHistory) already patches
+     * dangling tool_use, but history written incorrectly **before that** may still reside on disk: at
+     * that time, interruptions were not written to disk, which was later changed to persist them,
+     * leaving behind files with dangling tool_use on dev machines. If we only handle writing and not
+     * reading, such dirty sessions hit a 400 first, self-heal via saveHistory in catch, and only
+     * recover on the next message.
      */
-    // 字符上限关掉:截断改由 Agent 按每轮真实 token 数来做(见下面的 maxInputTokens)
+    // Disable character limit: truncation is handled by the Agent based on actual tokens per round
+    // (see maxInputTokens below)
     const history = MessageHistory.fromJSON(healDanglingToolUse(initialMessages), { onEvent: safeOnEvent, maxChars: Infinity });
 
     let providerModule;
@@ -269,52 +287,61 @@ export function startRun(opts) {
     }
 
     /*
-     * 审查环路:默认跟着「深度自主」开关走 —— 开了深度自主,就是要它做完整的活,
-     * 这时才值得多花 reviewer / judger 的开销。也可以用 opts.reviewLoop 单独开关。
+     * Review loop: follows the "deep autonomy" toggle by default: enabling deep autonomy means asking
+     * it to do the full job, which makes the extra overhead of reviewer / judger worthwhile. It can
+     * also be toggled independently via opts.reviewLoop.
      */
     const useLoop = opts.reviewLoop ?? !!opts.deepAuto;
     const requestFetch = opts.fetchImpl || globalThis.fetch;
     /*
-     * 三层包在一起,顺序是有讲究的(从外到内):重试 → 闲置超时 → 真正的 fetch。
+     * Three layers wrapped together, with a specific order (from outside in): retry → idle timeout →
+     * actual fetch.
      *
-     * 重试在最外面:每次尝试都要重新走一遍闲置超时那一层,拿到一份**新的**计时器。
-     * 反过来的话第二次尝试会带着上一次已经到期的 signal 出门,当场就 abort。
+     * Retry is outermost: each attempt must go through the idle timeout layer again to get a **new**
+     * timer. Otherwise, the second attempt leaves with the signal already expired from the previous
+     * attempt and aborts immediately.
      *
-     * 停止用的是 abortController.signal(用户点停止),退避等待期间也听它 ——
-     * 不然点了停止还要干等十几秒才有反应。
-     * 只重试「发请求」这一下:流已经开始读之后不能重发,详见 retry-fetch.mjs 的说明。
+     * Stop uses abortController.signal (when the user clicks stop), which is also listened to during
+     * backoff waiting, otherwise clicking stop would still wait over ten seconds for a reaction. Only
+     * retry the "send request" step itself: requests cannot be resent once stream reading has started;
+     * see description in retry-fetch.mjs for details.
      */
     const retryingFetch = createRetryingFetch(
-      // 超时按「多久没来数据」算,不按「一共跑了多久」算 —— 原来是 AbortSignal.timeout(120000),
-      // 那是整段请求的墙钟上限(含读流),一个健康地流了 121 秒的长回合会被硬掐断。
-      // 上下文越大、工具越多越容易撞上,也就是活干得越多越容易被掐。见 harness/idle-timeout.mjs。
+      // Timeout is calculated by "how long no data has arrived", not "total runtime": previously it was
+      // AbortSignal.timeout(120000), which was the wall-clock cap for the whole request (including stream
+      // reading), abruptly cutting off a long round that streamed healthily for 121 seconds. The larger
+      // the context and the more tools used, the easier it hits this cap, meaning the more work done, the
+      // more likely it gets cut off. See harness/idle-timeout.mjs.
       withIdleTimeout(
         (url, options) => requestFetch(url, {
           ...options,
           /*
-           * **合并,不能覆盖。**
+           * **Merge, do not overwrite.**
            *
-           * 这里原来写的是 `signal: abortController.signal` —— 一行之差,把
-           * withIdleTimeout 组合好的信号整个盖掉了,于是闲置定时器到点 abort 的那个
-           * controller 根本没人在听:上游真卡住时这一轮永远不结束,不报错、不触发自动续跑,
-           * 界面上只有心跳在涨。而改之前 AbortSignal.timeout 是直接交给真 fetch 的,
-           * 会真的掐断 —— 也就是说那一版比改之前更糟,是回归。
+           * Originally it had `signal: abortController.signal` here: a one-line difference that completely
+           * overwrote the signal composed by withIdleTimeout, so nothing listened to the controller when the
+           * idle timer aborted on expiration. If the upstream genuinely stalled, this round never ended,
+           * reported no errors, and never triggered auto-resume, with only heartbeats increasing on the UI.
+           * Before that change, AbortSignal.timeout was passed directly to the real fetch and actually cut
+           * off: meaning that version was worse than before the change, a regression.
            *
-           * options.signal 里已经含了用户停止那一路(withIdleTimeout 组合过),
-           * 这里再并一次 abortController.signal 是为了「即使包装层将来变了,
-           * 用户点停止也一定管用」这条保证不依赖上游实现。
+           * options.signal already includes the user stop signal (composed by withIdleTimeout); merging
+           * abortController.signal here once more guarantees that "even if the wrapper layer changes in the
+           * future, clicking stop will definitely work" without relying on upstream implementation.
            */
           signal: options?.signal
             ? AbortSignal.any([abortController.signal, options.signal])
             : abortController.signal,
         }),
-        // 阈值可以从 opts 传,给测试用 —— 不然一条「上游不吐字」的用例要真等两分钟。
-        // 生产路径没人传,走 120 秒。
+        // Threshold can be passed from opts for tests, otherwise an "upstream emits no tokens" test case
+        // would actually wait two minutes. Omitted in production paths, defaulting to 120 seconds.
         /*
-         * 环路里放宽到 300 秒。实跑 worker 一轮干到 40 多次往返、历史 80 多条、带着 10 张截图时,
-         * 模型吐第一个字前要想 90~110 秒,再大一点就撞上 120 秒被掐断;重试带的是同一份请求,
-         * 照样超时 —— 三次都卡在同一个回合,整个环路作废。那不是断线,是想得慢。
-         * 普通对话仍是 120 秒:真卡住的时候还是该早点告诉用户。
+         * Relaxed to 300 seconds inside the loop. In practice, when a worker reaches over 40 round-trips,
+         * over 80 history messages, and carries 10 screenshots in a single round, the model needs to think
+         * for 90-110 seconds before emitting its first token; if slightly larger, it hits 120 seconds and
+         * gets cut off. Retries carry the exact same request and still time out: stuck on the same turn
+         * three times, invalidating the entire loop. That is not a dropped connection, but slow thinking.
+         * Normal chat remains at 120 seconds: when genuinely stuck, it should still notify the user earlier.
          */
         { idleMs: Number(opts.idleMsForTest) > 0 ? Number(opts.idleMsForTest) : (useLoop || opts.checkpoint ? 300000 : 120000) },
       ),
@@ -327,11 +354,14 @@ export function startRun(opts) {
         },
       },
     );
-    // 输入预算按不加速度上限时的输出上限算(这一轮里速度上限会变,按最大的那个留余量)
+    // Input budget is calculated using the output limit without speed caps (the speed cap can change
+    // within this round; reserve headroom based on the maximum)
     const maxOutput = resolveMaxOutput(cfg);
     /*
-     * 按实测速度给单次输出设上限(2026-10-22 用户定:「按实测速度给单次输出设上限」):让一次请求在网关约 300 秒掐断之前写完。
-     * 速度记录按模型存(harness/output-speed.mjs),每次请求后按用量记一笔;模拟 provider 不算。
+     * Set per-output cap based on measured speed (user decision, 2026-10-22: "Set per-output cap based on
+     * measured speed"): allow a single request to finish writing before the gateway cuts off around 300
+     * seconds. Speed records are stored per model (harness/output-speed.mjs), recorded based on usage
+     * after each request; mock providers do not count.
      */
     const speedFile = opts.outputSpeedFile === 'local' ? localOutputSpeedFile()
       : (typeof opts.outputSpeedFile === 'string' && path.isAbsolute(opts.outputSpeedFile) ? opts.outputSpeedFile : null);
@@ -340,19 +370,24 @@ export function startRun(opts) {
     const rawProvider = providerModule.createProvider(cfg, { fetchImpl: retryingFetch });
     const provider = speedBook ? withOutputSpeed(rawProvider, speedBook, cfg.model) : rawProvider;
     /*
-     * 轮次上限:常规 48 轮(2026-10-24 用户定,原先 24 轮;一张复杂自定义卡光写代码就要十几轮,
-     * 24 轮不够走到建卡那一步);「深度自主」开着时换成设置里的「自主轮次」(opts.maxRounds),
-     * 那个值为 0 表示不限 —— 在这里变成 Infinity,循环就没有终点了。
+     * Round limit: standard 48 rounds (user decision, 2026-10-24, previously 24 rounds; writing code
+     * alone for a complex custom card takes over a dozen rounds, and 24 rounds is not enough to reach
+     * the card creation step); when "deep autonomy" is enabled, switch to "autonomous rounds"
+     * (opts.maxRounds) from settings: a value of 0 means unlimited, which becomes Infinity here,
+     * leaving no end point for the loop.
      */
     const maxIterations = opts.deepAuto
       ? (opts.maxRounds === 0 ? Infinity : Number(opts.maxRounds) || 300)
       : 48;
-    // 单次输出上限:配置里的 maxTokens 是上限的上限,真正发的数按模型定(harness/model-limits.mjs,A07 2026-10-22);
-    // 再按实测速度压一道(上面的 speedBook),每次请求实际发的数见 `output-speed` 诊断
+    // Per-output cap: maxTokens in config is the upper bound of the cap, the actual number sent is
+    // determined by model (harness/model-limits.mjs, A07 2026-10-22); further clamped by measured speed
+    // (speedBook above); see `output-speed` diagnostics for the actual number sent per request
     safeOnEvent({ type: 'diagnostic', stage: 'configuration', data: { vendor: cfg.vendor, model: cfg.model, effort: cfg.effort || '(default)', maxTokens: cfg.maxTokens, maxOutput, speedCap: speedBook ? speedBook.capFor(cfg.model) : null, protocol: 'native-tools', schemaCompat, maxRounds: Number.isFinite(maxIterations) ? maxIterations : null, deepAuto: !!opts.deepAuto } });
     /*
-     * 代码块空间(server/tools/code-cache.mjs):目录由宿主给(`opts.codeCacheDir`,按项目);没给就放在这个对话的历史文件旁边,
-     * 只在这个对话里有效。建不出来(目录写不了)就不给这组工具,这一轮照常跑。
+     * Code block workspace (server/tools/code-cache.mjs): directory is provided by the host
+     * (`opts.codeCacheDir`, per project); if not provided, placed next to this chat's history file,
+     * valid only within this chat. If it cannot be created (directory not writable), do not provide
+     * this set of tools; the round continues as usual.
      */
     let codeCache = null;
     try {
@@ -363,8 +398,9 @@ export function startRun(opts) {
       safeOnEvent({ type: 'status', text: tr("Code sandbox unavailable: {0}", e?.message || e) });
     }
     /*
-     * 技能(issue 46):每一轮开头扫一次,外部根排在内置的前面,同名时外部的算数。
-     * 清单拼在系统提示词后面,一个技能都没有时系统提示词不变。
+     * Skills (issue 46): scan once at the start of each round; external roots precede built-in ones,
+     * and external ones take precedence on name collision. The manifest is appended to the system
+     * prompt; if there are no skills, the system prompt remains unchanged.
      */
     const skillsDir = opts.skillsDir === 'local' ? localSkillsDir()
       : (typeof opts.skillsDir === 'string' && path.isAbsolute(opts.skillsDir) ? opts.skillsDir : null);
@@ -372,7 +408,8 @@ export function startRun(opts) {
     safeOnEvent({ type: 'diagnostic', stage: 'skills', data: { skills: skills.map((s) => s.name), skipped: skippedSkills } });
     const skillsNote = skillCatalogPrompt(skills);
     const systemPrompt = skillsNote ? `${opts.systemPrompt ?? ''}${skillsNote}` : opts.systemPrompt;
-    // localTools: false 时不给读写本地文件的 text_editor;toolFilter 是只交给模型的工具名单(托管档的开放清单)
+    // When localTools: false, do not provide text_editor for reading/writing local files; toolFilter
+    // is the list of tools passed to the model (open manifest for the hosted tier)
     const tools = await buildTools({ callTool: opts.callTool, workspaceDir: opts.cwd, onEvent: safeOnEvent, localTools: opts.localTools !== false, only: opts.toolFilter ?? null, codeCache, skills });
     const agent = new Agent({ 
       provider, 
@@ -381,9 +418,10 @@ export function startRun(opts) {
       maxIterations,
       deepAuto: !!opts.deepAuto,
       /*
-       * 上下文拉满:gemini-3.8-flash 是 100 万 token 上下文(openlux 网关 /v1/models 的说明
-       * 「offers a million-token context window」)。预算 = 上下文 − 这一轮最多输出的量 − 3 万余量。
-       * 网关自动缓存,实测同一前缀第二次命中约八成,长上下文的费用压得住。
+       * Max out context: gemini-3.8-flash has a 1 million token context (description in openlux gateway
+       * /v1/models: "offers a million-token context window"). Budget = context - max output tokens this
+       * round - 30,000 headroom. The gateway caches automatically, with tests showing about an 80% hit
+       * rate on the second request for the same prefix, keeping long-context costs under control.
        */
       maxInputTokens: 1_000_000 - maxOutput - 30_000,
       onEvent: safeOnEvent,
@@ -391,9 +429,11 @@ export function startRun(opts) {
       history,
       codeCache,
       /*
-       * 每次模型请求前后的回调(托管档的闸与用量记录)。`opts.checkpoint` 为真时,从第二次请求起每次请求之前把历史落一次盘:
-       * 这时上一次工具往返刚做完 —— 进程被杀也只丢正在进行的那一次(契约 cloud-agent-contract.md 第 7.1 节)。
-       * 桌面两样都不传,与原来相同。
+       * Callbacks before and after each model request (gate and usage records for the hosted tier). When
+       * `opts.checkpoint` is true, history is persisted to disk before each request starting from the
+       * second request: at this point the previous tool round-trip just finished: even if the process is
+       * killed, only the one currently in progress is lost (contract cloud-agent-contract.md section 7.1).
+       * Desktop passes neither, unchanged from before.
        */
       ...(typeof opts.onModelCall === 'function' || opts.checkpoint ? {
         onModelCall: async (phase, info) => {
@@ -405,26 +445,29 @@ export function startRun(opts) {
     });
 
     /*
-     * 落历史。**成功和失败都要落** ——
+     * Record history. **Record both successes and failures**:
      *
-     * 原来只在成功那条路写盘,于是一超时/一报错,这一轮做过的事(说过的话、调过的工具)
-     * 全部丢掉:下次带同一个 sessionId 进来,读到的还是上一轮的历史。用户手打「继续」
-     * 看着像接上了,其实是从更早的地方重新开始 —— 而且他不会知道。
-     * 中断恰恰是最需要「记得刚才干到哪」的时候。
+     * Previously, it only wrote to disk on the success path, so as soon as a timeout or error
+     * occurred, everything done in this turn (words spoken, tools called) was completely lost: next
+     * time coming in with the same sessionId, it would still read the previous turn's history. When the
+     * user manually typed "continue", it looked like it resumed, but it actually restarted from even
+     * earlier: and they would not know. An interruption is precisely when "remembering where we left
+     * off" is needed most.
      */
     const saveHistory = () => {
       try {
         let historyStr = JSON.stringify(healDanglingToolUse(history.toJSON()));
-        // 历史文件的大小上限(只有托管档给,`opts.historyMaxBytes`):超了按现有的历史截断(从最早的整对消息删起)再落
+        // Maximum history file size (only provided by the hosted tier, `opts.historyMaxBytes`): if exceeded,
+        // truncate existing history (deleting from the earliest complete message pair) before saving
         const maxBytes = Number(opts.historyMaxBytes) > 0 ? Number(opts.historyMaxBytes) : 0;
         for (let i = 0; maxBytes && i < 4 && Buffer.byteLength(historyStr, 'utf8') > maxBytes; i += 1) {
           const before = history.size();
           history.maxChars = Math.floor(before * (maxBytes / Buffer.byteLength(historyStr, 'utf8')) * 0.85);
           history.truncate();
-          if (history.size() >= before) break; // 只剩截不动的两条了
+          if (history.size() >= before) break; // Only the two messages that cannot be truncated remain
           historyStr = JSON.stringify(healDanglingToolUse(history.toJSON()));
         }
-        // 再确认一遍历史里没有 API Key
+        // Confirm once more that there is no API Key in the history
         fs.writeFileSync(
           historyFile,
           currentApiKey && historyStr.includes(currentApiKey)
@@ -433,7 +476,7 @@ export function startRun(opts) {
           'utf8',
         );
       } catch (e) {
-        // 存不下也不该把这一轮的结果盖掉,记一句就够了
+        // Even if it cannot fit, do not overwrite this turn's results; recording one line is enough
         console.error('[api] failed to write session history:', e?.message || e);
       }
     };
@@ -453,17 +496,18 @@ export function startRun(opts) {
       const usage = {
         input: typeof rawUsage.input === 'number' ? rawUsage.input : 0,
         output: typeof rawUsage.output === 'number' ? rawUsage.output : 0,
-        // 网关自动缓存的命中量;input 里已经含着它,这个数是看命中率用的
+        // Gateway auto-cache hit count; input already contains it, this number is used to check hit rate
         cacheRead: typeof rawUsage.cacheRead === 'number' ? rawUsage.cacheRead : 0,
       };
       
       safeOnEvent({ type: 'done', sessionId, usage, outcome: result.outcome, completed: result.completed, failed: result.failed });
     } catch (err) {
-      // 半路断了也要把做到哪儿记下来,不然「继续」接的是更早的那一轮
+      // Even if interrupted midway, record where it got to; otherwise "continue" will resume an even
+      // earlier turn
       saveHistory();
 
       if (abortController.signal.aborted) {
-        // 用户点了停止 —— 这是他的决定,不报错也不自动续
+        // The user clicked stop: this is their decision, do not report an error or automatically resume
         safeOnEvent({ type: 'status', text: tr("Aborted") });
       } else {
         let msg = err.message || String(err);
@@ -471,18 +515,23 @@ export function startRun(opts) {
           msg = msg.split(currentApiKey).join('***');
         }
         /*
-         * 超时是**可续跑**的:上下文都在历史里(上面刚存过),模型只是这一次没在
-         * 规定时间内吐字。让它接着说,而不是让用户去手打「继续」。
+         * Timeouts are **resumable**: the context is all in the history (just saved above); the model
+         * simply did not emit tokens within the allowed time this time. Let it continue speaking instead
+         * of having the user manually type "continue".
          *
-         * 注意 AbortError 不能一律当成「用户停止」:`AbortSignal.timeout` 触发时
-         * 抛的是 TimeoutError,而经 AbortSignal.any 传递之后名字可能是 AbortError ——
-         * 原来那句 `err.name === 'AbortError'` 会把超时也吞成一条「已中止」的状态,
-         * 连红字都不给,用户只看到对话无声停住。所以判「是不是用户停的」只认
-         * abortController.signal.aborted 这一个真凭据。
+         * Note that AbortError cannot simply be treated as "user stopped": when `AbortSignal.timeout`
+         * triggers it throws TimeoutError, but after being passed through AbortSignal.any the name may
+         * be AbortError: the original `err.name === 'AbortError'` swallowed timeouts into an "aborted"
+         * state without even showing red text, so the user only saw the chat stop silently. Therefore,
+         * determining "whether the user stopped it" only accepts abortController.signal.aborted as the
+         * single true indicator.
          */
         /*
-         * 流已经出过数据之后被网关掐断的,在 harness 里按截断处理、让模型接着写(stream-cut,2026-10-22),不会走到这里;
-         * 走到这里的是还没收到数据就断了的,和超时一样可以接着说。截断次数超限的那句不在里面(那是明说没做成)。
+         * Cases cut off by the gateway after the stream has already emitted data are handled as truncation
+         * in harness to let the model continue writing (stream-cut, 2026-10-22), and will not reach here;
+         * what reaches here is disconnected before receiving any data, which like timeouts can continue
+         * speaking. The case where truncation count exceeded the limit is not included (that explicitly
+         * states it failed).
          */
         const isTimeout = err.name === 'TimeoutError' || /timeout|timed out|aborted due to timeout/i.test(msg) || STREAM_DROPPED.test(msg);
         safeOnEvent(isTimeout ? {

@@ -1,29 +1,40 @@
 /**
- * 单次输出上限(A07,2026-10-22 用户定:「把单次输出上限调大」)。
+ * Single-output limit (A07, user decision, 2026-10-22: "increase single-output limit").
  *
- * 原来三家 provider 都写死 `cfg.maxTokens || 4096`,模型把 4096 个 token 花在思考和一个大工具参数上就被截断。
- * 现在按模型取它真实允许的上限;查不到的模型给保守值 UNKNOWN_OUTPUT_TOKENS,网关因为数太大回 400 时由 provider 降一档重试一次。
+ * Originally all three providers hardcoded `cfg.maxTokens || 4096`, and models were truncated after
+ * spending 4096 tokens on thinking and a large tool argument.
+ * Now the limit genuinely allowed is retrieved by model; models not found are given the conservative
+ * value UNKNOWN_OUTPUT_TOKENS, and if the gateway returns 400 because the number is too large, the
+ * provider drops down one tier and retries once.
  *
- * 配置里的 `maxTokens` 是**上限的上限**:配了就不超过它(取它和模型上限里小的那个)。没配、或者等于旧缺省 4096,
- * 当作没配,用模型上限〔裁:output-cache 2026-10-22〕—— 4096 是 `ai-config.mjs`、`set-key.mjs`、`service-keys.mjs`
- * 在用户没填时自动写进配置文件的旧缺省,不是谁特意定的;照它办就永远调不大。真想压到 4096 以下就填一个更小的数。
+ * `maxTokens` in config is the **ceiling of limits**: when configured, it will not exceed it (taking
+ * the smaller of it and the model limit). If not configured, or equal to the old default 4096,
+ * treat as unconfigured and use the model limit [ruling:output-cache 2026-10-22]: 4096 was the old
+ * default automatically written into config files by `ai-config.mjs`, `set-key.mjs`, and
+ * `service-keys.mjs` when left empty by the user, not deliberately decided by anyone; adhering to
+ * it means it could never be adjusted larger. If you genuinely want to cap below 4096, fill in a
+ * smaller number.
  *
- * 数字出处:Claude 各型号取 claude-api 技能 `shared/models.md` 的模型表(缓存于 2026-10-06);GPT、Gemini 取各家公开文档的
- * 「max output tokens」(gpt-5 系 128000、o 系 100000、gpt-4.1 32768、gpt-4o 16384;gemini-2.5 及以后 65536、2.0 与 1.5 是 8192)。
- * 认不出的模型名用 UNKNOWN_OUTPUT_TOKENS。2026-10-22 实测 openlux 网关:gemini-3.8-flash、claude-sonnet-5-5 走 OpenAI 兼容口时,
- * max_tokens 给到 1000000 / 300000 都照常回 200(网关自己压到上游的上限),所以给大了不会让这条路失败。
+ * Source of numbers: Claude models use the model table from the claude-api skill `shared/models.md`
+ * (cached on 2026-10-06); GPT and Gemini use "max output tokens" from their official documentation
+ * (gpt-5 family 128000, o-series 100000, gpt-4.1 32768, gpt-4o 16384; gemini-2.5 and later 65536,
+ * 2.0 and 1.5 are 8192). Unrecognized model names use UNKNOWN_OUTPUT_TOKENS. Tested on 2026-10-22
+ * against the openlux gateway: when gemini-3.8-flash and claude-sonnet-5-5 use the OpenAI-compatible
+ * endpoint, setting max_tokens to 1000000 / 300000 still returns 200 as usual (the gateway clamps
+ * to the upstream limit itself), so setting it too high will not make this path fail.
  */
 
-/** 旧缺省:配置里是这个数时当作没配 */
+/** Old default: treated as unconfigured when this number is in config */
 export const LEGACY_DEFAULT_MAX_TOKENS = 4096;
-/** 认不出的模型用这个 */
+/** Used for unrecognized models */
 export const UNKNOWN_OUTPUT_TOKENS = 16384;
-/** 降档时依次试的档位 */
+/** Tiers tried in sequence when downgrading tiers */
 export const OUTPUT_TIERS = Object.freeze([128000, 100000, 65536, 64000, 32768, 32000, 16384, 8192, 4096]);
 
-// 模型名可能带前缀(`openai/gpt-5`、`models/gemini-2.5-pro`),只在开头或 `/`、`:` 后面认
+// Model names may carry prefixes (`openai/gpt-5`, `models/gemini-2.5-pro`); only recognized at
+// start or after `/` or `:`
 const at = (body) => new RegExp(`(?:^|[/:])(?:${body})`, 'i');
-/** 先具体后笼统:第一个对上的算 */
+/** Specific before general: first match wins */
 const TABLE = [
   // Claude
   [at('claude-(?:fable|mythos)'), 128000],
@@ -47,7 +58,7 @@ const TABLE = [
   [at('gemini'), 65536],
 ];
 
-/** 这个模型的单次输出上限;认不出回 null */
+/** Single-output limit for this model; returns null if unrecognized */
 export function modelOutputLimit(model) {
   const name = String(model || '').trim();
   if (!name) return null;
@@ -56,9 +67,11 @@ export function modelOutputLimit(model) {
 }
 
 /**
- * 这一次请求真正发出去的输出上限:min(模型上限, 配置上限, 按实测速度算的上限)。
- * 第三项是 `cfg.outputCap`(一个回数字的函数,`runners/api.mjs` 按 `output-speed.mjs` 给;让一次请求在网关约 300 秒掐断之前写完,
- * 2026-10-22 用户定),没给就不算。
+ * Output limit actually sent for this request: min(model limit, config limit, limit calculated from
+ * measured speed).
+ * The third item is `cfg.outputCap` (a function returning a number, provided by `runners/api.mjs`
+ * based on `output-speed.mjs`; ensures a request finishes writing before the ~300s gateway cutoff,
+ * user decision, 2026-10-22); omitted if not provided.
  */
 export function resolveMaxOutput(cfg) {
   const known = modelOutputLimit(cfg?.model);
@@ -72,17 +85,20 @@ export function resolveMaxOutput(cfg) {
 }
 
 /**
- * OpenAI 兼容口用哪个字段:o 系、GPT-5 及以后的推理模型认 `max_completion_tokens`(官方接口对它们发 `max_tokens` 直接 400),
- * 其余发 `max_tokens`。两个不同时带:有的上游见到两个都带也回 400。
+ * Which field to use for OpenAI-compatible endpoints: o-series and reasoning models from GPT-5
+ * onward recognize `max_completion_tokens` (sending `max_tokens` to them on official endpoints
+ * returns an immediate 400), and the rest send `max_tokens`. Never include both: some upstreams
+ * also return 400 when seeing both.
  */
 export function usesMaxCompletionTokens(model) {
   return at('o[1-9](?:-|$)|gpt-[5-9]').test(String(model || '').trim());
 }
 
 /**
- * 这条 400 说的是不是「输出上限太大」;是的话回下一档的数,不是回 null。
- * 报错里写了上限(如 Anthropic 的「max_tokens: 200000 > 128000」、OpenAI 的「at most 16384」)就用报错里那个,
- * 没写就取 OUTPUT_TIERS 里比现在小的下一档。
+ * Whether this 400 indicates "output limit too large"; returns next tier value if so, null if not.
+ * If the error message specifies a limit (e.g. Anthropic's "max_tokens: 200000 > 128000" or OpenAI's
+ * "at most 16384"), use the one from the error; if not specified, pick the next tier in
+ * OUTPUT_TIERS smaller than current.
  */
 export function lowerOutputAfter400(text, current) {
   const s = String(text || '');
@@ -95,11 +111,15 @@ export function lowerOutputAfter400(text, current) {
   return tier ?? null;
 }
 
-/** 这条 400 是不是在说字段名不对(要换另一个字段):回 'max_tokens' / 'max_completion_tokens' 表示该换成哪个,不是回 null */
+/**
+ * Whether this 400 indicates wrong field name (needs switching to the other field): returns
+ * 'max_tokens' / 'max_completion_tokens' indicating which to switch to, or null if not
+ */
 export function swapOutputParamAfter400(text, sent) {
   const s = String(text || '');
   if (!/unsupported|not supported|unrecognized|unknown|not allowed|extra inputs|invalid param/i.test(s) && !/use ['"`]?max_completion_tokens/i.test(s)) return null;
-  // 「max_completion_tokens」里不含「max_tokens」这个子串,两条不会互相误认
+  // "max_completion_tokens" does not contain the substring "max_tokens", so the two will not
+  // misidentify each other
   if (sent === 'max_tokens' && /max_tokens/i.test(s)) return 'max_completion_tokens';
   if (sent === 'max_completion_tokens' && /max_completion_tokens/i.test(s)) return 'max_tokens';
   return null;

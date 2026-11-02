@@ -1,9 +1,13 @@
 /**
- * 按哈希把本地内容库里已有的素材交给上传队列(C10a 集成返工:开启「放云端」时,开启前就在项目里的素材也要上云)。
- * 跑:node --test server/test/upload-enqueue-existing.test.mjs
+ * Hand over assets already in the local content store to the upload queue by hash (C10a integration
+ * rework: when "move to the cloud" is enabled, assets in the project before enabling must also move
+ * to the cloud).
+ * Run: node --test server/test/upload-enqueue-existing.test.mjs
  *
- * `enqueueLocalMedia`(`server/upload-queue.mjs`)接 `POST /api/media/upload-queue/enqueue` 的请求体;队列用真的
- * `createUploadQueue`(只在内存,目标是一个记录用的假素材服务客户端),看进队的档位、先小后大、只收本地有的、缺的回报。
+ * `enqueueLocalMedia` (`server/upload-queue.mjs`) accepts the request body of
+ * `POST /api/media/upload-queue/enqueue`; the queue uses real `createUploadQueue` (in-memory only,
+ * targeting a mock asset service client for logging) to check queued tiers, small before large,
+ * only accepting locally existing items, and reporting missing items.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -112,12 +116,12 @@ test('UQE-8 cancel: withdraws assets that are uploading or queued and removes th
   assert.equal(q.stats().items.length, 2);
   q.start();
   while (!putStarted) await new Promise((r) => setTimeout(r, 10));
-  // 撤回正在上传的 V_ORIG
+  // Cancel V_ORIG currently uploading
   const cancelRes = await q.cancel([V_ORIG]);
   assert.deepEqual(cancelRes, { ok: true, cancelled: [V_ORIG] });
   assert.equal(putAborted, true);
   assert.deepEqual(q.stats().items.map((i) => i.id), [IMG]);
-  // 撤回排队中的 IMG
+  // Cancel queued IMG
   const cancelAllRes = await q.cancel();
   assert.deepEqual(cancelAllRes, { ok: true, cancelled: [IMG] });
   assert.equal(q.stats().items.length, 0);
@@ -147,21 +151,21 @@ test('UQE-9 /api/media/upload-queue/cancel endpoint: withdraws in-flight and que
   t.after(() => { server.closeAllConnections?.(); server.close(); });
   const base = `http://127.0.0.1:${server.address().port}`;
 
-  // 先设远端目标（连本机素材服务时队列是空操作，不进队）
+  // Set remote target first (queue is a no-op when connecting to local asset service; does not enqueue)
   const setTarget = await fetch(`${base}/api/media/upload-queue/target`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ base: 'http://remote.asset.service/api' }),
   });
   assert.equal(setTarget.status, 200);
 
-  // 把两项进队
+  // Enqueue both items
   const enq = await fetch(`${base}/api/media/upload-queue/enqueue`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ hashes: [V_ORIG, IMG] }),
   });
   assert.equal(enq.status, 200);
 
-  // 1. POST /api/media/upload-queue/cancel 撤回 V_ORIG
+  // 1. POST /api/media/upload-queue/cancel: cancel V_ORIG
   const c1 = await fetch(`${base}/api/media/upload-queue/cancel`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ hashes: [V_ORIG] }),
@@ -171,14 +175,14 @@ test('UQE-9 /api/media/upload-queue/cancel endpoint: withdraws in-flight and que
   assert.deepEqual(j1.cleaned, [V_ORIG]);
   assert.equal(fs.existsSync(file1), false, 'In-flight/queued files are deleted');
 
-  // 2. DELETE /api/media/upload-queue/<hash> 撤回 IMG
+  // 2. DELETE /api/media/upload-queue/<hash>: cancel IMG
   const c2 = await fetch(`${base}/api/media/upload-queue/${IMG}`, { method: 'DELETE' });
   const j2 = await c2.json();
   assert.deepEqual(j2.cancelled, [IMG]);
   assert.deepEqual(j2.cleaned, [IMG]);
   assert.equal(fs.existsSync(file2), false, 'Withdrawn files are deleted');
 
-  // 3. 不在队列里（已完整传完出队）的文件：cancel 不会删除它
+  // 3. Files not in the queue (already fully uploaded and dequeued): cancel will not delete them
   const doneFile = path.join(mediaDir, `${V_SMALL}.mp4`);
   fs.writeFileSync(doneFile, 'finished-data');
   fs.writeFileSync(path.join(mediaDir, 'index.json'), JSON.stringify({

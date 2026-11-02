@@ -1,22 +1,28 @@
 /**
- * 页面里后台轮询的小工具(对话列表、删除通知、删到一半接着办用)。没有 React，Node 里有单测(`poll.test.mjs`)。
+ * A small utility for background polling in the page (chat list, deletion notices, resuming a
+ * half-finished deletion). No React; there are Node unit tests (`poll.test.mjs`).
  *
- * 规矩(2026-10-13 审查)：
- *   - 同时只有一次在途：上一次没回来，不发下一次；
- *   - 失败退避：连续失败一次翻一倍，封顶 `maxMs`；成功就回到 `baseMs`；
- *   - 登录失效(`run` 回 `"stop"`)就停，不再来；
- *   - 页面不可见就不排下一次，回到可见时(`kick()`)立刻来一次再接着排。
+ * Rules (review, 2026-10-13):
+ *   - Only one in flight at a time: if the previous one has not come back, the next is not sent;
+ *   - Backoff on failure: each consecutive failure doubles the delay, capped at `maxMs`; success
+ *     returns to `baseMs`;
+ *   - Stop when the login expires (`run` returns `"stop"`), and do not come back;
+ *   - When the page is not visible, the next one is not scheduled; when it becomes visible again
+ *     (`kick()`), run one immediately and then continue scheduling.
  */
 export interface Poller {
   start(): void;
   stop(): void;
-  /** 立刻来一次(回到前台、页面里有人动了对话时)；在途或已停就什么都不做 */
+  /**
+   * Run once immediately (when back in the foreground, or when someone in the page touched a chat);
+   * does nothing if one is in flight or it has stopped
+   */
   kick(): void;
   describe(): { running: boolean; inflight: boolean; failures: number; nextDelayMs: number; stopped: boolean };
 }
 
 export function createPoller(o: {
-  /** 返回 `"stop"` 表示不用再来了(登录失效)；抛错算失败，退避 */
+  /** Returning `"stop"` means no need to come back (login expired); a throw counts as failure, back off */
   run: () => Promise<"stop" | void>;
   baseMs: number;
   maxMs?: number;
@@ -38,7 +44,7 @@ export function createPoller(o: {
   }
   async function tick() {
     if (!started || stopped || inflight) return;
-    if (!visible()) return; // 不可见：不排下一次，kick() 回来再说
+    if (!visible()) return; // Not visible: do not schedule the next one; deal with it when kick() comes back
     inflight = true;
     try {
       const out = await o.run();

@@ -19,7 +19,7 @@ export function clipFrameSpan(clip, fps) {
  * screenshot still moves Motion/WAAPI anchors (Tokyo project: step-timeline at
  * frame 1962 differed by a frame depending on whether 1961 was captured). A cut
  * inside a stateful card's mounted life therefore changes pixels. Direct cards,
- * media and 素材效果卡 are evaluated at their time and may be cut anywhere.
+ * media and media effect cards are evaluated at their time and may be cut anywhere.
  * An unknown mode is treated as stateful.
  */
 export function shardCutCandidates(clips, startFrame, endFrame, fps) {

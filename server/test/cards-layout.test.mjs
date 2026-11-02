@@ -1,12 +1,14 @@
 /*
- * D4(b) `/api/cards/layout`(预渲染的整场景实体框)。
+ * D4(b) `/api/cards/layout` (whole scene entity box for prerender).
  *
- * 纯计算那部分直接测(素材段的框、回包成型);要开浏览器的那部分把
- * `bakeFrames` / `captureSnapshot` 两个模块替掉,只验「一次请求只渲一遍」
- * 和 `{ screenshot: false }` + 钩子确实传下去了。
+ * The pure computation part is tested directly (media clip boxes, response formatting); the part
+ * that requires opening a browser replaces two modules `bakeFrames` / `captureSnapshot`, only
+ * verifying "renders once per request" and that `{ screenshot: false }` + hooks are indeed passed
+ * down.
  *
- * 跑法:`node --experimental-test-module-mocks --test server/test/cards-layout.test.mjs`
- * 带 `PC_STAGE_TEST_URL` 时最后一条会真打一台 dev server(不带就整条跳过)。
+ * How to run: `node --experimental-test-module-mocks --test server/test/cards-layout.test.mjs`
+ * When `PC_STAGE_TEST_URL` is set, the last test will actually hit a dev server (skipped entirely
+ * if not set).
  */
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -29,7 +31,8 @@ mock.module(new URL('../bakery/capture-snapshot.mjs', import.meta.url).href, {
   exports: {
     captureSnapshot: async (_bakery, html, screenshot, options = {}) => {
       captureCalls.push({ html, screenshot, options });
-      // 真实实现在 fonts.ready 之后 prepareFrameMedia 之前跑钩子;这里只把返回值透出来
+      // Real implementation runs hooks after fonts.ready and before prepareFrameMedia; here only pass
+      // through the return value
       return options.afterFonts ? await options.afterFonts({ evaluate: async () => measured }) : Buffer.alloc(0);
     },
   },
@@ -40,15 +43,15 @@ const { FramePipeline, layoutClips, frameContentBox, measureEntityRects } = awai
 const stage = { width: 1920, height: 1080 };
 
 test('A media clip\'s contentBox is its frameCss box', () => {
-  // 没有 frame = 铺满舞台(resolveFrameSize 的默认值)
+  // No frame = fill the stage (resolveFrameSize default value)
   assert.deepEqual(frameContentBox(undefined, stage), { left: 0, top: 0, width: 1920, height: 1080 });
-  // 锚点在左上角:(x, y) 就是左上角
+  // Anchor point at top-left: (x, y) is the top-left corner
   assert.deepEqual(frameContentBox({ x: 100, y: 50, w: 640, h: 360 }, stage), { left: 100, top: 50, width: 640, height: 360 });
-  // 锚点在正中:左上角 = (x, y) 减去半个框
+  // Anchor point at center: top-left = (x, y) minus half the box
   assert.deepEqual(frameContentBox({ x: 960, y: 540, w: 640, h: 360, anchor: [0.5, 0.5] }, stage), { left: 640, top: 360, width: 640, height: 360 });
-  // 只给了一边的宽高:另一边铺满
+  // Width or height given for only one side: the other side fills
   assert.deepEqual(frameContentBox({ w: 800 }, stage), { left: 0, top: 0, width: 800, height: 1080 });
-  // 取整,和页面侧 roundBox 一致
+  // Rounded, consistent with page-side roundBox
   assert.deepEqual(frameContentBox({ x: 10.4, y: 10.6, w: 100.5, h: 99.4 }, stage), { left: 10, top: 11, width: 101, height: 99 });
 });
 
@@ -66,13 +69,13 @@ test('Response shape: cards use the measured entity box, media clips use project
   const { stage: st, clips, cardIds } = layoutClips(project, ['card-a', 'card-b', 'media-a', 'nope'], list, 1);
   assert.deepEqual(st, stage);
   assert.deepEqual(cardIds, ['card-a', 'card-b']);
-  // 量到了:bounds 优先于包裹层 rect,且取整
+  // Measured: bounds takes precedence over wrapper layer rect, and rounded
   assert.deepEqual(clips['card-a'].contentBox, { left: 704, top: 269, width: 512, height: 541 });
   assert.equal(clips['card-a'].contentNote, undefined);
-  // 这一刻不在画面上:null + 说明,别被当成「没内容」
+  // Not on screen at this moment: null + explanation, not to be mistaken for "no content"
   assert.equal(clips['card-b'].contentBox, null);
   assert.match(clips['card-b'].contentNote, /not on screen/);
-  // 素材段:不进快照,等于它的 frameCss 框
+  // Media clip: does not enter snapshots, equals its frameCss box
   assert.deepEqual(clips['media-a'].contentBox, { left: 200, top: 100, width: 800, height: 450 });
   assert.equal(clips['nope'].contentBox, null);
   assert.match(clips['nope'].contentNote, /clip nope not found/);
@@ -85,7 +88,7 @@ test('When the entity extent cannot be measured, fall back to the wrapper layer\
   assert.deepEqual(clips['card-a'].contentBox, { left: 1, top: 2, width: 3, height: 4 });
 });
 
-/** 只挡住磁盘和浏览器,layout / layoutNow 本身跑真的 */
+/** Only stubs out disk and browser, layout / layoutNow themselves run for real */
 function stubbed(entryProject, html = new Map()) {
   const service = new FramePipeline({ root: '.', origin: () => '' });
   const entry = { key: 'k', project: entryProject, dir: '.', html, controls: new Map(), recordVersion: 0 };
@@ -115,10 +118,10 @@ test('A single request renders only once, regardless of how many clipIds are ask
   assert.deepEqual(first.stage, stage);
   assert.equal(Object.keys(first.clips).length, 30);
   assert.deepEqual(first.clips['c0'].contentBox, { left: 10, top: 10, width: 40, height: 40 });
-  // 钩子和 screenshot: false 确实传到了 captureSnapshot
+  // Hooks and screenshot: false are indeed passed to captureSnapshot
   assert.equal(captureCalls[0].options.screenshot, false);
   assert.equal(typeof captureCalls[0].options.afterFonts, 'function');
-  // 冻出来的这一帧被 record 进 entry.html,下一次就该命中
+  // This frozen frame is recorded into entry.html and should hit next time
   assert.equal(entry.html.has(30), true);
 
   const second = await service.layout(big, { t: 1, clipIds: ['c0'] });
@@ -132,7 +135,7 @@ test('Do not short-circuit even when the pixels already exist: if entry.html lac
   bakeCalls.length = 0; captureCalls.length = 0;
   measured = [{ clipId: 'card-a', rect: { left: 0, top: 0, width: 1920, height: 1080 }, bounds: { left: 8, top: 8, width: 64, height: 64 } }];
   const { service, entry } = stubbed(project);
-  // MOV 命中的那条路只喂像素,这里连 mov 都不看
+  // The MOV hit path only feeds pixels; here mov is not even inspected
   entry.mov = { lookup: async () => Buffer.alloc(10), ready: Promise.resolve() };
   const out = await service.layout(project, { t: 0, clipIds: ['card-a'] });
   assert.equal(bakeCalls.length, 1);
@@ -157,7 +160,7 @@ test('t is clamped to the project duration, frame number is round(t × fps)', as
   assert.equal((await service.layout(project, { t: 1.49, clipIds: ['card-a'] })).frame, 45);
 });
 
-/* ---------------- D3:see_frames 每帧附的实体矩形 ---------------- */
+/* ---------------- D3:see_frames entity rectangles attached to each frame ---------------- */
 
 test('D3 entityRects: missing frames are filled by a single bakeFrames, one snapshot is injected per frame with no screenshot, and the hook is measureEntityRects', async () => {
   bakeCalls.length = 0; captureCalls.length = 0;
@@ -185,8 +188,8 @@ test('D3 entityRects: when the page has no __pcSolid attached (hook returns null
 });
 
 /*
- * measureEntityRects 的页面函数:拿一棵假 DOM 直接跑(page.evaluate = 就地调用),
- * 只验「solid 什么时候是 null」—— bounds 的数值是 solid.ts 自己的事。
+ * Page function of measureEntityRects: runs directly with a mock DOM (page.evaluate = invoked in
+ * place), only verifying "when solid is null": the value of bounds is solid.ts's own business.
  */
 class FakeRect {
   constructor(left, top, width, height) { Object.assign(this, { left, top, width, height, right: left + width, bottom: top + height }); }
@@ -222,7 +225,8 @@ test('D3 measureEntityRects: bounds when there are entities; null when the whole
     el('DIV', { 'data-pc-clip': 'offstage' }, [0, 0, 1920, 1080], [el('SPAN', { solid: 1 }, [2000, 0, 100, 100])]),
     el('DIV', { 'data-pc-clip': 'group' }, [0, 0, 1920, 1080], [el('CANVAS', { 'data-pc-group-plane': '' }, [0, 0, 1920, 1080])]),
     el('DIV', { 'data-pc-clip': 'plane' }, [0, 0, 1920, 1080], [el('IMG', { 'data-pc-snapshot-plane': '' }, [10, 10, 20, 20])]),
-    // 快照里 canvas 换成的 <img>:外框在舞台上,但实体那一块(画布像素 3900.. → 舞台 1950..)在舞台外
+    // <img> replacing canvas in snapshot: outer box is on stage, but the entity part (canvas pixels
+    // 3900.. → stage 1950..) is off-stage
     el('DIV', { 'data-pc-clip': 'painted-off' }, [0, 0, 1920, 1080], [el('IMG', { solid: 1, 'data-pc-painted-box': '3900,0,10,10', width: 3840, height: 1080 }, [0, 0, 1920, 1080])]),
   ]);
   const list = ['painted', 'empty', 'offstage', 'group', 'plane', 'painted-off'].map(clipId => ({ clipId, rect: full, bounds: clipId === 'painted' ? new FakeRect(100, 200, 300.4, 50.6) : full }));
@@ -234,7 +238,7 @@ test('D3 measureEntityRects: bounds when there are entities; null when the whole
   assert.equal(by.group.solid, null, 'A group stream plane does not count as this card\'s entity');
   assert.deepEqual(by.plane.solid, [0, 0, 1920, 1080], 'Snapshot / stream / proxy planes count as entities');
   assert.equal(by['painted-off'].solid, null, 'Judged by the data-pc-painted-box region');
-  // 页面上没挂 __pcSolid
+  // __pcSolid is not attached on the page
   globalThis.window = {};
   const saved = globalThis.document;
   globalThis.document = { querySelector: () => root };
@@ -242,7 +246,7 @@ test('D3 measureEntityRects: bounds when there are entities; null when the whole
   finally { globalThis.document = saved; delete globalThis.window; }
 });
 
-/* 真打一台 dev server(PC_STAGE_TEST_URL=http://127.0.0.1:5214);不设就跳过。 */
+/* Actually hits a dev server (PC_STAGE_TEST_URL=http://127.0.0.1:5214); skips if not set. */
 test('Integration: /api/cards/layout returns integer boxes for a real project', { skip: !process.env.PC_STAGE_TEST_URL }, async () => {
   const origin = process.env.PC_STAGE_TEST_URL.replace(/\/+$/, '');
   const live = {

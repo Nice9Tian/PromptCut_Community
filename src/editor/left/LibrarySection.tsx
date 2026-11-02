@@ -16,12 +16,15 @@ import { useUploadRejectedNotice } from "./uploadRejectedNotice";
 import { tr } from "../../i18n/index.ts";
 
 /**
- * 「素材库」分区:导入媒体 → 搜索 → 分类胶囊 → 分组(视频 / 图片 / 音频)。
- * 卡片、部件在「动画」分区(AnimationsSection)。
+ * "Media library" section: import media → search → category pills → groups (video / image / audio).
+ * Cards and parts are in the "Animations" section (AnimationsSection).
  *
- * 右键菜单、删除确认框、底部提示条都挂在这一级常驻渲染,
- * 不跟着某个组的详情走 —— 在总览、组详情、搜索结果里右键都弹得出来。
- * 以前 pc.left.group.library 里存过卡片组的 id:不在 LIBRARY_GROUP_IDS 里,useOpenGroup 读出来就是总览。
+ * The context menu, delete confirm dialog and bottom hint bar are all mounted and rendered
+ * persistently at this level,
+ * not following the detail of some group: right-clicking in the overview, group detail and search
+ * results all pops them up.
+ * pc.left.group.library used to store card group ids: ones not in LIBRARY_GROUP_IDS are read by
+ * useOpenGroup as the overview.
  */
 export function LibrarySection() {
   const [search, setSearch] = useState("");
@@ -30,11 +33,11 @@ export function LibrarySection() {
   const [openGroup, setOpenGroup] = useOpenGroup("library", LIBRARY_GROUP_IDS);
   const [msg, flash] = useFlash();
   const mediaInputRef = useRef<HTMLInputElement>(null);
-  // 在线上传被限额拒掉的（游客第 4 条视频之类）：在底部提示条说清楚，多停一会儿
+  // Online upload rejected by a quota (a guest's 4th video, for example): say so clearly in the bottom hint bar, and stay a bit longer
   const showRejected = useCallback((text: string) => flash(text, 8000), [flash]);
   useUploadRejectedNotice(showRejected);
 
-  // 素材三组共用一份右键菜单
+  // The three media groups share one context menu
   const mediaMenu = useMediaMenu(flash);
   const videos = useMediaGroup("video", q, mediaMenu.openMenu);
   const images = useMediaGroup("image", q, mediaMenu.openMenu);
@@ -44,9 +47,10 @@ export function LibrarySection() {
 
   const data: Record<string, GroupData> = { videos, images, music, cuts: cuts.data };
 
-  // 在线浏览器断网时导入媒体置灰、提示「当前离线」(桌面版照常导入,连上后再上传;2026-10-22 用户定)
+  // When the online browser is offline, importing media is greyed out with the hint "Currently offline" (desktop app imports as usual and uploads once connected; 2026-10-22 user decision)
   const importOffline = useImportOffline();
-  // 这个项目只给了只读权限(游客):导入是写,按钮置灰、空组里的「导入…」占位也不出
+  // This project only grants read-only access (guest): import is a write, so the button is greyed out
+  // and the "Import…" placeholder in an empty group is not shown either
   const ro = useReadOnly();
   const importMedia = useCallback(() => { if (!importOffline && !ro.locked) mediaInputRef.current?.click(); }, [importOffline, ro.locked]);
 
@@ -55,7 +59,7 @@ export function LibrarySection() {
     if (!files || files.length === 0) return;
     try {
       const { counts, skipped, firstKind, rejected } = await importMediaFiles(files);
-      // 导入完成后把用户带到素材落地的那个组,让他看见东西进来了
+      // After an import, take the user to the group where the media landed, so they can see it came in
       if (firstKind) setOpenGroup(KIND_GROUP[firstKind]);
       if (skipped.length > 0) {
         const done = (Object.keys(counts) as AssetKind[])
@@ -76,7 +80,7 @@ export function LibrarySection() {
   return (
     <div data-pc="library" className="pc-left-section">
       <SectionHead title={tr("Media library")}>
-        {/* 常驻的导入:选进来的文件按类型自动落到视频 / 图片 / 音频组 */}
+        {/* Always-visible import: selected files are sorted by type into the video / image / audio groups */}
         <button
           type="button"
           className="pc-btn-primary is-block pc-left-primary"
@@ -89,7 +93,8 @@ export function LibrarySection() {
           <IconImport size={16} />
           <span>{importOffline ? tr("Import media ({0})", IMPORT_OFFLINE_TEXT) : tr("Import media")}</span>
         </button>
-        {/* 从用户自己的网盘导入:字节不经过页面,由编辑器进程直接拉(StorageImportButton) */}
+        {/* Import from the user's own cloud drive: bytes do not pass through the page, the editor process
+   pulls them directly (StorageImportButton) */}
         <StorageImportButton
           disabled={importOffline || ro.locked}
           disabledTitle={ro.locked ? ro.why : IMPORT_OFFLINE_TEXT}

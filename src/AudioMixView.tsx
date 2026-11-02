@@ -1,15 +1,18 @@
 /**
- * ?audioMix=1&plan=<plan.json 地址>&out=<POST 地址>:导出的混音页。
+ * ?audioMix=1&plan=<plan.json URL>&out=<POST URL>: the export mix page.
  *
- * server/bakery/audio-mix.mjs 用 puppeteer 打开它,等 window.__pcAudioMix 出现。页面做的事只有一件:
- * 读 plan.json → renderMix(OfflineAudioContext,和预览同一套效果链)→ 32 位浮点 wav → POST 回服务端,
- * 服务端写成 export-<id>/audio/mix.wav,ffmpeg 再把它合进 preview.mp4。
+ * server/bakery/audio-mix.mjs opens it with puppeteer and waits for window.__pcAudioMix to appear.
+ * The page does only one thing: read plan.json → renderMix (OfflineAudioContext, the same effect
+ * chain as the preview) → 32-bit float wav → POST it back to the server, which writes it as
+ * export-<id>/audio/mix.wav, and ffmpeg then merges it into preview.mp4.
  *
- * 不走 ExportView 的虚拟时钟:这一页没有画面,离线渲染自己有时间轴。
+ * It does not use ExportView's virtual clock: this page has no picture, and offline rendering has
+ * its own timeline.
  */
 import { useEffect, useState } from "react";
-// 音频素材效果卡在这一页里求值,注册表和 configureCardAudio 必须先跑过。同一棵模块树里
-// App / ExportView / StageView 已经各自 import 过它了,这行只是把依赖写明。
+// Audio media effect cards are evaluated in this page, so the registry and configureCardAudio must
+// run first. App / ExportView / StageView in the same module tree have each already imported it;
+// this line just makes the dependency explicit.
 import "./cards";
 import { encodeWavFloat32, peakOf, renderMix, type MixPlan } from "./audio/renderMix";
 import { tr } from "./i18n/index.ts";

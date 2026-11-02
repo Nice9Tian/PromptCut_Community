@@ -1,27 +1,34 @@
 import type { ChatMessage, InboundAgentMessage } from "../../../ai/types.ts";
 
 /**
- * 对话列表里每条消息画成什么(MessageList.tsx 用)。纯函数,好让 node 直接跑测试(row-plan.test.mjs)。
+ * What each message in the chat list is drawn as (used by MessageList.tsx). A pure function, so node
+ * can run the tests directly (row-plan.test.mjs).
  *
- * 每一轮的回复各画各的气泡,紧跟在发起它的那条用户消息后面(2026-10-20)。
- * 原先简洁模式下「没交本轮小结的回复,下一轮接着累计在它的气泡里」:一条没交小结的回复(例如第一个事件前就失败、
- * 页面按队列终态补的那条失败回复)会把后面几轮全吞进去,新一轮的思考、图标和本轮小结画在旧气泡里、排在后面几条用户消息上面
- * (2026-10-20 生产复现,项目「验收018-Claude」对话 cc-mvfhwi2p-xi4o)。气泡现在只放 Agent 说的话,操作挪到了气泡下面的
- * 「Agent 操作」里按轮显示,合并已经没有用处,去掉。
+ * Each turn's reply draws its own bubble, right after the user message that started it (2026-10-20).
+ * Previously, in concise mode, "a reply that didn't submit this turn's summary, the next turn keeps
+ * accumulating in its bubble": one reply without a summary (for example one that failed before the
+ * first event, the failure reply the page fills in from the queue's final state) would swallow the
+ * following turns, so the new turn's thinking, icons and this turn's summary were drawn in the old
+ * bubble, above the later user messages
+ * (reproduced in production on 2026-10-20, project "Acceptance 018-Claude", chat cc-mvfhwi2p-xi4o).
+ * The bubble now holds only what the Agent says, and operations moved below the bubble into "Agent
+ * operations", shown per turn; merging is no longer useful, so it was removed.
  */
 
 export interface InboundPlan {
-  /** 助手消息 id → 它之前收到的其他 Agent 的消息(那几条不画出来的用户消息拼起来) */
+  /** Assistant message id → the messages from other Agents it received before (those undrawn user messages joined together) */
   inboundFor: Map<string, { list: InboundAgentMessage[]; key: string }>;
-  /** 只装着其他 Agent 消息的用户消息:不画用户气泡 */
+  /** A user message that holds only other Agents' messages: no user bubble is drawn */
   inboundOnly: Set<string>;
-  /** 后面还没有回复可挂的:在最后那条的位置留一行小字,值是条数 */
+  /** Nothing follows yet for them to attach to a reply: leave a line of small text at the position of the last one, the value is the count */
   orphanNote: Map<string, number>;
 }
 
 /**
- * 其他 Agent 发来的消息(AiPanel 自动投递时在用户消息上带着 inbound 字段,不靠正文前缀认)不是用户说的话:
- * 不画用户气泡,交给紧跟着的那条 Agent 回复,在「Agent 操作」里当「收到消息」展示。后面暂时还没有回复可挂的,在原位留一行小字。
+ * Messages sent by other Agents (when AiPanel delivers automatically it carries an inbound field on the
+ * user message, rather than recognizing them by a body prefix) are not things the user said:
+ * no user bubble is drawn; they are handed to the Agent reply that follows, shown in "Agent operations"
+ * as "Message received". If no reply follows yet to attach to, a line of small text is left in place.
  */
 export function inboundPlan(messages: readonly ChatMessage[]): InboundPlan {
   const inboundFor = new Map<string, { list: InboundAgentMessage[]; key: string }>();
@@ -53,11 +60,11 @@ export function inboundPlan(messages: readonly ChatMessage[]): InboundPlan {
 export interface PlannedRow {
   id: string;
   kind: "user" | "assistant" | "note";
-  /** note:收到几条其他 Agent 的消息、还没有回复可挂 */
+  /** note: some messages from other Agents were received and no reply is available to attach to yet */
   count?: number;
 }
 
-/** 按消息顺序排出画出来的每一行:每条用户消息一行、每条回复一行(不合并),只装其他 Agent 消息的用户消息换成小字或不画 */
+/** Lay out each drawn row in message order: one row per user message, one per reply (not merged); a user message holding only other Agents' messages becomes small text or is not drawn */
 export function rowPlan(messages: readonly ChatMessage[], plan: InboundPlan = inboundPlan(messages)): PlannedRow[] {
   const rows: PlannedRow[] = [];
   for (const m of messages) {
@@ -71,7 +78,7 @@ export function rowPlan(messages: readonly ChatMessage[], plan: InboundPlan = in
   return rows;
 }
 
-/** 这一轮的回复是在回哪条用户消息:往前找最近的、画出来的那条用户消息 */
+/** Which user message this turn's reply is answering: look backwards for the nearest drawn user message */
 export function promptOf(messages: readonly ChatMessage[], assistantId: string, plan?: InboundPlan): ChatMessage | null {
   const i = messages.findIndex((m) => m.id === assistantId);
   for (let j = i - 1; j >= 0; j--) {

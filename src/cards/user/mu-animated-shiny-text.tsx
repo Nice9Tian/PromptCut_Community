@@ -1,7 +1,8 @@
 /**
- * 来源: 搬自 Magic UI (https://magicui.design/docs/components/animated-shiny-text)
+ * Source: ported from Magic UI (https://magicui.design/docs/components/animated-shiny-text)
  * MIT License
- * 本地改动: 翻译器自动改写 @/lib/utils → ../magicui/vendor/cn;包成 CardDef。
+ * Local changes: translator automatically rewrote @/lib/utils → ../magicui/vendor/cn;
+ * wrapped into CardDef.
  */
 import type { CardDef, CardProps } from "../../kernel/types";
 import {
@@ -67,7 +68,8 @@ export const muAnimatedShinyText: CardDef<Params> = {
   useWhen: "Use when a word or short phrase needs a \"glowing\" emphasis; the highlight loops every 8 seconds and never stops, suited to light backgrounds. No number rolling, no rotating through multiple words.",
   tags: ["Text", "highlight", "shine"],
   source: "magicui",
-  // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
+  // Frame mode: fixed by the audit (A0.1). The value = the return value of
+  // cardFrameMode(def, def.defaults) before it was fixed.
   frameMode: "stateful",
   defaults: { text: "PromptCut", shimmerWidth: 200 },
   controls: [

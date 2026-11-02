@@ -1,10 +1,13 @@
 /**
- * 节点端点的会话诊断与会话日志节流（`server/render-node/session-diag.mjs`，报告 `docs/archive/agent-reports/AGENT-host-diag.md`）。
- * 跑：node --test server/test/session-diag.test.mjs
+ * Session diagnostics and session log throttling for node endpoints
+ * (`server/render-node/session-diag.mjs`, report `docs/archive/agent-reports/AGENT-host-diag.md`).
+ * Run: node --test server/test/session-diag.test.mjs
  *
- * 计数对着真的文档服务跑（前面挡 `session-gateway-kit.mjs` 的会话网关，断线用 `fake-ws-kit.mjs` 的 TCP 代理，
- * 与 `session-link.test.mjs` 同一套）：掐一次传输 → 接续 +1、脱开 +1、不重建；服务端结束会话 → 关闭码与原因、重建 +1；
- * 换了服务端 → 接续被拒 +1。另测节流、按行转发、主机状态行，以及诊断与日志里没有凭证与会话号。
+ * Counts run against real document service (fronted by session gateway in `session-gateway-kit.mjs`,
+ * disconnection uses TCP proxy in `fake-ws-kit.mjs`, same suite as `session-link.test.mjs`):
+ * sever transport once → resume +1, detach +1, no rebuild; server ends session → close code and
+ * reason, rebuild +1; server changed → resume rejected +1. Also tests throttling, line-by-line
+ * forwarding, host status lines, and that diagnostics and logs contain no credentials or session ids.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -25,7 +28,10 @@ async function startDoc(t) {
   return { service, url: `ws://127.0.0.1:${port}/` };
 }
 
-/** 会话网关 + TCP 代理 + 端点；鉴权列表里带一个随机「凭证」，用来查它进没进诊断与日志 */
+/**
+ * Session gateway + TCP proxy + endpoint; auth list includes a random "credential" to check
+ * whether it entered diagnostics and logs
+ */
 async function rig(t) {
   const doc = await startDoc(t);
   const gw = await startSessionGateway({ upstream: doc.url });
@@ -112,7 +118,7 @@ test('SD-lost swapped to a different server: resume rejected with 4404, lost +1,
 test('SD-no-stats endpoint without stats(): counts are null, diagnostics empty', () => {
   assert.equal(sessionCountersOf({}), null);
   assert.deepEqual(sessionDiagOf(null), {});
-  // 旧端点（只有 HT-a 之前的几项）缺的计数给 0
+  // Old endpoints (only items prior to HT-a) default missing counts to 0
   const c = sessionCountersOf({ stats: () => ({ resumes: 2, opens: 1 }) });
   assert.equal(c.resumes, 2);
   assert.equal(c.renews, 0);

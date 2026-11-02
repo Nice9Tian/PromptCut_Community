@@ -1,18 +1,23 @@
 /**
- * 配音(voice_generate):云端语音合成,走 API 调 MiniMax / 可灵 / Vidu。API Key 走 ai-config 那一套落盘加密。
+ * Voiceover (voice_generate): cloud voice synthesis, calling MiniMax / Kling / Vidu via API.
+ * API Key is encrypted on disk following the ai-config scheme.
  *
- *   GET  /api/voice/config          设置 + 静态数据(服务商、模型、系统音色、情绪、字数上限)
- *   POST /api/voice/config          局部更新设置;带 apiKey 就换 API Key
- *   POST /api/voice/clear-key       删 API Key
- *   POST /api/voice/generate        合成一段,先落临时目录、再经素材服务的入库接口进内容库(和用户导入同一条路),
- *                                   回 /@media/<hash>;preview: true 写固定的试听文件(不进素材库,落试听缓存目录)
- *   GET  /api/voice/preview/<文件名> 试听文件(合成试听、音色设计与复刻的试听),从试听缓存目录回放
- *   POST /api/voice/custom          往「我的音色」里手填一条
- *   POST /api/voice/custom/remove   从「我的音色」里移除(只删本地记录,服务商那边不动)
- *   POST /api/voice/design          MiniMax 音色设计(新音色首次合成收 ¥9.9)
- *   POST /api/voice/clone           MiniMax 快速复刻,源文件先入库、只递素材标识,服务端经素材服务取字节(同上收费)
+ *   GET  /api/voice/config          Settings + static data (provider, model, system voice, emotion, word limit)
+ *   POST /api/voice/config          Partially update settings; change API Key if apiKey is provided
+ *   POST /api/voice/clear-key       Delete API Key
+ *   POST /api/voice/generate        Synthesize a segment, save to temp dir first, then enter content store
+ *                                   via asset service store interface (same path as user media imports),
+ *                                   return /@media/<hash>; preview: true writes fixed preview file
+ *                                   (does not enter media library, saved to preview cache directory)
+ *   GET  /api/voice/preview/<filename> Preview file (synthesis preview, voice design and clone preview),
+ *                                   played back from preview cache directory
+ *   POST /api/voice/custom          Manually add an entry to "My voices"
+ *   POST /api/voice/custom/remove   Remove from "My voices" (only deletes local record, provider side untouched)
+ *   POST /api/voice/design          MiniMax voice design (first synthesis of a new voice charges 9.9 yuan)
+ *   POST /api/voice/clone           MiniMax quick clone, source file stored into library first, only passes
+ *                                   asset identifier, server fetches bytes via asset service (charged as above)
  *
- * 真正的逻辑在 server/voice/*.mjs(纯函数,可单测),这里只做路由和落盘。
+ * Real logic is in server/voice/*.mjs (pure functions, unit testable); only routing and persistence are done here.
  */
 import type { Plugin, ViteDevServer, Connect } from "vite";
 import type { ServerResponse } from "http";
@@ -67,14 +72,17 @@ function fail(res: ServerResponse, e: unknown): void {
 }
 
 /**
- * 试听文件(合成试听、音色设计与复刻的试听)放哪儿:数据目录下的缓存 `cache/voice-preview/`,**不是素材服务的存储目录**。
- * 它们只在设置面板里听一下、不进素材库,所以不入库;但也不该写进素材目录绕过素材服务
- * (`docs/semantics/product/asset-service.md`「职责」)。由 `GET /api/voice/preview/<文件名>` 回放,页面照回来的地址播。
+ * Where preview files (synthesis preview, voice design and clone preview) are placed: cache under
+ * data directory `cache/voice-preview/`, **not asset service storage directory**. They are only
+ * listened to in settings panel and do not enter media library, so not stored into library;
+ * but should not be written to asset catalog bypassing asset service
+ * (`docs/semantics/product/asset-service.md` "Responsibilities"). Played back via
+ * `GET /api/voice/preview/<filename>`, and page plays using the returned address.
  */
 function previewDir(root: string): string {
   return path.join(dataDir(root), "cache", "voice-preview");
 }
-/** 试听文件名:只认字母数字和 . _ -(音色 id 来自服务商,拼进文件名前先洗一遍) */
+/** Preview filename: only alphanumeric and . _ - allowed (voice id comes from provider, sanitized before interpolating into filename) */
 const PREVIEW_NAME = /^[\w.-]+\.(mp3|wav|flac|pcm)$/;
 function previewName(raw: string): string {
   return raw.replace(/[^\w.-]/g, "_");
@@ -82,7 +90,7 @@ function previewName(raw: string): string {
 function previewUrl(name: string): string {
   return `/api/voice/preview/${encodeURIComponent(name)}`;
 }
-/** 写一份试听文件,回它的播放地址 */
+/** Write a preview file and return its playback address */
 function writePreview(root: string, rawName: string, buf: Buffer): string {
   const name = previewName(rawName);
   fs.mkdirSync(previewDir(root), { recursive: true });
@@ -93,17 +101,23 @@ function writePreview(root: string, rawName: string, buf: Buffer): string {
 let ffmpegBin: string | null | undefined;
 
 /**
- * 素材记录 → 素材服务上的 HTTP 地址(ffmpeg 的 `-i`)。和感知工具、音频测量同一条(`mediaSourceOf`):
- * 本地素材服务的 `/@media/<hash>` 在共享项目里会向远程素材服务拉。请求体里的 `path` 不看。
+ * Asset record → HTTP address on asset service (ffmpeg's `-i`). Same path as perception tools and
+ * audio measurement (`mediaSourceOf`): `/@media/<hash>` on local asset service pulls from remote
+ * asset service in shared projects. Ignore `path` in request body.
  */
 const resolveSource = createAssetSourceResolver({ origin: assetServiceOrigin, toUrl: (m: any, origin: string) => mediaSourceOf(m, origin) });
 
 /**
- * 复刻的源文件从哪儿读:**只经素材服务**(`docs/semantics/product/asset-service.md`「职责」;写法同 `perception-source.mjs`)。
- * 页面先把源文件经 `/api/media/upload` 入库,再只递回包里的素材标识 `media: { hash, url, name }`。
- * 原来收回包里的 `path`(本地内容库里的绝对路径)、`isInside` 后直接读,共享项目或素材服务在别处时就读不到;
- * 现在请求体里的 `path` 一概不看 —— 这个接口会把文件上传到第三方,只认素材服务答得出的那一份,也不会变成任意文件外发。
- * 回 `{ src, label }`;没给标识、素材服务上没有回 VoiceError(400),素材服务不可达抛 AssetSourceError(502)。
+ * Where source files for clone are read: **only via asset service**
+ * (`docs/semantics/product/asset-service.md` "Responsibilities"; same style as `perception-source.mjs`).
+ * Page first stores source file into library via `/api/media/upload`, then only passes asset
+ * identifier `media: { hash, url, name }` in response.
+ * Previously, reading `path` (absolute path in local content store) and `isInside` directly from
+ * response failed when shared projects or asset service were elsewhere;
+ * now `path` in request body is completely ignored: this interface uploads files to third parties,
+ * only accepts the copy returned by asset service, and avoids arbitrary file exfiltration.
+ * Returns `{ src, label }`; returns VoiceError(400) if identifier is missing or absent on asset service,
+ * throws AssetSourceError(502) if asset service is unreachable.
  */
 export async function resolveCloneSource(body: any, resolve: (m: any) => Promise<string | null> = resolveSource): Promise<{ src: string; label: string }> {
   const r: any = await resolveMediaSource(body, resolve);
@@ -114,11 +128,13 @@ export async function resolveCloneSource(body: any, resolve: (m: any) => Promise
 }
 
 /**
- * 复刻前把源文件整理成 MiniMax 收的样子:单声道 wav、去掉开头静音、音量拉平、最长 5 分钟。
- * 视频也能直接拿来复刻(取它的声音)。`src` 是素材服务上的地址。返回临时 wav 的路径和秒数。
+ * Format source file before clone to MiniMax expected format: mono wav, trimmed leading silence,
+ * normalized volume, up to 5 minutes. Videos can also be used directly for clone (extracting audio).
+ * `src` is address on asset service. Returns path and duration in seconds of temporary wav.
  *
- * ffmpeg 必须异步起:单进程形态里素材服务就在编辑器进程自己身上,同步的 spawnSync 会卡住事件循环,
- * ffmpeg 发来的 HTTP 请求没人答(同 `audio-source.mjs` 的 `ffprobeText`)。
+ * ffmpeg must be started asynchronously: in single-process mode asset service resides on editor
+ * process itself; synchronous spawnSync blocks event loop, leaving HTTP requests from ffmpeg
+ * unanswered (same as `ffprobeText` in `audio-source.mjs`).
  */
 export async function prepareCloneAudio(src: string, { ffmpeg, timeoutMs = 120_000 }: { ffmpeg?: string; timeoutMs?: number } = {}): Promise<{ file: string; seconds: number }> {
   if (!ffmpeg) {
@@ -143,7 +159,7 @@ export async function prepareCloneAudio(src: string, { ffmpeg, timeoutMs = 120_0
     fs.rm(out, { force: true }, () => {});
     throw new VoiceError(tr("Failed to convert source file to audio: {0}", r.stderr.trim().slice(-300) || tr("ffmpeg produced no output")));
   }
-  // 16 位单声道 32kHz:每秒 64000 字节,减掉 44 字节的 wav 头
+  // 16-bit mono 32kHz: 64,000 bytes per second, minus 44 bytes of wav header
   const seconds = Math.max(0, (fs.statSync(out).size - 44) / 64000);
   return { file: out, seconds };
 }
@@ -163,8 +179,8 @@ export function voicePlugin(): Plugin {
           }
           if ((method === "GET" || method === "HEAD") && url.startsWith("/api/voice/preview/")) {
             let name = "";
-            try { name = decodeURIComponent(url.slice("/api/voice/preview/".length)); } catch { /* 下面按不认处理 */ }
-            // 文件名被正则限死(不含路径分隔符),拼出来的路径跑不出试听缓存目录
+            try { name = decodeURIComponent(url.slice("/api/voice/preview/".length)); } catch { /* Handled as unrecognized below */ }
+            // Filename is strictly restricted by regex (no path separators); constructed path cannot escape preview cache directory
             if (!PREVIEW_NAME.test(name)) return sendJson(res, 404, { ok: false, error: tr("No such preview file") });
             res.setHeader("Cache-Control", "no-store");
             return serveFile(path.join(previewDir(root), name), req, res);
@@ -184,14 +200,16 @@ export function voicePlugin(): Plugin {
               speed: body.speed, emotion: body.emotion, name: body.name,
             };
             if (body.preview === true) {
-              // 试听:固定文件名、覆盖上一次,不进素材库(设置面板里听一下就扔);落试听缓存目录,不写素材目录
+              // Preview: fixed filename, overwrites previous, does not enter media library (discarded after playing in settings panel); written to preview cache directory, not written to asset catalog
               const out = await generateVoice({ cfg: readVoiceConfig(), args, outDir: previewDir(root), preview: true });
               const { path: _cached, ...rest } = out;
               return sendJson(res, 200, { ok: true, ...rest, url: previewUrl(out.name) });
             }
-            // 正式合成(voice_generate):先落这一次自己的临时目录,再经素材服务的入库接口进内容库,
-            // 和用户导入素材走同一条路(docs/semantics/product/asset-service.md「入库这一步不能省」)。
-            // 回的是入库后的标识(/@media/<hash>、哈希、入库记录),不回临时路径 —— 回完它就删了。
+            // Formal synthesis (voice_generate): written to its own temporary directory first, then stored
+            // into content store via asset service store interface, following the same path as user media imports
+            // (docs/semantics/product/asset-service.md "Storing into the library cannot be omitted").
+            // Returns post-storage identifiers (/@media/<hash>, hash, storage record), not temporary paths:
+            // deleted after returning.
             const stage = fs.mkdtempSync(path.join(os.tmpdir(), "pc-voice-"));
             try {
               const out = await generateVoice({ cfg: readVoiceConfig(), args, outDir: stage, preview: false });
@@ -226,7 +244,7 @@ export function voicePlugin(): Plugin {
             if (body.consent !== true) throw new VoiceError(tr("Cloning someone else's voice requires their consent first; tick the confirmation and submit again."));
             const voiceId = body.voiceId || `pcVoice${Date.now()}`;
             if (!isCloneIdShape(voiceId)) throw new VoiceError(tr("Voice id must be 8-256 characters, start with a letter, and contain only letters, digits and - _."));
-            // 字节只经素材服务取(见 resolveCloneSource);请求体里的 path 不看
+            // Bytes are only fetched via asset service (see resolveCloneSource); ignore path in request body
             const source = await resolveCloneSource(body);
             const prepared = await prepareCloneAudio(source.src);
             try {

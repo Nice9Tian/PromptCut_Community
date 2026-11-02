@@ -1,15 +1,22 @@
 import { typingMountClockMs } from "../kernel/typingEvents";
 
 /**
- * 挂载钟(`CardProps.mountClockMs`)的记账,从 `Stage` 里拆出来好单测。
+ * Accounting for the mount clock (`CardProps.mountClockMs`), extracted from `Stage` for unit
+ * testing.
  *
- * 平铺时间轴的导出页(`ExportView` 里不经 `FrameScene` 的那个 `Stage`)提前 `CARD_MOUNT_LEAD` 挂载卡片。
- * 旧的「挂载即播」打字卡从挂载那一帧的页面时钟起计时,所以在这条路径上它比片段起点早走这一段(30 fps 下一帧),
- * 导出像素基线(默认演示项目)就是那样渲出来的。按 `t` 取字的新卡要逐帧一致,就得知道自己早挂了多久。
+ * The export page with a flattened timeline (the `Stage` in `ExportView` that does not go through
+ * `FrameScene`) mounts cards `CARD_MOUNT_LEAD` early. Old "play on mount" typing cards timed from the
+ * page clock of the frame where they mounted, so on this path they ran ahead of the clip start by
+ * this duration (one frame at 30 fps), which is how the export pixel baseline (default demo project)
+ * was rendered. New cards retrieving characters by `t` must be frame-accurate, so they need to know
+ * how early they were mounted.
  *
- * `mountedAt`:这一次挂载(`片段 id:代数`,和包裹层的 key 同一个)第一次渲染时的舞台时刻(秒)。
- * 返回值:在片段起点之前挂上的卡 → 自挂载起经过的毫秒(与旧实现同一个算式);
- * 在起点或之后才挂上的(从片段中间开始导、重挂载)→ `undefined`,卡照常按 `t`,不让「从中间接着打」退回「从头打」。
+ * `mountedAt`: stage time (seconds) at the first render of this mount (`clip id:generation`, same as
+ * the wrapper layer key).
+ * Return value: for cards mounted before the clip start → elapsed milliseconds since mount (same
+ * formula as the old implementation); for cards mounted at or after the start (exporting from the
+ * middle of a clip, remounting) → `undefined`, and the card uses `t` as usual, preventing "continue
+ * typing from the middle" from reverting to "type from the start".
  */
 export function mountClockMsAt(mountedAt: Map<string, number>, key: string, clipStart: number, now: number): number | undefined {
   let at = mountedAt.get(key);
@@ -17,7 +24,10 @@ export function mountClockMsAt(mountedAt: Map<string, number>, key: string, clip
   return at < clipStart ? typingMountClockMs(now, at) : undefined;
 }
 
-/** 这一次渲染没挂的卡清掉:它再进来是一次新的挂载,钟从那时重新起算(和旧卡重挂载即重播一致)。 */
+/**
+ * Clear cards not mounted in this render: re-entering is a new mount, and the clock restarts from
+ * then (consistent with old cards replaying upon remount).
+ */
 export function forgetUnmounted(mountedAt: Map<string, number>, live: ReadonlySet<string>): void {
   for (const key of [...mountedAt.keys()]) if (!live.has(key)) mountedAt.delete(key);
 }

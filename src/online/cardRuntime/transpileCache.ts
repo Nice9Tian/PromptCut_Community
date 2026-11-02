@@ -1,22 +1,28 @@
 /**
- * 单个文件的转译缓存(`docs/plan/online-card-exec-contract.md` 第 1、5 节):键 = 运行时版本 + 文件键 + 内容哈希。
- * 存在**编辑页面**的 IndexedDB 里(舞台是另一个源,看不到);内容哈希没变不重转,换了转译器(运行时版本变了)旧条目不再命中。
+ * Transpile cache for single files (`docs/plan/online-card-exec-contract.md` Sections 1, 5):
+ * key = runtime version + file key + content hash. Stored in IndexedDB of the **editor page**
+ * (stage is another origin, unable to see it); does not re-transpile if content hash is unchanged,
+ * and if transpiler changes (runtime version changed), old entries no longer hit.
  *
- * 读是同步的(转译流程里逐个文件问):开页面时把库里这一版运行时的条目整批读进内存(`warm`),之后只查内存;
- * 写是先进内存、再异步落库,落库失败不管(下次重转)。没有 IndexedDB(单测、隐私模式)时就是一张内存表。
- * 失败的结果(不支持的写法)也存:同一份源码不必每 5 秒重判一次。
+ * Reads are synchronous (queried file by file during transpilation): on page load, entries for this
+ * runtime version are bulk-loaded from the store into memory (`warm`), querying only memory
+ * thereafter; writes enter memory first, then persist asynchronously to the store;
+ * persist failures are ignored (re-transpiled next time). In environments without IndexedDB
+ * (unit tests, private browsing mode), this functions as an in-memory table.
+ * Failed results (unsupported syntax) are also cached: no need to re-evaluate the same source
+ * code every 5 seconds.
  */
 import type { FileResult } from "./transpile.ts";
 
 export const TRANSPILE_DB = "pc-card-transpile";
 const STORE = "files";
-/** 内存与库里各最多留多少条(按写入先后淘汰最旧的) */
+/** Maximum entries retained in memory and in the store (oldest evicted in order of write) */
 export const TRANSPILE_CACHE_LIMIT = 600;
 
 export interface TranspileCache {
   get(key: string, hash: string): FileResult | undefined;
   set(key: string, hash: string, value: FileResult): void;
-  /** 把库里这一版运行时的条目读进内存;没有库、读失败都当空的 */
+  /** Reads entries for this runtime version from the store into memory; treated as empty if store is missing or read fails */
   warm(): Promise<void>;
   readonly size: number;
 }
@@ -63,7 +69,7 @@ export function createTranspileCache(runtime: string, idb: IdbFactory | null = t
       trim();
       void open().then((d) => {
         if (!d) return;
-        try { d.transaction(STORE, "readwrite").objectStore(STORE).put(value, k); } catch { /* 落库失败:下次重转 */ }
+        try { d.transaction(STORE, "readwrite").objectStore(STORE).put(value, k); } catch { /* Persist to store failed: re-transpile next time */ }
       });
     },
     async warm() {
@@ -80,7 +86,7 @@ export function createTranspileCache(runtime: string, idb: IdbFactory | null = t
             const cur = req.result;
             if (!cur) return;
             const k = String(cur.key);
-            // 别的运行时版本的、形状不对的、超出上限的:顺手删掉
+            // Other runtime versions, malformed entries, or those exceeding the limit: opportunistically delete
             if (!k.startsWith(prefix) || !validResult(cur.value) || kept >= TRANSPILE_CACHE_LIMIT) cur.delete();
             else { kept++; if (!mem.has(k)) mem.set(k, cur.value); }
             cur.continue();

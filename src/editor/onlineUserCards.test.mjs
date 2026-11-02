@@ -1,14 +1,21 @@
 /**
- * 在线浏览器模式下这台设备跑不了的卡(用户卡、素材效果卡、内容库同步来的用户卡)在父页一侧的判定(C10 契约第 9 节,2026-09-29 用户改语义)。
- * 跑:node --experimental-test-module-mocks --test src/editor/onlineUserCards.test.mjs
+ * Evaluation on the parent page side for cards that cannot run on this device in online browser mode
+ * (user cards, media effect cards, user cards synced from content store) (C10 contract section 9;
+ * user semantic change, 2026-09-29).
+ * Run: node --experimental-test-module-mocks --test src/editor/onlineUserCards.test.mjs
  *
- *   OU-01 `clipIdentityOf`:在线时不给它们身份(不测、查不到旧成本记录、查不到声明的帧模式);桌面照旧;同步表变了跟着变;
- *         两边都没有定义的未知卡片桌面与在线都不给身份
- *   OU-05 未知卡片:不测、不当重卡、不进预渲染集合(桌面与在线一致);定义到了(热更新 / 同步到了)就照常进表
- *   OU-02 `planDispatch`:它们一律判重、进预渲染集合(页面发布的清单计划据此含它们),哪怕 L2 里留着判轻的旧记录;
- *         同步表后到也重算;没有定义的同步卡不让算表崩
- *   OU-03 时间轴:标签依次取构建时名字 → 同步名字 →「未知卡片」;徽标只在「在线、本机跑不了、没覆盖整段」三者同时成立时出
- *   OU-04 卡片源码同步(`sync/onlineCardSources.ts`):列、取、解析进注册表;哈希没变不再取正文;连接换了清表;取不到时表不动
+ *   OU-01 `clipIdentityOf`: do not assign identity when online (unmeasured, no old cost records found,
+ *         no declared frame mode found); desktop as usual; updates when sync table changes; unknown cards
+ *         defined on neither side get no identity on either desktop or online
+ *   OU-05 Unknown cards: unmeasured, not treated as heavy cards, not added to prerender set (consistent
+ *         between desktop and online); once definitions arrive (hot reloaded / synced), enter table as usual
+ *   OU-02 `planDispatch`: all classified as heavy and enter prerender set (manifest plan published by
+ *         page includes them accordingly), even if old light records remain in L2; recomputed even if sync
+ *         table arrives late; synced cards without definitions must not crash table calculation
+ *   OU-03 Timeline: labels take build-time name → sync name → "Unknown card" in order; badge appears only
+ *         when all three hold: "online, cannot run locally, does not cover full clip"
+ *   OU-04 Card source sync (`sync/onlineCardSources.ts`): list, fetch, parse into registry; do not fetch
+ *         body again if hash unchanged; clear table on connection change; table remains unchanged if fetch fails
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import { test, mock } from "node:test";
@@ -55,7 +62,8 @@ test("OU-01 clipIdentityOf: when online, a card that cannot run on this page has
     assert.ok(on1.identityKeys.b, "Built-in cards still have an identity");
     assert.equal(on1.identityKeys.s, undefined, "The sync table has not arrived: s is still an unknown card, no identity (not measured)");
     assert.equal(on1.identityKeys.x, undefined, "Unknown cards get no identity");
-    // 2026-10-06(online-card-exec-contract.md 第 6 节):构建时就在在线包里的仓库用户卡是页面自己的代码,本页能运行,照内置卡给身份
+    // 2026-10-06 (online-card-exec-contract.md section 6): repository user cards already in the online
+    // bundle at build time are the page's own code, can run on this page, and get identity like built-in cards
     assert.equal(on1.identityKeys.u, desk.identityKeys.u, "Build-time user card: has an identity (same key as on desktop)");
     assert.equal(on1.frameModes.u, "direct");
     assert.equal(on1.capabilities.has("u"), true);
@@ -65,7 +73,8 @@ test("OU-01 clipIdentityOf: when online, a card that cannot run on this page has
     assert.equal(on2.identityKeys.s, undefined, "The sync table has arrived but there is no run state yet: the synced card has no identity");
     assert.equal(on2.identityKeys.x, undefined, "An id that exists on neither side still has no identity");
     assert.equal(CI.clipIdentityOf(p), on2, "Use the memo when nothing changed");
-    // 运行状态:只有 ready 才有身份;源码版本取这一代的短签名,换代换键
+    // Runtime status: only ready has identity; source version takes the short signature of this generation,
+    // changing key upon generation change
     for (const state of ["loading", "unsupported-syntax", "missing-module", "load-error", "gpu", "media", "runtime-error", "not-isolated"]) {
       R.setCardRunStates([["synced-card", { state }]]);
       assert.equal(CI.clipIdentityOf(p).identityKeys.s, undefined, `${state}: cannot run on this page, no identity`);
@@ -76,7 +85,9 @@ test("OU-01 clipIdentityOf: when online, a card that cannot run on this page has
     assert.equal(ready1.capabilities.has("s"), true);
     R.setCardRunStates([["synced-card", { state: "ready", version: "g2" }]]);
     assert.notEqual(CI.clipIdentityOf(p).identityKeys.s, ready1.identityKeys.s, "Source generation changed: the identity changes too (measure again)");
-    // 2026-10-21 起不按档另挡用户卡:构建时的用户卡本页能运行,最低一档、按界限搜索判时都照内置卡有身份(停下追精确帧)
+    // As of 2026-10-21, do not block user cards separately by tier: build-time user cards can run on this
+    // page, and have identity like built-in cards at the lowest tier or when evaluated by bounds search
+    // (stop to catch up exact frames)
     D.setPlanLowest(true);
     D.setPlanSearch(true);
     const low = CI.clipIdentityOf(p);
@@ -96,7 +107,8 @@ test("OU-01 clipIdentityOf: when online, a card that cannot run on this page has
 test("OU-02 planDispatch: when online, cards that cannot run on this page are always classified as heavy and go into the prerender set, and old classify-as-light records are ignored; user cards that can run are classified by their record; a late sync table or run state also triggers a recompute", async () => {
   setup();
   const p = project();
-  // 桌面口径的身份键 → 每张都有一条很轻的成本记录(模拟 L2 里以前在后台舞台上测过的旧记录)
+  // Desktop-standard identity key → each has a very light cost record (simulating old records previously
+  // measured on the background stage in L2)
   const keys = CI.clipIdentityOf(p).identityKeys;
   const lightRec = (key) => ({ identityKey: key, fps: FPS, device: "d", measuredAt: 1, stepMs: 0.2, kind: "random", vtOk: true, seekOk: true, seekMs: 0.2, catchUpMs: 0.2 });
   D.resetPlanDispatch();
@@ -114,10 +126,12 @@ test("OU-02 planDispatch: when online, cards that cannot run on this page are al
     R.setSyncedUserCards([{ id: "synced-card", name: "Synced card" }]);
     await settle();
     assert.deepEqual([...D.currentPlan().prerenderSet], ["g", "s"], "Sync table has arrived but is not loaded yet: synced cards with no definition are classified as heavy, and building the table does not crash");
-    // 页面发布的清单计划按 prerenderSet 取卡片段(Preview 的 clips()):含运行不了的同步卡
+    // Manifest plan published by the page takes card clips by prerenderSet (Preview's clips()): includes
+    // synced cards that cannot run
     const byId = new Map(p.tracks[0].clips.map((c) => [c.id, c]));
     assert.deepEqual([...D.currentPlan().prerenderSet].filter((id) => !!byId.get(id)?.cardId), ["g", "s"]);
-    // 载入成功(运行状态 ready):有身份;还没有记录时按声明兜底(同步卡没有声明,判重),记录到了按记录判
+    // Load succeeded (runtime status ready): has identity; when there is no record yet, fall back to
+    // declaration (synced cards have no declaration, classified as heavy); once records arrive, evaluate by records
     let planNotifications = 0;
     const offPlan = D.onPlanUpdated(() => { planNotifications++; });
     try {
@@ -132,11 +146,13 @@ test("OU-02 planDispatch: when online, cards that cannot run on this page are al
     } finally {
       offPlan();
     }
-    // 运行不了了(新一代转译失败):回到一律按重,手里那条判轻的记录不认
+    // Can no longer run (transpilation failed for the new generation): revert to classifying all as heavy,
+    // ignoring the cached light record on hand
     R.setCardRunStates([["synced-card", { state: "unsupported-syntax", detail: "namespace" }]]);
     await settle();
     assert.deepEqual([...D.currentPlan().prerenderSet], ["g", "s"], "Cannot run: classified as heavy");
-    // 只有一个舞台按界限搜索判时(2026-10-21 起不按档另挡用户卡):构建时的用户卡照内置卡按界限搜索的结果判
+    // When there is only one stage and evaluating by bounds search (as of 2026-10-21, do not block user cards
+    // separately by tier): build-time user cards are evaluated by bounds search results like built-in cards
     D.setPlanSearch(true);
     D.setPlanSearchLight([keys.b, keys.u]);
     await settle();
@@ -152,7 +168,8 @@ test("OU-02 planDispatch: when online, cards that cannot run on this page are al
 
 test("OU-05 unknown cards (defined on neither side): desktop and online both skip measuring them, do not treat them as heavy cards and do not put them in the prerender set; once a definition arrives they enter the table as usual", async () => {
   setup();
-  // x 声明 stateful:没有成本记录时按声明兜底会判重 —— 未知卡片不能走到这一步
+  // x declares stateful: with no cost record, falling back to declaration classifies as heavy; unknown
+  // cards cannot reach this step
   const p = { ...project(), tracks: [{ id: "t", name: "t", clips: [clip("b", "builtin"), clip("x", "nobody", 0, 2)] }] };
   assert.equal(R.isKnownCardId("builtin"), true);
   assert.equal(R.isKnownCardId("mine"), true);
@@ -186,7 +203,8 @@ test("OU-05 unknown cards (defined on neither side): desktop and online both ski
       H.setOnlineBrowserMode(false);
     }
   }
-  // 定义到了(热更新装上这张卡):照常给身份、按声明兜底判重
+  // Definition arrived (hot reload installed this card): assign identity as usual, fall back to
+  // declaration and classify as heavy
   D.resetPlanDispatch();
   D.setPlanCosts([], null);
   D.setPlanProject(p);
@@ -213,7 +231,7 @@ test("OU-03 timeline: label; no more \"Needs local PC render assistance\" badge 
   }
 });
 
-/** 假的内容库:card-source 一类的 list / get */
+/** Mock content store: list / get such as card-source */
 function fakeContent(items) {
   const store = new Map(Object.entries(items));
   const sent = [];
@@ -259,27 +277,27 @@ test("OU-04 card source sync: list, fetch and parse into the registry; no body f
     assert.equal(content.sent.filter((m) => m.type === "content.get").length, 2);
     assert.deepEqual(content.sent[0], { type: "content.list", kind: "card-source", prefix: "src/cards/user/" });
     assert.equal(changes, 1);
-    // 再来一轮:哈希没变,不再取正文,不通知
+    // Another round: hash unchanged, do not fetch body again, do not notify
     await sources.sync();
     assert.equal(content.sent.filter((m) => m.type === "content.get").length, 2);
     assert.equal(changes, 1);
-    // 改名:只取那一条
+    // Rename: fetch only that item
     content.store.set("src/cards/user/a.tsx", cardSrc("synced-a", "Synced A renamed"));
     await sources.sync();
     assert.equal(content.sent.filter((m) => m.type === "content.get").length, 3);
     assert.equal(R.knownCardName("synced-a"), "Synced A renamed");
-    // 取不到:表不动
+    // Fetch failed: table remains unchanged
     content.setFail(true);
     await sources.sync();
     assert.equal(R.syncedUserCards().size, 3);
     assert.ok(sources.debug().errors > 0);
     content.setFail(false);
-    // 连接换了(换项目):先清表,再按新连接重取
+    // Connection changed (switched project): clear table first, then re-fetch with new connection
     content.store.delete("src/cards/user/b.tsx");
     link = { id: 2 };
     await sources.sync();
     assert.deepEqual([...R.syncedUserCards().keys()], ["synced-a"]);
-    // 离开共享项目:清空
+    // Leave shared project: clear
     link = null;
     await sources.sync();
     assert.equal(R.syncedUserCards().size, 0);
@@ -370,21 +388,21 @@ export const MORE = [{ key: "side", label: "Position", type: "select", options: 
     assert.equal(v.skippedControls.length, 1);
     assert.match(v.skippedControls[0].reason, /spread GONE could not be resolved: the content store has no file \.\/gone/);
     assert.deepEqual(sources.debug().deps, ["src/cards/user/lib/more.ts", "src/cards/user/shared.ts"]);
-    // 再来一轮:都没变,不取
+    // Another round: nothing changed, do not fetch
     await sources.sync();
     assert.equal(gets().length, 3);
-    // 被引文件改了:只重取它,入口重解析
+    // Referenced file modified: re-fetch it only, re-parse entry
     content.store.set("src/cards/user/shared.ts", `export const SHARED = [{ key: "text", label: "Text changed", type: "text" }, { key: "n", label: "Number", type: "number" }];
 `);
     await sources.sync();
     assert.deepEqual(gets().slice(3), ["src/cards/user/shared.ts"]);
     assert.deepEqual(R.syncedCardView("synced-i").controls.map((c) => c.label), ["Text changed", "Number", "Position", "Primary color"]);
-    // 缺的文件后来同步上来了:取到、补上,提示撤掉
+    // Missing file was synced later: fetched, filled in, notice dismissed
     content.store.set("src/cards/user/gone.ts", `export const GONE = [];\n`);
     await sources.sync();
     assert.equal(R.syncedCardView("synced-i").controlsIncomplete, false);
     assert.deepEqual(R.syncedCardView("synced-i").skippedControls, []);
-    // 被引文件从内容库里删了:回到提示
+    // Referenced file was deleted from content store: return to notice
     content.store.delete("src/cards/user/lib/more.ts");
     await sources.sync();
     const v2 = R.syncedCardView("synced-i");

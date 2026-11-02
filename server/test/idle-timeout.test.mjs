@@ -1,4 +1,4 @@
-// node --test server/test/idle-timeout.test.mjs —— 流式请求的「闲置超时」
+// node --test server/test/idle-timeout.test.mjs: "idle timeout" for streaming requests
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -6,7 +6,7 @@ const { withIdleTimeout } = await import('../harness/idle-timeout.mjs');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** 造一个流:按 gaps 给的间隔逐块吐出来 */
+/** Create a stream: emit chunk by chunk according to intervals given by gaps */
 function streamOf(gaps) {
   return {
     ok: true, status: 200, statusText: 'OK',
@@ -26,7 +26,8 @@ async function drain(res) {
 }
 
 test('data keeps flowing: a stream never times out however long it runs. This is exactly the case the old total-duration cap cut off wrongly', async () => {
-  // 每 40ms 一块、共 8 块 = 320ms,远超 100ms 的闲置阈值,但每一块都把表拨回去了
+  // One chunk every 40ms, 8 chunks in total = 320ms, far exceeding the 100ms idle threshold, but each
+  // chunk reset the clock
   const f = withIdleTimeout(async () => streamOf([40, 40, 40, 40, 40, 40, 40, 40]), { idleMs: 100 });
   const res = await f('u', {});
   const chunks = await drain(res);

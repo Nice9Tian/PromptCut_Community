@@ -1,10 +1,14 @@
 /**
- * HT1：服务端会话层（契约 `docs/plan/http-transport-contract.md` 第 3、4、5、7、8 节，第 11 节 HT1 的 WebSocket 部分）。
- * 跑：node --test server/test/ht1-session.test.mjs
+ * HT1: Server session layer (contract `docs/plan/http-transport-contract.md` Sections 3, 4, 5, 7, 8,
+ * and the WebSocket part of HT1 in Section 11).
+ * Run: node --test server/test/ht1-session.test.mjs
  *
- * 只照契约写，没看实现。假设集中在 `ht-kit.mjs`（H1～H9）。服务端会话层没到位时（`server/docservice/session.mjs`
- * 不存在）整组跳过，写明原因；到位后自动真跑。
- * HT1 里经 HTTP 的几项（WebSocket 断后经 HTTP 接续、HTTP 断后经 WebSocket 接续、open 的鉴权、send / recv）属 HT-b，不在这里。
+ * Written solely according to contract without inspecting implementation. Assumptions are
+ * centralized in `ht-kit.mjs` (H1-H9). When the server session layer is not in place
+ * (`server/docservice/session.mjs` does not exist), skip the whole suite and state the reason;
+ * runs automatically once in place.
+ * The several HTTP items in HT1 (resume via HTTP after WebSocket disconnect, resume via WebSocket
+ * after HTTP disconnect, authentication for open, send / recv) belong to HT-b and are not here.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,7 +21,7 @@ import { rawWsClient } from './fake-raw-ws.mjs';
 const T = { skip: SKIP_SERVER };
 const biz = (c) => c.all.filter((m) => typeof m?.type === 'string' && !m.type.startsWith('session.'));
 
-// ------------------------------------------------------------------ 建会话
+// ------------------------------------------------------------------ Session creation
 
 test('HT1-open session creation: the first outbound message is session.welcome (sid is 256-bit base64url, resumed false, ack 0, retainMs, transport ws), and the echo is only promptcut.v1', T, async (t) => {
   const env = await startService({ retainMs: 45_000 });
@@ -33,7 +37,7 @@ test('HT1-open session creation: the first outbound message is session.welcome (
   assert.equal(env.mod.connects.length, 1, 'the core sees one connection');
   assert.equal(env.mod.connects[0].principal.userId, 'alice');
 
-  // 两个 sid 不同
+  // The two sids are different
   const c2 = await openSession(env, { user: 'bob' });
   assert.notEqual(c2.sid, c.sid);
 });
@@ -59,7 +63,7 @@ test('HT1-seq application messages carry seq in both directions: the server coun
   for (const s of env.mod.seen) {
     assert.ok(!('seq' in s.msg) && !('ack' in s.msg), `the module cannot see seq / ack: ${JSON.stringify(s.msg)}`);
   }
-  // 模块之外的发送入口同样补 seq
+  // Send entry points outside modules also attach seq
   env.service.send(env.mod.connects[0].connId, { type: 'ht.pushed' });
   const pushed = await c.next((m) => m.type === 'ht.pushed');
   assert.equal(pushed.seq, 4);
@@ -97,7 +101,7 @@ test('HT1-ack-batch when received messages have no chance to piggyback, session.
   assert.equal(a2.ack, 33);
 });
 
-// ------------------------------------------------------------------ 接续
+// ------------------------------------------------------------------ Resume
 
 test('HT1-resume after a WebSocket drop, resume over WebSocket: no re-authentication, connId unchanged, the module sees no disconnect; welcome carries the ack for everything the server has fully received; unacknowledged server messages are resent (original seq, in order)', T, async (t) => {
   const env = await startService();
@@ -106,13 +110,13 @@ test('HT1-resume after a WebSocket drop, resume over WebSocket: no re-authentica
   const connId = env.mod.connects[0].connId;
   for (let n = 1; n <= 3; n++) c.sendSeq({ type: 'ht.echo', n });
   for (let n = 1; n <= 3; n++) await c.next((m) => m.type === 'ht.echoed' && m.n === n);
-  // 客户端只确认到 1，然后断
+  // Client only acknowledges up to 1, then disconnects
   c.sendRaw({ type: 'session.ack', ack: 1 });
   await sleep(50);
   c.close();
   await c.ended();
   await waitFor(() => env.logs.some((l) => l.event === 'session.detach'), 2000, 'session.detach log');
-  // 脱开期间服务端又写了一条
+  // Server wrote another message during detach
   env.service.send(connId, { type: 'ht.pushed', k: 'during-detach' });
   await sleep(50);
   assert.equal(env.mod.disconnects.length, 0, 'a transport drop only detaches the session; the core sees no disconnect');
@@ -129,7 +133,7 @@ test('HT1-resume after a WebSocket drop, resume over WebSocket: no re-authentica
   assert.equal(env.mod.connects.length, 1, 'the module saw connect only once');
   assert.equal(env.mod.disconnects.length, 0);
 
-  // 接续后照常收发，身份不变
+  // Normal send/receive after resume, identity unchanged
   r.sendSeq({ type: 'ht.echo', n: 9 });
   const e9 = await r.next((m) => m.type === 'ht.echoed' && m.n === 9);
   assert.equal(e9.seq, 5);
@@ -158,7 +162,7 @@ test('HT1-dedup resend and deduplication: any seq the client resends that the se
   c.sendSeq({ type: 'ht.echo', n: 1 });
   c.sendSeq({ type: 'ht.echo', n: 2 });
   await c.next((m) => m.type === 'ht.echoed' && m.n === 2);
-  // 同一条传输上重发
+  // Retransmit on the same transport
   c.sendRaw({ type: 'ht.echo', n: 2, seq: 2 });
   c.sendRaw({ type: 'ht.echo', n: 1, seq: 1 });
   await sleep(100);
@@ -167,7 +171,7 @@ test('HT1-dedup resend and deduplication: any seq the client resends that the se
   await c.ended();
   const r = await openSession(env, { resume: { sid: c.sid, ack: c.ackOf() } });
   assert.equal(r.welcome.ack, 2);
-  // 客户端不看 welcome.ack、全部重发，再加一条新的
+  // Client ignores welcome.ack, retransmits everything, and adds a new message
   r.sendRaw({ type: 'ht.echo', n: 1, seq: 1 });
   r.sendRaw({ type: 'ht.echo', n: 2, seq: 2 });
   r.sendRaw({ type: 'ht.echo', n: 3, seq: 3 });
@@ -217,7 +221,7 @@ test('HT1-resume-fail resume failure: session does not exist 404; already ended 
   assert.equal(await resumeStatus(env, c.sid, 0), 410, '410 after an explicit close');
 });
 
-// ------------------------------------------------------------------ 出错
+// ------------------------------------------------------------------ Errors
 
 test('HT1-bad-seq seq gap: the server ends the session with 1002 bad-seq and does not retain it (the module sees the disconnect immediately, and a later resume gets 410)', T, async (t) => {
   const env = await startService();
@@ -241,7 +245,7 @@ test('HT1-bad-ack ack greater than the largest seq the server has sent: 1002 bad
   c.sendRaw({ type: 'session.ack', ack: 5 });
   assert.deepEqual(await c.ended(), { code: 1002, reason: 'bad-seq' });
   await waitFor(() => env.mod.disconnects.length === 1, 1000, 'the module sees the disconnect');
-  // 业务消息里顺带越界 ack 同样
+  // Out-of-bounds ack piggybacked in business message behaves the same
   const c2 = await openSession(env, { user: 'bob' });
   c2.sendRaw({ type: 'ht.echo', n: 1, seq: 1, ack: 7 });
   assert.deepEqual(await c2.ended(), { code: 1002, reason: 'bad-seq' });
@@ -257,7 +261,7 @@ test('HT1-bad-resume-ack the ack in the resume item is greater than the largest 
   await c.ended();
   const r = await rawHandshake(env.port, { protocols: [PROTOCOL, resumeItem(c.sid, 9)] });
   if (r.status === 101) {
-    // 接受了升级：随后应以 1002 关掉
+    // Upgrade accepted: should subsequently close with 1002
     const ended = await new Promise((resolve) => { r.sock.once('close', () => resolve(true)); setTimeout(() => resolve(false), 2000); });
     assert.ok(ended, 'after accepting the upgrade, it must end immediately with 1002');
   }
@@ -265,7 +269,7 @@ test('HT1-bad-resume-ack the ack in the resume item is greater than the largest 
   await waitFor(() => env.mod.disconnects.length === 1, 2000, 'the session ends, the module sees the disconnect');
 });
 
-// ------------------------------------------------------------------ 保留与结束
+// ------------------------------------------------------------------ Retention and termination
 
 test('HT1-retain end on retention period expiry: the module sees no disconnect during the period; at expiry disconnect fires, the conn.timeout log is written and sessions.expired goes up by one; a later resume gets 410', T, async (t) => {
   const env = await startService({ retainMs: 400 });
@@ -311,7 +315,7 @@ for (const [code, reason] of [[4003, 'kicked'], [4004, 'project-deleted']]) {
     t.after(env.cleanup);
     const c = await openSession(env);
     const connId = env.mod.connects[0].connId;
-    // 模块经核心关（踢人、删项目走这条，auth-contract 第 7 节）
+    // Module closes via core (kicking members and deleting projects use this path, auth-contract Section 7)
     assert.equal(env.mod.ctx.close(connId, code, reason), true);
     const ev = await c.ended();
     assert.equal(ev.code, code);
@@ -352,7 +356,7 @@ test('HT1-heartbeat when a ping round gets no pong: the transport is closed, the
   const raw = await rawWsClient(env.port, { protocols: [PROTOCOL, 'promptcut.user.alice', SESSION_NEW] });
   t.after(() => raw.destroy());
   const welcome = await raw.next((m) => m.type === 'session.welcome');
-  raw.pause(); // 不读 socket：收不到 ping，也就不回 pong
+  raw.pause(); // Does not read socket: cannot receive ping, thus does not return pong
   await waitFor(() => env.logs.some((l) => l.event === 'session.detach'), 3000, 'detached after heartbeat timeout');
   await sleep(100);
   assert.equal(env.mod.disconnects.length, 0, 'only detached, not ended');
@@ -362,7 +366,7 @@ test('HT1-heartbeat when a ping round gets no pong: the transport is closed, the
   assert.equal(env.mod.connects.length, 1);
 });
 
-// ------------------------------------------------------------------ 诊断
+// ------------------------------------------------------------------ Diagnostics
 
 test('HT1-healthz sessions in /healthz: total, per transport, detached, old clients, cumulative counters and list (five keys per item, transport null when detached)', T, async (t) => {
   const env = await startService({ retainMs: 60_000 });
@@ -390,7 +394,7 @@ test('HT1-healthz sessions in /healthz: total, per transport, detached, old clie
   }
   const bobConn = conns.find((x) => x.principal.userId === 'bob');
   assert.deepEqual({ transport: bobConn.transport, detached: bobConn.detached }, { transport: null, detached: true });
-  // 会话号不进 /healthz、describe()、日志
+  // Session id does not go into /healthz, describe(), or logs
   for (const sid of [a.sid, b.sid]) {
     assertNoSid(JSON.stringify(h), sid, '/healthz');
     assertNoSid(JSON.stringify(env.service.describe()), sid, 'describe()');

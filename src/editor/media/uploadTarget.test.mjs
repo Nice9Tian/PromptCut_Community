@@ -1,7 +1,8 @@
 /**
- * C6.6 设计稿第 9 节第 1 条:页面把共享项目的素材服务交给编辑器进程的上传队列(`assetTiers.ts` 的 `startUploadTarget`)。
- * 跑:node --test src/editor/media/uploadTarget.test.mjs
- * 计时器、时钟、推送都注入假的;`fetch` 换成记录用的假件。
+ * C6.6 design doc section 9 item 1: page hands shared project asset service to editor process
+ * upload queue (`startUploadTarget` in `assetTiers.ts`).
+ * Run: node --test src/editor/media/uploadTarget.test.mjs
+ * Timers, clock, and push are all injected with fakes; `fetch` is replaced with a fake for recording.
  */
 import "../../testing/registerTs.mjs";
 import test from "node:test";
@@ -20,7 +21,7 @@ function fakeClock() {
     setTimer: (fn, ms) => { const t = { fn, at: now + ms, ms }; timers.push(t); return t; },
     clearTimer: (t) => { const i = timers.indexOf(t); if (i >= 0) timers.splice(i, 1); },
     timers,
-    /** 触发到期的第一个计时器 */
+    /** Triggers the first expired timer */
     async fire() { const t = timers.shift(); now = Math.max(now, t.at); t.fn(); await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0)); },
   };
 }

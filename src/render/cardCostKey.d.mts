@@ -20,10 +20,13 @@ export interface CardCostRecord {
    */
   stepMs: number;
   /**
-   * 单次最大的活渲帧（ms）。**只作诊断，不进判重和分派**（任务书 3.3 / K1）：限 2 核下同一张卡
-   * 两次实测的单次最大能差十几倍（`particles-orbit` 33 ms 对 2.2 ms），越线的是偶发的一帧卡顿、
-   * 不是卡的稳定成本，所以 `stepMs` 改取百分位、单次最大另记在这里。
-   * 只有计时趟留得下逐帧样本，所以只有 `kind: 'stepped'` 和补抽够样本的 `direct` 卡有这一项。
+   * Maximum single live render frame (ms). **For diagnosis only, excluded from heavy classification
+   * and dispatch** (task brief 3.3 / K1): under a 2-core limit, two actual measurements of the same
+   * card can differ in maximum single frame by over tenfold (`particles-orbit` 33 ms vs 2.2 ms); what
+   * crosses the line is an occasional single-frame stutter, not the card's steady cost, so `stepMs`
+   * was changed to use a percentile, and the single maximum is recorded separately here.
+   * Only timing passes retain frame-by-frame samples, so only `kind: 'stepped'` and `direct` cards
+   * with sufficient resampled samples have this field.
    */
   stepMaxMs?: number;
   /** Worst single frame spent inlining styles (DOM clone + computed-style pass). */
@@ -36,8 +39,10 @@ export interface CardCostRecord {
   catchUpMs: number;
   capped?: boolean;
   /**
-   * 计时趟真实采到的帧数（`summarizeProbe` 的 `samples`）。只给共享成本记录用（文档服务的 `samples`，
-   * `mechanism/document-service.md`「成本记录」），不进判重和分派；旧记录没有这一项，转写时按 `device` 串里的 `stepN` 记。
+   * Actual number of frames sampled during timing pass (`samples` in `summarizeProbe`). Used only for
+   * shared cost records (`samples` in document service, "Cost record" in
+   * `mechanism/document-service.md`), excluded from heavy classification and dispatch; legacy records
+   * lack this field and record it from `stepN` in the `device` string when transcribed.
    */
   samples?: number;
   kind: 'random' | 'stepped';

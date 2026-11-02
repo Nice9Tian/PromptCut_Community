@@ -1,14 +1,20 @@
 /**
- * C10 契约第 7 节、第 18 节第 9 条〔裁〕:在线页面发布的清单计划,与对 M6c X4 的修改(编号 C10-LP-…)。
+ * C10 contract Section 7, Section 18, Clause 9 [ruling]: manifest plans published by online pages,
+ * and modifications to M6c X4 (numbered C10-LP-…).
  *
- *   LP1 清单计划的形状:`plan:<projectId>@<projectRev>#clips:<sig>`,带片段清单、normal 档;`requires` 不带
- *       envFingerprint / preferNode,只可能带 codeVersion;同一份清单同一个键;入站校验(normal 档、清单非空、签名合法)
- *   LP2 队列:带清单的 plan(清单计划、预渲染重试计划)host 能认领;不带清单的桌面 plan host 认领 0 次(X4 保留);browser 一律不认领
- *   LP3 节点侧规则 6:host 见到带清单的 plan 放行,见到桌面 plan 跳过
- *   LP4 独立主机认领清单计划:用自己的指纹切分;清单里的片段当重卡、不切流、细任务 normal 档;
- *       锁在别的指纹上的卡按锁的指纹出任务(卡片级指纹锁照旧生效)
+ *   LP1 Manifest plan shape: `plan:<projectId>@<projectRev>#clips:<sig>`, carries clip manifest and
+ *       normal tier; `requires` does not carry envFingerprint / preferNode, may only carry
+ *       codeVersion; same manifest gets same key; inbound validation (normal tier, non-empty
+ *       manifest, valid signature)
+ *   LP2 Queue: host can claim plan with manifest (manifest plan, prerender retry plan); desktop plan
+ *       without manifest claimed 0 times by host (X4 preserved); browser never claims
+ *   LP3 Node-side rule 6: host allows plan with manifest, skips desktop plan
+ *   LP4 Standalone host claims manifest plan: splits with its own fingerprint; clips in manifest
+ *       treated as heavy cards, do not split streams, fine-grained tasks in normal tier; cards
+ *       locked to other fingerprints emit tasks under locked fingerprint (per-card fingerprint lock
+ *       takes effect as before)
  *
- * 跑:node --test server/test/c10-list-plan.test.mjs
+ * Run: node --test server/test/c10-list-plan.test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -48,11 +54,11 @@ test('C10-LP1 shape of the manifest plan and inbound validation', () => {
   assert.equal(parse({ ...a, input: {} }).ok, false);
   assert.equal(parse({ ...a, input: { clips: [] } }).ok, false);
   assert.equal(parse({ ...a, resultKey: 'p1@3#clips:BAD!', id: 'plan:p1@3#clips:BAD!' }).ok, false);
-  // 预渲染重试计划的旧规则不变
+  // Old rules for prerender retry plans remain unchanged
   assert.equal(parse({ ...bf, priority: 'normal' }).ok, false);
 });
 
-/** 直接驱动队列:页面(发布方)、pc、host、browser 各一条连接 */
+/** Directly drive queue: one connection each for page (publisher), pc, host, and browser */
 function scene() {
   let now = 1_000;
   const inbox = new Map();
@@ -83,7 +89,7 @@ test('C10-LP2 queue: a plan host with a manifest can claim; a desktop plan host 
   s.publish(bf);
   assert.equal(s.claim('host', bf.id).type, 'task.claimed', 'host claims the prerender retry plan');
 
-  // 桌面 plan(不带清单,有 preferNode):X4 照旧,窗口内外 host 都是 plan-profile
+  // Desktop plan (without manifest, with preferNode): X4 as before, host is plan-profile both inside and outside window
   const desk = planTaskOf({ projectId: 'p2', projectRev: 1, codeVersion: CV, envFingerprint: FP_A, preferNode: 'PC' });
   s.publish(desk);
   let hostClaims = 0;
@@ -103,13 +109,13 @@ test('C10-LP3 node-side rule 6: host lets a plan with a manifest through and ski
   assert.deepEqual(checkClaimable(view(clipsPlanTaskOf({ projectId: 'p', projectRev: 1, clips: ['a'] })), host), { ok: true });
   assert.deepEqual(checkClaimable(view(backfillPlanTaskOf({ projectId: 'p', projectRev: 1, clips: ['a'] })), host), { ok: true });
   assert.deepEqual(checkClaimable(view(planTaskOf({ projectId: 'p', projectRev: 1 })), host), { ok: false, rule: 6, reason: 'plan-on-host' });
-  // 清单计划的 codeVersion 照旧查
+  // codeVersion of manifest plan checked as before
   const wrong = view(clipsPlanTaskOf({ projectId: 'p', projectRev: 1, clips: ['a'], codeVersion: 'other' }));
   assert.equal(checkClaimable(wrong, host).reason, 'code-version');
   assert.equal(checkClaimable(view(clipsPlanTaskOf({ projectId: 'p', projectRev: 1, clips: ['a'] })), { ...host, profile: 'browser', userId: 'u1' }).reason, 'plan-on-browser');
 });
 
-/** 切分用的 PlanContext:两张共享档的卡(c-free 没锁,c-locked 已锁在 FP_A 上)、一条流 */
+/** PlanContext for splitting: two shared tier cards (c-free unlocked, c-locked locked to FP_A), one stream */
 function context() {
   const control = (clipId, ck) => ({
     clipId, cardId: 'card', key: `png-${clipId}`, snapshotKey: resultKeyOf(ck, FP_B), contentKey: ck, tier: 'shared',
@@ -132,7 +138,7 @@ test('C10-LP4 a standalone host claims the manifest plan: splits with its own fi
   const lb = createLoopback();
   const q = createRenderQueue({ now: () => now, send: lb.queueSend, epoch: 'e1' });
   lb.attach(q);
-  // 先有人把 c-locked 的快照锁在 FP_A 上(桌面节点产过它)
+  // First someone locks snapshot of c-locked to FP_A (desktop node produced it)
   const locker = lb.connect('locker', { userId: 'creator' });
   locker.send({ type: 'publisher.hello', publisherId: 'LOCKER' });
   const lockedCk = 'ck-lock'.padEnd(64, '0');
@@ -143,15 +149,15 @@ test('C10-LP4 a standalone host claims the manifest plan: splits with its own fi
     requires: { envFingerprint: FP_A, codeVersion: CV },
   };
   locker.send({ type: 'task.publish', tasks: [lockedTask], reqId: 'lock-1' });
-  // 锁在第一次认领时建(F.1):桌面节点(FP_A)认领它
+  // Lock established on first claim (F.1): desktop node (FP_A) claims it
   locker.send({ type: 'node.hello', nodeId: 'LOCKER-NODE', profile: 'pc', envFingerprint: FP_A, codeVersions: [CV] });
   locker.send({ type: 'task.claim', id: lockedTask.id, expectVersion: 1, reqId: 'claim-1' });
   lb.flush();
-  // 页面只发布
+  // Page only publishes
   const page = lb.connect('page', { userId: 'member' });
   page.send({ type: 'publisher.hello', publisherId: 'PAGE' });
   lb.flush();
-  // 独立渲染主机:host 档、指纹 FP_B(与锁定方、与页面的环境都不同)
+  // Standalone render host: host tier, fingerprint FP_B (differs from environments of both locking party and page)
   const raw = lb.connect('host', { userId: 'host-user' });
   const out = [];
   const endpoint = { send: (m) => { out.push(m); raw.send(m); }, onMessage: (h) => raw.onMessage(h) };

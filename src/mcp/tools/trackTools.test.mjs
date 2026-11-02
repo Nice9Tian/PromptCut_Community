@@ -1,5 +1,5 @@
-// 序列工具(list/remove/update/move_track)的门槛和 store 的连带清理。
-// 跑法:node --test src/mcp/tools/trackTools.test.mjs
+// Gates for track tools (list/remove/update/move_track) and cascading cleanup in store.
+// Run: node --test src/mcp/tools/trackTools.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "vite";
@@ -31,20 +31,21 @@ test("Track tools: list, delete, edit, move, gates and undo", async () => {
     p.tracks = fixture();
     actions.loadProject(p);
 
-    // list_tracks:空的标 empty,锁定标 locked
+    // list_tracks: mark empty as empty, mark locked as locked
     const listed = tt.listTracks().tracks;
     assert.deepEqual(listed.filter((t) => t.empty).map((t) => t.trackId), ["t-e1", "t-e2", "t-lock"]);
     assert.equal(listed[1].media, 2);
     assert.equal(listed[4].locked, true);
 
-    // 空序列一次删两条,一步撤销
+    // Delete two empty tracks at once, single undo step
     const r = tt.removeTrack({ trackIds: ["t-e1", "t-e2"] });
     assert.deepEqual(r.removed.map((x) => x.trackId), ["t-e1", "t-e2"]);
     assert.deepEqual(getState().project.tracks.map((t) => t.id), ["t-cap", "t-v", "t-lock"]);
     actions.undo();
     assert.equal(getState().project.tracks.length, 5);
 
-    // 门槛:有内容要 force+reason;锁定不删;不认识的 id 报出现有的;不能删光
+    // Gate: tracks with content require force+reason; locked not deleted; unknown id reports existing
+    // ones; cannot delete all
     assert.throws(() => tt.removeTrack({ trackId: "t-v" }), /still has content.*force:true/);
     assert.throws(() => tt.removeTrack({ trackId: "t-v", force: true }), /reason/);
     assert.throws(() => tt.removeTrack({ trackId: "t-lock" }), /locked by the user/);
@@ -53,7 +54,7 @@ test("Track tools: list, delete, edit, move, gates and undo", async () => {
     assert.throws(() => tt.removeTrack({}), /trackId/);
     assert.equal(getState().project.tracks.length, 5);
 
-    // 连片段一起删:挂在上面的转场撤掉,不留悬空引用
+    // Delete clips together: remove transitions attached to them, leaving no dangling references
     assert.equal(actions.addTransition({ kind: "crossfade", clipId: "a", otherClipId: "b", dur: 0.5 }).ok, true);
     assert.equal(getState().project.transitions.length, 1);
     actions.select(["a"]);
@@ -67,7 +68,7 @@ test("Track tools: list, delete, edit, move, gates and undo", async () => {
     assert.deepEqual(getState().selection, []);
     actions.loadProject(p);
 
-    // update_track:改名 / 隐藏,类型不对就拒
+    // update_track: rename / hide; reject if type is incorrect
     const before = getState().project;
     const u = tt.updateTrack({ trackId: "t-e1", name: "  Ambient sound ", hidden: true });
     assert.equal(u.track.name, "Ambient sound");
@@ -78,7 +79,7 @@ test("Track tools: list, delete, edit, move, gates and undo", async () => {
     assert.throws(() => tt.updateTrack({ trackId: "t-e1", name: "   " }), /cannot be empty/);
     assert.throws(() => tt.updateTrack({ trackId: "t-e1" }), /Provide at least one/);
 
-    // move_track:挪到最上面;只调顺序也要让别的 Agent 知道
+    // move_track: move to top; even order-only adjustments must be made known to other Agents
     const beforeMove = getState().project;
     const m = tt.moveTrack({ trackId: "t-lock", index: 0 });
     assert.equal(m.tracks[0].trackId, "t-lock");
@@ -86,7 +87,7 @@ test("Track tools: list, delete, edit, move, gates and undo", async () => {
     assert.throws(() => tt.moveTrack({ trackId: "t-lock", index: 5 }), /0 to 4/);
     assert.throws(() => tt.moveTrack({ trackId: "t-lock", index: 1.5 }), /0 to 4/);
 
-    // add_track 带 index 插在指定位置
+    // add_track with index inserts at specified position
     const added = tt.addTrack({ name: "Background music", index: 1 });
     assert.equal(added.index, 1);
     assert.equal(getState().project.tracks[1].name, "Background music");

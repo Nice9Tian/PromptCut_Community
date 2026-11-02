@@ -1,8 +1,11 @@
 /**
- * 撤快照后投递一侧契约对齐(`snapshotFeed.ts`):
- *   - 每张卡的 HTML 快照作废后,deliverSnapshots 在播放中清空 settled 并返回 0,不向舞台派发快照补丁;
- *   - 播放中重卡全量由 suppressed 抑制接管,topDownOrder 保持层序,setBeatSwap / beatSwapDebug 保留兼容签名且无空指针。
- * 跑:node --experimental-test-module-mocks --test src/editor/c10-beat-feed.test.mjs
+ * Contract alignment on delivery side after revoking snapshots (`snapshotFeed.ts`):
+ *   - After each card's HTML snapshot is invalidated, deliverSnapshots clears settled during playback
+ *     and returns 0, without dispatching snapshot patches to stage;
+ *   - During playback, heavy cards are fully taken over by suppressed suppression, topDownOrder
+ *     maintains layer order, setBeatSwap / beatSwapDebug retain compatibility signatures without
+ *     null pointers.
+ * Run: node --experimental-test-module-mocks --test src/editor/c10-beat-feed.test.mjs
  */
 import { srcUrl } from "../testing/registerTs.mjs";
 import { test, mock, beforeEach } from "node:test";
@@ -20,7 +23,7 @@ performance.now = () => now;
 const settle = () => new Promise((r) => setImmediate(r));
 const FPS = 30;
 const card = (id, start, end) => ({ id, cardId: "c", start, end, params: {} });
-// 第一条轨道在最上面;同一轨道里后面的片段盖在前面的上面
+// First track is on top; within the same track, subsequent clips cover earlier ones
 const project = (tracks) => ({ version: 1, name: "p", width: 1920, height: 1080, fps: FPS, duration: 20, media: [], tracks });
 
 let src;
@@ -60,7 +63,7 @@ test("C10-BF-01 After snapshots are withdrawn, delivery during playback returns 
 });
 
 test("C10-BF-02 After snapshots are withdrawn, suppressed takes over in top-to-bottom layer order; deliverSnapshots returns 0", async () => {
-  // 三张重卡:轨道 top 上的 a、轨道 mid 上的 b、c(c 在 b 后面,盖在 b 上面)
+  // Three heavy cards: a on track top, b and c on track mid (c is after b, covering b)
   const p = project([
     { id: "top", name: "top", clips: [card("a", 0, 10)] },
     { id: "mid", name: "mid", clips: [card("b", 0, 10), card("c", 0, 10)] },
@@ -78,7 +81,7 @@ test("C10-BF-02 After snapshots are withdrawn, suppressed takes over in top-to-b
   assert.equal(d.last, null, "After snapshots are withdrawn, last is null, with no null-pointer error");
 });
 
-/* ---------------------------------------------------------------- 每层的换帧成本(swap-tuning 任务 A) */
+/* ---------------------------------------------------------------- Frame-swap cost of each layer (swap-tuning task A) */
 
 test("ST-A-08 The host supplies per-layer cost (by card kind): setBeatSwap stays signature-compatible; after snapshots are withdrawn, heavy cards are fully suppressed during playback", async () => {
   const p = project([
@@ -98,8 +101,8 @@ test("ST-A-08 The host supplies per-layer cost (by card kind): setBeatSwap stays
 
 test("ST-A-09 After snapshots are withdrawn, packing by size no longer happens; beatSwapDebug keeps a compatible signature with no null-pointer risk", async () => {
   const { SWAP_COST_MODEL, swapCostOfSize } = await import("../render/beatSwap.mjs");
-  const big = "<div>" + "x".repeat(400 * 1024) + "</div>";                        // 约 400 KB 文本
-  const bmp = '<img src="data:image/webp;base64,' + "A".repeat(400 * 1024) + '">'; // 约 400 KB 位图
+  const big = "<div>" + "x".repeat(400 * 1024) + "</div>";                        // Approx. 400 KB text
+  const bmp = '<img src="data:image/webp;base64,' + "A".repeat(400 * 1024) + '">'; // Approx. 400 KB bitmap
   const p = project([{ id: "t1", name: "t1", clips: [card("m", 0, 10)] }, { id: "t2", name: "t2", clips: [card("t", 0, 10)] }]);
   plan = { segments: [{ fromSec: 0, toSec: 1000, heavy: new Set(["m", "t"]), light: new Set() }] };
   const stage = fakeStage();

@@ -1,4 +1,4 @@
-import './lib/no-user-dirs.mjs'; // 第一个 import:不继承外部的 PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR,产物不落进用户的 Videos\PromptCut
+import './lib/no-user-dirs.mjs'; // First import: does not inherit external PROMPTCUT_EXPORT_DIR / PROMPTCUT_DATA_DIR; outputs do not land in the user's Videos\PromptCut
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -10,8 +10,9 @@ import { exportUnified } from '../server/bakery/export-unified.mjs';
 import { captureSnapshot } from '../server/bakery/capture-snapshot.mjs';
 import { devOrigin } from './probes/probe-connect.mjs';
 
-// 不给 PC_FRAME_TEST_URL 就打 .claude/launch.json 里的 dev-test(验证环境),和 scripts/probes/ 同一个来源。
-// 原来写死的 5192 是用户常驻编辑台(5190)的舞台端口,别碰
+// If PC_FRAME_TEST_URL is not provided, hit dev-test (verification env) in .claude/launch.json,
+// same source as scripts/probes/.
+// The originally hardcoded 5192 is the stage port for the user's resident editor (5190); do not touch it
 const origin = process.env.PC_FRAME_TEST_URL || devOrigin();
 const root = path.resolve('out', `frame-verification-${Date.now()}`);
 const isolatedMedia = process.env.PC_FRAME_MEDIA_DIR || path.resolve('out/media');
@@ -48,15 +49,18 @@ try {
   const aFrame = PNG.sync.read(frames.get(8).buf).data;
   const direct = PNG.sync.read(late).data;
   assert.ok(aFrame.every((v, i) => Math.abs(v - direct[i]) <= 2), "track bitmap round-trip differs by at most two channel levels");
-  // 第二次取同一帧是缓存命中。整帧缓存从累积 PNG 换成 MOV 之后(8774613),命中的来源叫 'mov';
-  // 'rendered' 只剩读旧 PNG 缓存那条兼容路。
+  // Fetching the same frame a second time is a cache hit. After whole-frame cache switched from
+  // cumulative PNG to MOV (8774613), the hit source is called 'mov';
+  // 'rendered' only remains for the backward-compatible path reading legacy PNG caches.
   assert.equal((await service.see_frames(project, [.8])).get(8).source, 'mov');
   await service.preload(project); await service.background;
   assert.equal(entry.status, 'ready', entry.error);
   const prerendered = (await service.see_frames(project, [.8])).get(8).buf;
   assert.ok(PNG.sync.read(prerendered).data.equals(aFrame), 'C must exactly match the A pipeline');
-  // 后台那一趟的产物覆盖全部 10 帧:整场景逐帧 PNG 表(readFramesCore 第一步查的)与 C 趟抄出的 frames/。
-  // legacy 整帧通道方案 B(AGENT-maint-3)起不再编 preview.mp4 与整场景的 mov/full.mov,这里断言它们确实没了。
+  // Artifacts of that background pass cover all 10 frames: the whole-scene frame-by-frame PNG table
+  // (queried first in readFramesCore) and frames/ copied out in pass C.
+  // Starting from legacy whole-frame channel plan B (AGENT-maint-3), preview.mp4 and whole-scene
+  // mov/full.mov are no longer encoded; here we assert that they are indeed gone.
   const exists = file => fs.access(file).then(() => true, () => false);
   assert.deepEqual([...Array(10).keys()].filter(n => !entry.mov.has(n)), [], 'full-scene PNG table must hold every frame');
   const rastered = (await fs.readdir(path.join(entry.dir, 'frames'))).filter(n => /^\d{6}\.png$/.test(n));
@@ -65,8 +69,9 @@ try {
   assert.equal(await exists(path.join(entry.dir, 'mov', 'full.mov')), false, 'full-scene full.mov is no longer produced');
   assert.equal(await exists(path.join(root, 'controls-html')), false, 'controls-html is no longer produced');
   assert.equal(await exists(path.join(root, 'controls-local')), false, 'controls-local is no longer produced');
-  // 导出页自己不知道要渲哪个项目,得经 ?timeline= 带进去(同 verify-export-frame-content.mjs);
-  // 不带的话它渲的是页面默认项目,和这里的 320×180 对不上。
+  // The export page itself does not know which project to render, which must be passed in via ?timeline=
+  // (same as verify-export-frame-content.mjs); without it, it renders the page default project,
+  // which does not match the 320×180 here.
   const exportUrl = `${origin}/?export=1&timeline=${encodeURIComponent('data:application/json,' + encodeURIComponent(JSON.stringify(project)))}`;
   const exported = await exportUnified(project, { url: exportUrl, out: path.join(root, 'exported'), targetFrames: [8] });
   const exportedFrame = PNG.sync.read(await fs.readFile(path.join(exported.framesDir, '000008.png'))).data;

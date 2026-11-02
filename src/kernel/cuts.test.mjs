@@ -1,13 +1,15 @@
 /**
- * kernel/cuts.ts 的单测。跑:node --test src/kernel/cuts.test.mjs
+ * Unit tests for kernel/cuts.ts. Run: node --test src/kernel/cuts.test.mjs
  *
- * 多剪辑的模型只有一条不变量:**每条剪辑的内容只存一份** —— 激活的在 Project.tracks,
- * 停放的在各自条目里。切换、删除、老文件加载都不能把内容弄丢或弄成两份。钉死:
- *   - 老文件(没有 cuts)加载后:tracks 原样是「剪辑1」,只此一条(2026-10-20 用户定:默认只留一个);
- *   - 切换是 round-trip:A→B→A 后 tracks / duration / 播放头逐项相同;
- *   - 激活条目永远不带 tracks;
- *   - 删最后一条拒绝;删激活那条自动切到相邻;
- *   - 删素材要清到停放的剪辑里。
+ * The multi-cut model has only one invariant: **the content of each cut is stored only once**:
+ * the active cut in Project.tracks, parked cuts in their respective entries. Switching, deleting,
+ * and loading legacy files must never lose content or duplicate it. Pinned down:
+ *   - Legacy files (without cuts) after loading: tracks are as-is for "Cut 1", this one only
+ *     (user decision, 2026-10-20: keep only one by default);
+ *   - Switching is a round-trip: after A→B→A, tracks / duration / playhead are identical item by item;
+ *   - Active entries never carry tracks;
+ *   - Deleting the last cut is rejected; deleting the active cut switches to an adjacent cut;
+ *   - Deleting an asset must clean into parked cuts.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -21,7 +23,7 @@ import {
 const clip = (id, extra = {}) => ({ id, cardId: "x", start: 0, end: 1, params: {}, ...extra });
 const legacy = () => ({ ...createEmptyProject("Old project"), tracks: [{ id: "t-1", name: "Track 1", clips: [clip("a")] }], duration: 12 });
 const empty = (id) => [{ id: `${id}-1`, name: "Track 1", clips: [] }, { id: `${id}-2`, name: "Track 2", clips: [] }];
-/** 0.7.18 之前新建的项目:默认三条剪辑已经存在 cuts 里(加载时原样保留) */
+/** Projects created before 0.7.18: three cuts exist in cuts by default (preserved as-is on load) */
 const three = () => ({
   ...legacy(),
   cuts: [

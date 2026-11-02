@@ -1,12 +1,16 @@
 /**
- * C10a 邀请码的契约测试（`docs/plan/c10a-contract.md` 第 5 节、第 12 节「邀请码」一条）。
- * 跑：node --test server/test/c10a-invite.test.mjs
+ * Contract tests for C10a invite codes (`docs/plan/c10a-contract.md` section 5,
+ * section 12 "invite code" item).
+ * Run: node --test server/test/c10a-invite.test.mjs
  *
- * 服务端用 `auth-kit.mjs` 组装的共享项目文档服务（真 HTTP、真 WebSocket），创建者操作按 auth 契约第 7 节现算证明。
- * 假设的接口见 `c10a-kit.mjs` 的 K1；端点不在时整组 skip（原因里写「接口缺失」）。
+ * Server uses shared project document service assembled with `auth-kit.mjs` (real HTTP,
+ * real WebSocket); creator operations compute proof on the fly per auth contract section 7.
+ * For assumed APIs, see K1 of `c10a-kit.mjs`; skip the entire group when endpoints are absent
+ * (reason says "missing API").
  *
- * 来源地址：回环来源不计入限速（auth 契约第 9 节），所以除了限速那几条，请求都从回环发；
- * 限速用例用 `__remote` 模拟公网来源（`auth-kit.mjs` 文件头）。
+ * Origin address: loopback origins do not count toward rate limits (auth contract section 9),
+ * so except for those rate-limiting items, requests are all sent from loopback; rate-limiting
+ * test cases use `__remote` to simulate public network origin (`auth-kit.mjs` file header).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -25,7 +29,7 @@ const it = (name, fn) => test(name, { skip }, fn);
 const INVALID = Object.freeze({ ok: false, error: 'invite-invalid' });
 const R = (i) => `203.0.113.${10 + i}`;
 
-/** 建项目、创建者进入、签发邀请码 */
+/** Create project, creator enters, issue invite code */
 async function setup(t, { mode = 'free', fields = {}, host = {} } = {}) {
   const env = await hostFor(t, host);
   const proj = await createProject(env, { mode });
@@ -37,7 +41,7 @@ async function setup(t, { mode = 'free', fields = {}, host = {} } = {}) {
 
 const status = async (creator, proj) => inviteStatusOf(await adminOp(creator, proj, 'invite-status'));
 
-// ------------------------------------------------------------------ 签发、解析
+// ------------------------------------------------------------------ Issue, resolve
 
 it('C10A-IV-01 issuing: 43-character base64url; default 7 days, unlimited uses; the plaintext appears only in the issue response; resolve returns the project name and mode and does not consume a use', async (t) => {
   const { env, proj, creator, invite, code } = await setup(t);
@@ -94,7 +98,7 @@ it('C10A-IV-03 revoke: resolve and redeem always give invite-invalid; invite-sta
   const st = await status(creator, proj);
   assert.equal(st.active, false);
   assert.equal(typeof st.revokedAt, 'number');
-  // 作废不影响已经进来的人：凭兑换得到的 K 照常握手
+  // Invalidation does not affect members who already joined: handshake proceeds normally with redeemed K
   assert.equal(await joinStatus(env, proj, { username: 'zoe', device: dev, key: got.json.project.key }), 101);
 });
 
@@ -170,7 +174,7 @@ it('C10A-IV-07 invite-invalid has one uniform shape: unknown, revoked, expired a
   }
 });
 
-// ------------------------------------------------------------------ 兑换：K、禁入
+// ------------------------------------------------------------------ Redeem: K, bans
 
 it('C10A-IV-08 open entry returns K: K equals the K derived from the project password, the normal handshake works with it; resolve does not return K', async (t) => {
   const { env, proj, code } = await setup(t);
@@ -228,7 +232,7 @@ it('C10A-IV-11 ban: redeeming for a kicked (username, device) returns 401 banned
   assert.equal((await redeemInvite(env, { code, username: 'zoe', deviceId: dev.deviceId })).status, 200, 'after unban');
 });
 
-// ------------------------------------------------------------------ 限速
+// ------------------------------------------------------------------ Rate limiting
 
 for (const ep of ['resolve', 'redeem']) {
   it(`C10A-IV-12 rate limit (${ep}): after 5 failures from the same source, everything within 60 s gets 429 rate-limited (even a correct code is rejected), another source is unaffected, and it recovers after 61 s`, async (t) => {
@@ -255,7 +259,7 @@ it('C10A-IV-13 failures from a loopback source do not count toward the rate limi
   assert.equal((await resolveInvite(env, code)).status, 200);
 });
 
-// ------------------------------------------------------------------ 创建者操作、存储、日志
+// ------------------------------------------------------------------ Creator operations, storage, logs
 
 it('C10A-IV-14 all three ops need creator proof: a member, no proof, or wrong proof is always forbidden, and none takes effect', async (t) => {
   const { env, proj, creator, code } = await setup(t);
@@ -277,7 +281,7 @@ it('C10A-IV-15 plaintext never reaches disk or logs: no file in the data directo
   await resolveInvite(env, code, { remote: R(20) });
   await redeemInvite(env, { code, username: 'yan', deviceId: newDevice().deviceId }, { remote: R(20) });
   await status(creator, proj);
-  // 再签发一个，确保旧记录被改写之后同样不含原文
+  // Issue another one, ensuring old records also contain no plaintext after being rewritten
   const second = (await adminOp(creator, proj, 'invite-create')).code;
   for (const c of [code, second]) {
     assert.deepEqual(filesContaining(env.dataDir, c), [], `the data directory contains the plaintext ${c.slice(0, 6)}…`);

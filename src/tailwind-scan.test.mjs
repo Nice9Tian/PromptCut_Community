@@ -1,17 +1,19 @@
 /**
- * Tailwind 扫描范围的守门检查（M8 遗留 L12）。跑：node --test src/tailwind-scan.test.mjs
+ * Gatekeeper check for Tailwind scan scope (M8 leftover L12). Run: node --test src/tailwind-scan.test.mjs
  *
- * 为什么要钉死：开发服务里 `@tailwindcss/vite` 把扫描到的每个文件都挂成样式的依赖。改到的文件
- * 后缀不是代码或样式（`.md`、`.txt`、`.yaml`、`.toml`、`.html`、`.log` 等）时，它不打日志就让
- * 所有打开的页面整页重载：用户常驻的编辑器、正在跑的探针页面都会被重载（查证见
- * `docs/archive/agent-reports/AGENT-tailwind-scan.md`）。`src/index.css` 里的 `@source not`
- * 已把文档、测试、脚本等排除出扫描，但以后在 `src/`、`server/` 下新加一个非代码文件，
- * 它就又进了扫描，以前只能靠人记着。
+ * Why pin this down: in the dev server, `@tailwindcss/vite` attaches every scanned file as a style
+ * dependency. When a modified file's extension is not code or style (`.md`, `.txt`, `.yaml`,
+ * `.toml`, `.html`, `.log`, etc.), it triggers a full page reload on all open pages without logging:
+ * the user's resident editor and running probe pages are both reloaded (verification in
+ * `docs/archive/agent-reports/AGENT-tailwind-scan.md`). `@source not` in `src/index.css` has already
+ * excluded docs, tests, scripts, etc. from scanning, but if a non-code file is added under `src/`
+ * or `server/` in the future, it would enter scanning again, which previously relied on human memory.
  *
- * 做法：用插件自己的两块（`@tailwindcss/node` 的 compile、`@tailwindcss/oxide` 的 Scanner），
- * 按插件同样的方式从 `src/index.css` 算出扫描源，拿到真实扫描到的文件表，而不是在这里另抄
- * 一份排除规则。所以排除表只有一处：`src/index.css`。扫描器按 `.gitignore` 跳过忽略的路径，
- * 没被忽略的未跟踪文件也会扫到，这里一并检查（它们一样会触发重载）。
+ * Approach: use the plugin's own two parts (compile from `@tailwindcss/node`, Scanner from
+ * `@tailwindcss/oxide`) to compute scan sources from `src/index.css` in the same way as the plugin,
+ * getting the actual scanned file list rather than duplicating an exclusion rule set here. Thus the
+ * exclusion list has only one source: `src/index.css`. The scanner skips ignored paths per
+ * `.gitignore`; unignored untracked files are also scanned and checked here (they trigger reloads too).
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -26,14 +28,18 @@ const SRC = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(SRC);
 const ENTRY = path.join(SRC, "index.css");
 
-/** 插件对这些后缀的改动只热更新、不整页重载（代码与样式），其余后缀一律算违例 */
+/**
+ * The plugin only hot-reloads changes to these extensions without full page reload (code and
+ * styles); all other extensions count as violations.
+ */
 const CODE_OR_STYLE = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".css"]);
-/** 守的范围 */
+/** Guarded scope */
 const GUARDED = ["src/", "server/"];
 
 const rel = (f) => path.relative(ROOT, f).split(path.sep).join("/");
 
-// 与 `@tailwindcss/vite` 4.x 的 generate() 相同：root 为 null 时以 Vite 的 root（仓库根）为 base 扫全部文件，再接上 `@source` 各条
+// Same as generate() in `@tailwindcss/vite` 4.x: when root is null, scans all files using Vite's
+// root (repository root) as base, then appends each `@source` rule
 
 async function scannedFiles() {
   const compiler = await compile(fs.readFileSync(ENTRY, "utf8"), { base: SRC, onDependency() {} });

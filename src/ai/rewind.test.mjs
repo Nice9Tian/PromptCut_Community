@@ -1,7 +1,8 @@
 /**
  * node --test src/ai/rewind.test.mjs
  *
- * 「回退到这里」的纯逻辑:那条用户消息和它之后的全部移除,原文和附件放回输入框。
+ * Pure logic for "Rewind to here": that user message and everything after it are removed, with the
+ * original text and attachments put back into the input box.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

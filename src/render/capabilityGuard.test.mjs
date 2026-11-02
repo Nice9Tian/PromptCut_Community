@@ -1,9 +1,10 @@
 /**
- * A0.2 运行期兜底的单测。跑:node --test src/render/capabilityGuard.test.mjs
+ * Unit test for A0.2 runtime fallback. Run: node --test src/render/capabilityGuard.test.mjs
  *
- * 这条规则错了不会报错,只会让一张毛玻璃卡的死素材被当成「独立卡」上云共享 ——
- * 换个下层就糊着别人的画面。所以三件事各钉一条:量得到、只对 independent 生效、
- * 降级之后 cardCapabilities 真的改口。
+ * If this rule is wrong, no error is thrown; it only causes a dead asset of a frosted-glass card
+ * to be shared to the cloud as a "standalone card": changing the lower layer then blurs with
+ * someone else's video. So pin one rule for each of three things: measurable, only effective
+ * for independent, and cardCapabilities actually changes after downgrade.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -11,7 +12,7 @@ import assert from "node:assert/strict";
 const { usesBackdropFilter, needsGuard, guardCompositing, resetGuardScans } = await import("./capabilityGuard.ts");
 const { cardCapabilities, degradedCards, resetDegradedCards } = await import("../kernel/frameMode.mjs");
 
-/** 最小的假 DOM:只需要 querySelector / querySelectorAll 和一张 style 表 */
+/** Minimal fake DOM: only requires querySelector / querySelectorAll and a style table */
 function fakeStage(clips) {
   const byClip = new Map();
   for (const [clipId, styles] of Object.entries(clips)) {
@@ -31,10 +32,10 @@ test("usesBackdropFilter: none / empty string does not count, any truthy value d
   assert.equal(usesBackdropFilter(el(""), readStyle), false);
   assert.equal(usesBackdropFilter(el("blur(24px)"), readStyle), true);
   assert.equal(usesBackdropFilter(null, readStyle), false);
-  // -webkit- 前缀那一支单独走
+  // The -webkit- prefix branch is handled separately
   const webkit = { style: { webkitBackdropFilter: "blur(24px)" }, querySelectorAll: () => [] };
   assert.equal(usesBackdropFilter(webkit, readStyle), true);
-  // 子孙节点也要扫到:玻璃板是卡片内部的 div,不是外层那一格
+  // Descendant nodes must also be scanned: the glass pane is a div inside the card, not the outer box
   const nested = { style: {}, querySelectorAll: () => [{ style: { backdropFilter: "blur(8px)" } }] };
   assert.equal(usesBackdropFilter(nested, readStyle), true);
 });
@@ -66,7 +67,7 @@ test("guardCompositing: declared independent but actually has frosted glass → 
   assert.equal(after.independentCache, false);
   assert.equal(degradedCards().get("punch-pill"), "backdrop-filter");
 
-  // 同一张卡不重复报警
+  // Do not alert repeatedly for the same card
   const again = guardCompositing(stage, [{ id: "c1", cardId: "punch-pill" }], { readStyle, warn: (m) => warnings.push(m) });
   assert.deepEqual(again, []);
   assert.equal(warnings.length, 1);
