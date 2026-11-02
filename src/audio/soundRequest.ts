@@ -6,6 +6,7 @@
 import { findClip, type Project, type TrackClip, type Track } from "../kernel/project";
 import { createNotificationRecipe, createTypingSoundRecipe, validateSoundEffectRecipe, type SoundEffectRecipe, type TypingScheduleOptions } from "../kernel/soundEffects";
 import { typingScheduleOptionsFromParams } from "../kernel/typingEvents";
+import { tr } from "../i18n/index.ts";
 
 export interface GenerateSoundOptions {
   preset?: "notification" | "keyboard";
@@ -43,12 +44,12 @@ export interface SoundGenerationPlan {
 
 export function planSoundGeneration(p: Project, options: GenerateSoundOptions): SoundGenerationPlan {
   const target = options.clipId ? findClip(p, options.clipId) : null;
-  if (options.clipId && !target?.clip.soundEffect) throw new Error("找不到可重生成的音效片段");
-  if (target?.track.locked) throw new Error("请先解锁音效序列");
+  if (options.clipId && !target?.clip.soundEffect) throw new Error(tr("No regenerable sound effect clip found"));
+  if (target?.track.locked) throw new Error(tr("Unlock the sound effect track first"));
   const requestedSourceId = options.sourceClipId ?? target?.clip.soundEffect?.sourceClipId;
   const candidate = requestedSourceId ? findClip(p, requestedSourceId) : null;
   const source = candidate?.clip.cardId === "mu-typing" ? candidate : null;
-  if ((options.sourceClipId || options.refreshSource) && !source) throw new Error("sourceClipId 必须指向当前剪辑中的打字机卡片");
+  if ((options.sourceClipId || options.refreshSource) && !source) throw new Error(tr("sourceClipId must point to a typing card in the current cut"));
   // Removing the visual card does not erase the persisted sound recipe; ordinary regeneration detaches the orphan link.
   const sourceClipId = source?.clip.id;
   const previous = target?.clip.soundEffect?.recipe;
@@ -77,7 +78,7 @@ export function planSoundGeneration(p: Project, options: GenerateSoundOptions): 
     }
   } else if (preset === "keyboard") {
     const typing = source ? typingScheduleOptionsFromParams(source.clip.params) : options.typing ?? (previous?.preset === "keyboard" ? previous.typingSource?.source : undefined);
-    if (!typing) throw new Error("键盘声需要 sourceClipId 或 typing.text 与节奏");
+    if (!typing) throw new Error(tr("Keyboard sound requires sourceClipId, or typing.text with a rhythm"));
     recipe = createTypingSoundRecipe(typing, { ...(previous?.preset === "keyboard" ? previous.params : {}), ...options.params }, { seed: options.seed ?? previous?.seed ?? typing.seed ?? 0 });
   } else recipe = createNotificationRecipe(options.params, { seed: options.seed ?? 0 });
   // A caller-owned object must not change while an async render is in flight.
@@ -87,9 +88,9 @@ export function planSoundGeneration(p: Project, options: GenerateSoundOptions): 
   const start = target ? undefined : options.start ?? source?.clip.start;
   const mediaOffset = source && recipe.preset === "keyboard" ? Math.max(0, source.clip.mediaOffset ?? 0) : 0;
   const available = recipe.frames / recipe.sampleRate - mediaOffset;
-  if (!target && start !== undefined && available <= 0) throw new Error("这段打字范围没有剩余声音,请检查素材偏移");
-  if (start !== undefined && (!Number.isFinite(start) || start < 0 || start >= p.duration)) throw new Error("start 必须在项目时间范围内");
+  if (!target && start !== undefined && available <= 0) throw new Error(tr("This typing range has no audio left, please check the media offset"));
+  if (start !== undefined && (!Number.isFinite(start) || start < 0 || start >= p.duration)) throw new Error(tr("start must be within the project time range"));
   const duration = source && recipe.preset === "keyboard" ? Math.min(available, source.clip.end - source.clip.start) : available;
-  const name = `${(options.name || (recipe.preset === "keyboard" ? "键盘声" : "提示音")).replace(/\.wav$/i, "").slice(0, 100)}.wav`;
+  const name = `${(options.name || (recipe.preset === "keyboard" ? tr("Keyboard sound") : tr("Notification sound"))).replace(/\.wav$/i, "").slice(0, 100)}.wav`;
   return { recipe, target, source, sourceClipId, start, duration, mediaOffset, name, expectedClip, expectedSource };
 }

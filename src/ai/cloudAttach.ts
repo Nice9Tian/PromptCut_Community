@@ -10,6 +10,7 @@
  * （原在 `src/ai/cloud/attach.ts`，上移至公开侧 `src/ai/cloudAttach.ts`）
  */
 import type { ChatAttachment } from "./types.ts";
+import { tr } from "../i18n/index.ts";
 
 /** 单个附件的上限(服务端 512 MB;超了回 413 `too-large`,同样的话也用于对话工作目录满了) */
 export const CLOUD_ATTACH_MAX_BYTES = 512 * 1024 * 1024;
@@ -24,11 +25,11 @@ export const CLOUD_ATTACH_ACCEPT = [
 ].join(",");
 
 /** 云端附件上传的悬停说明(附件按钮) */
-export const CLOUD_ATTACH_TITLE = "添加附件:文件传到云端这个对话的工作目录,让云端 Agent 用得上(单个不超过 512 MB)";
+export const CLOUD_ATTACH_TITLE = tr("Add attachment: upload files to this cloud chat's working directory so the Cloud Agent can use them (max 512 MB each)");
 
-export const CLOUD_ATTACH_TOO_LARGE = "文件太大了,云端收不下(单个文件不超过 512 MB,这个对话的工作目录也有总量上限)。";
+export const CLOUD_ATTACH_TOO_LARGE = tr("File too large, the cloud can't accept it (each file must be 512 MB or less, and this chat's working directory also has a total size limit).");
 /** 只发了附件、没写话:服务端不收空消息 */
-export const CLOUD_ATTACH_NEED_TEXT = "请写一句话,说明想让云端 Agent 怎么用这些文件。";
+export const CLOUD_ATTACH_NEED_TEXT = tr("Write one sentence explaining how you want the Cloud Agent to use these files.");
 
 /** 输入区上一个附件的占位 id(上传期间、失败重试、移除都靠它对上) */
 export function newCloudAttachId(): string {

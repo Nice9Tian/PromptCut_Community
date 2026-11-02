@@ -66,11 +66,11 @@ test("regeneration replaces one reference only, retaining range/offset/gain and 
 test("overlap, locked and stale project validation does not add an asset", () => {
   const p = fresh(); const result = actions.commitSoundEffect(spec({ duration: 1 }));
   const count = getState().project.media.length;
-  assert.throws(() => actions.commitSoundEffect(spec({ start: 1.2, trackId: p.tracks[0].id, link: { recipe, reuseKey, requestId: "other" } })), /重叠/);
+  assert.throws(() => actions.commitSoundEffect(spec({ start: 1.2, trackId: p.tracks[0].id, link: { recipe, reuseKey, requestId: "other" } })), /overlap/);
   assert.equal(getState().project.media.length, count);
   actions.updateTrack(p.tracks[0].id, { locked: true });
   assert.throws(() => actions.commitSoundEffect(spec({ replaceClipId: result.clipId, expectedClip: JSON.stringify(findClip(getState().project, result.clipId).clip) })), /解锁/);
-  assert.throws(() => actions.commitSoundEffect(spec({ projectId: "old" })), /切换/);
+  assert.throws(() => actions.commitSoundEffect(spec({ projectId: "old" })), /switch/);
 });
 
 test("split and trim retain canonical source offsets; linked sounds move and split in sync", async () => {

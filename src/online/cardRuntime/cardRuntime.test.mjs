@@ -68,16 +68,16 @@ const hostOf = (extra = {}) => ({
 });
 const bundle = async (files, entry, opts = {}) => T.bundleCard({ runtime: RUNTIME, entry, read: files.read, hasBuiltin: (p) => p === "src/kernel/clock.ts" || p === "src/cards/native/hud.tsx", ...opts });
 
-test("OCE-T-01 写法预检:不支持的写法认得出;注释、字符串、JSX 文本、类型里的不算", () => {
+test("OCE-T-01 syntax precheck: unsupported syntax is recognized; anything in comments, strings, JSX text or types does not count", () => {
   const what = (src) => P.unsupportedSyntax(src).map((x) => x.what);
   assert.deepEqual(what("export namespace N { export const x = 1 }"), ["namespace"]);
-  assert.deepEqual(what("module M { export const x = 1 }"), ["module 块"]);
-  assert.deepEqual(what("function d(t: any) {}\n@d class C {}"), ["装饰器"]);
-  assert.deepEqual(what("class C { accessor x = 1 }"), ["accessor 字段"]);
+  assert.deepEqual(what("module M { export const x = 1 }"), ["module block"]);
+  assert.deepEqual(what("function d(t: any) {}\n@d class C {}"), ["decorator"]);
+  assert.deepEqual(what("class C { accessor x = 1 }"), ["accessor field"]);
   assert.deepEqual(what("export const u = import.meta.url"), ["import.meta"]);
-  assert.deepEqual(what("export const m = import('./x')"), ["动态 import()"]);
-  assert.deepEqual(what("export const x = await Promise.resolve(1)"), ["顶层 await"]);
-  assert.equal(P.unsupportedSyntax("const a = 1;\n\nexport const b = await a")[0].line, 3, "带行号");
+  assert.deepEqual(what("export const m = import('./x')"), ["dynamic import()"]);
+  assert.deepEqual(what("export const x = await Promise.resolve(1)"), ["top-level await"]);
+  assert.equal(P.unsupportedSyntax("const a = 1;\n\nexport const b = await a")[0].line, 3, "has line number");
   assert.deepEqual(what(`
     // namespace N { } @d accessor x import.meta await
     /* import('./x') */
@@ -92,30 +92,30 @@ test("OCE-T-01 写法预检:不支持的写法认得出;注释、字符串、JSX
     const g = async () => await f();
     export const el = <div title="@d">hi @bob accessor zz namespace Q import.meta await</div>;
     export const v = accessor + namespace + module.exports;
-  `), [], "不该报");
-  assert.throws(() => P.unsupportedSyntax("const = ;"), "源码有语法错时抛错(调用方当转译失败)");
+  `), [], "should not be reported");
+  assert.throws(() => P.unsupportedSyntax("const = ;"), "throws on a source syntax error (the caller treats it as a transpile failure)");
 });
 
-test("OCE-T-02 转一个文件:TSX → CommonJS;取出说明符;语法错、太大给状态", () => {
+test("OCE-T-02 transpile one file: TSX → CommonJS; extract specifiers; syntax errors and oversized files give a status", () => {
   const ok = T.transpileCardFile(`${U}a.tsx`, CARD("a", `import { useMemo } from "react";\nimport { helper } from "./a-util";\nimport "./a.css";\nexport const used = helper();\nexport type ThreeMod = typeof import("three");`));
   assert.equal(ok.ok, true);
-  assert.match(ok.js, /require\(['"]react\/jsx-runtime['"]\)/, "JSX 用 automatic 运行时");
-  assert.doesNotMatch(ok.js, /CardDef|: \{ text: string \}/, "类型剥掉了");
-  assert.deepEqual([...ok.specifiers].sort(), ["./a-util", "./a.css", "react/jsx-runtime"].sort(), "只引类型的导入、没用到的具名导入不留 require(同 TypeScript 的省略规则)");
-  assert.doesNotThrow(() => new Function("require", "module", "exports", ok.js), "转出来的是能编的脚本");
+  assert.match(ok.js, /require\(['"]react\/jsx-runtime['"]\)/, "JSX uses the automatic runtime");
+  assert.doesNotMatch(ok.js, /CardDef|: \{ text: string \}/, "types are stripped");
+  assert.deepEqual([...ok.specifiers].sort(), ["./a-util", "./a.css", "react/jsx-runtime"].sort(), "type-only imports and unused named imports leave no require (same as TypeScript's elision rule)");
+  assert.doesNotThrow(() => new Function("require", "module", "exports", ok.js), "the output is a compilable script");
   const bad = T.transpileCardFile(`${U}b.tsx`, "export const x = <div>;");
   assert.equal(bad.ok, false);
   assert.equal(bad.state.state, "unsupported-syntax");
   assert.equal(bad.state.file, `${U}b.tsx`);
   const ns = T.transpileCardFile(`${U}c.tsx`, "export namespace N { export const x = 1 }");
-  assert.deepEqual(ns.state, { state: "unsupported-syntax", detail: "namespace(第 1 行)", file: `${U}c.tsx` });
+  assert.deepEqual(ns.state, { state: "unsupported-syntax", detail: "namespace(line 1)", file: `${U}c.tsx` });
   const big = T.transpileCardFile(`${U}d.tsx`, `export const s = "${"x".repeat(T.MAX_SOURCE_CHARS)}";`);
   assert.equal(big.state.state, "unsupported-syntax");
-  assert.match(big.state.detail, /文件太大/);
+  assert.match(big.state.detail, /file too large/);
   assert.deepEqual(T.requireSpecifiers(`var a = require('x'); var b = _interop(require("./y")); const t = "not require(here"`), ["x", "./y"]);
 });
 
-test("OCE-T-03 导入解析:包、同步来的源码、内置模块、样式;其余不支持", () => {
+test("OCE-T-03 import resolution: packages, synced source, built-in modules, styles; everything else is unsupported", () => {
   const synced = new Set([`${U}util.ts`, `${U}lib/index.tsx`, `${U}look.css`, `${U}sub/deep.ts`]);
   const builtin = new Set(["src/cards/native/hud.tsx", "src/kernel/clock.ts", "src/kernel/types.ts", "src/render/cards/graphValues.ts", "src/parts/lib/x.tsx", "src/editor/Preview.tsx", "src/render/Stage.tsx", "src/cards/fit.ts"]);
   const env = { hasSynced: (k) => synced.has(k), hasBuiltin: (p) => builtin.has(p) };
@@ -134,13 +134,13 @@ test("OCE-T-03 导入解析:包、同步来的源码、内置模块、样式;其
   for (const spec of ["lodash", "three/examples/jsm/controls/OrbitControls.js", "three/addons", "@/lib/utils", "react-dom/client", "node:fs", "",
     "../../editor/Preview", "../../render/Stage", "./nope", "./util?raw", "./data.json", "./pic.png", "../../../package.json", "../../../../etc/passwd", "./nope.css", "../native/hud.css"]) {
     const out = r(spec);
-    assert.equal(out.ok, false, `不该支持:${spec}`);
+    assert.equal(out.ok, false, `should not be supported: ${spec}`);
   }
-  assert.equal(RS.isBuiltinModulePath(`${U}x.tsx`), false, "用户卡目录不算页面自带");
+  assert.equal(RS.isBuiltinModulePath(`${U}x.tsx`), false, "the user card directory does not count as built into the page");
   assert.equal(RS.isBuiltinModulePath("src/kernel/x.test.mjs"), false);
 });
 
-test("OCE-T-04 一张卡打成包:闭包、缺文件、不支持的模块、代的签名、缓存", async () => {
+test("OCE-T-04 bundle one card: closure, missing files, unsupported modules, generation signature, cache", async () => {
   const files = lib({
     [`${U}a.tsx`]: CARD("a", `import { helper } from "./a-util";\nimport { now } from "../../kernel/clock";\nimport "./a.css";\nexport const used = helper() + now();`),
     [`${U}a-util.ts`]: `import { deep } from "./lib/deep";\nexport const helper = () => deep + 1;`,
@@ -151,13 +151,13 @@ test("OCE-T-04 一张卡打成包:闭包、缺文件、不支持的模块、代�
   const out = await bundle(files, `${U}a.tsx`);
   assert.equal(out.ok, true);
   const b = out.bundle;
-  assert.deepEqual(b.modules.map((m) => m.key), [`${U}a.tsx`, `${U}a-util.ts`, `${U}lib/deep.ts`], "入口在第一个;只收自己引到的");
+  assert.deepEqual(b.modules.map((m) => m.key), [`${U}a.tsx`, `${U}a-util.ts`, `${U}lib/deep.ts`], "entry comes first; only collects what it imports");
   assert.deepEqual(b.styles.map((s) => s.key), [`${U}a.css`]);
   assert.equal(b.styles[0].css, ".a-look { color: red }");
   assert.deepEqual(b.modules[0].imports["../../kernel/clock"], { kind: "builtin", path: "src/kernel/clock.ts" });
   assert.deepEqual(b.modules[0].imports["./a-util"], { kind: "synced", key: `${U}a-util.ts` });
   assert.equal(b.runtime, RUNTIME);
-  assert.equal(b.tailwind, "", "没给编译器就不生成");
+  assert.equal(b.tailwind, "", "nothing is generated when no compiler is given");
   assert.ok(b.generation.startsWith(`${RUNTIME}|`));
   // 依赖的哈希变了,代跟着变;没变的不变
   const again = await bundle(files, `${U}a.tsx`);
@@ -167,16 +167,16 @@ test("OCE-T-04 一张卡打成包:闭包、缺文件、不支持的模块、代�
   files.set(`${U}a.css`, `.a-look { color: blue }`);
   const c3 = await bundle(files, `${U}a.tsx`);
   assert.equal(c3.bundle.styles[0].css, ".a-look { color: blue }");
-  assert.notEqual(c3.bundle.generation, again.bundle.generation, "样式变了也换代");
+  assert.notEqual(c3.bundle.generation, again.bundle.generation, "a style change also bumps the generation");
   assert.notEqual((await T.bundleCard({ runtime: "ocr2:x", entry: `${U}other.tsx`, read: files.read, hasBuiltin: () => false })).bundle.generation,
-    (await bundle(files, `${U}other.tsx`)).bundle.generation, "运行时版本进代的签名");
+    (await bundle(files, `${U}other.tsx`)).bundle.generation, "the runtime version goes into the generation signature");
   // 失败:指出是哪个模块、哪个文件
   const f2 = lib({ [`${U}m.tsx`]: CARD("m", `import _ from "lodash";\nexport const z = _;`) });
   assert.deepEqual((await bundle(f2, `${U}m.tsx`)).state, { state: "missing-module", detail: "lodash", file: `${U}m.tsx` });
   const f3 = lib({ [`${U}n.tsx`]: CARD("n", `import { x } from "./gone";\nexport const z = x;`) });
   assert.deepEqual((await bundle(f3, `${U}n.tsx`)).state, { state: "missing-module", detail: "./gone", file: `${U}n.tsx` });
   const f4 = lib({ [`${U}p.tsx`]: CARD("p", `import { x } from "./p-bad";\nexport const z = x;`), [`${U}p-bad.ts`]: `export namespace X { export const x = 1 }\nexport const x = 1;` });
-  assert.deepEqual((await bundle(f4, `${U}p.tsx`)).state, { state: "unsupported-syntax", detail: "namespace(第 1 行)", file: `${U}p-bad.ts` });
+  assert.deepEqual((await bundle(f4, `${U}p.tsx`)).state, { state: "unsupported-syntax", detail: "namespace(line 1)", file: `${U}p-bad.ts` });
   assert.equal((await bundle(lib({}), `${U}none.tsx`)).state.state, "missing-module");
   // 缓存:第二次不再转译(换一个会抛错的读法也照出结果是不行的,所以数 set 的次数)
   let sets = 0, gets = 0;
@@ -185,11 +185,11 @@ test("OCE-T-04 一张卡打成包:闭包、缺文件、不支持的模块、代�
   await bundle(files, `${U}a.tsx`, { cache });
   assert.equal(sets, 3);
   await bundle(files, `${U}a.tsx`, { cache });
-  assert.equal(sets, 3, "哈希没变不重转");
+  assert.equal(sets, 3, "an unchanged hash is not transpiled again");
   assert.ok(gets >= 6);
 });
 
-test("OCE-T-05 加载器:执行、收卡片定义、组件渲得出来;相对导入、有环、样式回调", async () => {
+test("OCE-T-05 loader: executes, collects card definitions, components render; relative imports, cycles, style callbacks", async () => {
   const files = lib({
     [`${U}a.tsx`]: `import { useMemo } from "react";
 import { label } from "./a-util";
@@ -212,19 +212,19 @@ export const second = { id: "a2", name: "第二张", defaults: {}, controls: [],
   const loader = L.createCardLoader({ runtime: RUNTIME, host: hostOf(), onStyle: (e, css) => styles.push([e, css]), onCards: (d) => cardEvents.push(d.map((x) => x.id)), onResults: (r) => resultEvents.push([...r.keys()]) });
   const res = await loader.setBundles([out.bundle]);
   assert.deepEqual(res, [{ ok: true, entry: `${U}a.tsx`, generation: out.bundle.generation, cardIds: ["a", "a2"] }]);
-  assert.deepEqual(loader.cards().map((d) => d.id), ["a", "a2"], "长得像卡片定义的导出都收,不像的不收");
-  assert.deepEqual(styles, [[`${U}a.tsx`, ".a-look { color: red }"]], "样式在执行之前注入");
+  assert.deepEqual(loader.cards().map((d) => d.id), ["a", "a2"], "Export everything that looks like a card definition, skip what does not");
+  assert.deepEqual(styles, [[`${U}a.tsx`, ".a-look { color: red }"]], "Styles are injected before execution");
   assert.deepEqual(cardEvents, [["a", "a2"]]);
   assert.deepEqual(resultEvents, [[`${U}a.tsx`]]);
   const React = require("react");
   const { renderToStaticMarkup } = require("react-dom/server");
   const html = renderToStaticMarkup(React.createElement(loader.cards()[0].Component, { params: { text: "在线" } }));
-  assert.equal(html, `<div class="a-look">〔在线〕<b>42</b></div>`, "页面那一份 React 渲得出来;相对导入、有环、页面自带的模块都接上了");
-  assert.equal(L.isCardDef({ id: "x", name: "n", defaults: {}, controls: [] }), false, "没有 Component / card / audio 的不算");
+  assert.equal(html, `<div class="a-look">〔在线〕<b>42</b></div>`, "The page's own React renders it; relative imports, cycles and the page's built-in modules are all wired up");
+  assert.equal(L.isCardDef({ id: "x", name: "n", defaults: {}, controls: [] }), false, "Without Component / card / audio it does not count");
   assert.equal(L.isCardDef({ id: "x", name: "n", defaults: {}, controls: [], card: () => ({}) }), true);
 });
 
-test("OCE-T-06 加载器的失败状态", async () => {
+test("OCE-T-06 loader failure states", async () => {
   const one = async (source, host = hostOf(), extra = {}) => {
     const files = lib({ [`${U}c.tsx`]: source, ...extra });
     const out = await T.bundleCard({ runtime: RUNTIME, entry: `${U}c.tsx`, read: files.read, hasBuiltin: (p) => p === "src/kernel/clock.ts" || p === "src/kernel/gone.ts" });
@@ -240,12 +240,12 @@ test("OCE-T-06 加载器的失败状态", async () => {
   assert.deepEqual(await one(`import { x } from "../../kernel/gone";\nexport const card = { id: "c", name: "c", defaults: {}, controls: [], Component: () => x };`),
     { state: "missing-module", detail: "src/kernel/gone.ts", file: `${U}c.tsx` });
   assert.deepEqual(await one(`import { lazy } from "three";\nexport const card = { id: "c", name: "c", defaults: {}, controls: [], Component: () => lazy };`, hostOf({ three: async () => { throw new Error("chunk 404"); } })),
-    { state: "missing-module", detail: "three", file: `${U}c.tsx` }, "按需载入失败也算页面里没有");
-  const thrown = await one(`throw new Error("顶层炸了\\n第二行");`);
-  assert.deepEqual(thrown, { state: "load-error", detail: "顶层炸了", file: `${U}c.tsx` }, "只留错误的第一行");
+    { state: "missing-module", detail: "three", file: `${U}c.tsx` }, "A failed on-demand load also counts as missing from the page");
+  const thrown = await one(`throw new Error("Top level blew up\\nSecond line");`);
+  assert.deepEqual(thrown, { state: "load-error", detail: "Top level blew up", file: `${U}c.tsx` }, "Keep only the first line of the error");
   const syntax = await one(`if (true) { await Promise.resolve(1); }\nexport const card = { id: "c", name: "c", defaults: {}, controls: [], Component: () => null };`);
-  assert.equal(syntax.state, "unsupported-syntax", "预检认不出的顶层块里的 await:载入时的语法错同样归为不支持的写法");
-  assert.deepEqual(await one(`export const nothing = 1;`), { state: "load-error", detail: "这个文件没有导出卡片定义", file: `${U}c.tsx` });
+  assert.equal(syntax.state, "unsupported-syntax", "An await inside a top-level block the precheck cannot recognize: a syntax error at load time is likewise classified as unsupported syntax");
+  assert.deepEqual(await one(`export const nothing = 1;`), { state: "load-error", detail: "This file does not export a card definition", file: `${U}c.tsx` });
   // 运行时版本不一致
   const files = lib({ [`${U}c.tsx`]: CARD("c") });
   const out = await bundle(files, `${U}c.tsx`);
@@ -254,10 +254,10 @@ test("OCE-T-06 加载器的失败状态", async () => {
   // 卡片代码里现拼的 require 不在转译时的表里:抛错,不会摸到别的模块
   const sneaky = await one(`const r = require;\nconst fs = r("node:fs");\nexport const card = { id: "c", name: "c", defaults: {}, controls: [], Component: () => fs };`);
   assert.equal(sneaky.state, "load-error");
-  assert.match(sneaky.detail, /在线页面里没有这个模块/);
+  assert.match(sneaky.detail, /This module is not available on the online page/);
 });
 
-test("OCE-T-07 换代:没变不重新执行;变了重新执行;失败撤旧;不在组里的撤下;clear", async () => {
+test("OCE-T-07 generation change: unchanged is not re-executed; changed is re-executed; failure withdraws the old one; ones not in the group are withdrawn; clear", async () => {
   globalThis.__oceRuns = [];
   const src = (id, n) => `import { v } from "./${id}-dep";\n(globalThis as any).__oceRuns.push("${id}:" + v);\nexport const card = { id: "${id}", name: "n", defaults: {}, controls: [], Component: () => ${n} };`;
   const files = lib({ [`${U}a.tsx`]: src("a", 1), [`${U}a-dep.ts`]: `export const v = 1;`, [`${U}b.tsx`]: src("b", 1), [`${U}b-dep.ts`]: `export const v = 1;` });
@@ -269,16 +269,16 @@ test("OCE-T-07 换代:没变不重新执行;变了重新执行;失败撤旧;不�
   assert.deepEqual(globalThis.__oceRuns, ["a:1", "b:1"]);
   const defA = loader.cards()[0];
   await loader.setBundles(await both());
-  assert.deepEqual(globalThis.__oceRuns, ["a:1", "b:1"], "同一代不重新执行");
-  assert.equal(loader.cards()[0], defA, "定义对象也是原来那个");
+  assert.deepEqual(globalThis.__oceRuns, ["a:1", "b:1"], "The same generation is not re-executed");
+  assert.equal(loader.cards()[0], defA, "The definition object is also the original one");
   assert.equal(cardEvents, 1, "没变不通知");
   files.set(`${U}a-dep.ts`, `export const v = 2;`);
   await loader.setBundles(await both());
-  assert.deepEqual(globalThis.__oceRuns, ["a:1", "b:1", "a:2"], "只有闭包变了的那张重新执行,拿到的是新依赖");
+  assert.deepEqual(globalThis.__oceRuns, ["a:1", "b:1", "a:2"], "Only the card whose closure changed is re-executed, and it gets the new dependency");
   assert.notEqual(loader.cards()[0], defA);
   assert.equal(cardEvents, 2);
   // 新一代失败:旧一代撤下,不拿旧代码画新版本
-  files.set(`${U}a-dep.ts`, `throw new Error("坏了");`);
+  files.set(`${U}a-dep.ts`, `throw new Error("Broke");`);
   const r = await loader.setBundles(await both());
   assert.equal(r[0].ok, false);
   assert.deepEqual(loader.cards().map((d) => d.id), ["b"]);
@@ -303,7 +303,7 @@ test("OCE-T-07 换代:没变不重新执行;变了重新执行;失败撤旧;不�
   delete globalThis.__oceRuns;
 });
 
-test("OCE-T-08 运行状态:摊到卡上;编辑页面一侧的先后;面板说明", () => {
+test("OCE-T-08 run states: spread onto cards; order on the editor page side; panel description", () => {
   const results = new Map([
     [`${U}a.tsx`, { ok: true, entry: `${U}a.tsx`, generation: "g", cardIds: ["a", "a2"] }],
     [`${U}b.tsx`, { ok: false, entry: `${U}b.tsx`, generation: "g", state: { state: "load-error", detail: "炸了" } }],
@@ -314,63 +314,63 @@ test("OCE-T-08 运行状态:摊到卡上;编辑页面一侧的先后;面板说�
   const bundles = [{ ok: true, entry: `${U}a.tsx`, bundle: { generation: "gen-a-1" } }, { ok: false, entry: `${U}b.tsx`, state: { state: "missing-module", detail: "lodash" } }, { ok: true, entry: `${U}c.tsx`, bundle: { generation: "gen-c-1" } }];
   const st = (extra) => Object.fromEntries([...ERS.editorRunStates({ cards, available: true, bundles, ...extra })].map(([id, s]) => [id, s.state]));
   assert.deepEqual(st({ available: false }), { a: "not-isolated", b: "not-isolated", c: "not-isolated", d: "not-isolated" });
-  assert.deepEqual(st({}), { a: "loading", b: "missing-module", c: "loading", d: "loading" }, "转译不成的用转译的;舞台还没报的、还没转的在载入");
+  assert.deepEqual(st({}), { a: "loading", b: "missing-module", c: "loading", d: "loading" }, "Those that fail to transpile use the transpiler's state; those the stage has not reported on and that are not yet transpiled are loading");
   const A = new Map([["a", { state: "ready" }], ["c", { state: "ready" }]]), B = new Map([["a", { state: "ready" }], ["c", { state: "gpu" }]]);
-  assert.deepEqual(st({ stages: [A, null, B] }), { a: "ready", b: "missing-module", c: "gpu", d: "loading" }, "两台舞台不一样时取运行不了的那个");
+  assert.deepEqual(st({ stages: [A, null, B] }), { a: "ready", b: "missing-module", c: "gpu", d: "loading" }, "When the two stages differ, take the one that cannot run");
   // 能运行的带上这一代的短签名(成本身份里的源码版本用它):同一代同一个,换代换一个
   const verOf = (gen) => ERS.editorRunStates({ cards, available: true, stages: [A], bundles: [{ ok: true, entry: `${U}a.tsx`, bundle: { generation: gen } }] }).get("a").version;
   assert.equal(typeof verOf("gen-a-1"), "string");
   assert.equal(verOf("gen-a-1"), verOf("gen-a-1"));
   assert.notEqual(verOf("gen-a-1"), verOf("gen-a-2"));
-  assert.equal(ERS.editorRunStates({ cards, available: false, blockedDetail: "这个站点没有开启在线运行用户卡与素材效果卡", bundles: [] }).get("a").detail, "这个站点没有开启在线运行用户卡与素材效果卡");
+  assert.equal(ERS.editorRunStates({ cards, available: false, blockedDetail: "This site does not have online running of user cards and media effect cards enabled", bundles: [] }).get("a").detail, "This site does not have online running of user cards and media effect cards enabled");
   // 九种状态各有说明(ready、loading 不出;原来的第十种随旧档位 2026-10-22 删掉)
   const msg = (s) => ERS.runStateMessage(s);
   assert.equal(msg({ state: "ready" }), null);
   assert.equal(msg({ state: "loading" }), null);
   assert.equal(msg(undefined), null);
-  assert.equal(msg({ state: "unsupported-syntax", detail: "namespace(第 3 行)", file: `${U}x.tsx` }), "在线浏览器不能运行这张卡:用了在线页面不支持的写法(namespace(第 3 行),x.tsx)。画面由渲染节点提供。");
-  assert.equal(msg({ state: "missing-module", detail: "lodash" }), "在线浏览器不能运行这张卡:引用了在线页面里没有的模块 lodash。画面由渲染节点提供。");
-  assert.equal(msg({ state: "load-error", detail: "炸了" }), "在线浏览器不能运行这张卡:载入时出错(炸了)。");
-  assert.equal(msg({ state: "gpu" }), "这台设备的图形能力不够,素材效果卡的画面由渲染节点提供。");
-  assert.equal(msg({ state: "media" }), "这台设备解不了这段素材,素材效果卡的画面由渲染节点提供。");
-  assert.equal(msg({ state: "runtime-error" }), "这张卡在在线浏览器里运行出错,本次改由渲染节点提供画面。");
-  assert.equal(msg({ state: "not-isolated" }), "这个页面没有隔离的运行环境,用户卡与素材效果卡的画面由渲染节点提供。");
-  assert.equal(msg({ state: "not-isolated", detail: "这个站点没有开启在线运行用户卡与素材效果卡" }), "这个站点没有开启在线运行用户卡与素材效果卡,用户卡与素材效果卡的画面由渲染节点提供。");
+  assert.equal(msg({ state: "unsupported-syntax", detail: "namespace(line 3)", file: `${U}x.tsx` }), "The online browser cannot run this card: it uses syntax the online page does not support (namespace(line 3), x.tsx). The visuals are provided by the render node.");
+  assert.equal(msg({ state: "missing-module", detail: "lodash" }), "The online browser cannot run this card: it references a module the online page does not have: lodash. The visuals are provided by the render node.");
+  assert.equal(msg({ state: "load-error", detail: "炸了" }), "The online browser cannot run this card: error while loading (blew up).");
+  assert.equal(msg({ state: "gpu" }), "This device's graphics capability is not enough, so the picture of media effect cards is provided by a render node.");
+  assert.equal(msg({ state: "media" }), "This device cannot decode this media clip, so the picture of media effect cards is provided by a render node.");
+  assert.equal(msg({ state: "runtime-error" }), "This card failed to run in the online browser, so a render node provides the picture this time.");
+  assert.equal(msg({ state: "not-isolated" }), "This page has no isolated runtime environment, so the picture of user cards and media effect cards is provided by a render node.");
+  assert.equal(msg({ state: "not-isolated", detail: "This site does not have online running of user cards and media effect cards enabled" }), "This site does not have online running of user cards and media effect cards enabled, so the visuals of user cards and media effect cards are provided by the render node.");
   assert.equal(R.CARD_RUN_STATES.length, 9);
   for (const s of R.CARD_RUN_STATES) if (s !== "ready" && s !== "loading") assert.ok(msg({ state: s }), s);
 });
 
-test("OCE-T-09 Tailwind 补生成:候选类名;工具类与主题变量,不带基础层;每张卡各编各的", async () => {
+test("OCE-T-09 Tailwind supplementary generation: candidate class names; utility classes and theme variables, no base layer; each card compiles on its own", async () => {
   const c = TW.classCandidates([`<div className={cn("absolute inset-0 text-[137px]", on && 'bg-fuchsia-300 hover:scale-110')} data-x="[&>*]:p-2">\n  {\`md:grid-cols-3 \${x}\`}</div>;`]);
-  for (const want of ["absolute", "inset-0", "text-[137px]", "bg-fuchsia-300", "hover:scale-110", "[&>*]:p-2", "md:grid-cols-3"]) assert.ok(c.includes(want), `候选里该有 ${want}:${c.join(" ")}`);
-  assert.equal(TW.classCandidates(["a b c d"], 2).length, 2, "有上限");
+  for (const want of ["absolute", "inset-0", "text-[137px]", "bg-fuchsia-300", "hover:scale-110", "[&>*]:p-2", "md:grid-cols-3"]) assert.ok(c.includes(want), `Candidates should include ${want}: ${c.join(" ")}`);
+  assert.equal(TW.classCandidates(["a b c d"], 2).length, 2, "Has a limit");
   const dir = path.dirname(require.resolve("tailwindcss/package.json"));
   const compile = TW.createCardCssCompiler({ theme: fs.readFileSync(path.join(dir, "theme.css"), "utf8"), utilities: fs.readFileSync(path.join(dir, "utilities.css"), "utf8") });
   const css = await compile(c);
   assert.match(css, /\.text-\\\[137px\\\]\s*\{\s*font-size: 137px/);
-  assert.match(css, /--color-fuchsia-300:/, "用到的主题变量一并给(在线包里没用过的颜色变量本来不在)");
+  assert.match(css, /--color-fuchsia-300:/, "Theme variables that are used are provided too (color variables never used in the online bundle are absent by default)");
   assert.match(css, /@layer utilities/);
-  assert.doesNotMatch(css, /box-sizing: border-box|@layer base \{/, "不带基础层");
-  assert.equal(await compile(["notaclass", "也不是"]), "", "没有一个是类名:空串");
+  assert.doesNotMatch(css, /box-sizing: border-box|@layer base \{/, "No base layer");
+  assert.equal(await compile(["notaclass", "also not"]), "", "None of them is a class name: empty string");
   assert.equal(await compile([]), "");
   const other = await compile(["flex"]);
-  assert.doesNotMatch(other, /137px|fuchsia/, "后编的卡不带先编的卡的样式");
-  assert.equal(await compile(c), css, "同样的输入同样的输出");
+  assert.doesNotMatch(other, /137px|fuchsia/, "A card compiled later does not carry the styles of a card compiled earlier");
+  assert.equal(await compile(c), css, "Same input, same output");
   // 接进打包
   const files = lib({ [`${U}a.tsx`]: CARD("a") });
   const out = await bundle(files, `${U}a.tsx`, { css: compile });
   assert.match(out.bundle.tailwind, /137px/);
   const broken = await bundle(files, `${U}a.tsx`, { css: async () => { throw new Error("x"); } });
-  assert.equal(broken.ok, true, "样式补不出来不挡执行");
+  assert.equal(broken.ok, true, "A failure to generate styles does not block execution");
   assert.equal(broken.bundle.tailwind, "");
 });
 
-test("OCE-T-10 代码身份:页面算法与桌面 cardCodeIdentity 对仓库里每张卡算出同一个值", async () => {
+test("OCE-T-10 code identity: the page algorithm and the desktop cardCodeIdentity compute the same value for every card in the repo", async () => {
   const cards = await import(srcUrl("../server/vite-plugin-cards.ts"));
   const { sourceHash } = await import(srcUrl("../server/card-sync.mjs"));
   const text = (rel) => { try { const f = path.join(ROOT, rel); return fs.statSync(f).isFile() ? fs.readFileSync(f, "utf8") : null; } catch { return null; } };
-  assert.equal(await CI.sourceHashOf("a\r\nb", sha256), sourceHash("a\r\nb"), "内容哈希与内容库、桌面同一算法(换行先统一成 LF)");
-  assert.equal(await CI.sourceHashOf("a\r\nb"), sourceHash("a\nb"), "缺省用 WebCrypto,结果相同");
+  assert.equal(await CI.sourceHashOf("a\r\nb", sha256), sourceHash("a\r\nb"), "Content hash uses the same algorithm as the content store and the desktop app (line endings are normalized to LF first)");
+  assert.equal(await CI.sourceHashOf("a\r\nb"), sourceHash("a\nb"), "Defaults to WebCrypto, same result");
   const ids = new Set();
   for (const dir of ["src/cards/native", "src/cards/magicui", "src/cards/user"]) {
     for (const f of fs.readdirSync(path.join(ROOT, dir))) {
@@ -393,8 +393,8 @@ test("OCE-T-10 代码身份:页面算法与桌面 cardCodeIdentity 对仓库里�
     compared++;
     if (want.files.length > 1) multi++;
   }
-  assert.ok(compared >= 50, `比了 ${compared} 张`);
-  assert.ok(multi >= 10, `其中 ${multi} 张的闭包不止一个文件`);
+  assert.ok(compared >= 50, `Compared ${compared} cards`);
+  assert.ok(multi >= 10, `${multi} of them have a closure spanning more than one file`);
   assert.equal(await CI.cardCodeIdentityOf("src/cards/user/none.tsx", { synced: () => null, builtin: () => null }, { sha256 }), null);
   // 共用模块的几条规则
   assert.equal(SHARED.isCardCodePath("src/cards/native/hud.tsx"), true);
@@ -406,7 +406,7 @@ test("OCE-T-10 代码身份:页面算法与桌面 cardCodeIdentity 对仓库里�
   assert.equal(SHARED.cardCodePreimage(["a", "b"], (r) => (r === "a" ? "h" : null)), "a\nh\nb\nmissing\n");
 });
 
-test("OCE-T-11 转译缓存:按运行时版本、键、哈希;换版本不命中;失败结果也存", async () => {
+test("OCE-T-11 transpile cache: keyed by runtime version, key and hash; a different version misses; failed results are cached too", async () => {
   const a = TC.createTranspileCache("rt1", null);
   const ok = { ok: true, js: "x", specifiers: [] }, bad = { ok: false, state: { state: "unsupported-syntax" } };
   assert.equal(a.get("k", "h"), undefined);
@@ -414,13 +414,13 @@ test("OCE-T-11 转译缓存:按运行时版本、键、哈希;换版本不命中
   a.set("k2", "h", bad);
   assert.equal(a.get("k", "h"), ok);
   assert.equal(a.get("k2", "h"), bad);
-  assert.equal(a.get("k", "h2"), undefined, "哈希变了不命中");
+  assert.equal(a.get("k", "h2"), undefined, "A changed hash misses");
   a.set("k", "", ok);
-  assert.equal(a.get("k", ""), undefined, "没有哈希的不存");
+  assert.equal(a.get("k", ""), undefined, "Entries without a hash are not stored");
   await a.warm();
-  assert.equal(a.size, 2, "没有 IndexedDB 时就是一张内存表");
+  assert.equal(a.size, 2, "Without IndexedDB it is just an in-memory table");
   for (let i = 0; i < TC.TRANSPILE_CACHE_LIMIT + 5; i++) a.set(`f${i}`, "h", ok);
-  assert.equal(a.size, TC.TRANSPILE_CACHE_LIMIT, "有上限,淘汰最旧的");
+  assert.equal(a.size, TC.TRANSPILE_CACHE_LIMIT, "Has a size limit, evicts the oldest");
   assert.equal(a.get("k", "h"), undefined);
   // 假的 IndexedDB:落库的键带运行时版本,warm 只收本版本的、形状对的
   const rows = new Map([["rt1\nold\nh", ok], ["rt0\nstale\nh", ok], ["rt1\nbroken\nh", { ok: true }]]);
@@ -440,13 +440,13 @@ test("OCE-T-11 转译缓存:按运行时版本、键、哈希;换版本不命中
   const b = TC.createTranspileCache("rt1", fakeIdb);
   await b.warm();
   assert.equal(b.get("old", "h"), ok);
-  assert.deepEqual([...rows.keys()], ["rt1\nold\nh"], "别的运行时版本的、形状不对的顺手删掉");
+  assert.deepEqual([...rows.keys()], ["rt1\nold\nh"], "Entries from other runtime versions or with a wrong shape are deleted along the way");
   b.set("new", "h", bad);
   await new Promise((r) => setTimeout(r, 5));
   assert.equal(rows.get("rt1\nnew\nh"), bad);
 });
 
-test("OCE-T-12 注册表:运行时载入的卡与运行状态", () => {
+test("OCE-T-12 registry: cards loaded at runtime and their run state", () => {
   R.resetCards();
   R.resetRuntimeCardsForTest();
   const def = (id, extra = {}) => ({ id, name: `名-${id}`, defaults: {}, controls: [], Component: () => null, ...extra });
@@ -454,18 +454,18 @@ test("OCE-T-12 注册表:运行时载入的卡与运行状态", () => {
   const gen0 = R.cardsRegistryGen(), rgen0 = R.runtimeCardsGen();
   let notified = 0;
   const off = R.onRuntimeCardsChanged(() => { notified++; });
-  const a = def("rt-a"), clash = def("built", { name: "想冒充内置卡" });
+  const a = def("rt-a"), clash = def("built", { name: "Pretends to be a built-in card" });
   assert.equal(R.setRuntimeCards([a, clash]), true);
-  assert.equal(R.getCard("rt-a").name, "名-rt-a");
-  assert.equal(typeof R.getCard("rt-a").need_prerendering, "boolean", "和注册内置卡一样按审阅表盖能力(表里没有的按缺省)");
-  assert.equal(R.getCard("built").name, "名-built", "与构建时的卡撞 id:构建时的赢");
+  assert.equal(R.getCard("rt-a").name, "name-rt-a");
+  assert.equal(typeof R.getCard("rt-a").need_prerendering, "boolean", "Like registering a built-in card, capabilities are overlaid from the review table (entries missing from the table get defaults)");
+  assert.equal(R.getCard("built").name, "name-built", "Id clash with a build-time card: the build-time one wins");
   assert.equal(R.isRuntimeCard("rt-a"), true);
   assert.equal(R.isRuntimeCard("built"), false);
-  assert.deepEqual(R.allCards().map((c) => c.id), ["built"], "allCards 不含运行时载入的");
+  assert.deepEqual(R.allCards().map((c) => c.id), ["built"], "allCards does not include runtime-loaded cards");
   assert.equal(R.cardsRegistryGen(), gen0 + 1);
   assert.equal(R.runtimeCardsGen(), rgen0 + 1);
   assert.equal(notified, 1);
-  assert.equal(R.setRuntimeCards([a, clash]), false, "同一批定义对象:没变");
+  assert.equal(R.setRuntimeCards([a, clash]), false, "Same batch of definition objects: unchanged");
   assert.equal(notified, 1);
   assert.equal(R.setRuntimeCards([]), true);
   assert.equal(R.getCard("rt-a"), undefined);
@@ -473,17 +473,17 @@ test("OCE-T-12 注册表:运行时载入的卡与运行状态", () => {
   // 运行状态
   let s = 0;
   const offS = R.onCardRunStatesChanged(() => { s++; });
-  assert.equal(R.setCardRunStates([["x", { state: "ready" }], ["y", { state: "load-error", detail: "d".repeat(500), file: "f" }], ["z", { state: "编的" }], ["", { state: "ready" }], ["w", null]]), true);
+  assert.equal(R.setCardRunStates([["x", { state: "ready" }], ["y", { state: "load-error", detail: "d".repeat(500), file: "f" }], ["z", { state: "made-up" }], ["", { state: "ready" }], ["w", null]]), true);
   assert.deepEqual(R.cardRunState("x"), { state: "ready" });
-  assert.equal(R.cardRunState("y").detail.length, 300, "细节截断");
-  assert.equal(R.cardRunState("z"), undefined, "不认识的状态丢掉(舞台报来的当不可信输入)");
+  assert.equal(R.cardRunState("y").detail.length, 300, "Detail is truncated");
+  assert.equal(R.cardRunState("z"), undefined, "Unrecognized states are dropped (what the stage reports is treated as untrusted input)");
   assert.equal(R.cardRunState("w"), undefined);
   assert.equal(R.cardRunnableHere("x"), true);
   assert.equal(R.cardRunnableHere("y"), false);
-  assert.equal(R.cardRunnableHere("built"), true, "构建时就有定义的恒能运行");
+  assert.equal(R.cardRunnableHere("built"), true, "Cards defined at build time can always run");
   assert.equal(R.cardRunnableHere("nobody"), false);
   assert.equal(s, 1);
-  assert.equal(R.setCardRunStates({ x: { state: "ready" }, y: { state: "load-error", detail: "d".repeat(300), file: "f" } }), false, "内容没变不通知(也收普通对象)");
+  assert.equal(R.setCardRunStates({ x: { state: "ready" }, y: { state: "load-error", detail: "d".repeat(300), file: "f" } }), false, "No notification when the content is unchanged (plain objects are accepted too)");
   assert.equal(R.setCardRunStates([]), true);
   assert.equal(s, 2);
   offS();
@@ -491,9 +491,9 @@ test("OCE-T-12 注册表:运行时载入的卡与运行状态", () => {
   R.resetRuntimeCardsForTest();
 });
 
-test("OCE-T-13 执行的前提:缺省不执行;总开关只有明写 false 才关", () => {
+test("OCE-T-13 preconditions for execution: off by default; the master switch is only off when explicitly set to false", () => {
   G.resetCardExecGateForTest();
-  assert.equal(G.cardExecAvailable(), false, "隔离环境的结论没到之前不执行(没有 nginx 的摆法一直停在这里)");
+  assert.equal(G.cardExecAvailable(), false, "No execution until the isolated environment's verdict arrives (a setup without nginx stays here forever)");
   let n = 0;
   const off = G.subscribeCardExecGate(() => { n++; });
   G.setCardExecGate({ isolated: true });
@@ -502,21 +502,23 @@ test("OCE-T-13 执行的前提:缺省不执行;总开关只有明写 false 才�
   G.setCardExecGate({ isolated: true });
   assert.equal(n, 1, "没变不通知");
   G.setCardExecGate({ site: false });
-  assert.equal(G.cardExecAvailable(), false, "站点关了:隔离再好也不执行");
-  assert.equal(G.cardExecBlockedDetail(), "这个站点没有开启在线运行用户卡与素材效果卡");
-  G.setCardExecGate({ site: true, isolated: false, reason: "策略没生效" });
+  assert.equal(G.cardExecAvailable(), false, "Site disabled: no execution however good the isolation is");
+  assert.equal(G.cardExecBlockedDetail(), "This site does not have online running of user cards and media effect cards enabled");
+  G.setCardExecGate({ site: true, isolated: false, reason: "Policy not in effect" });
   assert.equal(G.cardExecAvailable(), false);
   assert.equal(G.cardExecBlockedDetail(), null);
-  assert.equal(G.cardExecGate().reason, "策略没生效");
+  assert.equal(G.cardExecGate().reason, "Policy not in effect");
   off();
   for (const on of [null, undefined, "", "{", {}, { v: 1, stageOrigins: [] }, { onlineCardExec: true }, { onlineCardExec: "false" }, { onlineCardExec: 0 }, '{"onlineCardExec":true}']) assert.equal(G.siteCardExecOf(on), true, JSON.stringify(on));
   for (const offv of [{ onlineCardExec: false }, '{"v":1,"onlineCardExec":false}']) assert.equal(G.siteCardExecOf(offv), false);
   G.resetCardExecGateForTest();
 });
 
-test("OCE-T-14 卡片源码同步里的转译:不能执行时与原来一字不差;能执行时转译、取样式;没变不重转;又不能了清掉", async () => {
+test("OCE-T-14 transpile during card source sync: identical to before when execution is unavailable; transpile and fetch styles when available; no re-transpile if unchanged; clear again when unavailable", async () => {
   const store = lib({
-    [`${U}a.tsx`]: `import { n } from "./a-util";\nimport "./a.css";\nexport const card = { id: "sync-a", name: "同步甲", defaults: {}, controls: [], Component: () => n };`,
+    [`${U}a.tsx`]: `import { n } from "./a-util";
+import "./a.css";
+export const card = { id: "sync-a", name: "Sync A", defaults: {}, controls: [], Component: () => n };`,
     [`${U}a-util.ts`]: `export const n = 1;`,
     [`${U}a.css`]: `.x { color: red }`,
     [`${U}unused.css`]: `.y { color: red }`,
@@ -540,39 +542,39 @@ test("OCE-T-14 卡片源码同步里的转译:不能执行时与原来一字不�
     },
   });
   await src.sync();
-  assert.deepEqual(gets.sort(), [`${U}a-util.ts`, `${U}a.tsx`], "不能执行:不取样式文件");
-  assert.deepEqual(runs, [], "不转译");
+  assert.deepEqual(gets.sort(), [`${U}a-util.ts`, `${U}a.tsx`], "Execution unavailable: style files are not fetched");
+  assert.deepEqual(runs, [], "No transpile");
   assert.deepEqual(seen, []);
   assert.deepEqual(src.debug().bundles, []);
   on = true;
   await src.sync();
   assert.deepEqual(runs, [[`${U}a.tsx`]]);
-  assert.ok(gets.includes(`${U}a.css`), "能执行:卡片引的样式文件也取");
-  assert.ok(!gets.includes(`${U}unused.css`), "没人引的样式不取");
+  assert.ok(gets.includes(`${U}a.css`), "Execution available: style files imported by the card are fetched too");
+  assert.ok(!gets.includes(`${U}unused.css`), "Styles nobody imports are not fetched");
   assert.deepEqual(seen, [[`${U}a.tsx`]]);
   assert.equal(src.debug().bundles[0].ok, true);
-  assert.equal(JSON.parse(src.debug().bundles[0].generation)[2], store.read(`${U}a.css`).hash, "转译时读得到样式的正文与哈希");
+  assert.equal(JSON.parse(src.debug().bundles[0].generation)[2], store.read(`${U}a.css`).hash, "The style's content and hash are readable during transpile");
   await src.sync();
-  assert.equal(runs.length, 1, "输入没变不重转");
+  assert.equal(runs.length, 1, "No re-transpile when the input is unchanged");
   store.set(`${U}a-util.ts`, `export const n = 2;`);
   await src.sync();
-  assert.equal(runs.length, 2, "闭包里的文件变了重转");
+  assert.equal(runs.length, 2, "Re-transpile when a file in the closure changes");
   store.set(`${U}a.css`, `.x { color: blue }`);
   await src.sync();
-  assert.equal(runs.length, 3, "样式变了也重转");
+  assert.equal(runs.length, 3, "Re-transpile when the style changes too");
   on = false;
   await src.sync();
-  assert.deepEqual(seen.at(-1), [], "又不能执行了:包清掉");
+  assert.deepEqual(seen.at(-1), [], "Execution unavailable again: bundles cleared");
   assert.equal(runs.length, 3);
   on = true;
   await src.sync();
-  assert.equal(runs.length, 4, "再能执行时重新转");
+  assert.equal(runs.length, 4, "Re-transpile when execution becomes available again");
   src.stop();
   assert.deepEqual(seen.at(-1), []);
   assert.deepEqual(S.cardSourceStyleImports(`import "./a.css";\nimport "../b.css";\nimport "../../../x.css";\nimport s from "./c.css?raw";\n// import "./no.css"`, `${U}sub/k.tsx`), [`${U}sub/a.css`, `${U}b.css`]);
 });
 
-test("OCE-T-15 仓库里现有的卡片与部件文件全部转得出,每个导入都解析得到", () => {
+test("OCE-T-15 all existing card and part files in the repo transpile, and every import resolves", () => {
   const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
   const rel = (f) => path.relative(ROOT, f).split(path.sep).join("/");
   const all = new Set(["src/cards", "src/parts", "src/kernel", "src/render/cards"].flatMap((d) => walk(path.join(ROOT, d))).map(rel));
@@ -591,13 +593,13 @@ test("OCE-T-15 仓库里现有的卡片与部件文件全部转得出,每个导�
       if (!r.ok && !(spec.endsWith(".css") && !f.startsWith(U))) unresolved.push(`${f} → ${spec}`);
     }
   }
-  assert.ok(files.length >= 70, `文件数 ${files.length}`);
-  assert.deepEqual(failed, [], "都转得出");
+  assert.ok(files.length >= 70, `File count ${files.length}`);
+  assert.deepEqual(failed, [], "All transpile");
   // 内置卡里唯一一处引到范围之外的页面模块(render 层);同步来的卡这样写会报「页面里没有的模块」
-  assert.deepEqual(unresolved, ["src/cards/native/caption-track.tsx → ../../render/captionFrame.mjs"], "除了这一处,每个导入都接得上");
+  assert.deepEqual(unresolved, ["src/cards/native/caption-track.tsx → ../../render/captionFrame.mjs"], "Except this one, every import resolves");
 });
 
-test("OCE-T-16 守门:编辑页面与导出页不引加载器;包名与白名单一致;运行时版本的形状", () => {
+test("OCE-T-16 gatekeeper: the editor page and the export page do not import the loader; package names match the allowlist; shape of the runtime version", () => {
   const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
   const forbidden = /cardRuntime\/(loader|stageRuntime|hostModules)\b/;
   const offenders = [];
@@ -610,35 +612,35 @@ test("OCE-T-16 守门:编辑页面与导出页不引加载器;包名与白名单
       for (const m of text.matchAll(/(?:from\s+|import\s*\(\s*|import\s+)["']([^"']+)["']/g)) if (forbidden.test(m[1])) offenders.push(`${path.relative(ROOT, f)} → ${m[1]}`);
     }
   }
-  assert.deepEqual(offenders, [], "编辑页面的源里不建加载器(只转译,不执行)");
+  assert.deepEqual(offenders, [], "The editor page's source does not create the loader (transpile only, no execution)");
   for (const f of ["src/ExportView.tsx", "src/Shell.tsx", "src/App.tsx"]) {
     if (fs.existsSync(path.join(ROOT, f))) assert.doesNotMatch(fs.readFileSync(path.join(ROOT, f), "utf8"), forbidden, f);
   }
   // 编辑页面一侧的转译模块本身不含执行的手段
   for (const f of ["transpile.ts", "transpile.browser.ts", "precheck.ts", "remotionLock.mjs", "resolve.ts", "tailwind.ts", "transpileCache.ts", "codeIdentity.ts", "gate.ts"]) {
     const text = fs.readFileSync(path.join(ROOT, "src/online/cardRuntime", f), "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
-    assert.doesNotMatch(text, /new Function|\beval\(|\bimport\(\s*[^)\s]/,`${f} 里不该有执行代码的手段`);
+    assert.doesNotMatch(text, /new Function|\beval\(|\bimport\(\s*[^)\s]/,`${f} must not contain any means of executing code`);
   }
   const host = fs.readFileSync(path.join(ROOT, "src/online/cardRuntime/hostModules.ts"), "utf8");
   const names = [...host.matchAll(/^\s*"([^"]+)": \(\) => import\("([^"]+)"\),$/gm)].map((m) => { assert.equal(m[1], m[2]); return m[1]; });
-  assert.deepEqual(names, [...PR.CARD_PACKAGES], "页面模块表的包名与白名单一一对上");
-  assert.equal(V.CARD_RUNTIME_VERSION, "ocr2:sucrase@dev:tailwindcss@dev", "单测里没有构建注入的版本");
+  assert.deepEqual(names, [...PR.CARD_PACKAGES], "The package names in the page module table match the allowlist one to one");
+  assert.equal(V.CARD_RUNTIME_VERSION, "ocr2:sucrase@dev:tailwindcss@dev", "Unit tests have no build-injected version");
   assert.equal(V.cardRuntimeVersionOf("ocr1", { sucrase: "3.35.1", tailwindcss: "4.3.3" }), "ocr1:sucrase@3.35.1:tailwindcss@4.3.3");
-  assert.equal(require("sucrase/package.json").version, "3.35.1", "转译器钉在契约写的那一版");
+  assert.equal(require("sucrase/package.json").version, "3.35.1", "The transpiler is pinned to the version written in the contract");
 });
 
-test('OCE-T-05 多CSS按文件回调、Tailwind最后；换代失败/卸载/clear完整撤样式，旧串回调保留', async () => {
+test('OCE-T-05 Multiple CSS files call back per file, Tailwind last; on generation-change failure/unmount/clear, styles are fully removed, and the old string callback is kept', async () => {
   const entry = `${U}parts.tsx`;
   const original = {runtime:RUNTIME,entry,generation:'1',modules:[{key:entry,imports:{},js:'exports.probe={id:"parts",name:"parts",defaults:{},controls:[],Component:()=>null};'}],styles:[{key:'first.css',css:'.first {color:red}'},{key:'later.css',css:'@import "https://example.invalid/public.css";'}],tailwind:'.last {color:blue}'};
   const calls=[];
-  const loader=L.createCardLoader({runtime:RUNTIME,host:hostOf(),onStyles:(entry,files)=>calls.push([entry,[...files]]),onStyle:()=>assert.fail('多文件回调优先')});
+  const loader=L.createCardLoader({runtime:RUNTIME,host:hostOf(),onStyles:(entry,files)=>calls.push([entry,[...files]]),onStyle:()=>assert.fail('Multi-file callback takes priority')});
   assert.equal((await loader.setBundles([original]))[0].ok,true);
   assert.deepEqual(calls.at(-1),[entry,[original.styles[0].css,original.styles[1].css,original.tailwind]]);
-  const count=calls.length;await loader.setBundles([original]);assert.equal(calls.length,count,'同代不重注样式');
+  const count=calls.length;await loader.setBundles([original]);assert.equal(calls.length,count,'Same generation does not re-inject styles');
   assert.equal((await loader.setBundles([{...original,generation:'2',runtime:'bad'}]))[0].ok,false);
-  assert.deepEqual(calls.at(-1),[entry,[]],'换代失败撤旧样式');
-  await loader.setBundles([original]);await loader.setBundles([]);assert.deepEqual(calls.at(-1),[entry,[]],'卸载撤样式');
-  await loader.setBundles([original]);loader.clear();assert.deepEqual(calls.at(-1),[entry,[]],'clear撤全部');
+  assert.deepEqual(calls.at(-1),[entry,[]],'Generation-change failure removes the old styles');
+  await loader.setBundles([original]);await loader.setBundles([]);assert.deepEqual(calls.at(-1),[entry,[]],'Unmount removes styles');
+  await loader.setBundles([original]);loader.clear();assert.deepEqual(calls.at(-1),[entry,[]],'clear removes everything');
   const legacy=[];const older=L.createCardLoader({runtime:RUNTIME,host:hostOf(),onStyle:(e,css)=>legacy.push([e,css])});
   await older.setBundles([original]);assert.deepEqual(legacy.at(-1),[entry,[...original.styles.map(s=>s.css),original.tailwind].join('\n')]);older.clear();assert.deepEqual(legacy.at(-1),[entry,'']);
 });

@@ -87,7 +87,7 @@ test("解析:参数没流完整或不是报告时返回 null", () => {
 
 test("reportsOf:按 parts 先后顺序,跳过别的工具;没有 parts 时读 tools", () => {
   const parts = [
-    { kind: "text", text: "开始" },
+    { kind: "text", text: "Start" },
     { kind: "tool", name: "mcp__promptcut__report_progress", input: { final: false, done: ["a"] } },
     { kind: "tool", name: "add_clip", input: { final: true, done: ["不是报告"] } },
     { kind: "tool", name: "report_progress", input: { final: true, problems: ["b"] } },
@@ -98,7 +98,7 @@ test("reportsOf:按 parts 先后顺序,跳过别的工具;没有 parts 时读 to
 
 test("reportText:只拼非空的组,有阶段名时带上", () => {
   assert.equal(
-    reportText({ final: true, stage: "配乐", done: ["加了配乐", "压了人声"], todo: [], problems: ["结尾太突兀"] }),
+    reportText({ final: true, stage: "Background music", done: ["加了配乐", "压了人声"], todo: [], problems: ["结尾太突兀"] }),
     "[配乐] 已完成:加了配乐、压了人声;问题:结尾太突兀",
   );
   assert.equal(reportText({ final: true, done: [], todo: [], problems: [] }), "");

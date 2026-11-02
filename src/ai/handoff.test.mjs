@@ -63,7 +63,7 @@ test("文字为空时用进度报告代替:只拼非空的组,带阶段名", () 
 test("只交了报告的回复也算说过话:没会话时 anySpoke、有会话时 othersSpoke 都认", () => {
   const onlyReport = [u("一"), a("agy", "", { parts: [report({ final: false, done: ["拆好了镜头"] })] })];
   assert.notEqual(buildHandoff(onlyReport, "claude", false), "", "anySpoke");
-  const h = [u("一"), a("claude", "C1"), u("二"), a("agy", "  ", { parts: [report({ final: true, todo: ["配乐"] })] })];
+  const h = [u("一"), a("claude", "C1"), u("二"), a("agy", "  ", { parts: [report({ final: true, todo: ["Background music"] })] })];
   const s = buildHandoff(h, "claude", true);
   assert.match(s, /待办:配乐/, "othersSpoke");
   assert.doesNotMatch(s, /C1/);

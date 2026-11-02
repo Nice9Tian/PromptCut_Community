@@ -1,5 +1,6 @@
 import type { AiProvider, ChatMessage } from "./types";
 import { reportsOf, reportText } from "./progressReport.ts";
+import { tr } from "../i18n/index.ts";
 
 /**
  * 换模型接手时的「前情」。
@@ -17,12 +18,12 @@ const LABEL: Record<AiProvider, string> = {
   claude: "Claude",
   agy: "Antigravity",
   codex: "Codex",
-  api: "API 直连",
+  api: tr("Direct API"),
 };
 
 function clip(text: string, max: number): string {
   const t = text.trim();
-  return t.length > max ? `${t.slice(0, max)}…(后面略)` : t;
+  return t.length > max ? tr("{0}…(rest omitted)", t.slice(0, max)) : t;
 }
 
 /**
@@ -67,10 +68,10 @@ export function buildHandoff(
   for (const m of unseen) {
     const text = spokenText(m);
     if (!text) continue;
-    if (m.role === "user") lines.push(`用户:${clip(text, perMessage)}`);
+    if (m.role === "user") lines.push(tr("User: {0}", clip(text, perMessage)));
     else if (m.role === "assistant") {
-      const who = m.runtime?.provider ? LABEL[m.runtime.provider] ?? m.runtime.provider : "助手";
-      lines.push(`助手(${who}${m.runtime?.model ? ` · ${m.runtime.model}` : ""}):${clip(text, perMessage)}`);
+      const who = m.runtime?.provider ? LABEL[m.runtime.provider] ?? m.runtime.provider : tr("Assistant");
+      lines.push(tr("Assistant ({0}{1}): {2}", who, m.runtime?.model ? ` · ${m.runtime.model}` : "", clip(text, perMessage)));
     }
   }
 
@@ -85,10 +86,10 @@ export function buildHandoff(
   const dropped = lines.length - kept.length;
 
   return [
-    "[前情 —— 系统自动附上,不是用户这一轮说的话。这段对话之前不是你在接待(或者你的会话记录已经没了),",
-    "你看不到那段历史,下面是按时间顺序的摘录。用户在里面提过的要求照样算数;时间轴和素材库的现状以工具读到的为准。]",
-    ...(dropped > 0 ? [`(更早的 ${dropped} 条略)`] : []),
+    tr("[Background: attached automatically by the system, not something the user said this round. Before this conversation you were not the one handling it (or your session record is gone),"),
+    tr("so you can't see that history. Below is an excerpt in chronological order. Requests the user made in it still count; for the current state of the timeline and media library, trust what the tools read.]"),
+    ...(dropped > 0 ? [tr("({0} earlier items omitted)", dropped)] : []),
     ...kept,
-    "[/前情]",
+    tr("[/Background]"),
   ].join("\n");
 }

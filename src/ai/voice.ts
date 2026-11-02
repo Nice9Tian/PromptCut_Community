@@ -3,6 +3,7 @@
  * 服务端在 server/vite-plugin-voice.ts,API Key 只在服务端,这边只看得到后四位。
  */
 import type { UploadedMedia } from "../editor/io/mediaUpload";
+import { tr } from "../i18n/index.ts";
 
 export type Provider = "minimax" | "kling" | "vidu";
 
@@ -66,7 +67,7 @@ export type VoicePatch = Partial<Omit<VoiceConfig, "apiKey" | "minimax" | "kling
 async function req<T>(url: string, init: RequestInit = {}, timeoutMs = 20_000): Promise<T> {
   const r = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok || data.ok === false) throw new Error(data.error || `${url} 返回 ${r.status}`);
+  if (!r.ok || data.ok === false) throw new Error(data.error || tr("{0} returned {1}", url, r.status));
   return data as T;
 }
 
@@ -120,7 +121,7 @@ export async function cloneVoiceFromFile(
   const upName = `voice-clone-src-${Date.now()}-${file.name}`;
   const up = await fetch(`/api/media/upload/${encodeURIComponent(upName)}`, { method: "POST", body: file });
   const data = await up.json().catch(() => ({}));
-  if (!up.ok || !(data.hash || data.url)) throw new Error(data.error || `上传源文件失败(HTTP ${up.status})`);
+  if (!up.ok || !(data.hash || data.url)) throw new Error(data.error || tr("Failed to upload source file (HTTP {0})", up.status));
   const media = { hash: data.hash, url: data.url, name: file.name };
   return post("/api/voice/clone", { ...args, media, consent: true }, 180_000);
 }

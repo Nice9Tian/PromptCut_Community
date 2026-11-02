@@ -26,7 +26,7 @@ function tokensOf(source: string): Tok[] {
   const head = lines[0] ?? "";
   const at = (name: string) => head.indexOf(name);
   const cLabel = at("Label"), cRaw = at("Raw"), cCtx = at("contextualKeyword"), cDepth = at("scopeDepth"), cType = at("isType"), cRole = at("identifierRole");
-  if (cLabel < 0 || cRaw < 0 || cCtx < 0 || cDepth < 0 || cType < 0 || cRole < 0) throw new Error("词法结果的表头变了");
+  if (cLabel < 0 || cRaw < 0 || cCtx < 0 || cDepth < 0 || cType < 0 || cRole < 0) throw new Error("The lexer result header changed");
   const out: Tok[] = [];
   for (let i = 1; i < lines.length; i++) {
     const l = lines[i];
@@ -52,22 +52,22 @@ export function unsupportedSyntax(source: string): UnsupportedSyntax[] {
   const hit = (what: string, line: number) => { if (!seen.has(what)) { seen.add(what); out.push({ what, line }); } };
   for (let i = 0; i < toks.length; i++) {
     const t = toks[i], next = toks[i + 1], next2 = toks[i + 2], prev = toks[i - 1];
-    if (t.label === "@") { hit("装饰器", t.line); continue; }
+    if (t.label === "@") { hit("decorator", t.line); continue; }
     if (t.label === "name" && (t.raw === "namespace" || t.raw === "module") && prev?.raw !== "declare" && prev?.raw !== "."
       && next && (next.label === "name" || next.label === "string") && next2 && (next2.label === "{" || next2.label === ".")) {
-      hit(t.raw === "module" ? "module 块" : "namespace", t.line);
+      hit(t.raw === "module" ? "module block" : "namespace", t.line);
       continue;
     }
     if (t.label === "name" && t.raw === "accessor" && !t.isType && next && next.line === t.line && (next.label === "name" || next.label === "[" || next.label === "string")) {
-      hit("accessor 字段", t.line);
+      hit("accessor field", t.line);
       continue;
     }
     if (t.raw === "import" && (t.label === "import" || t.label === "name") && next) {
       if (next.label === ".") { hit("import.meta", t.line); continue; }
       // 类型位置的 `typeof import("three")` 不算(转译时整句剥掉)
-      if (next.label === "(" && !t.isType) { hit("动态 import()", t.line); continue; }
+      if (next.label === "(" && !t.isType) { hit("dynamic import()", t.line); continue; }
     }
-    if (t.label === "name" && t.raw === "await" && t.depth === 0 && !t.isType) hit("顶层 await", t.line);
+    if (t.label === "name" && t.raw === "await" && t.depth === 0 && !t.isType) hit("top-level await", t.line);
   }
   return out;
 }

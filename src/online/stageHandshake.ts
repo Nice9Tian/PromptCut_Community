@@ -98,7 +98,7 @@ export function createStageHandshake(deps: StageHandshakeDeps): StageHandshake {
   const summary = () => {
     const got = deps.ids.filter((id) => slots.get(id)!.readyAt !== null);
     const loaded = deps.ids.filter((id) => slots.get(id)!.loadedAt !== null);
-    return `握上手的舞台:${got.join("、") || "无"};加载完的舞台:${loaded.join("、") || "无"}`;
+    return `Stages handshaken: ${got.join(", ") || "none"}; stages loaded: ${loaded.join(", ") || "none"}`;
   };
   const failWith = (why: string) => {
     if (!live()) return;
@@ -108,12 +108,12 @@ export function createStageHandshake(deps: StageHandshakeDeps): StageHandshake {
     deps.fail(reason);
   };
 
-  const total: Timer = setTimer(() => failWith(`打开 ${Math.round(totalMs / 1000)} 秒内两个舞台没都握上手`), totalMs);
+  const total: Timer = setTimer(() => failWith(`Both stages did not complete the handshake within ${Math.round(totalMs / 1000)} s of opening`), totalMs);
   const interimTimer: Timer | null = deps.interim ? setTimer(() => {
     if (phase !== "waiting" || slots.get(front)!.readyAt !== null) return;
     phase = "interim";
     interimAt = now() - t0;
-    deps.interim!(`可见舞台 ${front} 挂上 ${Math.round(interimMs / 1000)} 秒没握上手,先用同源单舞台出画面、预热两个舞台源(${summary()})`);
+    deps.interim!(`Visible stage ${front} did not complete the handshake ${Math.round(interimMs / 1000)} s after attaching; showing output from a same-origin single stage for now and warming up both stage origins (${summary()})`);
   }, interimMs) : null;
 
   return {
@@ -125,7 +125,7 @@ export function createStageHandshake(deps: StageHandshakeDeps): StageHandshake {
       if (s.deadline !== null) clearTimer(s.deadline);
       s.deadline = setTimer(() => {
         s.deadline = null;
-        if (s.readyAt === null) failWith(`舞台 ${id} 加载完 ${Math.round(perStageMs / 1000)} 秒没握上手`);
+        if (s.readyAt === null) failWith(`Stage ${id} did not complete the handshake ${Math.round(perStageMs / 1000)} s after loading`);
       }, perStageMs);
     },
     ready(id) {

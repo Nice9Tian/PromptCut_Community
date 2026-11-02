@@ -12,6 +12,7 @@
  * (`transpile.browser.ts`),单测里从 `node_modules` 读。
  */
 import { compile } from "tailwindcss";
+import { tr } from "../../i18n/index.ts";
 
 /** 一张卡最多取多少个候选(防坏数据) */
 export const MAX_CANDIDATES = 20_000;
@@ -57,7 +58,7 @@ export function createCardCssCompiler(sources: TailwindSources): CardCssCompiler
     loadStylesheet: async (id: string, base: string) => {
       if (id === "tailwindcss/theme.css") return { path: "tailwindcss/theme.css", base, content: sources.theme };
       if (id === "tailwindcss/utilities.css") return { path: "tailwindcss/utilities.css", base, content: sources.utilities };
-      throw new Error(`在线页面里没有这份样式:${id}`);
+      throw new Error(tr("The online page has no such stylesheet: {0}", id));
     },
   });
   // 一个候选都不给时的输出(只有层声明与版权注释):之后的输出等于它就当「没有样式」

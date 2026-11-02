@@ -19,20 +19,20 @@ function fresh(name = "起点") {
   return getState().project;
 }
 
-test("快照栈模式:行为照旧,canUndo / canRedo 反映 history / future", () => {
+test("snapshot stack mode: behavior unchanged, canUndo / canRedo reflect history / future", () => {
   fresh();
   assert.equal(actions.canUndo(), false);
-  actions.setProjectMeta({ name: "改 1" });
-  actions.setProjectMeta({ name: "改 2" });
+  actions.setProjectMeta({ name: "edit 1" });
+  actions.setProjectMeta({ name: "edit 2" });
   assert.equal(core.history.length, 2);
   actions.undo();
-  assert.equal(getState().project.name, "改 1");
+  assert.equal(getState().project.name, "edit 1");
   assert.equal(actions.canRedo(), true);
   actions.redo();
-  assert.equal(getState().project.name, "改 2");
+  assert.equal(getState().project.name, "edit 2");
 });
 
-test("V5-快照栈模式:同一 mergeKey 300 ms 内的连续修改合并成一步,中间有别的修改就不合并", () => {
+test("V5-snapshot stack mode: consecutive edits with the same mergeKey within 300 ms merge into one step, and do not merge if another edit comes in between", () => {
   const p0 = fresh();
   for (let i = 0; i < 4; i++) core.setProject({ ...getState().project, width: 100 + i }, { mergeKey: "w" });
   assert.equal(core.history.length, 1);
@@ -50,7 +50,7 @@ test("V5-快照栈模式:同一 mergeKey 300 ms 内的连续修改合并成一�
   assert.equal(core.history.length, 2);
 });
 
-test("连上文档服务:setProject 走 docsync,撤销按页面会话,别人的改动写进 state、不进撤销栈;解绑后回到快照栈", () => {
+test("Connected to the document service: setProject goes through docsync, undo is per page session, other people's changes are written to state and not pushed onto the undo stack; after unbinding, falls back to the snapshot stack", () => {
   const p0 = fresh("共享");
   const svc = new MemDocService({ project: structuredClone(p0), rev: 3 });
   let linkA;
@@ -65,47 +65,47 @@ test("连上文档服务:setProject 走 docsync,撤销按页面会话,别人的�
   svc.drain();
 
   const historyBefore = core.history.length;
-  actions.setProjectMeta({ name: "A 改的" });
-  assert.equal(getState().project.name, "A 改的");
+  actions.setProjectMeta({ name: "Edited by A" });
+  assert.equal(getState().project.name, "Edited by A");
   assert.equal(getState().project, A.project);
   assert.equal(core.history.length, historyBefore); // 快照栈不动
   assert.equal(actions.canUndo(), true);
   svc.drain();
-  assert.equal(svc.project.name, "A 改的");
-  assert.equal(B.project.name, "A 改的");
+  assert.equal(svc.project.name, "Edited by A");
+  assert.equal(B.project.name, "Edited by A");
 
   // B 改了(序列名,另一个实体),A 的 state 跟着变,但 A 的撤销栈里没有它
-  B.commit({ ...B.project, tracks: B.project.tracks.map((t, i) => (i === 0 ? { ...t, name: "B 改的序列" } : t)) });
+  B.commit({ ...B.project, tracks: B.project.tracks.map((t, i) => (i === 0 ? { ...t, name: "Track edited by B" } : t)) });
   svc.drain();
-  assert.equal(getState().project.tracks[0].name, "B 改的序列");
+  assert.equal(getState().project.tracks[0].name, "Track edited by B");
   assert.equal(getState().dirty, true);
   actions.undo();
   assert.equal(getState().project.name, "共享");
-  assert.equal(getState().project.tracks[0].name, "B 改的序列");
+  assert.equal(getState().project.tracks[0].name, "Track edited by B");
   assert.equal(actions.canUndo(), false);
   assert.equal(actions.canRedo(), true);
   actions.redo();
-  assert.equal(getState().project.name, "A 改的");
+  assert.equal(getState().project.name, "Edited by A");
   svc.drain();
   assert.equal(JSON.stringify(getState().project), JSON.stringify(svc.project));
   assert.equal(JSON.stringify(B.project), JSON.stringify(svc.project));
 
   // loadProject 是一次根替换
-  const other = { ...structuredClone(svc.project), name: "打开的旧文件" };
+  const other = { ...structuredClone(svc.project), name: "Old file that was opened" };
   actions.loadProject(other);
   assert.equal(actions.canUndo(), false);
   svc.drain();
   assert.equal(svc.log[svc.log.length - 1].ops[0].path, "");
-  assert.equal(B.project.name, "打开的旧文件");
+  assert.equal(B.project.name, "Old file that was opened");
 
   unbind();
-  actions.setProjectMeta({ name: "解绑后" });
+  actions.setProjectMeta({ name: "After unbinding" });
   assert.equal(core.history.length, 1);
   assert.equal(A.unconfirmed, 0);
 });
 
-test("AI 栏「撤销这步」(revertRemote)撤掉 Agent 加的轨道:store 里的项目当场换成撤后的那一份,不等下一次改动", () => {
-  const p0 = fresh("撤这步");
+test("AI panel \"Undo this step\" (revertRemote) undoes the track the Agent added: the project in the store is swapped on the spot for the post-undo copy, without waiting for the next edit", () => {
+  const p0 = fresh("Undo this step");
   const svc = new MemDocService({ project: structuredClone(p0), rev: 1 });
   let linkA;
   const A = new DocSync(p0, { projectId: "P", session: "A", send: (m) => linkA.send(m) });
@@ -119,19 +119,19 @@ test("AI 栏「撤销这步」(revertRemote)撤掉 Agent 加的轨道:store 里�
   svc.drain();
 
   // Agent 加了一条轨道
-  G.commit({ ...G.project, tracks: [...G.project.tracks, { id: "tAgent", name: "Agent 的轨道", clips: [] }] });
+  G.commit({ ...G.project, tracks: [...G.project.tracks, { id: "tAgent", name: "Agent's track", clips: [] }] });
   svc.drain();
   const agentOp = svc.log[svc.log.length - 1].opId;
-  assert.ok(getState().project.tracks.some((t) => t.id === "tAgent"), "页面收到了 Agent 加的轨道");
+  assert.ok(getState().project.tracks.some((t) => t.id === "tAgent"), "The page received the track the Agent added");
   const before = getState().project;
 
   const r = A.revertRemote({ opId: agentOp });
   assert.equal(r.done, true);
   // 修前:DocSync 本地副本已撤,store 还停在撤之前(bindStore 把这次当成 setProject 的 commit 跳过了)
-  assert.equal(getState().project, A.project, "store 里就是 DocSync 撤后的那一份");
-  assert.notEqual(getState().project, before, "换了新对象,不是原地改");
-  assert.ok(!getState().project.tracks.some((t) => t.id === "tAgent"), "轨道当场从 store 里消失");
-  assert.ok(before.tracks.some((t) => t.id === "tAgent"), "撤之前那份对象没被原地改");
+  assert.equal(getState().project, A.project, "The store holds the post-undo copy from DocSync");
+  assert.notEqual(getState().project, before, "Replaced with a new object, not modified in place");
+  assert.ok(!getState().project.tracks.some((t) => t.id === "tAgent"), "The track disappears from the store on the spot");
+  assert.ok(before.tracks.some((t) => t.id === "tAgent"), "The object from before the undo was not modified in place");
   assert.equal(getState().dirty, true);
   // 进了页面自己的撤销栈:Ctrl+Z 把 Agent 的轨道恢复回来,store 同样当场跟上
   assert.equal(actions.canUndo(), true);

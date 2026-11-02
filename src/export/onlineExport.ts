@@ -55,6 +55,7 @@ function downloadBlob(blob: Blob, name: string) {
 }
 
 import { isCardRunnable, nonRunnableClips } from "./cardLayers";
+import { tr } from "../i18n/index.ts";
 export { isCardRunnable, nonRunnableClips };
 
 /** 卡片画面的现成来源从哪取:文档服务(层表、清单、任务队列)与素材服务;页面没连着项目时为 null(全部由导出页活渲) */
@@ -126,7 +127,7 @@ export async function exportVideoOnline(
       job.blob = memory!.blob();
       if (!canPickFile()) downloadBlob(job.blob, name);
     }
-    pushToast(`${ONLINE_EXPORT_TEXT.done}(${result.frames} 帧,${(result.bytes / 1024 / 1024).toFixed(1)} MB)`, "info");
+    pushToast(tr("{0} ({1} frames, {2} MB)", ONLINE_EXPORT_TEXT.done, result.frames, (result.bytes / 1024 / 1024).toFixed(1)), "info");
     return { outDir: "", id, written: !!writable };
   } catch (e) {
     renewer?.stop();

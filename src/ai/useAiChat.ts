@@ -15,6 +15,7 @@ import { mediaCardUrl } from "./mediaRef";
 import { buildHandoff } from "./handoff";
 import { getQueueState, remove as removeQueued } from "./chatQueue";
 import { rewindAt, type RewindResult } from "./rewind";
+import { tr } from "../i18n/index.ts";
 
 /** 回退时这一页每家驱动的会话 id 都要清,清单在这里 */
 const ALL_PROVIDERS: AiProvider[] = ["claude", "agy", "codex", "api"];
@@ -139,9 +140,9 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
     if (opts?.mock) {
       setProviders([
         { id: "claude", label: "Claude Code", available: true, version: "2.1.221", auth: { loggedIn: false, loginCommand: ["claude", "auth", "login"] } },
-        { id: "codex", label: "Codex", available: true, version: "0.136.0", auth: { loggedIn: null, detail: "unknown variant ultra, expected one of none|minimal|low|medium|high|xhigh", fixHint: "codex 配置文件 ~/.codex/config.toml 第 5 行的 model_reasoning_effort 值本版 codex 不认,改成 high 或 xhigh 后再试", loginCommand: ["codex", "login"] } },
+        { id: "codex", label: "Codex", available: true, version: "0.136.0", auth: { loggedIn: null, detail: "unknown variant ultra, expected one of none|minimal|low|medium|high|xhigh", fixHint: tr("The model_reasoning_effort value on line 5 of the codex config file ~/.codex/config.toml is not recognized by this version of codex. Change it to high or xhigh and try again"), loginCommand: ["codex", "login"] } },
         { id: "agy", label: "Antigravity", available: true, version: "1.1.27", auth: { loggedIn: true } },
-        { id: "api", label: "API 直连", available: false, note: "还没填 API Key", auth: { loggedIn: false, detail: "还没填 API Key" } }
+        { id: "api", label: tr("Direct API"), available: false, note: tr("API key not set yet"), auth: { loggedIn: false, detail: tr("API key not set yet") } }
       ]);
       setConfig({ version: 1, defaultProvider: null, toolProtocol: true, api: { vendor: "anthropic", baseUrl: "", model: "gpt-4o|gpt-4o-mini", maxTokens: 4096, apiKey: { set: false, last4: "" }, source: "" }, keys: { custom: { set: false, last4: "" }, router: { set: false, last4: "" } }, cliModels: { claude: "opus|sonnet|haiku", codex: "gpt-5.6-terra|gpt-5.6-sol", agy: "gemini-3.8-flash-high|gemini-3.8-flash-medium|gemini-3.8-flash-low|gemini-3.1-pro-high|gemini-3.1-pro-low|claude-sonnet-4-6" } });
       setProvider("claude");
@@ -188,9 +189,9 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
       })
       .catch((e: unknown) => {
         if (e instanceof Error) {
-          setError("获取 AI 供应商失败：" + e.message);
+          setError(tr("Failed to get AI providers: ") + e.message);
         } else {
-          setError("获取 AI 供应商失败");
+          setError(tr("Failed to get AI providers"));
         }
       });
   }, [opts?.mock]);
@@ -219,7 +220,7 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
     const poll = async () => {
       try {
         const res = await fetch('/api/ai/setup', { signal: AbortSignal.timeout(15000) });
-        if (!res.ok) throw new Error('无法获取安装和登录进度');
+        if (!res.ok) throw new Error(tr("Unable to get install and login progress"));
         const data = await res.json();
         if (stopped) return;
         const jobs: CliSetupJob[] = data.jobs || [];
@@ -238,7 +239,7 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
           lastFinished = finished;
         }
       } catch (e) {
-        if (!stopped) setSetupJobs(prev => prev.map(j => j.state === 'running' ? { ...j, message: '连接中断，正在重新获取进度…' } : j));
+        if (!stopped) setSetupJobs(prev => prev.map(j => j.state === 'running' ? { ...j, message: tr("Connection interrupted, re-fetching progress…") } : j));
       } finally {
         if (!stopped) timer = window.setTimeout(poll, 2000);
       }
@@ -258,10 +259,10 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
         body: JSON.stringify({ provider: id, deviceAuth }), signal: AbortSignal.timeout(30000),
       });
       const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || '请求失败');
+      if (!res.ok || !data.ok) throw new Error(data.error || tr("Request failed"));
       setSetupJobs(prev => [...prev.filter(j => j.provider !== id), data.job]);
     } catch (e) {
-      const message = e instanceof Error ? e.message : '请求失败';
+      const message = e instanceof Error ? e.message : tr("Request failed");
       if (kind === 'install') {
         setInstallState(prev => ({ ...prev, [id]: 'failed' }));
         setInstallError(prev => ({ ...prev, [id]: message }));
@@ -285,8 +286,8 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
   const cancelSetup = useCallback(async (id: AiProvider) => {
     try {
       const res = await fetch('/api/ai/setup', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: id }), signal: AbortSignal.timeout(15000) });
-      if (!res.ok) throw new Error('取消失败，请重试');
-    } catch (e) { setError(e instanceof Error ? e.message : '取消失败'); }
+      if (!res.ok) throw new Error(tr("Cancel failed, please retry"));
+    } catch (e) { setError(e instanceof Error ? e.message : tr("Cancel failed")); }
   }, []);
 
   const saveConfig = useCallback(async (patch: AiConfigPatch) => {
@@ -324,7 +325,7 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
       const data = await res.json();
       setConfig(data?.config ?? data);
     } catch (e) {
-      setError("保存配置失败");
+      setError(tr("Failed to save settings"));
       throw e;
     }
   }, [opts?.mock]);
@@ -346,7 +347,7 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
       body: JSON.stringify({ kind }),
     });
     const data = await res.json().catch(() => null);
-    if (!res.ok || !data?.ok) throw new Error(data?.error || "清理密钥失败");
+    if (!res.ok || !data?.ok) throw new Error(data?.error || tr("Failed to clear keys"));
     setConfig(data.config);
   }, [opts?.mock]);
 
@@ -545,7 +546,7 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
 
     if (opts?.mock) {
       let i = 0;
-      const msg = "这是内置假流回复内容。我将调用一个工具看看效果。";
+      const msg = tr("This is the built-in fake stream reply. I will call a tool to see how it works.");
       const timer = setInterval(() => {
         // 被停掉或被新的发送顶掉:假流也跟着停,别往已中止的消息里接着写、也别事后把 streaming 关掉
         if (seq !== sendSeqRef.current) {
@@ -575,22 +576,22 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
               const tools = [...(m.tools || [])];
               if (tools.length > 0) {
                 tools[0].ok = true;
-                tools[0].summary = "获取成功";
+                tools[0].summary = tr("Fetched successfully");
               }
-              const parts = completeToolPart(m.parts, { name: "get_editor_state", ok: true, summary: "获取成功" });
+              const parts = completeToolPart(m.parts, { name: "get_editor_state", ok: true, summary: tr("Fetched successfully") });
               return { ...m, tools, parts };
             }));
             // 工具跑完之后再说一句:详细模式下应当出现「文字 → 工具 → 文字」的真实顺序
             // 这段同时充当渲染样张:表格、行内公式、独占一行的公式都在里面
             const tail = [
-              "工具返回了,时间轴现在是空的。建议这样排:",
+              tr("The tool returned, and the timeline is empty now. Suggested arrangement:"),
               "",
-              "| 卡片 | 起 | 止 |",
+              tr("| Card | Start | End |"),
               "| --- | ---: | ---: |",
-              "| 金句卡 | 3.0 | 8.0 |",
-              "| 数字滚动 | 8.0 | 10.5 |",
+              tr("| Quote card | 3.0 | 8.0 |"),
+              tr("| Number counter | 8.0 | 10.5 |"),
               "",
-              "每张卡的时长 \\(d = t_1 - t_0\\),整段导出帧数:",
+              tr("Duration of each card \\(d = t_1 - t_0\\), total exported frames:"),
               "",
               "$$N = \\lceil (t_1 - t_0) \\times fps \\rceil$$",
             ].join("\n");
@@ -816,7 +817,7 @@ export function useAiChat(opts?: { mock?: boolean; tabId?: string; getConversati
         setMessages((prev) =>
           prev.map((m) =>
             m.id === asstMsgId
-              ? { ...m, error: "发生错误: " + e.message, pending: false, finishedAt: Date.now(), outcome: "error" }
+              ? { ...m, error: tr("An error occurred: ") + e.message, pending: false, finishedAt: Date.now(), outcome: "error" }
               : m
           )
         );

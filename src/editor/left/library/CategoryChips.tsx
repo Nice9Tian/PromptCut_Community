@@ -61,7 +61,7 @@ export function CategoryChips({ active, onCategory, onOpenGroup, groupsByCategor
                 onCategory(cat);
               }}
             >
-              {cat}
+              {tr(cat === "visual" ? "Visual" : "Audio")}
             </button>
             <button
               type="button"

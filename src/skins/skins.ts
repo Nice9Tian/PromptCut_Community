@@ -1,5 +1,6 @@
 import { agentColorFor } from "./agentColor";
 import { palettes, semantic, type Palette, type PaletteSide } from "./palettes";
+import { tr } from "../i18n/index.ts";
 
 /**
  * 窗口皮肤 = 一组 --ui-* 变量,运行时由 useSkin 写到 <html> 上;skins.css 只负责把界面的
@@ -153,8 +154,8 @@ function sideToVars(side: PaletteSide, mode: SkinMode): Record<string, string> {
 
 function paletteSkins(p: Palette): Skin[] {
   return [
-    { id: `${p.id}-dark`, name: `${p.name} · 深 (${p.en})`, group: "主题库", mode: "dark", description: p.blurb, vars: sideToVars(p.dark, "dark") },
-    { id: `${p.id}-light`, name: `${p.name} · 浅 (${p.en})`, group: "主题库", mode: "light", description: p.blurb, vars: sideToVars(p.light, "light") },
+    { id: `${p.id}-dark`, name: tr("{0} · Dark ({1})", p.name, p.en), group: tr("Theme library"), mode: "dark", description: p.blurb, vars: sideToVars(p.dark, "dark") },
+    { id: `${p.id}-light`, name: tr("{0} · Light ({1})", p.name, p.en), group: tr("Theme library"), mode: "light", description: p.blurb, vars: sideToVars(p.light, "light") },
   ];
 }
 
@@ -164,26 +165,26 @@ function extra(id: string, name: string, description: string, vars: Record<strin
   const base = sideToVars(steelPalette.dark, "dark");
   // Agent 色跟着这套皮肤自己的强调色重算,不能沿用钢蓝的
   const agent = vars["ui-agent"] ?? agentColorFor(vars["ui-accent"] ?? base["ui-accent"]);
-  return { id, name, group: "更多", mode: "dark", description, vars: { ...base, ...vars, "ui-agent": agent } };
+  return { id, name, group: tr("More"), mode: "dark", description, vars: { ...base, ...vars, "ui-agent": agent } };
 }
 
 export const skins: Skin[] = [
   ...palettes.flatMap(paletteSkins),
-  extra("aurora", "极光 (Aurora)", "深海军蓝底,青绿主色", {
+  extra("aurora", tr("Aurora"), tr("Deep navy base, teal-green primary"), {
     "ui-bg": "#070b14", "ui-bg-2": "#0c1220", "ui-panel": "#121b2d", "ui-panel-2": "#1a263c", "ui-float": "#22304a",
     "ui-border": "#283854", "ui-border-strong": "#3d557f", "ui-fg": "#e2ebf8", "ui-fg-muted": "#8da4c8", "ui-fg-faint": "#56719b",
     "ui-accent": "#14b8a6", "ui-accent-hover": "#2fd0bd", "ui-accent-press": "#0f9384", "ui-accent-fg": "#031311", "ui-accent-soft": "rgba(20, 184, 166, 0.2)",
     "ui-info": "#14b8a6", "ui-radius-sm": "6px", "ui-radius": "8px", "ui-radius-lg": "10px", "ui-radius-xl": "12px", "ui-glow": "0 0 12px rgba(20, 184, 166, 0.6)", "ui-backdrop": "rgba(7, 11, 20, 0.7)",
     "ui-scroll-thumb": "#283854", "ui-scroll-thumb-hover": "#3d557f",
   }),
-  extra("amber", "琥珀 (Amber)", "暖黑底,橙金主色", {
+  extra("amber", tr("Amber"), tr("Warm black base, orange-gold primary"), {
     "ui-bg": "#1e1510", "ui-bg-2": "#251a14", "ui-panel": "#2a1e16", "ui-panel-2": "#3a2a1f", "ui-float": "#46342a",
     "ui-border": "#543c2c", "ui-border-strong": "#785640", "ui-fg": "#fdf8f4", "ui-fg-muted": "#bba291", "ui-fg-faint": "#7a6659",
     "ui-accent": "#f59e0b", "ui-accent-hover": "#fbbf3f", "ui-accent-press": "#c47f08", "ui-accent-fg": "#1a1613", "ui-accent-soft": "rgba(245, 158, 11, 0.2)",
     "ui-info": "#f59e0b", "ui-glow": "0 0 8px rgba(245, 158, 11, 0.5)", "ui-backdrop": "rgba(18, 15, 13, 0.7)",
     "ui-scroll-thumb": "#543c2c", "ui-scroll-thumb-hover": "#785640",
   }),
-  extra("neon", "霓虹 (Neon)", "近黑底,高对比强辉光", {
+  extra("neon", tr("Neon"), tr("Near-black base, high contrast, strong glow"), {
     "ui-bg": "#08080a", "ui-bg-2": "#0f0f14", "ui-panel": "#171720", "ui-panel-2": "#222230", "ui-float": "#2b2b3c",
     "ui-border": "#3a123e", "ui-border-strong": "#631d68", "ui-fg": "#ffffff", "ui-fg-muted": "#9e9eb8", "ui-fg-faint": "#5a5a75",
     "ui-accent": "#ec4899", "ui-accent-hover": "#f472b6", "ui-accent-press": "#be2f78", "ui-accent-fg": "#08080a", "ui-accent-soft": "rgba(236, 72, 153, 0.2)",

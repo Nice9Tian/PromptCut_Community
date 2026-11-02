@@ -2,6 +2,7 @@ import { newId, type Project, type Track } from "../../kernel/project";
 import { transitionsOf } from "../../kernel/transitions";
 
 import { state, set, setProject, clearTransitionFades, updateTrack, pruneCardNodes } from "../core";
+import { tr as trText } from "../../i18n/index.ts";
 
 export const tracks = {
 
@@ -9,7 +10,7 @@ export const tracks = {
   /** 加一条序列。opts.index 给了就插在那个位置(时间轴上「拖到序列之间」新建用),不给就加在数组末尾。 */
   addTrack(name?: string, opts: { index?: number } = {}): Track {
     const n = state.project.tracks.length + 1;
-    const track: Track = { id: newId("t"), name: name ?? `序列 ${n}`, clips: [] };
+    const track: Track = { id: newId("t"), name: name ?? trText("Track {0}", n), clips: [] };
     const tracks = [...state.project.tracks];
     const at = opts.index == null ? tracks.length : Math.max(0, Math.min(tracks.length, opts.index));
     tracks.splice(at, 0, track);

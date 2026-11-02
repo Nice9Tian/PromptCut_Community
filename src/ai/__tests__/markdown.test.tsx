@@ -36,8 +36,8 @@ function test() {
 
   // 基本 Markdown
   const basic = html("# 标题\n\n- 一\n- 二\n\n**粗** 和 `code`");
-  assert.ok(basic.includes("<h1"), "标题");
-  assert.ok(basic.includes("<li>"), "列表");
+  assert.ok(basic.includes("<h1"), "Title");
+  assert.ok(basic.includes("<li>"), "List");
   assert.ok(basic.includes("<strong>") && basic.includes("<code>"), "粗体和行内代码");
 
   // 不开 raw HTML:模型写的标签当文字转义,不能真的注入

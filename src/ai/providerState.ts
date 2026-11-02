@@ -1,4 +1,5 @@
 import type { ProviderInfo, RunEvent, SttInfo } from './types';
+import { tr } from "../i18n/index.ts";
 
 // One authority per editor document. Tabs share requests and transition barriers.
 let providers: ProviderInfo[] = [];
@@ -17,7 +18,7 @@ const publish = (list: ProviderInfo[]) => {
 export async function refreshProviders(refresh = false): Promise<{ providers: ProviderInfo[]; stt?: SttInfo }> {
   const before = epoch;
   const res = await fetch('/api/ai/providers' + (refresh ? '?refresh=1' : ''), { signal: AbortSignal.timeout(30000) });
-  if (!res.ok) throw new Error('无法获取 AI 服务状态');
+  if (!res.ok) throw new Error(tr("Unable to get AI service status"));
   const data = await res.json();
   const list = Array.isArray(data) ? data : data.providers || [];
   if (before === epoch) publish(list);

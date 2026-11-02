@@ -1,3 +1,4 @@
+import { tr } from "../i18n/index.ts";
 /**
  * 纯浏览器的设备身份（C10a 契约 `docs/plan/c10a-contract.md` 第 2 节；主执行计划 12.2 节「设备名」）。
  *
@@ -29,16 +30,16 @@ interface UaData {
 /** UA → 浏览器名与系统名（只为给人看；识别不了就写「浏览器」「未知系统」） */
 export function browserLabel(ua: string, uaData?: UaData | null, maxTouchPoints = 0): { browser: string; os: string } {
   const s = String(ua || "");
-  let browser = "浏览器";
-  if (/MicroMessenger/i.test(s)) browser = "微信";
+  let browser = tr("Browser");
+  if (/MicroMessenger/i.test(s)) browser = tr("WeChat");
   else if (/EdgA?\/|Edg\//.test(s)) browser = "Edge";
   else if (/OPR\/|Opera/.test(s)) browser = "Opera";
   else if (/Firefox\/|FxiOS\//.test(s)) browser = "Firefox";
   else if (/CriOS\/|Chrome\/|Chromium\//.test(s)) browser = "Chrome";
   else if (/Safari\//.test(s) && /Version\//.test(s)) browser = "Safari";
   const brands = uaData?.brands?.map((b) => b.brand) ?? [];
-  if (browser === "浏览器" && brands.length) browser = brands.find((b) => !/Not.?A.?Brand|Chromium/i.test(b)) ?? brands[0];
-  let os = "未知系统";
+  if (browser === tr("Browser") && brands.length) browser = brands.find((b) => !/Not.?A.?Brand|Chromium/i.test(b)) ?? brands[0];
+  let os = tr("Unknown OS");
   const platform = uaData?.platform ?? "";
   if (/iPhone|iPod/.test(s)) os = "iOS";
   else if (/iPad/.test(s) || (/Macintosh/.test(s) && maxTouchPoints > 1)) os = "iPadOS"; // iPad 常报桌面 UA

@@ -1,3 +1,4 @@
+import { tr } from "../../i18n/index.ts";
 /**
  * 声音线程里的占位模块(`docs/plan/online-card-exec-contract.md` 3.5)。纯逻辑,单测直接载入。
  *
@@ -8,7 +9,7 @@
  */
 
 /** 占位被调用时抛的错;声音线程据它把原因报回去 */
-export const SOUND_STUB_PREFIX = "声音代码里不能用 ";
+export const SOUND_STUB_PREFIX = tr("Sound code cannot use ");
 
 export function soundStubMessage(name: string): string {
   return `${SOUND_STUB_PREFIX}${name}`;
@@ -25,7 +26,7 @@ export function createSoundStub(name: string): unknown {
       // 被 `await`、被模板字符串拼接、被 JSON 序列化时不该抛,也不该被当成 thenable
       if (key === "then" || key === Symbol.toPrimitive || key === Symbol.iterator || key === Symbol.asyncIterator || key === "toJSON") return undefined;
       if (key === Symbol.toStringTag) return "SoundStub";
-      if (key === "toString") return () => `[占位 ${name}]`;
+      if (key === "toString") return () => `[placeholder ${name}]`;
       if (key === "$$typeof" || key === "prototype") return undefined;
       return stub;
     },

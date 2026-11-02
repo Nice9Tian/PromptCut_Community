@@ -11,6 +11,7 @@
  */
 // @ts-expect-error 纯 JS 模块、没有类型声明（`src/` 一侧引 .mjs 也都是这么标的）
 import { RecoveryCoordinator } from "../../server/recovery/coordinator.mjs";
+import { tr } from "../i18n/index.ts";
 
 /* ======================================================================== *
  * 1. 贯穿型接缝：buildInfo / apiGuard / updateCheck / UpdateNotice
@@ -382,7 +383,7 @@ export class PublicAccountFailure extends Error {
 export class PublicCloudDelegationError extends Error {
   readonly code: string;
   constructor(reason: string) {
-    super(`文档服务没有签发云端 Agent 的委托(${reason})`);
+    super(tr("The document service did not issue a delegation for the Cloud Agent ({0})", reason));
     this.name = "CloudDelegationError";
     this.code = reason;
   }
@@ -413,7 +414,7 @@ export interface SyncCloudBackend {
 
 const defaultSyncCloudBackend: SyncCloudBackend = {
   async discoverRoom() {
-    throw Object.assign(new Error("社区版未启用云端房间中继服务"), { reason: "unavailable" });
+    throw Object.assign(new Error(tr("The community edition does not enable the cloud room relay service")), { reason: "unavailable" });
   },
   relayFetch() {
     return (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init);
@@ -451,7 +452,7 @@ const defaultSyncCloudBackend: SyncCloudBackend = {
   accountCloudIdentity(options) {
     return {
       async getTicket() {
-        if (!options.isCurrent()) throw new Error("还没有取得云端 Agent 的身份证明");
+        if (!options.isCurrent()) throw new Error(tr("Proof of identity for the Cloud Agent has not been obtained yet"));
         const value = await options.session();
         return value.agentDelegationTicket;
       },

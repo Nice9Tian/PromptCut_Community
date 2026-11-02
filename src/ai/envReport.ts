@@ -1,6 +1,7 @@
 // 带 .ts 后缀:tsconfig 开了 allowImportingTsExtensions,而单测是用 node --test 直接跑
 // .ts 的,无后缀的传递 import 它解析不了(projectAi.test.mjs 当初就栽在这上面)。
 import { AI_SESSION_PREFIX } from "./aiSessionKeys.ts";
+import { tr } from "../i18n/index.ts";
 
 /**
  * 诊断报告里的「当时这台机器是什么状态」。
@@ -100,8 +101,8 @@ function safeToShow(key: string): boolean {
 /** 一句人话说清「现在是哪个模式」,省得从三个布尔值里推 */
 export function describeMode(input: EnvInput): string {
   // 两种工作方式(user-workflow.md「工作方式」):传统式 / SKILL(桌面 APP 的 Agent 经 MCP 接入同一个项目,AI 栏照常可用)
-  const bits = [input.skill?.active ? 'SKILL 模式(桌面 APP 的 Agent 经 MCP 改这个项目,AI 栏照常可用)' : '传统式'];
-  if ((input.agentTabs ?? 1) > 1) bits.push(`多 Agent(${input.agentTabs} 个页签)`);
+  const bits = [input.skill?.active ? tr("SKILL mode (the desktop app's Agent edits this project via MCP, the AI panel still works as usual)") : tr("Classic mode")];
+  if ((input.agentTabs ?? 1) > 1) bits.push(tr("Multi-Agent ({0} tabs)", input.agentTabs));
   return bits.join(' + ');
 }
 
@@ -117,14 +118,14 @@ export function mediaDirs(media: EnvMediaItem[]): string[] {
     if (!m.path) continue;
     const cut = Math.max(m.path.lastIndexOf('\\'), m.path.lastIndexOf('/'));
     // cut === 0 是 posix 根下的文件(/a.mp4),目录就是根,不是「没有目录」
-    seen.add(cut > 0 ? m.path.slice(0, cut) : cut === 0 ? '/' : '(没有目录)');
+    seen.add(cut > 0 ? m.path.slice(0, cut) : cut === 0 ? '/' : tr("(no directory)"));
   }
   return [...seen];
 }
 
 /** localStorage 里和 AI / 编辑器有关的那些键。密钥不存这儿(在服务端 ai.json) */
 function localKeys(storage: EnvInput['storage']): { sessionIds: Record<string, string>; settings: Record<string, string>; note?: string } {
-  if (!storage) return { sessionIds: {}, settings: {}, note: '读不到 localStorage' };
+  if (!storage) return { sessionIds: {}, settings: {}, note: tr("Can't read localStorage") };
   const sessionIds: Record<string, string> = {};
   const settings: Record<string, string> = {};
   try {
@@ -133,14 +134,14 @@ function localKeys(storage: EnvInput['storage']): { sessionIds: Record<string, s
       if (!k) continue;
       const v = storage.getItem(k);
       if (v === null) continue;
-      const short = v.length > VALUE_LIMIT ? `${v.slice(0, VALUE_LIMIT)}…(共 ${v.length} 字)` : v;
+      const short = v.length > VALUE_LIMIT ? tr("{0}… ({1} characters in total)", v.slice(0, VALUE_LIMIT), v.length) : v;
       if (k.startsWith(AI_SESSION_PREFIX)) sessionIds[k] = short;
       else if (!/^(ai|pc\.)/.test(k)) continue;
       // 白名单外的只报「有这么个键、多长」:排查要的是「哪些设置存在」,不是原文 —— 见 VALUE_SAFE
-      else settings[k] = safeToShow(k) ? short : `(有值,共 ${v.length} 字;不在白名单,不带原文)`;
+      else settings[k] = safeToShow(k) ? short : tr("(has a value, {0} characters in total; not in the allowlist, original text omitted)", v.length);
     }
   } catch {
-    return { sessionIds, settings, note: '读 localStorage 时出错,下面这些可能不全' };
+    return { sessionIds, settings, note: tr("Error while reading localStorage, the items below may be incomplete") };
   }
   return { sessionIds, settings };
 }
@@ -153,13 +154,13 @@ export function buildEnvReport(input: EnvInput): Record<string, unknown> {
   const sessionCount = Object.keys(keys.sessionIds).length;
 
   return {
-    说明: '出问题那一刻这台机器的现场。用来分清「产品的 bug」和「这台机器的环境问题」——只有对话本身的话,两者一条都排除不掉。',
+    note: tr("The state of this machine at the moment the problem occurred. Used to tell \"a product bug\" apart from \"an environment problem on this machine\": with the chat alone, neither can be ruled out."),
     mode: {
       mode: input.skill?.active ? 'skill' : 'classic',
       skillActive: !!input.skill?.active,
       skill: input.skill?.active ? input.skill : null,
       agentTabs: input.agentTabs ?? 1,
-      说明: describeMode(input),
+      note: describeMode(input),
     },
     project: input.project
       ? {
@@ -168,7 +169,7 @@ export function buildEnvReport(input: EnvInput): Record<string, unknown> {
           // 用户看到的一堆怪事都是从这儿来的,所以这一项要显式说出来
           filePath: input.project.filePath ?? null,
           saved: !!input.project.filePath,
-          savedNote: input.project.filePath ? undefined : '这个项目还没保存过,素材和工作目录都在临时目录下',
+          savedNote: input.project.filePath ? undefined : tr("This project has not been saved yet, its media and working directory are under the temp directory"),
           unsavedChanges: !!input.project.dirty,
           canvas: { width: input.project.width, height: input.project.height, fps: input.project.fps, duration: input.project.duration },
           tracks: tracks.map((t) => ({ id: t.id, name: t.name, clips: t.clips?.length || 0 })),
@@ -178,12 +179,12 @@ export function buildEnvReport(input: EnvInput): Record<string, unknown> {
     media: {
       count: media.length,
       // 用户说「素材库里什么也没有」而模型偏偏说得出文件名 —— 这一行就是对质用的
-      说明: media.length === 0 ? '素材库是空的:模型如果说得出任何素材名字,那不是从这个项目里读到的' : `素材库有 ${media.length} 个文件`,
+      note: media.length === 0 ? tr("The media library is empty: if the model can name any media, that was not read from this project") : tr("The media library has {0} files", media.length),
       dirs: mediaDirs(media),
       items: media.map((m) => ({
         id: m.id, name: m.name, kind: m.kind,
         duration: m.duration, width: m.width, height: m.height,
-        path: m.path ?? '(没有磁盘路径,可能是还没上传的 blob)',
+        path: m.path ?? tr("(no disk path, possibly a blob that hasn't been uploaded yet)"),
         hasTranscript: !!m.hasTranscript,
       })),
     },
@@ -195,9 +196,9 @@ export function buildEnvReport(input: EnvInput): Record<string, unknown> {
        * 把两个数摆在一起,报告一眼就能看出来:可见 0 条 + 会话 id 还在
        * = 服务端会去 harness-sessions 里把旧历史整段读回来(见 aiSessionKeys.ts)。
        */
-      说明: sessionCount === 0
-        ? '没有残留的后端会话 id:这一轮是从零开始的'
-        : `还留着 ${sessionCount} 把后端会话 id —— 对上服务端 sessions 那一段,看它们各自背着多少条历史`,
+      note: sessionCount === 0
+        ? tr("No leftover backend session ids: this round starts from scratch")
+        : tr("{0} backend session ids are still left: check them against the server sessions section to see how much history each one carries", sessionCount),
     },
     localSettings: keys.settings,
     localNote: keys.note,

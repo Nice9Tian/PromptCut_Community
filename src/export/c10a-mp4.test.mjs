@@ -129,9 +129,9 @@ it("C10A-MP4-01 只有视频：ffprobe 读得出，H.264、尺寸、30 帧、1 �
   assert.equal(p.video.width, w);
   assert.equal(p.video.height, h);
   assert.equal(Number(p.video.nb_read_packets), 30, "帧数");
-  near(Number(p.format.duration), 1.0, 1 / fps + 0.001, "时长");
+  near(Number(p.format.duration), 1.0, 1 / fps + 0.001, "Duration");
   const [n, d] = p.video.avg_frame_rate.split("/").map(Number);
-  near(n / d, fps, 0.05, "帧率");
+  near(n / d, fps, 0.05, "Frame rate");
   await decodesClean(file);
   assert.deepEqual(await frameMd5(file), await frameMd5(video.file, ["-f", "h264"]), "解出来的画面与源码流逐帧相同");
 });
@@ -166,7 +166,7 @@ it("C10A-MP4-03 25 fps、GOP 10：关键帧落在第 0、10、20… 帧，帧数
   assert.deepEqual(packets.map((p, i) => (p.key ? i : -1)).filter((i) => i >= 0), [0, 10, 20, 30, 40], "关键帧与编码器给的一致");
   packets.forEach((p, i) => near(p.t, i / fps, 0.002, `第 ${i} 帧的时间戳`));
   const p = await probe(file);
-  near(Number(p.format.duration), 2.0, 1 / fps + 0.001, "时长");
+  near(Number(p.format.duration), 2.0, 1 / fps + 0.001, "Duration");
   await decodesClean(file);
 });
 
@@ -176,8 +176,8 @@ it("C10A-MP4-04 60 fps 半秒：30 帧、0.5 秒（高帧率的时间戳不漂�
   const file = await mux({ video, w, h, fps, name: "v60" });
   const p = await probe(file);
   assert.equal(Number(p.video.nb_read_packets), 30);
-  near(Number(p.format.duration), 0.5, 1 / fps + 0.001, "时长");
+  near(Number(p.format.duration), 0.5, 1 / fps + 0.001, "Duration");
   const [n, d] = p.video.avg_frame_rate.split("/").map(Number);
-  near(n / d, fps, 0.1, "帧率");
+  near(n / d, fps, 0.1, "Frame rate");
   await decodesClean(file);
 });

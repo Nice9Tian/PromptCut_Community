@@ -14,6 +14,7 @@ import { findClip } from "../kernel/project";
 import { cardJson } from "../kernel/cardGraph.mjs";
 import { cardAudioIdentity, cardAudioSourceOffset, clipHasEmbeddedAudio, resolveCardAudioRendition } from "../kernel/cardAudioRendition.mjs";
 import { requireCardAudioHooks, renderEmbeddedCardWav } from "./cardAudio";
+import { tr } from "../i18n/index.ts";
 
 export interface HostedCardAudioResult {
   ok: true;
@@ -35,12 +36,12 @@ export async function renderClipCardAudio(project: Project, clipId: string, opti
   held = null;
   const hooks = requireCardAudioHooks();
   const hit = findClip(project, clipId);
-  if (!hit || !clipHasEmbeddedAudio(project, hit.clip, hooks.getCard)) throw new Error("找不到带内嵌声音的动效卡片");
-  if (hit.track.locked) throw new Error("请先解锁卡片所在序列");
+  if (!hit || !clipHasEmbeddedAudio(project, hit.clip, hooks.getCard)) throw new Error(tr("Cannot find a motion graphics card with embedded audio"));
+  if (hit.track.locked) throw new Error(tr("Unlock the track containing the card first"));
   const clip = hit.clip;
   const expectedClip = JSON.stringify(clip);
   const identity = cardAudioIdentity(project, clip, hooks), sourceOffset = cardAudioSourceOffset(project, clip);
-  if (new TextEncoder().encode(cardJson(identity)).byteLength > 96 * 1024) throw new Error("卡片声音参数记录过大，请缩短片段或精简输入");
+  if (new TextEncoder().encode(cardJson(identity)).byteLength > 96 * 1024) throw new Error(tr("Card audio parameter record is too large. Shorten the clip or simplify the input"));
   if (!options.force) {
     try {
       const reusable = resolveCardAudioRendition(project, clip, hooks);
@@ -48,12 +49,12 @@ export async function renderClipCardAudio(project: Project, clipId: string, opti
     } catch { /* 缺失或过期时重新生成 */ }
   }
   const rendered = await renderEmbeddedCardWav(project, clip, new AbortController().signal);
-  if (options.maxBytes && rendered.wav.byteLength > options.maxBytes) throw new Error("这段卡片声音太大了，云端一次生成不了，请缩短片段");
+  if (options.maxBytes && rendered.wav.byteLength > options.maxBytes) throw new Error(tr("This card audio is too large for the cloud to generate in one pass. Shorten the clip"));
   const sourceKey = await sha256Hex(new TextEncoder().encode(cardJson({ version: 1, identity, sourceOffset, frames: rendered.frames, sampleRate: 48000 })));
   held = rendered.wav;
   return {
     ok: true, clipId, expectedClip, bytes: rendered.wav.byteLength,
-    name: `${clip.label || hooks.getCard(clip.cardId)?.name || clip.cardId} · 卡片声音.wav`,
+    name: tr("{0} · card audio.wav", clip.label || hooks.getCard(clip.cardId)?.name || clip.cardId),
     rendition: { version: 1, cardId: clip.cardId, sourceKey, sourceOffset, duration: rendered.frames / 48000,
       sampleRate: 48000, frames: rendered.frames, channels: rendered.channels, identity },
   };
@@ -61,7 +62,7 @@ export async function renderClipCardAudio(project: Project, clipId: string, opti
 
 /** 取走一块(base64);`from` 到头时清掉留着的 WAV */
 export function takeCardAudioChunk(from: number, size: number): string {
-  if (!held) throw new Error("没有留着的卡片声音");
+  if (!held) throw new Error(tr("No retained card audio"));
   const part = held.subarray(from, Math.min(held.byteLength, from + size));
   if (from + size >= held.byteLength) held = null;
   let text = "";

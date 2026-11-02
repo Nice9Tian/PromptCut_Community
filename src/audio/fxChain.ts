@@ -26,6 +26,7 @@
  */
 
 import { AUDIO_FX_KINDS, isNeutralOp, resolveAudioOps, reverbImpulse, type AudioFxDef, type ResolvedAudioOp } from "../kernel/audioFx.mjs";
+import { tr } from "../i18n/index.ts";
 
 export interface FxChain {
   input: AudioNode;
@@ -208,7 +209,7 @@ function stageOf(ctx: BaseAudioContext, op: ResolvedAudioOp): Stage {
     p.pan.value = values.pan;
     return { input: p, output: p, nodes: [p], apply: (v, when, c, ramp) => setParam(p.pan, v.pan, when, c, ramp) };
   }
-  throw new Error(`不认识的音频效果种类 ${String(kind)}`);
+  throw new Error(tr("Unknown audio effect kind {0}", String(kind)));
 }
 
 /* ---------------------------------------------------------------- 整条链 */

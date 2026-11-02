@@ -38,12 +38,12 @@ async function bothIsolated(iso) {
   return { a, b };
 }
 
-test("OCS-S-01 舞台 iframe 的 sandbox 只开脚本与保有自己的源两项", () => {
+test("OCS-S-01 the stage iframe sandbox enables only scripts and keeping its own origin", () => {
   assert.equal(STAGE_SANDBOX, "allow-scripts allow-same-origin");
   for (const no of ["allow-popups", "allow-top-navigation", "allow-forms", "allow-modals", "allow-downloads"]) assert.ok(!STAGE_SANDBOX.includes(no), no);
 });
 
-test("OCS-S-02 舞台发来的自检结果按形状校验,结论不信舞台自己下的、按各项事实重算", () => {
+test("OCS-S-02 self-check results sent by the stage are validated by shape; the verdict does not trust the stage's own conclusion and is recomputed from the individual facts", () => {
   assert.deepEqual(sanitizeIsolationReport(OK), OK);
   // 舞台自称通过,但事实不齐:重算成不通过
   for (const lie of [{ ...OK, csp: "meta" }, { ...OK, csp: "none" }, { ...OK, crossOrigin: false }, { ...OK, hardened: false }, { ...OK, reasons: ["meta-only"] }]) {
@@ -59,11 +59,11 @@ test("OCS-S-02 舞台发来的自检结果按形状校验,结论不信舞台自�
   for (const bad of ["", "nope", null, 1, {}]) assert.equal(sanitizeBreach(bad), null);
 });
 
-test("OCS-S-03 两台都自检通过、票据交接成功:都走 cookie(基址 /media-s/<sid>、不带票据),本页判可执行", async () => {
+test("OCS-S-03 both stages pass the self-check and the ticket handoff succeeds: both use cookies (base /media-s/<sid>, no ticket), and this page is judged executable", async () => {
   const { iso, state } = make();
   assert.deepEqual({ enabled: iso.state().enabled, reason: iso.state().reason }, { enabled: false, reason: "no-stage" });
   const { a, b } = await bothIsolated(iso);
-  assert.deepEqual(a, { mode: "cookie", base: `/media-s/${SID}`, ticket: null, cardExec: false }, "另一台还没好:先不点头");
+  assert.deepEqual(a, { mode: "cookie", base: `/media-s/${SID}`, ticket: null, cardExec: false }, "The other stage is not ready yet: do not approve yet");
   assert.deepEqual(b, { mode: "cookie", base: `/media-s/${SID}`, ticket: null, cardExec: true });
   assert.deepEqual(iso.state(), { enabled: true, reason: "ok", detail: {}, egress: "none" });
   assert.deepEqual(state.grants, [{ origin: S1, sid: SID, ticket: TICKET }, { origin: S2, sid: SID, ticket: TICKET }]);
@@ -85,7 +85,7 @@ test("OCS-S-03 两台都自检通过、票据交接成功:都走 cookie(基址 /
   assert.equal(iso.sid, SID);
 });
 
-test("OCS-S-04 浏览器没有出口白名单或Trusted Types:分源和交接就绪仍可执行", async () => {
+test("OCS-S-04 browser has no egress allowlist or Trusted Types: origin separation and handoff readiness are still executable", async () => {
   const { iso } = make();
   iso.setStages(["A", "B"]);
   iso.handshake("A"); iso.handshake("B");
@@ -95,7 +95,7 @@ test("OCS-S-04 浏览器没有出口白名单或Trusted Types:分源和交接就
   assert.deepEqual({ enabled: iso.state().enabled, egress: iso.state().egress }, { enabled: true, egress: "none" });
 });
 
-test("OCS-S-05 托管方关了总开关:不交接、不等自检,两台都不给票据(严禁退回带票据的旧办法),原因是总开关;打开后恢复", async () => {
+test("OCS-S-05 host turned off the master switch: no handoff, no waiting for the self-check, neither stage gets a ticket (falling back to the old ticket-based approach is strictly forbidden), and the reason is the master switch; restored once turned on", async () => {
   const { iso, state } = make({ enabled: false });
   const { a, b } = await bothIsolated(iso);
   for (const p of [a, b]) assert.deepEqual(p, { mode: "cookie", base: `/media-s/${SID}`, ticket: null, cardExec: false });
@@ -103,7 +103,7 @@ test("OCS-S-05 托管方关了总开关:不交接、不等自检,两台都不给
   assert.deepEqual({ enabled: iso.state().enabled, reason: iso.state().reason }, { enabled: false, reason: "switch-off" });
 });
 
-test("OCS-S-06 有一台自检没过(只有 <meta> 兜底):那一台不给票据,本页不执行,说得出是哪台、为什么", async () => {
+test("OCS-S-06 one stage fails the self-check (only the <meta> fallback): that stage gets no ticket, this page does not execute, and it can say which stage and why", async () => {
   const { iso, state } = make();
   iso.setStages(["A", "B"]);
   iso.handshake("A"); iso.handshake("B");
@@ -114,17 +114,17 @@ test("OCS-S-06 有一台自检没过(只有 <meta> 兜底):那一台不给票据
   assert.equal(a.cardExec, false);
   assert.deepEqual(b, { mode: "cookie", base: `/media-s/${SID}`, ticket: null, cardExec: false });
   assert.deepEqual(iso.state(), { enabled: false, reason: "not-isolated", detail: { B: ["meta-only"] }, egress: null });
-  assert.deepEqual(state.grants.map((g) => g.origin), [S1], "没过的那一台不交接");
+  assert.deepEqual(state.grants.map((g) => g.origin), [S1], "The stage that failed gets no handoff");
 });
 
-test("OCS-S-07 票据交接没成(舞台源没有 /media-s/、第三方 cookie 被拦):不给票据,本页不执行,原因是交接", async () => {
+test("OCS-S-07 ticket handoff fails (the stage origin has no /media-s/, third-party cookies are blocked): no ticket, this page does not execute, and the reason is the handoff", async () => {
   const { iso } = make({ grantOk: false });
   const { a } = await bothIsolated(iso);
   assert.deepEqual(a, { mode: "cookie", base: `/media-s/${SID}`, ticket: null, cardExec: false });
   assert.deepEqual({ enabled: iso.state().enabled, reason: iso.state().reason }, { enabled: false, reason: "grant-failed" });
 });
 
-test("OCS-S-08 握手之后等不到自检结果(旧版舞台页不发、舞台卡住):到时按自检出错,不给票据", async () => {
+test("OCS-S-08 no self-check result arrives after the handshake (old stage page does not send it, stage is stuck): on timeout it is treated as a self-check error, no ticket", async () => {
   const { iso, state } = make();
   iso.setStages(["A", "B"]);
   iso.handshake("A");
@@ -138,7 +138,7 @@ test("OCS-S-08 握手之后等不到自检结果(旧版舞台页不发、舞台�
   assert.equal(state.grants.length, 0);
 });
 
-test("OCS-S-09 点过头之后任何舞台都不再收到票据:后来哪一台自检不过或交接失败,拿到的是不带票据的 cookie 基址;未配置 stageOrigin 则抛错拒绝退回同源", async () => {
+test("OCS-S-09 after approval no stage receives a ticket again: any stage that later fails the self-check or handoff gets a cookie base without a ticket; if stageOrigin is not configured it throws and refuses to fall back to the same origin", async () => {
   const { iso, state } = make();
   await bothIsolated(iso);
   assert.equal(iso.state().enabled, true);
@@ -158,11 +158,11 @@ test("OCS-S-09 点过头之后任何舞台都不再收到票据:后来哪一台�
   assert.equal(iso.state().reason, "no-stage");
   await assert.rejects(
     () => iso.plan("A", { active: false, stageOrigin: null, ticket: TICKET }),
-    /跨源隔离舞台未配置或不可用/
+    /cross-origin isolated stage is not configured or unavailable/
   );
 });
 
-test("OCS-S-10 加固拦下过试图造子框架的代码:本页会话不再执行;订阅方收到通知", async () => {
+test("OCS-S-10 hardening blocked code that tried to create a child frame: this page session no longer executes; subscribers are notified", async () => {
   const { iso } = make();
   let calls = 0;
   iso.subscribe(() => { calls++; });
@@ -179,7 +179,7 @@ test("OCS-S-10 加固拦下过试图造子框架的代码:本页会话不再执�
   assert.equal(iso.state().reason, "breach");
 });
 
-test("OCS-S-11 等自检的时候这一台又握手了(换了文档):这一次作废;还没有票据时不交接、也不退回旧办法", async () => {
+test("OCS-S-11 this stage handshakes again while waiting for the self-check (document changed): this round is voided; with no ticket yet, no handoff and no fallback to the old approach", async () => {
   const { iso, state } = make();
   iso.setStages(["A", "B"]);
   iso.handshake("A");
@@ -194,7 +194,7 @@ test("OCS-S-11 等自检的时候这一台又握手了(换了文档):这一次�
   assert.equal(state.grants.length, 0);
 });
 
-test("OCS-S-12 会话号:32 位十六进制,每次不同;交接请求是带凭据的跨源 POST、票据只在 Authorization 头里,204 才算成", async () => {
+test("OCS-S-12 session ID: 32 hex digits, different each time; the handoff request is a credentialed cross-origin POST, the ticket is only in the Authorization header, and only 204 counts as success", async () => {
   const sid = newSid();
   assert.match(sid, /^[0-9a-f]{32}$/);
   assert.notEqual(sid, newSid());
@@ -212,16 +212,16 @@ test("OCS-S-12 会话号:32 位十六进制,每次不同;交接请求是带凭�
   assert.equal(await grantMediaCookie(S1, SID, TICKET, async () => { throw new TypeError("Failed to fetch"); }), false);
   const n = calls.length;
   assert.equal(await grantMediaCookie(S1, "bad sid", TICKET, fetchImpl(204)), false);
-  assert.equal(calls.length, n, "会话号不对就不发请求");
+  assert.equal(calls.length, n, "No request is sent if the session ID is wrong");
 });
 
-test("OCS-S-13 本页的那一份:没建会话(桌面运行环境、还没挂舞台)回「没有舞台、不执行」;总开关经 enabled 读", async () => {
+test("OCS-S-13 this page's instance: no session created (desktop runtime, stage not yet mounted) returns \"no stage, not executing\"; the master switch is read via enabled", async () => {
   resetPageStageIsolationForTest();
   assert.deepEqual({ enabled: onlineCardExec().enabled, reason: onlineCardExec().reason }, { enabled: false, reason: "no-stage" });
   let on = false, calls = 0;
   const off = subscribeOnlineCardExec(() => { calls++; });
   const iso = pageStageIsolation(() => on);
-  assert.equal(pageStageIsolation(), iso, "同一页只有一份");
+  assert.equal(pageStageIsolation(), iso, "Only one instance per page");
   iso.setStages(["A", "B"]);
   assert.equal(onlineCardExec().reason, "switch-off");
   assert.ok(calls >= 1);
@@ -232,18 +232,18 @@ test("OCS-S-13 本页的那一份:没建会话(桌面运行环境、还没挂舞
   resetPageStageIsolationForTest();
 });
 
-test("OCS-S-14 只有一个舞台(舞台闸门第一级、握手失败退回):跨源单舞台 A 自检通过、交接成功就能执行,不看 B;B 不在布局里不给票据", async () => {
+test("OCS-S-14 only one stage (first level of the stage gate, falling back after handshake failure): cross-origin single stage A passes the self-check and handoff succeeds, so it can execute, ignoring B; B is not in the layout and gets no ticket", async () => {
   const { iso } = make();
   iso.setStages(["A"]);
-  assert.equal(iso.state().reason, "pending", "还没自检:等着");
+  assert.equal(iso.state().reason, "pending", "Not self-checked yet: waiting");
   iso.handshake("A");
   iso.report("A", OK);
   const a = await iso.plan("A", { active: true, stageOrigin: S1, ticket: TICKET });
   assert.equal(a.mode, "cookie");
-  assert.equal(a.ticket, null, "票据不经 RPC");
-  assert.deepEqual({ enabled: iso.state().enabled, reason: iso.state().reason }, { enabled: true, reason: "ok" }, "单舞台同样跨源隔离:能执行用户卡与素材效果卡");
+  assert.equal(a.ticket, null, "Ticket does not go through RPC");
+  assert.deepEqual({ enabled: iso.state().enabled, reason: iso.state().reason }, { enabled: true, reason: "ok" }, "Single stage is also cross-origin isolated: can execute user cards and media effect cards");
   const b = await iso.plan("B", { active: false, stageOrigin: S2, ticket: TICKET });
-  assert.equal(b.ticket, null, "不在布局里的那一台不给票据");
+  assert.equal(b.ticket, null, "The stage not in the layout gets no ticket");
   // 换回两个舞台:B 还没自检,回到等着
   iso.setStages(["A", "B"]);
   assert.equal(iso.state().enabled, false);
@@ -252,7 +252,7 @@ test("OCS-S-14 只有一个舞台(舞台闸门第一级、握手失败退回):�
   assert.equal(iso.state().reason, "no-stage");
 });
 
-test("(f) 路径号按账号加项目固定(createStageSidStore 与会话 setScope / reload):同账号同项目稳定复用、跨项目跨账号隔离、存储异常与脏值兜底、缺标识不碰存储、换项目强制重载舞台且守单向规矩", async () => {
+test("(f) path ID is fixed per account plus project (createStageSidStore and session setScope / reload): stably reused for the same account and project, isolated across projects and accounts, fallback for storage errors and dirty values, no storage access when an identifier is missing, switching project forces a stage reload and keeps the one-way rule", async () => {
   const backing = new Map();
   let getCalls = 0, setCalls = 0;
   const fakeStorage = {
@@ -267,21 +267,21 @@ test("(f) 路径号按账号加项目固定(createStageSidStore 与会话 setSco
   const scopeC = { accountId: "acct:2", projectId: "proj/alpha" };
   const sidA1 = store1.sidFor(scopeA);
   assert.match(sidA1, /^[0-9a-f]{32}$/);
-  assert.equal(store1.sidFor(scopeA), sidA1, "同一 store 内同账号同项目复用同一 sid");
+  assert.equal(store1.sidFor(scopeA), sidA1, "Within the same store, the same account and project reuse the same sid");
   const expectedKeyA = `${STAGE_SID_STORAGE_PREFIX}${encodeURIComponent(scopeA.accountId)}:${encodeURIComponent(scopeA.projectId)}`;
   assert.equal(backing.get(expectedKeyA), sidA1);
 
   // 2. 两个 store 共用同一份存储(模拟新开页面会话) -> 同一 sid
   const store2 = createStageSidStore({ storage: fakeStorage });
-  assert.equal(store2.sidFor(scopeA), sidA1, "新页面会话从 localStorage 读回同一 sid");
+  assert.equal(store2.sidFor(scopeA), sidA1, "A new page session reads the same sid back from localStorage");
 
   // 3. 不同项目 -> 不同 sid;4. 不同账号 -> 不同 sid
   const sidB1 = store1.sidFor(scopeB);
   const sidC1 = store1.sidFor(scopeC);
   assert.match(sidB1, /^[0-9a-f]{32}$/);
   assert.match(sidC1, /^[0-9a-f]{32}$/);
-  assert.notEqual(sidB1, sidA1, "同账号不同项目 sid 不同");
-  assert.notEqual(sidC1, sidA1, "不同账号同项目号 sid 不同");
+  assert.notEqual(sidB1, sidA1, "Same account, different project: sid differs");
+  assert.notEqual(sidC1, sidA1, "Different account, same project ID: sid differs");
   assert.notEqual(sidC1, sidB1);
 
   // 5. getItem 或 setItem 抛错(或读取 storage 本身抛错) -> 退回内存随机 32 位十六进制 sid,store 内稳定、不同作用域不同
@@ -295,9 +295,9 @@ test("(f) 路径号按账号加项目固定(createStageSidStore 与会话 setSco
     const fb = fallbackStore.sidFor(scopeB);
     assert.match(fa, /^[0-9a-f]{32}$/);
     assert.match(fb, /^[0-9a-f]{32}$/);
-    assert.equal(fallbackStore.sidFor(scopeA), fa, "存储抛错时同一作用域在会话内仍稳定");
+    assert.equal(fallbackStore.sidFor(scopeA), fa, "When storage throws, the same scope stays stable within the session");
     assert.equal(fallbackStore.sidFor(scopeB), fb);
-    assert.notEqual(fa, fb, "存储抛错时不同作用域仍不共用 sid");
+    assert.notEqual(fa, fb, "When storage throws, different scopes still do not share a sid");
   }
 
   // 6. 存储里是脏值 -> 换新 sid 并覆盖写回
@@ -307,7 +307,7 @@ test("(f) 路径号按账号加项目固定(createStageSidStore 与会话 setSco
     const fresh = cleanStore.sidFor(scopeA);
     assert.match(fresh, /^[0-9a-f]{32}$/);
     assert.notEqual(fresh, garbage);
-    assert.equal(backing.get(expectedKeyA), fresh, "脏值被新生成的合法 sid 覆盖");
+    assert.equal(backing.get(expectedKeyA), fresh, "The dirty value is overwritten by a newly generated valid sid");
   }
 
   // 7. 缺少任一 id -> 绝不触碰 storage,不同缺省作用域仍拿到各自稳定且互不相同的内存 sid
@@ -322,10 +322,10 @@ test("(f) 路径号按账号加项目固定(createStageSidStore 与会话 setSco
   const m3 = memStore.sidFor({ accountId: "acct-1", projectId: null });
   const m4 = memStore.sidFor({ accountId: "", projectId: "proj-1" });
   const m5 = memStore.sidFor({ accountId: null, projectId: null });
-  assert.equal(touched, 0, "缺账号或项目标识时绝不访问 storage");
+  assert.equal(touched, 0, "Never access storage when the account or project identifier is missing");
   for (const s of [m1, m2, m3, m4, m5]) assert.match(s, /^[0-9a-f]{32}$/);
-  assert.equal(new Set([m1, m2, m3, m4]).size, 4, "不同缺标识作用域互不共用 sid");
-  assert.equal(memStore.sidFor({ accountId: null, projectId: "proj-1" }), m1, "同一缺标识作用域在会话内稳定");
+  assert.equal(new Set([m1, m2, m3, m4]).size, 4, "Different scopes with missing identifiers do not share a sid");
+  assert.equal(memStore.sidFor({ accountId: null, projectId: "proj-1" }), m1, "The same scope with a missing identifier stays stable within the session");
   assert.equal(memStore.sidFor({ accountId: null, projectId: null }), m5);
   assert.ok(getCalls > 0 && setCalls > 0);
 
@@ -351,7 +351,7 @@ test("(f) 路径号按账号加项目固定(createStageSidStore 与会话 setSco
   assert.match(sidA, /^[0-9a-f]{32}$/);
   const notifyBeforeSameScope = state.notifications;
   iso.setScope({ ...scopeA });
-  assert.equal(state.notifications, notifyBeforeSameScope, "相同作用域重复 setScope 是空操作、不触发通知");
+  assert.equal(state.notifications, notifyBeforeSameScope, "Repeating setScope with the same scope is a no-op and triggers no notification");
 
   iso.handshake("A"); iso.handshake("B");
   iso.report("A", OK); iso.report("B", OK);
@@ -368,12 +368,12 @@ test("(f) 路径号按账号加项目固定(createStageSidStore 与会话 setSco
   iso.setScope(scopeB);
   const sidB = iso.sid;
   assert.notEqual(sidB, sidA);
-  assert.equal(state.notifications, notifyBeforeSwitch + 1, "切换作用域改变就绪状态时通知一次订阅方");
+  assert.equal(state.notifications, notifyBeforeSwitch + 1, "Subscribers are notified once when switching scope changes the readiness state");
   assert.deepEqual({ enabled: iso.state().enabled, reason: iso.state().reason }, { enabled: false, reason: "pending" });
 
   const reloadA = await iso.plan("A", { active: true, stageOrigin: S1, ticket: TICKET });
   assert.deepEqual(reloadA, { mode: "cookie", base: null, ticket: null, cardExec: false, reload: true });
-  assert.equal(state.grants.length, 2, "需要重载时不发新的交接请求");
+  assert.equal(state.grants.length, 2, "No new handoff request is sent when a reload is needed");
   // 安全兜底分支(active 为假、或 ticket 为空)同样不能把第二个 sid 交给旧文档
   assert.deepEqual(await iso.plan("A", { active: false, stageOrigin: S1, ticket: TICKET }), { mode: "cookie", base: null, ticket: null, cardExec: false, reload: true });
   assert.deepEqual(await iso.plan("B", { active: true, stageOrigin: S2, ticket: null }), { mode: "cookie", base: null, ticket: null, cardExec: false, reload: true });
@@ -384,7 +384,7 @@ test("(f) 路径号按账号加项目固定(createStageSidStore 与会话 setSco
   assert.deepEqual({ enabled: iso.state().enabled, reason: iso.state().reason }, { enabled: true, reason: "ok" });
   const backToA = await iso.plan("A", { active: true, stageOrigin: S1, ticket: TICKET });
   assert.deepEqual(backToA, { mode: "cookie", base: `/media-s/${sidA}`, ticket: null, cardExec: true });
-  assert.equal(state.grants.length, 2, "切回 A 时旧交接仍有效,不重发交接");
+  assert.equal(state.grants.length, 2, "When switching back to A the old handoff is still valid, no handoff is resent");
 
   // 再次切到项目 B,模拟两台舞台整页重载后重新握手:拿到 sidB,同一张票据也为 sidB 重新交接
   iso.setScope(scopeB);
@@ -399,7 +399,7 @@ test("(f) 路径号按账号加项目固定(createStageSidStore 与会话 setSco
   assert.deepEqual(state.grants.slice(2), [
     { origin: S1, sid: sidB, ticket: TICKET },
     { origin: S2, sid: sidB, ticket: TICKET },
-  ], "同一张票据与舞台源在新 sid 下必须重新交接");
+  ], "The same ticket and stage origin must be handed off again under a new sid");
 
   // 单向规矩 1:点过头之后切到项目 C,即使自检不过或交接失败也绝不退回带票据的旧办法
   iso.setScope(scopeC);
@@ -426,7 +426,7 @@ test("(f) 路径号按账号加项目固定(createStageSidStore 与会话 setSco
   assert.equal(iso.state().reason, "breach");
 });
 
-test("(g) 页面原地换项目、素材连接还没换过来:卡片代码的项目与素材的项目不同,本页当场不点头执行(新项目的代码不进拿着上一个项目路径号的舞台文档);素材换过来后路径号变、要求整页重载;Preview 发包前先重算作用域", async () => {
+test("(g) page switches project in place while the media connection has not switched yet: the card code's project differs from the media's project, so this page does not approve execution on the spot (the new project's code does not enter a stage document that holds the previous project's path ID); once the media switches over, the path ID changes and a full page reload is required; Preview recomputes the scope before sending a packet", async () => {
   const backing = new Map();
   const storage = { getItem: (k) => backing.get(k) ?? null, setItem: (k, v) => { backing.set(k, v); } };
   const state = { grants: [], notifications: 0 };
@@ -452,7 +452,7 @@ test("(g) 页面原地换项目、素材连接还没换过来:卡片代码的项
   assert.deepEqual({ enabled: iso.state().enabled, reason: iso.state().reason }, { enabled: false, reason: "pending" });
   assert.equal(state.notifications, before + 1);
   const during = await iso.plan("A", { active: true, stageOrigin: S1, ticket: TICKET });
-  assert.equal(during.cardExec, false, "对不上的这一段发给舞台的策略不点头");
+  assert.equal(during.cardExec, false, "The policy sent to the stage for the mismatched segment is not approved");
   assert.equal(during.ticket, null);
   // 同一组再报一次是空操作
   iso.setScope({ accountId: "acct-1", projectId: "A", codeProjectId: "B" });
@@ -490,21 +490,21 @@ test("(g) 页面原地换项目、素材连接还没换过来:卡片代码的项
   const push = preview.indexOf("const pushCardBundles = useCallback(");
   const scoped = preview.indexOf(".setScope(stageSidScope());", push);
   const decided = preview.indexOf("cardExecAvailable()", push);
-  assert.ok(push > 0 && scoped > push && scoped < decided, "pushCardBundles 先 setScope 再判 cardExecAvailable");
+  assert.ok(push > 0 && scoped > push && scoped < decided, "pushCardBundles calls setScope before deciding cardExecAvailable");
   // 2026-10-23 审查 P2:取票据要等;等的时候素材连接或打开的项目换了,这张票据作废,不交到按新作用域算的路径号下
   const media = preview.indexOf("const pushMediaPolicy = useCallback(");
   const captured = preview.indexOf("const scopeBefore = scopeKey();", media);
   const awaited = preview.indexOf("await remoteAssetTicket()", media);
   const recheck = preview.indexOf("if (scopeKey() !== scopeBefore) return;", media);
   const mediaScoped = preview.indexOf("iso.setScope(stageSidScope());", media);
-  assert.ok(media > 0 && captured > media && awaited > captured && recheck > awaited && mediaScoped > recheck, "pushMediaPolicy:等票据前后各读一次作用域,不一致就放弃,再定路径号");
-  assert.match(preview, /const scopeKey = \(\) => JSON\.stringify\(\[remoteAssetBase\(\), stageSidScope\(\)\]\);/, "作用域含素材连接与打开的项目");
+  assert.ok(media > 0 && captured > media && awaited > captured && recheck > awaited && mediaScoped > recheck, "pushMediaPolicy: read the scope once before and once after awaiting the ticket, abandon if they differ, then decide the path number");
+  assert.match(preview, /const scopeKey = \(\) => JSON\.stringify\(\[remoteAssetBase\(\), stageSidScope\(\)\]\);/, "The scope includes the asset connection and the open project");
   // 原地换项目(`plan.reload`):重建舞台 iframe 元素(key 带 stageFrameGen),不用 `frame.src = frame.src`(免得旧浏览上下文的会话历史留着)
   const reloadBranch = preview.indexOf("if (plan.reload)", media);
   const bumpGen = preview.indexOf("setStageFrameGen((prev) => ({ ...prev, [id]: prev[id] + 1 }));", reloadBranch);
-  assert.ok(reloadBranch > mediaScoped && bumpGen > reloadBranch && bumpGen < preview.indexOf("return;", reloadBranch), "plan.reload 分支递增 stageFrameGen 重建舞台 iframe");
-  assert.ok(!preview.slice(reloadBranch, preview.indexOf("return;", reloadBranch)).includes("frame.src"), "plan.reload 不再原地赋 frame.src");
+  assert.ok(reloadBranch > mediaScoped && bumpGen > reloadBranch && bumpGen < preview.indexOf("return;", reloadBranch), "The plan.reload branch increments stageFrameGen to rebuild the stage iframe");
+  assert.ok(!preview.slice(reloadBranch, preview.indexOf("return;", reloadBranch)).includes("frame.src"), "plan.reload no longer assigns frame.src in place");
   for (const key of ["single-${stageFrameGen.A}", "dualA-${stageFrameGen.A}", "dualB-${stageFrameGen.B}"]) {
-    assert.ok(preview.includes(`key={\`${key}\`}`), `舞台 iframe key 带重建代数: ${key}`);
+    assert.ok(preview.includes(`key={\`${key}\`}`), `The stage iframe key carries the rebuild generation: ${key}`);
   }
 });

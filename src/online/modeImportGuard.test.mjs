@@ -103,8 +103,8 @@ function chainToMode(entries, mocked) {
   return null;
 }
 
-test("C10A-MODE-01 Node 单测载入的模块不静态引用 src/online/mode.ts(要么按需载入,要么单测先换成桩)", () => {
-  assert.ok(testFiles.length > 100, `找到的单测文件太少:${testFiles.length}`);
+test("C10A-MODE-01 Modules loaded by Node unit tests do not statically reference src/online/mode.ts (either load on demand, or stub it in the unit test first)", () => {
+  assert.ok(testFiles.length > 100, `Too few unit test files found: ${testFiles.length}`);
   const bad = [];
   for (const f of testFiles) {
     const text = read(f);
@@ -113,18 +113,18 @@ test("C10A-MODE-01 Node 单测载入的模块不静态引用 src/online/mode.ts(
     const chain = chainToMode(testEntries(f, text), mocked);
     if (chain) bad.push(`${rel(f)}:${chain.join(" → ")}`);
   }
-  assert.deepEqual(bad, [], `这些单测会在 Node 里载到 mode.ts(import.meta.env 不存在,当场抛错):\n${bad.join("\n")}`);
+  assert.deepEqual(bad, [], `These unit tests load mode.ts in Node (import.meta.env does not exist, throws immediately):\n${bad.join("\n")}`);
 });
 
-test("C10A-MODE-02 守门自己管用:静态引了 mode.ts 的模块能被认出来", () => {
+test("C10A-MODE-02 the gate works on itself: modules that statically import mode.ts are recognized", () => {
   const importers = walk(path.join(ROOT, "src"))
     .filter((f) => /\.(ts|tsx)$/.test(f) && !f.endsWith(".d.ts"))
     .filter((f) => staticSpecs(read(f)).some((s) => rel(resolveFrom(f, s) ?? "") === MODE));
-  assert.ok(importers.length >= 3, `静态引 mode.ts 的模块应当认得出来,实际 ${importers.map(rel).join(", ")}`);
+  assert.ok(importers.length >= 3, `modules that statically import mode.ts should be recognized, actual: ${importers.map(rel).join(", ")}`);
   // 一个假单测:直接载 Preview.tsx(它静态引了 mode.ts),没换桩 → 该判红
   const fake = path.join(ROOT, "src", "editor", "fake.test.mjs");
   const chain = chainToMode(testEntries(fake, 'const P = await import("./Preview.tsx");'), new Set());
-  assert.ok(chain && chain.at(-1) === MODE, `假单测应当走到 mode.ts:${JSON.stringify(chain)}`);
+  assert.ok(chain && chain.at(-1) === MODE, `the fake unit test should reach mode.ts: ${JSON.stringify(chain)}`);
   // 换了桩就不算
   assert.equal(chainToMode(testEntries(fake, 'await import(srcUrl("online/mode.ts"))'), new Set([MODE])), null);
 });

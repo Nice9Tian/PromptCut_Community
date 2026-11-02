@@ -79,6 +79,7 @@ import { createNodeSession as createNodeSessionUntyped } from "../../server/rend
 import { checkClaimable as checkClaimableUntyped } from "../../server/render-node/filter.mjs";
 // @ts-expect-error 无类型声明的 .mjs(同构:细任务的执行规矩,桌面与页面共用,D11)
 import { createTaskRunner as createTaskRunnerUntyped, ABORTED as ABORTED_UNTYPED } from "../../server/render-node/task-runner.mjs";
+import { tr } from "../i18n/index.ts";
 
 /* ------------------------------------------------------------------ 当节点的条件 */
 
@@ -275,7 +276,7 @@ export function streamManifest(
   parts: { inits: Readonly<Record<string, StreamInitMeta>>; segments: Readonly<Record<string | number, StreamSegmentMeta>> },
 ): StreamManifestOut {
   const input = streamInputOf(task);
-  if (!input || !task.range) throw Object.assign(new Error("任务没有 input.stream / range"), { retryable: false });
+  if (!input || !task.range) throw Object.assign(new Error("Task has no input.stream / range"), { retryable: false });
   const { from, to } = task.range;
   const inits: Record<string, StreamInitMeta> = {};
   const segments: Record<string, StreamSegmentMeta> = {};
@@ -294,7 +295,7 @@ export function streamManifest(
     inits, segments,
   };
   const bytes = new TextEncoder().encode(JSON.stringify(out)).length;
-  if (bytes > STREAM_RESULT_MAX_BYTES) throw Object.assign(new Error(`任务清单 ${bytes} 字节,超过上限 ${STREAM_RESULT_MAX_BYTES}`), { code: "result-too-large", bytes, retryable: false });
+  if (bytes > STREAM_RESULT_MAX_BYTES) throw Object.assign(new Error(`Task manifest is ${bytes} bytes, over the limit of ${STREAM_RESULT_MAX_BYTES}`), { code: "result-too-large", bytes, retryable: false });
   return out;
 }
 
@@ -711,7 +712,7 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
       if (!holding(r)) return null;
     }
     if (!project) {
-      lastError = `取不到第 ${Number.isSafeInteger(rev) ? rev : "?"} 版项目`;
+      lastError = tr("Cannot get project revision {0}", Number.isSafeInteger(rev) ? rev : "?");
       release(r, "no-snapshot");
       return null;
     }
@@ -931,7 +932,7 @@ export function createBrowserNode(deps: BrowserNodeDeps): BrowserNode {
       } else if (message.type === "error" && !welcomed && message.reqId === undefined) {
         // 报到被拒(D9 forbidden、D14 not-chromium、D10 bad-message):不当节点、不重连
         refused = String(message.reason ?? "error");
-        lastError = `报到被拒:${refused}`;
+        lastError = `Check-in refused: ${refused}`;
         try { deps.onRefused?.(refused); } catch { /* 宿主坏了 */ }
       }
       if (message.type === "queue.snapshot" || message.type === "task.opened") refreshCards();

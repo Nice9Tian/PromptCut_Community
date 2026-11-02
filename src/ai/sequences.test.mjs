@@ -59,7 +59,7 @@ test("frameTimes:等间隔,起点略后挪;4 格和 9 格", () => {
 });
 
 test("transcriptFor:取和区间有交集的字幕段", () => {
-  const tr = { engine: "x", model: "y", createdAt: "", segments: [{ start: 0, end: 4, text: "甲" }, { start: 4, end: 9, text: " 乙 " }, { start: 9, end: 12, text: "丙" }] };
+  const tr = { engine: "x", model: "y", createdAt: "", segments: [{ start: 0, end: 4, text: "A" }, { start: 4, end: 9, text: " 乙 " }, { start: 9, end: 12, text: "丙" }] };
   assert.equal(transcriptFor(tr, 5, 10), "乙 丙");
   assert.equal(transcriptFor(tr, 20, 30), "");
   assert.equal(transcriptFor(undefined, 0, 1), "");

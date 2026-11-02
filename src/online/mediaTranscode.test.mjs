@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { smallVideoDimensions, Sha256, sha256Blob, transcodeVideoSmall } from "./mediaTranscode.ts";
 
-test("smallVideoDimensions: 保持比例缩放至 800×600 以内且宽高均为偶数", () => {
+test("smallVideoDimensions: scales proportionally to fit within 800×600 with both width and height even", () => {
   // 1080p (1920×1080) -> 800×450
   assert.deepEqual(smallVideoDimensions(1920, 1080), { width: 800, height: 450 });
 
@@ -32,7 +32,7 @@ test("smallVideoDimensions: 保持比例缩放至 800×600 以内且宽高均为
   assert.equal(fallback.height % 2, 0);
 });
 
-test("Sha256 & sha256Blob: 与 node:crypto 结果逐位一致", async () => {
+test("Sha256 & sha256Blob: bit-for-bit identical to node:crypto results", async () => {
   const cases = [
     "",
     "hello world",
@@ -47,17 +47,17 @@ test("Sha256 & sha256Blob: 与 node:crypto 结果逐位一致", async () => {
     const expected = crypto.createHash("sha256").update(Buffer.from(text, "utf8")).digest("hex");
     const blob = new Blob([text]);
     const actual = await sha256Blob(blob);
-    assert.equal(actual, expected, `哈希不匹配: text length = ${text.length}`);
+    assert.equal(actual, expected, `Hash mismatch: text length = ${text.length}`);
   }
 
   // 二进制分块数据
   const binary = crypto.randomBytes(5 * 1024 * 1024 + 1234); // 5MB+
   const expectedBin = crypto.createHash("sha256").update(binary).digest("hex");
   const actualBin = await sha256Blob(new Blob([binary]));
-  assert.equal(actualBin, expectedBin, "大文件二进制哈希不匹配");
+  assert.equal(actualBin, expectedBin, "Large file binary hash mismatch");
 });
 
-test("transcodeVideoSmall: 无 VideoEncoder 环境优雅降级返回 null，不抛错", async () => {
+test("transcodeVideoSmall: without VideoEncoder, downgrades gracefully and returns null, no throw", async () => {
   const dummyBlob = new Blob([crypto.randomBytes(100)], { type: "video/mp4" });
   // 在未注入 WebCodecs 的 Node 环境下直接运行
   const result = await transcodeVideoSmall(dummyBlob, {
@@ -66,7 +66,7 @@ test("transcodeVideoSmall: 无 VideoEncoder 环境优雅降级返回 null，不�
   assert.equal(result, null);
 });
 
-test("transcodeVideoSmall: 视频元数据探测失败时优雅降级返回 null", async () => {
+test("transcodeVideoSmall: when video metadata probing fails, downgrades gracefully and returns null", async () => {
   const dummyBlob = new Blob([crypto.randomBytes(100)], { type: "video/mp4" });
   const mockVideo = {
     addEventListener(event, cb) {
@@ -92,7 +92,7 @@ test("transcodeVideoSmall: 视频元数据探测失败时优雅降级返回 null
   assert.equal(result, null);
 });
 
-test("transcodeVideoSmall: 正常 WebCodecs + mp4Mux 模拟产出合法 MP4", async () => {
+test("transcodeVideoSmall: normal WebCodecs + mp4Mux simulation produces a valid MP4", async () => {
   const dummyBlob = new Blob([crypto.randomBytes(200)], { type: "video/mp4" });
   const mockVideo = {
     readyState: 4,
@@ -164,7 +164,7 @@ test("transcodeVideoSmall: 正常 WebCodecs + mp4Mux 模拟产出合法 MP4", as
     },
   });
 
-  assert.ok(res !== null, "转码应成功返回结果");
+  assert.ok(res !== null, "Transcoding should return a result successfully");
   assert.equal(res.width, 800);
   assert.equal(res.height, 450);
   assert.ok(res.blob.size > 0);

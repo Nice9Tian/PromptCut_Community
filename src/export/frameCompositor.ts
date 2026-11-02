@@ -30,6 +30,7 @@ import { stageOrigins } from "../editor/previewMode";
 import { ONLINE } from "../online/mode";
 import { STAGE_ENTRY_FILE } from "../online/isolation/stageGuard";
 import { activeCardSourceReader } from "../editor/sync/onlineCardSources";
+import { tr as trText } from "../i18n/index.ts";
 
 type ExportWindow = Window & typeof globalThis & {
   __pcReady?: boolean;
@@ -216,16 +217,16 @@ export class ExportCompositor {
     return new Promise<T>((resolve, reject) => {
       const signal = this.opts.signal;
       const settle = () => { clearTimeout(timer); signal?.removeEventListener("abort", onAbort); this.pendingRpc.delete(id); };
-      const onAbort = () => { settle(); reject(Object.assign(new Error("已取消"), { cancelled: true })); };
+      const onAbort = () => { settle(); reject(Object.assign(new Error(trText("Cancelled")), { cancelled: true })); };
       const timer = setTimeout(() => {
         settle();
-        reject(new Error(`导出舞台 ${Math.round(EXPORT_STAGE_RPC_TIMEOUT_MS / 1000)} 秒没有回应(${String(msg.type)})`));
+        reject(new Error(trText("Export stage did not respond for {0} s ({1})", Math.round(EXPORT_STAGE_RPC_TIMEOUT_MS / 1000), String(msg.type))));
       }, EXPORT_STAGE_RPC_TIMEOUT_MS);
       signal?.addEventListener("abort", onAbort, { once: true });
       this.pendingRpc.set(id, { resolve: (v) => { settle(); resolve(v); }, reject: (e) => { settle(); reject(e); } });
       try {
         const w = this.frameEl.contentWindow;
-        if (!w) throw new Error("导出舞台 iframe 已脱落");
+        if (!w) throw new Error(trText("Export stage iframe has been detached"));
         if (transfer && transfer.length) {
           w.postMessage({ id, ...msg }, "*", transfer);
         } else {
@@ -266,7 +267,7 @@ export class ExportCompositor {
 
     const el = document.createElement("iframe");
     el.setAttribute("aria-hidden", "true");
-    el.title = "逐帧导出";
+    el.title = trText("Frame-by-frame export");
     el.dataset.pc = "browser-export-frame";
     // 只能 opacity:0 藏:display:none / visibility:hidden 会停掉里面的 rAF 与 <video>(和后台舞台同一个理由)
     el.style.cssText = `position:fixed;left:0;top:0;width:${p.width}px;height:${p.height}px;border:0;opacity:0;pointer-events:none;z-index:-1`;
@@ -288,7 +289,7 @@ export class ExportCompositor {
           while (!ready) {
             c.throwIfAborted();
             try { c.frameEl.contentWindow?.postMessage({ type: "pc-export-ping" }, "*"); } catch { /* ignore */ }
-            if (performance.now() - t0 > 60_000) throw new Error("导出舞台 60 秒没就绪");
+            if (performance.now() - t0 > 60_000) throw new Error(trText("Export stage was not ready after 60 s"));
             await new Promise((r) => setTimeout(r, 50));
           }
         } finally {
@@ -343,12 +344,12 @@ export class ExportCompositor {
           freshTicket: opts.freshTicket?.() ?? null,
         });
       } else {
-        await c.waitFor(() => c.w?.__pcReady === true && typeof c.w.__pcLoadProject === "function", 60_000, "导出页 60 秒没就绪");
+        await c.waitFor(() => c.w?.__pcReady === true && typeof c.w.__pcLoadProject === "function", 60_000, trText("Export page was not ready after 60 s"));
         // 同步来的用户卡在导出页里没有定义:把同步表交给它,让这些卡的包裹层挂出来,逐帧换成预渲染原尺寸
         const synced = [...syncedUserCards().values(), ...(wrapped.replaced ? [{ id: WRAPPER_ONLY_CARD, name: "" }] : [])];
         if (synced.length) c.w.__pcSetSyncedUserCards?.(synced);
         await c.w.__pcLoadProject!(p);
-        await c.waitFor(() => c.w.__pcReady === true && typeof c.w.__pcSetT === "function", 60_000, "导出页 60 秒没装好项目");
+        await c.waitFor(() => c.w.__pcReady === true && typeof c.w.__pcSetT === "function", 60_000, trText("Export page did not finish loading the project after 60 s"));
       }
     } catch (e) {
       c.close();
@@ -368,7 +369,7 @@ export class ExportCompositor {
   }
 
   private throwIfAborted() {
-    if (this.opts.signal?.aborted) throw Object.assign(new Error("已取消"), { cancelled: true });
+    if (this.opts.signal?.aborted) throw Object.assign(new Error(trText("Cancelled")), { cancelled: true });
   }
 
   /**
@@ -520,7 +521,7 @@ export class ExportCompositor {
 
     t0 = performance.now();
     const snap = this.w.__pcCreateSnapshot!();
-    if (snap.lossy) throw new Error("这一帧有读不出像素的画布,导不出来");
+    if (snap.lossy) throw new Error(trText("This frame has a canvas whose pixels can't be read, so it can't be exported"));
     const tpl = document.createElement("template");
     tpl.innerHTML = snap.html;
     // 重卡:包裹层里换成预渲染原尺寸
@@ -607,7 +608,7 @@ export class ExportCompositor {
         this.messageListener = null;
       }
       for (const handler of [...this.pendingRpc.values()]) {
-        handler.reject(new Error("导出合成器已关闭"));
+        handler.reject(new Error(trText("Export compositor is closed")));
       }
       this.pendingRpc.clear();
       try {

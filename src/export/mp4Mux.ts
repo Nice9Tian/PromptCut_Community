@@ -1,3 +1,4 @@
+import { tr } from "../i18n/index.ts";
 /**
  * 最小的 MP4 封装器(`docs/plan/c10a-contract.md` 第 11 节〔裁〕、第 11.1 节):一条 H.264 视频轨,有音频时再加一条 AAC 轨。
  * 不引依赖(`mp4-muxer` 停维护;Mediabunny 是 MPL-2.0)。浏览器(WebCodecs 的输出)和 Node(单测)都能跑。
@@ -129,9 +130,9 @@ export class Mp4Muxer {
   private chain: Promise<void> = Promise.resolve();
 
   constructor({ video, audio = null, sink }: { video: VideoTrackConfig; audio?: AudioTrackConfig | null; sink: MuxSink }) {
-    if (!/^avc[13]\./.test(video.codec)) throw new Error(`只封装 H.264:${video.codec}`);
-    if (audio && !/^mp4a\.40\./.test(audio.codec)) throw new Error(`只封装 AAC:${audio.codec}`);
-    if (!(video.width > 0) || !(video.height > 0) || !(video.fps > 0)) throw new Error("视频轨的宽高帧率不对");
+    if (!/^avc[13]\./.test(video.codec)) throw new Error(tr("Only H.264 can be muxed: {0}", video.codec));
+    if (audio && !/^mp4a\.40\./.test(audio.codec)) throw new Error(tr("Only AAC can be muxed: {0}", audio.codec));
+    if (!(video.width > 0) || !(video.height > 0) || !(video.fps > 0)) throw new Error(tr("The video track has an invalid width, height or frame rate"));
     this.sink = sink;
     this.video = video;
     this.audio = audio;
@@ -155,7 +156,7 @@ export class Mp4Muxer {
   get bytesWritten(): number { return this.position; }
 
   private sample(track: TrackState, data: Uint8Array, duration: number, cts: number, sync: boolean) {
-    if (this.finalized) throw new Error("已经 finalize 过了");
+    if (this.finalized) throw new Error(tr("Already finalized"));
     track.offsets.push(this.position);
     track.sizes.push(data.length);
     track.durations.push(duration);
@@ -179,7 +180,7 @@ export class Mp4Muxer {
   /** 一个音频块(裸 AAC 帧,不带 ADTS 头)。时长缺省按 AAC 的 1024 个采样 */
   addAudioChunk(data: Uint8Array, { durationUs }: { timestampUs?: number; durationUs?: number } = {}): void {
     const track = this.tracks[1];
-    if (!track) throw new Error("这个封装器没有音频轨");
+    if (!track) throw new Error(tr("This muxer has no audio track"));
     const duration = durationUs && durationUs > 0 ? Math.round((durationUs * track.timescale) / 1e6) : 1024;
     this.sample(track, data, duration, 0, true);
   }

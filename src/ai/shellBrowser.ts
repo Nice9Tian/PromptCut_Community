@@ -35,7 +35,7 @@ export async function muteAgentWebview(muted: boolean): Promise<boolean> {
     await call("agent_webview_mute", { muted });
     return true;
   } catch (e) {
-    console.warn("[shellBrowser] agent_webview_mute 失败", e);
+    console.warn("[shellBrowser] agent_webview_mute failed", e);
     return false;
   }
 }
@@ -63,7 +63,7 @@ export async function showAgentWebview(rect: Rect): Promise<boolean> {
     });
     return true;
   } catch (e) {
-    console.warn("[shellBrowser] agent_webview_show 失败", e);
+    console.warn("[shellBrowser] agent_webview_show failed", e);
     return false;
   }
 }
@@ -76,7 +76,7 @@ export async function hideAgentWebview(): Promise<boolean> {
     await call("agent_webview_hide");
     return true;
   } catch (e) {
-    console.warn("[shellBrowser] agent_webview_hide 失败", e);
+    console.warn("[shellBrowser] agent_webview_hide failed", e);
     return false;
   }
 }

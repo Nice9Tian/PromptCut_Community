@@ -36,7 +36,7 @@ const SG = await import(srcUrl("online/isolation/execGate.ts"));
 const ERS = await import(srcUrl("editor/sync/cardRunStates.ts"));
 const RPC = await import(srcUrl("render/stageRpc.ts"));
 
-test("OCE-G-01 图形能力判定:四种不够各判各的;够就是 ok", () => {
+test("OCE-G-01 Graphics capability check: each of the four shortfalls is judged separately; sufficient means ok", () => {
   const good = { webgl2: true, renderer: "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Direct3D11 vs_5_0 ps_5_0, D3D11)", maxTextureSize: 16384 };
   assert.equal(GPU.judgeGraphCapability(good, { longSide: 1920 }), "ok");
   assert.equal(GPU.judgeGraphCapability(good, { longSide: 16384 }), "ok");
@@ -55,10 +55,10 @@ const dom = (id, extra = {}) => ({ id, name: id, defaults: {}, controls: [], fra
 const graphDef = (id) => dom(id, { Component: undefined, card: () => ({}) });
 const local = (id) => H.unsupportedHere(id, R.getCard(id));
 
-test("OCE-G-02 素材效果卡在哪份文档里能跑:缺省不能;舞台写了之后才能;出过事的卡按运行不了;桌面恒不算", () => {
+test("OCE-G-02 In which document a media effect card can run: by default it cannot; only after the stage declares it; cards that have had trouble count as unable to run; desktop never counts", () => {
   R.resetCards(); R.resetRuntimeCardsForTest();
   R.registerCards([dom("builtin")]);
-  R.setSyncedUserCards([{ id: "g-synced", name: "同步素材效果卡" }, { id: "u-synced", name: "同步用户卡" }]);
+  R.setSyncedUserCards([{ id: "g-synced", name: "Synced media effect card" }, { id: "u-synced", name: "Synced user card" }]);
   H.setOnlineBrowserMode(true);
   try {
     // 编辑页面:没有定义,只看运行状态
@@ -66,18 +66,18 @@ test("OCE-G-02 素材效果卡在哪份文档里能跑:缺省不能;舞台写了
     R.setCardRunStates([["g-synced", { state: "gpu" }]]);
     assert.equal(local("g-synced"), true);
     R.setCardRunStates([["g-synced", { state: "ready" }]]);
-    assert.equal(local("g-synced"), false, "编辑页面:舞台说能运行就不算");
+    assert.equal(local("g-synced"), false, "Editor page: does not count if the stage says it can run");
     R.setCardRunStates([]);
     // 舞台:载入成功(运行时注册表里有定义)。素材效果卡还要这份文档「能跑素材效果卡」
     R.setRuntimeCards([graphDef("g-synced"), dom("u-synced")]);
     assert.equal(R.graphCardsRunnableHere(), false);
-    assert.equal(local("u-synced"), false, "用户卡:载入成功就能运行");
-    assert.equal(local("g-synced"), true, "素材效果卡:这份文档还没说能跑素材效果卡");
+    assert.equal(local("u-synced"), false, "User card: can run once loaded successfully");
+    assert.equal(local("g-synced"), true, "Media effect card: this document has not yet declared that media effect cards can run");
     const gen = R.cardsRegistryGen();
     assert.equal(R.setLocalCardExec({ graph: true }), true);
-    assert.ok(R.cardsRegistryGen() > gen, "变了要让按代数记忆的地方重算");
+    assert.ok(R.cardsRegistryGen() > gen, "A change must make places that memoize by generation recompute");
     assert.equal(R.setLocalCardExec({ graph: true }), false, "没变不通知");
-    assert.equal(local("g-synced"), false, "能跑素材效果卡的舞台:素材效果卡能运行");
+    assert.equal(local("g-synced"), false, "Stage that can run media effect cards: the media effect card can run");
     // 2026-10-21 起不按档另挡:舞台里载入成功、能跑素材效果卡的照常运行(停下追精确帧)
     assert.equal(local("u-synced"), false);
     // 出过事的卡:撤下
@@ -99,7 +99,7 @@ test("OCE-G-02 素材效果卡在哪份文档里能跑:缺省不能;舞台写了
   }
 });
 
-test("OCE-G-03 出事登记:素材解不了一次就算;求值错连着两次才算,成功过清零;渲染错一次就算;换代清掉", () => {
+test("OCE-G-03 Trouble registry: one media decode failure counts; evaluation errors count only twice in a row, reset after a success; one render error counts; cleared on generation change", () => {
   T.resetCardTroubleForTest();
   let fired = 0;
   const off = T.onCardTrouble(() => { fired++; });
@@ -107,10 +107,10 @@ test("OCE-G-03 出事登记:素材解不了一次就算;求值错连着两次才
   assert.deepEqual(T.cardTroubles().get("g1")?.kind, "media");
   assert.equal(fired, 1);
   T.noteGraphCardError("g2", new Error("shader compile failed\nline 2"));
-  assert.equal(T.cardTroubles().has("g2"), false, "第一次求值错不算");
+  assert.equal(T.cardTroubles().has("g2"), false, "The first evaluation error does not count");
   T.noteGraphCardOk("g2");
   T.noteGraphCardError("g2", new Error("again"));
-  assert.equal(T.cardTroubles().has("g2"), false, "中间成功过:重新数");
+  assert.equal(T.cardTroubles().has("g2"), false, "A success in between: count again");
   T.noteGraphCardError("g2", new Error("again"));
   assert.deepEqual(T.cardTroubles().get("g2"), { kind: "runtime-error", detail: "again" });
   assert.equal(T.GRAPH_ERROR_STRIKES, 2);
@@ -118,7 +118,7 @@ test("OCE-G-03 出事登记:素材解不了一次就算;求值错连着两次才
   assert.deepEqual(T.cardTroubles().get("u1"), { kind: "runtime-error", detail: "boom" });
   const before = fired;
   T.noteCardRenderError("u1", new Error("another"));
-  assert.equal(fired, before, "已经登记的不重复通知");
+  assert.equal(fired, before, "Already registered ones are not notified again");
   T.clearCardTrouble(["g1", "u1"]);
   assert.equal(T.cardTroubles().has("g1"), false);
   assert.equal(T.cardTroubles().has("u1"), false);
@@ -127,15 +127,15 @@ test("OCE-G-03 出事登记:素材解不了一次就算;求值错连着两次才
   T.resetCardTroubleForTest();
 });
 
-test("OCE-G-04 页面画面执行不以出口能力为条件，站点/隔离开关仍有效",()=>{
+test("OCE-G-04 Page visual execution does not depend on exit capability; site/isolation switches still apply",()=>{
   PG.resetCardExecGateForTest(); assert.equal(PG.cardVisualExecAvailable(),false);
   PG.setCardExecGate({site:true,isolated:true,visual:false});
   assert.equal(PG.cardExecAvailable(),true);assert.equal(PG.cardVisualExecAvailable(),true);assert.equal(PG.cardExecBlockedDetail(),null);
-  PG.setCardExecGate({site:false});assert.equal(PG.cardVisualExecAvailable(),false);assert.match(PG.cardExecBlockedDetail(),/站点没有开启/);
+  PG.setCardExecGate({site:false});assert.equal(PG.cardVisualExecAvailable(),false);assert.match(PG.cardExecBlockedDetail(),/site is not enabled/);
   PG.resetCardExecGateForTest();
 });
 
-test("OCE-G-05 舞台无allowlist/Trusted Types仍执行画面，父页/票据/breach仍把关",()=>{
+test("OCE-G-05 Stage without allowlist/Trusted Types still executes visuals; parent page/ticket/breach still gate",()=>{
   SG.resetExecGateForTest();SG.markIsolatedStageDocument();
   SG.setIsolationReport({ok:true,crossOrigin:true,csp:'header',egress:'none',hardened:true,trustedTypes:'unsupported',reasons:[]});
   assert.equal(SG.cardVisualExecAllowed(),false);
@@ -144,30 +144,30 @@ test("OCE-G-05 舞台无allowlist/Trusted Types仍执行画面，父页/票据/b
   SG.resetExecGateForTest();
 });
 
-test("OCE-G-06 两台舞台都报了能运行才算;有一台说运行不了就按运行不了;画面不执行时是 not-isolated 并带原因", () => {
+test("OCE-G-06 Counts only when both stages report they can run; if one says it cannot run, treat as unable to run; when visuals do not execute, it is not-isolated with a reason", () => {
   const cards = [{ id: "a", name: "A", source: "src/cards/user/a.tsx" }];
   const bundles = [{ ok: true, entry: "src/cards/user/a.tsx", bundle: { generation: "g1" } }];
   const run = (stages, extra = {}) => ERS.editorRunStates({ cards, available: true, bundles, stages, stageCount: 2, ...extra }).get("a");
   assert.equal(run([undefined, undefined]).state, "loading");
-  assert.equal(run([new Map([["a", { state: "ready" }]]), undefined]).state, "loading", "只有一台载入好:还算载入中");
+  assert.equal(run([new Map([["a", { state: "ready" }]]), undefined]).state, "loading", "Only one is loaded: still counts as loading");
   assert.equal(run([new Map([["a", { state: "ready" }]]), new Map([["a", { state: "ready" }]])]).state, "ready");
-  assert.ok(run([new Map([["a", { state: "ready" }]]), new Map([["a", { state: "ready" }]])]).version, "能运行的带这一代的签名");
-  assert.equal(run([new Map([["a", { state: "gpu", detail: "只有软件渲染" }]]), undefined]).state, "gpu", "有一台说不行就不用等另一台");
+  assert.ok(run([new Map([["a", { state: "ready" }]]), new Map([["a", { state: "ready" }]])]).version, "Ones that can run carry this generation's signature");
+  assert.equal(run([new Map([["a", { state: "gpu", detail: "Only software rendering is available" }]]), undefined]).state, "gpu", "If one says no, there is no need to wait for the other");
   assert.equal(run([new Map([["a", { state: "ready" }]]), new Map([["a", { state: "media" }]])]).state, "media");
   // 缺省(不给 stageCount)与原来相同:一台报了就算
   assert.equal(ERS.editorRunStates({ cards, available: true, bundles, stages: [new Map([["a", { state: "ready" }]])] }).get("a").state, "ready");
-  const blocked = run([], { available: false, blockedDetail: "隔离尚未就绪" });
+  const blocked = run([], { available: false, blockedDetail: "Isolation is not ready yet" });
   assert.equal(blocked.state, "not-isolated");
-  assert.match(ERS.runStateMessage(blocked), /隔离尚未就绪/);
-  assert.match(ERS.runStateMessage({ state: "gpu" }), /图形能力不够/);
-  assert.match(ERS.runStateMessage({ state: "media" }), /解不了这段素材/);
+  assert.match(ERS.runStateMessage(blocked), /Isolation is not ready yet/);
+  assert.match(ERS.runStateMessage({ state: "gpu" }), /graphics capability is insufficient/);
+  assert.match(ERS.runStateMessage({ state: "media" }), /cannot decode this media/);
 });
 
-test("OCE-G-07 舞台 RPC:两个新方法有时限;两种新事件在事件表里、不分角色", () => {
+test("OCE-G-07 Stage RPC: the two new methods have timeouts; the two new events are in the event table, regardless of role", () => {
   assert.equal(RPC.stageCallTimeoutMs("loadUserCards", [[]]), RPC.STAGE_UPDATE_TIMEOUT_MS);
   assert.equal(RPC.stageCallTimeoutMs("synthCardAudio", [{ count: 48_000, sampleRate: 48_000 }]), 10_000 + 20_000 + RPC.STAGE_RPC_SLACK_MS);
   assert.equal(RPC.stageCallTimeoutMs("synthCardAudio", [{ count: 48_000 * 60, sampleRate: 48_000 }]), 120_000 + 20_000 + RPC.STAGE_RPC_SLACK_MS);
-  assert.ok(RPC.stageCallTimeoutMs("synthCardAudio", [{}]) > 0, "坏参数也有时限");
+  assert.ok(RPC.stageCallTimeoutMs("synthCardAudio", [{}]) > 0, "Bad arguments also have a timeout");
   for (const type of ["card-states", "sound-state"]) {
     assert.ok(RPC.STAGE_EVENT_TYPES.has(type), type);
     assert.ok(RPC.STAGE_ANY_ROLE_EVENTS.has(type), type);
@@ -176,7 +176,7 @@ test("OCE-G-07 舞台 RPC:两个新方法有时限;两种新事件在事件表�
   assert.match(src, /"bakeCancel", "loadUserCards", "synthCardAudio"\]/);
 });
 
-test("OCE-G-08 接线(按源码核)", () => {
+test("OCE-G-08 Wiring (checked against source)", () => {
   const stage = read("StageView.tsx");
   // 舞台执行前问自己的闸门;画面另问出口;不是舞台入口的文档不记、不执行
   assert.match(stage, /if \(!stageExecGate\(\)\.allowed \|\| !bundles\) \{/);
@@ -186,26 +186,26 @@ test("OCE-G-08 接线(按源码核)", () => {
   // 按需载入、桌面构建剪得掉:三处 import() 都在编译期常量把关的函数里,文件里没有静态引入
   assert.match(stage, /const applyCardBundles = async \(\): Promise<void> => \{\s+if \(import\.meta\.env\.VITE_PC_ONLINE !== "1" \|\| cardExec\.stopped\) return;/);
   for (const mod of ["stageRuntime", "stageSound", "soundSpawn", "loader", "hostModules"]) {
-    assert.doesNotMatch(stage, new RegExp(`^import (?!type )[^\\n]*cardRuntime/${mod}`, "m"), `StageView 不能静态引 ${mod}`);
+    assert.doesNotMatch(stage, new RegExp(`^import (?!type )[^\\n]*cardRuntime/${mod}`, "m"), `StageView must not statically import ${mod}`);
   }
   // 声音线程:经 spawnRuntimeWorker 从 blob 引导(守卫把全局 Worker 锁成抛错的构造函数,这里用的是它装上之前留在模块闭包里的原生构造函数),先建 Trusted Types 缺省策略
   const spawn = read("online/cardRuntime/soundSpawn.ts");
   assert.match(spawn, /spawnRuntimeWorker\(`\$\{trustedTypesPrelude\(\)\}importScripts\(\$\{JSON\.stringify\(abs\)\}\);`/);
   assert.match(spawn, /spawnRuntimeWorker\(`import \$\{JSON\.stringify\(abs\)\};`/);
-  assert.doesNotMatch(spawn, /new Worker\(/, "不许自己调全局 Worker 起线程(守卫已把它锁成抛错的构造函数;引导地址一律是本模块建的 blob,worker-src blob:)");
+  assert.doesNotMatch(spawn, /new Worker\(/, "Do not call the global Worker to start threads yourself (the guard has locked it into a constructor that throws; the bootstrap URL is always a blob built by this module, worker-src blob:)");
   // 声音线程的模块表不引汇总文件(它们把样式带进线程,线程起不来)
   assert.match(read("online/cardRuntime/soundModules.ts"), /"!\/src\/cards\/\*\*\/index\.ts", "!\/src\/parts\/\*\*\/index\.ts"/);
   // 编辑页面:发包、收状态、接声音、立闸门
   const preview = read("editor/Preview.tsx");
   assert.match(preview, /c\.loadUserCards\(list, \{ sound: id === soundStageId\(\) \}\)/);
-  assert.match(preview, /function soundStageId\(\): StageId \{\s*return ONLINE && !dualStage\(\) \? "A" : "B";/, "声音线程:双舞台在实例 B,单舞台在 A");
+  assert.match(preview, /function soundStageId\(\): StageId \{\s*return ONLINE && !dualStage\(\) \? "A" : "B";/, "Sound thread: with dual stages it is on instance B, with a single stage on A");
   assert.match(preview, /setCardExecGate\(\{ site: onlineStageState\(\)\.cardExec, isolated: s\.enabled, reason: s\.enabled \? null : s\.reason, visual: true \}\)/);
   // 挂着的舞台都报了能运行才算能运行:双舞台两台、单舞台(舞台闸门第一级)一台
   assert.match(preview, /stages: mountedStageIds\(\)\.map\(\(id\) => stageCardStatesRef\.current\[id\]\), stageCount: Math\.max\(1, mountedStageIds\(\)\.length\),/);
   assert.match(preview, /setNodeGraphCapable\(STAGE_IDS\.every\(\(s\) => stageGraphRef\.current\[s\] === "ok"\)\)/);
   assert.match(preview, /createIsolatedSoundLink\(\{/);
   const push = preview.slice(preview.indexOf("const pushCardBundles = useCallback"), preview.indexOf("const pushCardBundlesRef"));
-  assert.ok(push.length > 100 && !/ticket|Ticket|password|credential/.test(push), "发给舞台的包里不带票据或凭证");
+  assert.ok(push.length > 100 && !/ticket|Ticket|password|credential/.test(push), "The bundle sent to the stage contains no ticket or credentials");
   // 编辑页面与导出页不引舞台接线、加载器(类型除外)
   for (const dir of ["editor", "export"]) {
     const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));

@@ -118,6 +118,10 @@ export function clipsPlanTask({ projectId, projectRev, clips, codeVersion, brows
 }
 
 import { getNodeCardInfo, subscribeNodeCardInfo, type NodeCardInfo } from "./nodeCardInfo.ts";
+import { tr } from "../i18n/index.ts";
+
+/** What editor/sync/link.ts says when the link to the document service is down (in English or the interface language) */
+const LINK_DOWN = ["Not connected to the document service", "The document service did not respond", "Connection lost"];
 
 type Request = (msg: Record<string, unknown>, timeoutMs?: number) => Promise<Record<string, unknown>>;
 /** `createWsEndpoint` 的形状(只用这两样) */
@@ -203,9 +207,9 @@ function requestOver(endpoint: EndpointLike, prefix: string, onOther?: (m: Recor
   return {
     request: (msg, timeoutMs = 15_000) => new Promise((resolve, reject) => {
       const reqId = `${prefix}-${++seq}`;
-      const timer = setTimeout(() => { waiting.delete(reqId); reject(new Error(`${String(msg.type)} 没有回应`)); }, timeoutMs);
+      const timer = setTimeout(() => { waiting.delete(reqId); reject(new Error(tr("{0} did not respond", String(msg.type)))); }, timeoutMs);
       waiting.set(reqId, (m) => { clearTimeout(timer); resolve(m); });
-      if (!endpoint.send({ ...msg, reqId })) { waiting.delete(reqId); clearTimeout(timer); reject(new Error("连接断了")); }
+      if (!endpoint.send({ ...msg, reqId })) { waiting.delete(reqId); clearTimeout(timer); reject(new Error("Connection lost")); }
     }),
     stop: () => { if (typeof off === "function") off(); waiting.clear(); },
   };
@@ -289,7 +293,7 @@ export function createPlanPublisher(deps: PlanPublisherDeps): PlanPublisher {
       note({ at: now(), id: task.id, clips: clips.length, ok: true, state: r.state, node, ...(waitedMs !== undefined ? { waitedMs } : {}) });
     } catch (e) {
       const error = String((e as Error)?.message ?? e);
-      if (/连接断了|没连上|没有回应/.test(error)) helloOk = false;
+      if (LINK_DOWN.some((m) => error.includes(m) || error.includes(tr(m)))) helloOk = false;
       // 没人认领、发不出去都不报错(C10 契约第 7 节):记下来,下一次改动或下一轮再发
       note({ at: now(), id: task.id, clips: clips.length, ok: false, error });
     } finally {

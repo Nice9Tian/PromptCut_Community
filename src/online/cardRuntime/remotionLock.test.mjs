@@ -63,13 +63,13 @@ function C({ t = 0 }: CardProps<{}>) { return <div style={{ opacity: tween(t, { 
 export const card: CardDef<{}> = { id: "m", name: "m", description: "d", source: "user", frameMode: "direct", defaults: {}, controls: [], Component: C };
 `;
 
-test("RL-01 哪些卡该锁：声明成 remotion 式并且引用了框架", () => {
+test("RL-01 Which cards should be locked: declared as remotion style and referencing the framework", () => {
   assert.deepEqual(K.remotionLockPlan(MARKED), { names: ["TABLE", "C", "card"], specifiers: ["../../kernel/remotionStyle"] });
   // 两个条件缺一个都不锁
-  assert.equal(K.remotionLockPlan(MARKED.replace('"direct"', '"stateful"')), null, "motion 式的卡");
-  assert.equal(K.remotionLockPlan(MARKED.replace('import { tween } from "../../kernel/remotionStyle";', "const tween = (..._a: unknown[]) => 1;")), null, "没引用框架的卡（框架出现之前建的卡都是这样）");
+  assert.equal(K.remotionLockPlan(MARKED.replace('"direct"', '"stateful"')), null, "motion-style card");
+  assert.equal(K.remotionLockPlan(MARKED.replace('import { tween } from "../../kernel/remotionStyle";', "const tween = (..._a: unknown[]) => 1;")), null, "card that does not reference the framework (every card built before the framework existed looks like this)");
   // 注释、字符串里的字样不算
-  const commented = `// frameMode: "direct"，import { x } from "../../kernel/remotionStyle"\nconst note = 'frameMode: "direct" from "../../kernel/remotionStyle"';\n${MARKED.replace('"direct"', '"stateful"')}`;
+  const commented = `// frameMode: "direct", import { x } from "../../kernel/remotionStyle"\nconst note = 'frameMode: "direct" from "../../kernel/remotionStyle"';\n${MARKED.replace('"direct"', '"stateful"')}`;
   assert.equal(K.remotionLockPlan(commented), null);
   const commentedImport = `/* import { tween } from "../../kernel/remotionStyle"; */\n${MARKED.replace('import { tween } from "../../kernel/remotionStyle";', "const tween = (..._a: unknown[]) => 1;")}`;
   assert.equal(K.remotionLockPlan(commentedImport), null);
@@ -112,10 +112,10 @@ export const card: CardDef<Params> = { id: "n", frameMode: "direct", defaults: {
   assert.equal(K.remotionLockPlan(undefined), null);
 });
 
-test("RL-02 老卡一张都不碰：仓库里现有的每个卡片与部件文件都不接这一段，转译结果一字不差", () => {
+test("RL-02 old cards are left untouched: no existing card or part file in the repo gets this appended segment, and the transpiled output is identical character for character", () => {
   const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]));
   const files = [...walk(path.join(ROOT, "src", "cards")), ...walk(path.join(ROOT, "src", "parts"))].filter((f) => /\.(ts|tsx)$/.test(f) && !/\.(test|d)\./.test(f));
-  assert.ok(files.length > 60, `卡片与部件文件 ${files.length} 个`);
+  assert.ok(files.length > 60, `${files.length} card and part files`);
   let direct = 0;
   for (const file of files) {
     const key = path.relative(ROOT, file).replace(/\\/g, "/");
@@ -126,15 +126,15 @@ test("RL-02 老卡一张都不碰：仓库里现有的每个卡片与部件文�
     const got = T.transpileCardFile(key, source);
     if (!got.ok) continue; // 在线页面本来就不支持的写法（与这里无关），原样
     const plain = transform(source, { transforms: ["typescript", "jsx", "imports"], jsxRuntime: "automatic", production: true, preserveDynamicImport: true, filePath: key }).code;
-    assert.equal(got.js, plain, `${key} 转出来的文本变了`);
+    assert.equal(got.js, plain, `The transpiled text of ${key} changed`);
   }
   // 声明成 remotion 式的内置卡确实在这批文件里（它们不是用框架写的，所以同样不锁）
-  assert.ok(direct >= 4, `声明成 remotion 式的内置文件 ${direct} 个`);
+  assert.ok(direct >= 4, `${direct} built-in files declared as remotion-style`);
   // 违规样例与对照卡里，没引用框架的那几张同样不锁
   for (const name of ["rs-stateful-control.tsx", "violations/framework.tsx"]) assert.equal(K.remotionLockSuffix(`${U}x.tsx`, fixture(name)), "", name);
 });
 
-test("RL-03 在线页面：用框架写的示例卡转得出、载得进、渲得出来；先渲第 N 帧再渲第 M 帧与顺着渲相同", async () => {
+test("RL-03 online page: the sample card written with the framework can be transpiled, loaded and rendered; rendering frame N then frame M gives the same result as rendering sequentially", async () => {
   const React = require("react");
   const { renderToStaticMarkup } = require("react-dom/server");
   for (const name of ["rs-title-reveal.tsx", "rs-bar-race.tsx", "rs-orbit-canvas.tsx"]) {
@@ -144,20 +144,20 @@ test("RL-03 在线页面：用框架写的示例卡转得出、载得进、渲�
     // 包里记着运行时那一半：舞台按它去取页面自带的模块
     assert.deepEqual(out.bundle.modules[0].imports["../../kernel/remotionStyle/lock"], { kind: "builtin", path: "src/kernel/remotionStyle/lock.ts" });
     assert.deepEqual(out.bundle.modules[0].imports["../../kernel/remotionStyle"], { kind: "builtin", path: "src/kernel/remotionStyle/index.ts" });
-    assert.match(out.bundle.modules[0].js, /^"use strict";/, "转出来的是严格模式：往冻住的对象里写会抛错，不是悄悄不生效");
+    assert.match(out.bundle.modules[0].js, /^"use strict";/, "The transpiled output is in strict mode: writing to a frozen object throws instead of silently having no effect");
     const [def] = loader.cards();
-    assert.ok(Object.isFrozen(def) && Object.isFrozen(def.defaults) && Object.isFrozen(def.controls) && Object.isFrozen(def.Component), `${name} 的卡片定义锁住了`);
+    assert.ok(Object.isFrozen(def) && Object.isFrozen(def.defaults) && Object.isFrozen(def.controls) && Object.isFrozen(def.Component), `The card definition of ${name} is locked`);
     const frame = (n) => renderToStaticMarkup(React.createElement(def.Component, { params: { ...def.defaults }, playToken: 0, t: n / 30, duration: 5 }));
     const forward = [];
     for (let n = 0; n <= 60; n++) forward.push(frame(n));
     // 画布卡的像素是在浏览器里画的，这里只有一个空的 <canvas>（像素由真 Chrome 里的探针比）；另两张的标记确实随时间变
-    if (name !== "rs-orbit-canvas.tsx") assert.notEqual(forward[3], forward[40], "画面确实随时间变");
-    for (const n of [60, 0, 37, 12, 59, 1]) assert.equal(frame(n), forward[n], `${name} 第 ${n} 帧`);
-    for (let n = 60; n >= 0; n--) assert.equal(frame(n), forward[n], `${name} 倒着渲到第 ${n} 帧`);
+    if (name !== "rs-orbit-canvas.tsx") assert.notEqual(forward[3], forward[40], "The picture really changes over time");
+    for (const n of [60, 0, 37, 12, 59, 1]) assert.equal(frame(n), forward[n], `${name} frame ${n}`);
+    for (let n = 60; n >= 0; n--) assert.equal(frame(n), forward[n], `${name} rendered backwards to frame ${n}`);
   }
 });
 
-test("RL-04 在线页面：载入之后往顶层的对象里写当场报错；页面自己的模块没被冻住；老卡照旧能跑", async () => {
+test("RL-04 online page: writing to a top-level object after load throws immediately; the page's own modules are not frozen; old cards still run as before", async () => {
   const React = require("react");
   const entry = `${U}rs-alias-write.tsx`;
   const source = fixture("rs-alias-write.tsx");
@@ -176,8 +176,8 @@ test("RL-04 在线页面：载入之后往顶层的对象里写当场报错；�
   // 页面自己的模块（React、框架）不是这张卡的，没被冻住
   assert.equal(Object.isFrozen(React), false);
   assert.equal(Object.isFrozen(require("react/jsx-runtime")), false);
-  assert.equal(Object.isFrozen(FRAMEWORK.tween), false, "框架的函数是页面那一份，卡片锁只读时不碰它");
-  assert.equal(Object.isFrozen(FRAMEWORK.Easing), true, "这张表是框架自己冻的");
+  assert.equal(Object.isFrozen(FRAMEWORK.tween), false, "The framework's functions are the page's own copy; the card lock does not touch them when making things read-only");
+  assert.equal(Object.isFrozen(FRAMEWORK.Easing), true, "This table is frozen by the framework itself");
 
   // 同样的写法、没引用框架的卡（框架出现之前建的卡都是这样）：不锁，照旧能跑、照旧写得进去
   const old = source.replace('import { tween } from "../../kernel/remotionStyle";\n', "const tween = (t: number, _o: unknown) => Math.min(1, t);\n");
@@ -188,21 +188,21 @@ test("RL-04 在线页面：载入之后往顶层的对象里写当场报错；�
   assert.equal(Object.isFrozen(oldDef), false);
   oldDef.Component({ params: { text: "write-object" }, playToken: 0, t: 0.2 });
   oldDef.Component({ params: { text: "write-array" }, playToken: 0, t: 0.2 });
-  assert.deepEqual(oldDef.Component({ params: { text: "read-only" }, playToken: 0, t: 0.2 }).props.children, ["read-only", 1, 2], "老卡的行为没变");
+  assert.deepEqual(oldDef.Component({ params: { text: "read-only" }, playToken: 0, t: 0.2 }).props.children, ["read-only", 1, 2], "Old card behavior is unchanged");
 });
 
-test("RL-05 锁不住的东西放在顶层：载入时当场报错，这张卡不生效", async () => {
+test("RL-05 something that cannot be locked is placed at top level: it throws immediately on load and this card does not take effect", async () => {
   const entry = `${U}buffer.tsx`;
   // 建卡检查不许顶层 new；这里绕过它（经函数返回），由载入时的这一道拦住
   const source = MARKED.replace("const TABLE = { a: 1 };", "function make() { return new Float32Array(4); }\nconst TABLE = { a: 1, buf: make() };").replace('id: "m"', 'id: "buffer"');
   const { loader, res } = await load({ [entry]: source }, entry);
   assert.equal(res.ok, false);
   assert.equal(res.state.state, "load-error");
-  assert.match(res.state.detail, /buffer\.tsx.*TABLE\.buf.*Float32Array.*锁不成只读/s);
+  assert.match(res.state.detail, /buffer\.tsx.*TABLE\.buf.*Float32Array.*cannot be locked read-only/s);
   assert.deepEqual(loader.cards(), []);
 });
 
-test("RL-06 接上去的这一段在桌面那条路上也是合法的源码；源码前面的部分一个字符都不动", () => {
+test("RL-06 the appended segment is also valid source on the desktop path; not a single character of the source before it is changed", () => {
   const ts = require("typescript");
   for (const name of ["rs-title-reveal.tsx", "rs-bar-race.tsx", "rs-orbit-canvas.tsx", "rs-alias-write.tsx"]) {
     const source = fixture(name);
@@ -223,7 +223,7 @@ test("RL-06 接上去的这一段在桌面那条路上也是合法的源码；�
   }
 });
 
-test("RL-07 转译缓存：该锁的卡另用一个键，别的卡的键不变；运行时版本不动", async () => {
+test("RL-07 transpile cache: a card that must be locked uses a separate key, keys of other cards are unchanged; runtime version is unchanged", async () => {
   // 运行时版本进纯浏览器节点的环境指纹：动了它，在线浏览器里所有卡的键都跟着变。所以不动它，只给该锁的卡换缓存键
   assert.equal(V.CARD_RUNTIME_ABI, "ocr2");
   const plain = MARKED.replace('import { tween } from "../../kernel/remotionStyle";', "const tween = (..._a: unknown[]) => 1;").replace('id: "m"', 'id: "p"');
@@ -246,7 +246,7 @@ test("RL-07 转译缓存：该锁的卡另用一个键，别的卡的键不变�
   assert.equal(marked.bundle.generation, T.generationOf(RUNTIME, [[`${U}m.tsx`, hashOf(MARKED)]]));
 });
 
-test("RL-08 只有一行裸导入的卡：认成引用了框架，载入时照样锁；只有声音的卡在声音线程里载入时同样接锁", async () => {
+test("RL-08 a card with only a bare import line: recognized as referencing the framework and still locked on load; a card with only sound is also locked when loaded in the sound thread", async () => {
   // 裸导入：该锁；它是「只为副作用的导入」，算真的会载入的模块
   const source = fixture("rs-bare-import.tsx");
   assert.deepEqual(K.remotionLockPlan(source), { names: ["COUNTER", "C", "card"], specifiers: ["../../kernel/remotionStyle"] });
@@ -262,7 +262,7 @@ test("RL-08 只有一行裸导入的卡：认成引用了框架，载入时照�
   assert.deepEqual(out.bundle.modules[0].imports["../../kernel/remotionStyle"], { kind: "builtin", path: "src/kernel/remotionStyle/index.ts" });
   assert.deepEqual(out.bundle.modules[0].imports["../../kernel/remotionStyle/lock"], { kind: "builtin", path: "src/kernel/remotionStyle/lock.ts" });
   const [def] = loader.cards();
-  assert.ok(Object.isFrozen(def) && Object.isFrozen(def.defaults), "卡片定义锁住了");
+  assert.ok(Object.isFrozen(def) && Object.isFrozen(def.defaults), "The card definition is locked");
   assert.equal(def.Component({ params: { text: "read-only" }, playToken: 0, t: 0.2 }).type, "div");
   assert.throws(() => def.Component({ params: { text: "write-object" }, playToken: 0, t: 0.2 }), (err) => err instanceof TypeError);
   assert.deepEqual(def.Component({ params: { text: "read-only" }, playToken: 0, t: 0.2 }).props.children, ["read-only", 0]);
@@ -274,7 +274,7 @@ import type { CardDef } from "../../kernel/types";
 import { createNotificationRecipe, renderSoundEffectBlock } from "../../kernel/soundEffects";
 const CACHE = { calls: 0 };
 export const card: CardDef<{}> = {
-  id: "rs-sound-only", name: "只有声音", description: "d", source: "user", kind: "animation", inputs: {}, frameMode: "direct", defaults: {}, controls: [],
+  id: "rs-sound-only", name: "Sound only", description: "d", source: "user", kind: "animation", inputs: {}, frameMode: "direct", defaults: {}, controls: [],
   audio: (_sources, range) => {
     const cache = CACHE;
     cache.calls += 1;
@@ -297,5 +297,5 @@ export const card: CardDef<{}> = {
   await thread.handle({ t: "project", key: "k1", project });
   await thread.handle({ t: "render", id: 1, key: "k1", nodeId: "@clip/c1", start: 0, count: 64, sampleRate: 48000 });
   const answer = posted.find((m) => m.id === 1);
-  assert.equal(answer.t, "error", `往锁住的顶层对象里写：这一块合成不了，报错而不是悄悄带着状态。实际：${JSON.stringify(answer?.t)}`);
+  assert.equal(answer.t, "error", `Writing to a locked top-level object: this block cannot be composed and reports an error instead of silently carrying state. Actual: ${JSON.stringify(answer?.t)}`);
 });

@@ -16,7 +16,7 @@ const OK_REPORT = judgeIsolation({ crossOrigin: true, csp: "header", allowlist: 
 
 beforeEach(() => { resetExecGateForTest(); resetStageGuardForTest(); });
 
-test("OCS-H-01 带子框架的 HTML 串:七种标签、大小写、带前缀、标签名前有空白都认;实体声明也拒;相近的名字不误伤", () => {
+test("OCS-H-01 HTML string with subframes: all seven tags are recognized, in any case, with a prefix, or with whitespace before the tag name; entity declarations are also rejected; similar names are not hit by mistake", () => {
   for (const tag of FRAME_TAGS) {
     assert.ok(htmlHasFrame(`<${tag}>`), tag);
     assert.ok(htmlHasFrame(`<div><${tag.toUpperCase()} src="x"></div>`), tag);
@@ -24,7 +24,7 @@ test("OCS-H-01 带子框架的 HTML 串:七种标签、大小写、带前缀、�
     assert.ok(htmlHasFrame(`< ${tag}/>`), tag);
   }
   assert.ok(htmlHasFrame("<svg><foreignObject><iframe/></foreignObject></svg>"));
-  assert.ok(htmlHasFrame('<!DOCTYPE r [<!ENTITY f "&#60;iframe/&#62;">]><r>&f;</r>'), "实体展开能在源文本里不出现标签名的情况下造出元素");
+  assert.ok(htmlHasFrame('<!DOCTYPE r [<!ENTITY f "&#60;iframe/&#62;">]><r>&f;</r>'), "entity expansion can create an element even when the tag name does not appear in the source text");
   assert.ok(htmlHasFrame("<!entity x 'y'>"));
   for (const fine of ["", "<div>iframe</div>", "<p>object embed frame</p>", "<svg><foreignObject><div/></foreignObject></svg>", "<frame-like-custom></frame-like-custom>",
     "<objectives>", "<embedded>", "<iframes>", "<my-iframe>", "&lt;iframe&gt;", "<div data-x=\"<b>\">", null, undefined, 42]) {
@@ -32,12 +32,12 @@ test("OCS-H-01 带子框架的 HTML 串:七种标签、大小写、带前缀、�
   }
 });
 
-test("OCS-H-02 元素名是不是子框架类:大小写、前缀、首尾空白都认;别的不认", () => {
+test("OCS-H-02 whether an element name is a subframe type: case, prefix, and leading or trailing whitespace are all recognized; others are not", () => {
   for (const name of ["iframe", "IFRAME", "iFrAmE", "html:iframe", "x:OBJECT", "embed", "frame", "frameset", "portal", "fencedframe", " iframe "]) assert.ok(isFrameName(name), name);
   for (const name of ["div", "foreignObject", "my-iframe", "iframes", "object-fit", "", null, undefined, "video"]) assert.equal(isFrameName(name), false, String(name));
 });
 
-test("OCS-H-03 无出口白名单/Trusted Types/WebRTC guard仍通过，分源和响应头策略不可缺", () => {
+test("OCS-H-03 the no-egress allowlist/Trusted Types/WebRTC guard still pass; per-origin and response header policies are mandatory", () => {
   assert.deepEqual(OK_REPORT,{ok:true,crossOrigin:true,csp:'header',egress:'none',hardened:true,trustedTypes:'unsupported',reasons:[]});
   for(const trustedTypes of ['unsupported','created','failed','enforced']) assert.equal(judgeIsolation({crossOrigin:true,csp:'header',allowlist:false,harden:{...HARDENED,webrtcRemoved:false,trustedTypes}}).ok,true);
   const cases=[
@@ -56,7 +56,7 @@ test("OCS-H-03 无出口白名单/Trusted Types/WebRTC guard仍通过，分源�
     [{crossOrigin:true,csp:'header',harden:{...HARDENED,errors:['scope:SharedWorker:x']}},['not-hardened']],
     [{crossOrigin:true,csp:'header',harden:{...HARDENED,errors:['scope:indexedDB:x']}},['not-hardened']],
     [{crossOrigin:true,csp:'header',harden:{...HARDENED,errors:['scope:locks:x']}},['not-hardened']],
-    [{crossOrigin:true,csp:'header',harden:{...HARDENED,errors:['scope:integrity:内置对象或平台接口在守卫之前被改过(JSON)']}},['not-hardened']],
+    [{crossOrigin:true,csp:'header',harden:{...HARDENED,errors:['scope:integrity: built-in objects or platform interfaces were modified before the guard (JSON)']}},['not-hardened']],
   ];
   for(const [facts,reasons] of cases){const r=judgeIsolation(facts);assert.equal(r.ok,false);assert.deepEqual(r.reasons,reasons);}
   // 非关键项(纵深防御那几层、旧式文件系统入口等)没装上不挡执行;名字只是前缀相近的也不算
@@ -68,7 +68,7 @@ test("OCS-H-03 无出口白名单/Trusted Types/WebRTC guard仍通过，分源�
   assert.ok(ISOLATION_CHECK_BASE_PATH.startsWith('/'));
 });
 
-test("OCS-H-04 执行闸门:不是舞台文档、自检没出结果、自检没过、父页没点头,都不执行;四样齐了才开", () => {
+test("OCS-H-04 execution gate: no execution if it is not a stage document, the self-check has no result, the self-check failed, or the parent page has not approved; it opens only when all four are met", () => {
   assert.deepEqual({ allowed: cardExecGate().allowed, reason: cardExecGate().reason }, { allowed: false, reason: "not-stage" });
   // 不是舞台文档:父页怎么点头都不开
   noteMediaPolicy({ cardExec: true });
@@ -89,14 +89,14 @@ test("OCS-H-04 执行闸门:不是舞台文档、自检没出结果、自检没�
   assert.equal(cardExecGate().allowed, true);
 });
 
-test("OCS-H-05 执行闸门·要执行就不放秘密:见过票据的文档永久不执行;开过闸门的文档不再收票据", () => {
+test("OCS-H-05 execution gate, no secrets when executing: a document that has seen a ticket never executes; a document whose gate has opened no longer receives tickets", () => {
   markIsolatedStageDocument();
   setIsolationReport(OK_REPORT);
   // 旧办法:父页给了带票据的取档策略 → 这份票据可以用,但本文档永久不执行(哪怕父页同时点头)
   assert.deepEqual(noteMediaPolicy({ ticket: "v1.aaa.bbb", cardExec: true }), { acceptTicket: true });
   assert.equal(cardExecGate().reason, "ticket-seen");
   noteMediaPolicy({ cardExec: true, ticket: null });
-  assert.equal(cardExecGate().reason, "ticket-seen", "之后不带票据再点头也不开");
+  assert.equal(cardExecGate().reason, "ticket-seen", "approving again afterwards without a ticket still does not open it");
   assert.equal(cardExecGate().allowed, false);
 
   resetExecGateForTest();
@@ -112,7 +112,7 @@ test("OCS-H-05 执行闸门·要执行就不放秘密:见过票据的文档永�
   assert.deepEqual(noteMediaPolicy({ ticket: "", cardExec: true }), { acceptTicket: false });
 });
 
-test("OCS-H-06 执行闸门·加固拦下过造子框架的代码:永久关上;状态变了通知订阅方、没变不通知", () => {
+test("OCS-H-06 execution gate, hardening has blocked code that creates subframes: closed permanently; subscribers are notified when the state changes, not when it does not", () => {
   markIsolatedStageDocument();
   setIsolationReport(OK_REPORT);
   let calls = 0;
@@ -122,7 +122,7 @@ test("OCS-H-06 执行闸门·加固拦下过造子框架的代码:永久关上;�
   const same = cardExecGate();
   noteMediaPolicy({ cardExec: true });
   assert.equal(calls, 1);
-  assert.equal(cardExecGate(), same, "状态没变时对象身份不变");
+  assert.equal(cardExecGate(), same, "object identity is unchanged when the state is unchanged");
   noteBreach();
   assert.equal(calls, 2);
   assert.deepEqual({ allowed: cardExecGate().allowed, reason: cardExecGate().reason }, { allowed: false, reason: "breach" });
@@ -134,13 +134,13 @@ test("OCS-H-06 执行闸门·加固拦下过造子框架的代码:永久关上;�
   assert.equal(calls, 2);
 });
 
-test("OCS-H-07 舞台入口按路径认:只有 stage.html;编辑器页、同源单舞台(/editor/?stage=1)、导出页都不是", () => {
+test("OCS-H-07 stage entry is recognized by path: only stage.html; the editor page, same-origin single stage (/editor/?stage=1) and the export page are not", () => {
   assert.equal(STAGE_ENTRY_FILE, "stage.html");
   for (const p of ["/editor/stage.html", "/stage.html", "/a/b/stage.html"]) assert.ok(isStageEntryPath(p), p);
   for (const p of ["/editor", "/editor/", "/editor/index.html", "/editor/stage.html/", "/editor/xstage.html", "/editor/stage.htm", "", "/"]) assert.equal(isStageEntryPath(p), false, p);
 });
 
-test("OCS-H-08 启动钩子:不是在线构建、不在浏览器里、不是舞台入口都不做事(不装加固、闸门留在 not-stage、不向父页发消息)", () => {
+test("OCS-H-08 startup hook: does nothing when not an online build, not in a browser, or not a stage entry (no hardening installed, gate stays at not-stage, no message to the parent page)", () => {
   // Node 里没有 window:任何组合都不做事
   assert.equal(bootStageGuard({ online: true, base: "/editor/" }), false);
   assert.equal(bootStageGuard({ online: false, base: "/editor/" }), false);
@@ -198,7 +198,7 @@ function fakeGlobal({ onProto = false } = {}) {
   return { scope, proto, realLocal, realSession, idb };
 }
 
-test("OCS-H-09 舞台源的持久存储收走:卡片写的 localStorage / sessionStorage 只留在本文档内存;IndexedDB、Cache Storage、旧文件系统、源私有文件系统、存储桶都用不了,也改不回来", async () => {
+test("OCS-H-09 persistent storage of the stage origin is withdrawn: localStorage / sessionStorage written by a card stays only in this document's memory; IndexedDB, Cache Storage, the legacy file system, the origin private file system and storage buckets are all unusable and cannot be restored", async () => {
   const { scope, realLocal, realSession } = fakeGlobal();
   realLocal.set("old-key", "old-value");
   const r = denyPersistentStorage(scope);
@@ -245,9 +245,9 @@ test("OCS-H-09 舞台源的持久存储收走:卡片写的 localStorage / sessio
   assert.equal(scope.indexedDB, undefined);
   assert.equal(scope.caches, undefined);
   assert.equal(scope.webkitRequestFileSystem, undefined);
-  await assert.rejects(scope.navigator.storage.getDirectory(), /持久存储/);
-  await assert.rejects(scope.navigator.storageBuckets.open("x"), /持久存储/);
-  assert.deepEqual(await scope.navigator.storage.estimate(), {}, "不相干的方法照旧");
+  await assert.rejects(scope.navigator.storage.getDirectory(), /persistent storage/);
+  await assert.rejects(scope.navigator.storageBuckets.open("x"), /persistent storage/);
+  assert.deepEqual(await scope.navigator.storage.estimate(), {}, "unrelated methods stay as before");
 
   // 卡片代码想改回来:重新定义、赋值、删除都不成
   for (const k of ["localStorage", "sessionStorage", "indexedDB", "caches"]) {
@@ -256,17 +256,17 @@ test("OCS-H-09 舞台源的持久存储收走:卡片写的 localStorage / sessio
     assert.equal(Reflect.deleteProperty(scope, k), false, k);
   }
   assert.throws(() => Object.defineProperty(scope.StorageManager.prototype, "getDirectory", { value: async () => "x" }), TypeError);
-  assert.throws(() => { scope.localStorage.getItem = () => leak; }, TypeError, "内存那一份的方法锁死");
+  assert.throws(() => { scope.localStorage.getItem = () => leak; }, TypeError, "methods of the in-memory copy are locked");
   assert.throws(() => Object.defineProperty(scope.localStorage, "setItem", { value: () => {} }), TypeError);
 });
 
-test("OCS-H-10 Worker 的全局对象(入口在原型上)同样收走,原型上的原访问器拿不回来;声音线程与舞台加固都调用它", () => {
+test("OCS-H-10 The Worker global object (entry point is on the prototype) is withdrawn the same way, and the original accessor on the prototype cannot be recovered; the sound thread and stage hardening both call it", () => {
   const { scope, proto, idb } = fakeGlobal({ onProto: true });
   denyPersistentStorage(scope);
   assert.equal(scope.indexedDB, undefined);
   assert.equal(scope.caches, undefined);
   const d = Object.getOwnPropertyDescriptor(proto, "indexedDB");
-  assert.equal(d.get, undefined, "原型上的访问器换成了值");
+  assert.equal(d.get, undefined, "the accessor on the prototype was replaced with a value");
   assert.equal(d.value, undefined);
   assert.notEqual(scope.indexedDB, idb);
   // 接线:舞台加固与声音线程都调它(源码核对;真实浏览器里的行为由 media-cache-probe 核)
@@ -274,5 +274,5 @@ test("OCS-H-10 Worker 的全局对象(入口在原型上)同样收走,原型上�
   assert.match(harden, /const storage = denyPersistentStorage\(w\);/);
   const worker = fs.readFileSync(new URL("../cardRuntime/soundWorker.ts", import.meta.url), "utf8");
   const call = worker.indexOf("denyPersistentStorage(self);");
-  assert.ok(call > 0 && call < worker.indexOf("createSoundThread({"), "声音线程在建线程(载入卡片代码)之前收走存储");
+  assert.ok(call > 0 && call < worker.indexOf("createSoundThread({"), "the sound thread withdraws storage before creating the thread (loading card code)");
 });

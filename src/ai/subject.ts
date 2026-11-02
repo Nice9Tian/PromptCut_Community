@@ -9,6 +9,7 @@
 import { readSseStream } from "../editor/io/stt";
 import type { PerceptionMediaRef } from "./perceptionMedia";
 import type { Subjects, SubjectSample } from "../kernel/project";
+import { tr } from "../i18n/index.ts";
 
 export interface SubjectJobState {
   status: "running" | "done" | "error";
@@ -41,7 +42,7 @@ export async function subjectStatus(): Promise<{
   detail?: unknown;
 }> {
   const r = await fetch("/api/subject/status");
-  if (!r.ok) throw new Error("查不到主体检测拓展的状态");
+  if (!r.ok) throw new Error(tr("Cannot find the status of the subject detection extension"));
   return r.json();
 }
 
@@ -57,14 +58,14 @@ export async function startSubjectDetection(
     body: JSON.stringify({ mediaId: media.id, media, times, ...(prompt ? { prompt } : null) }),
   });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok || !data.ok) throw new Error(data.error || "主体检测没能启动");
+  if (!r.ok || !data.ok) throw new Error(data.error || tr("Subject detection failed to start"));
   return data.jobId as string;
 }
 
 export async function pollSubjectJob(jobId: string): Promise<SubjectJobState> {
   const r = await fetch(`/api/subject/job/${jobId}`);
   const data = await r.json().catch(() => ({}));
-  if (!r.ok || !data.ok) throw new Error(data.error || "查不到这个主体检测作业");
+  if (!r.ok || !data.ok) throw new Error(data.error || tr("Cannot find this subject detection job"));
   return data.job as SubjectJobState;
 }
 
@@ -93,13 +94,13 @@ export async function waitForSubjects(
     if (Date.now() > deadline) {
       await cancelSubjectJob(jobId);
       throw new Error(
-        `主体检测超过 ${Math.round(timeoutMs / 60000)} 分钟还没跑完，已取消。`
-        + "可以减少采样点（自己传 times），或先用 subject_status 确认档位——full 档比 light 慢一个数量级。",
+        tr("Subject detection did not finish within {0} minutes and was canceled.", Math.round(timeoutMs / 60000))
+        + tr("You can reduce the sampling points (pass times yourself), or first confirm the tier with subject_status: the full tier is an order of magnitude slower than light."),
       );
     }
     const job = await pollSubjectJob(jobId);
     onProgress?.(job.percent, job.engine);
-    if (job.status === "error") throw new Error(job.message || "主体检测失败");
+    if (job.status === "error") throw new Error(job.message || tr("Subject detection failed"));
     if (job.status === "done") {
       return {
         // 跑完却没报 engine，只可能是 Python 侧的 result 事件缺字段。认成 light
@@ -137,7 +138,7 @@ export async function installSubject(
   const res = await fetch("/api/subject/install", { method: "POST" });
   if (!res.ok || !res.body) {
     const d = await res.json().catch(() => ({}));
-    throw new Error(d.error || `/api/subject/install 返回 ${res.status}`);
+    throw new Error(d.error || tr("/api/subject/install returned {0}", res.status));
   }
   const log: string[] = [];
   let ok = true;
@@ -159,7 +160,7 @@ export async function installSubject(
       ok = false;
       // stderr 里才是有用的那句(pip 的真实报错、缺什么文件),message 往往只是
       // 「进程退出码 N」。只取 message 的话,用户看到的永远是一句没法照着做的话。
-      const msg = ev.message ?? "安装失败";
+      const msg = ev.message ?? tr("Install failed");
       const detail = typeof ev.stderr === "string" ? ev.stderr.trim() : "";
       const full = detail ? `${msg}\n${detail}` : msg;
       log.push("[error] " + full);

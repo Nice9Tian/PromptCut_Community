@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { tr } from "../i18n/index.ts";
 
 /**
  * 听写引擎安装任务的共享状态。
@@ -133,19 +134,19 @@ export function fractionOf(job: InstallJob): number | null {
 export function describe(job: InstallJob): string {
   switch (job.phase) {
     case "starting":
-      return "正在启动安装…";
+      return tr("Starting installation…");
     case "resolving":
-      return job.currentPackage ? `正在解析依赖:${job.currentPackage}` : "正在解析依赖…";
+      return job.currentPackage ? tr("Resolving dependencies: {0}", job.currentPackage) : tr("Resolving dependencies…");
     case "downloading":
       return job.currentPackage
-        ? `正在下载 ${job.currentPackage}${job.totalMB ? `(${job.totalMB.toFixed(1)} MB)` : ""}`
-        : "正在下载…";
+        ? tr("Downloading {0}{1}", job.currentPackage, job.totalMB ? `(${job.totalMB.toFixed(1)} MB)` : "")
+        : tr("Downloading…");
     case "installing":
-      return job.packageCount ? `正在安装 ${job.packageCount} 个包…` : "正在安装…";
+      return job.packageCount ? tr("Installing {0} packages…", job.packageCount) : tr("Installing…");
     case "done":
-      return "安装完成";
+      return tr("Installation complete");
     case "failed":
-      return job.error || "安装失败";
+      return job.error || tr("Install failed");
   }
 }
 

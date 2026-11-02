@@ -23,7 +23,7 @@ function harness() {
   return { log, App };
 }
 
-test("看不见(StoreHold true)的子树:store 变了不重渲、一直是上一次的值;露出来那一次按当时的 store 重读", async () => {
+test("Invisible (StoreHold true) subtree: does not re-render when the store changes and keeps the last value; when revealed, it rereads from the store as of that moment", async () => {
   actions.newProject("A");
   const { log, App } = harness();
   const root = mount(h(App, { hidden: false }));
@@ -37,21 +37,21 @@ test("看不见(StoreHold true)的子树:store 变了不重渲、一直是上一
   await flush();
   actions.setProjectMeta({ name: "C" });
   await flush();
-  assert.equal(log.live.at(-1), "C", "看得见的照常跟");
-  assert.equal(log.held.length, heldBefore, "看不见的一次都没重渲");
+  assert.equal(log.live.at(-1), "C", "Visible ones keep following as usual");
+  assert.equal(log.held.length, heldBefore, "The invisible one never re-rendered");
   assert.equal(log.held.at(-1), "A");
 
   root.render(h(App, { hidden: false }));
   await flush();
-  assert.equal(log.held.at(-1), "C", "露出来就是当时的值");
+  assert.equal(log.held.at(-1), "C", "When revealed, it holds the value from that moment");
   actions.setProjectMeta({ name: "D" });
   await flush();
-  assert.equal(log.held.at(-1), "D", "露出来之后照常跟");
+  assert.equal(log.held.at(-1), "D", "After being revealed, it keeps following as usual");
   assert.deepEqual(root.errors, []);
   root.unmount();
 });
 
-test("一挂上就是看不见的:第一次照常读当时的值,之后不跟", async () => {
+test("Invisible as soon as it is mounted: the first read gets the current value as usual, and it does not follow afterwards", async () => {
   actions.newProject("起点");
   const { log, App } = harness();
   const root = mount(h(App, { hidden: true }));
@@ -67,7 +67,7 @@ test("一挂上就是看不见的:第一次照常读当时的值,之后不跟", 
   root.unmount();
 });
 
-test("没包 StoreHold 的地方(缺省 false)行为不变:每次变动都重渲一次", async () => {
+test("Where StoreHold is not wrapped (default false) behavior is unchanged: re-renders once on every change", async () => {
   actions.newProject("x0");
   const seen = [];
   function Plain() {

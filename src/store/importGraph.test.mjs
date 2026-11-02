@@ -63,7 +63,7 @@ function resolve(fromFile, spec) {
 
 const files = listSources(STORE_DIR);
 
-test("src/store/actions/* 不 import ../project(否则就是 project ↔ actions 的环)", () => {
+test("src/store/actions/* must not import ../project (otherwise it is a project ↔ actions cycle)", () => {
   const offenders = [];
   for (const file of files) {
     if (path.basename(path.dirname(file)) !== "actions") continue;
@@ -74,10 +74,10 @@ test("src/store/actions/* 不 import ../project(否则就是 project ↔ actions
       }
     }
   }
-  assert.deepEqual(offenders, [], `这些 action 文件 import 了 ../project:${offenders.join(", ")}`);
+  assert.deepEqual(offenders, [], `These action files import ../project: ${offenders.join(", ")}`);
 });
 
-test("src/store 的运行时 import 图无环", () => {
+test("The runtime import graph of src/store has no cycles", () => {
   const graph = new Map();
   for (const file of files) {
     const deps = runtimeImports(fs.readFileSync(file, "utf8"))
@@ -103,5 +103,5 @@ test("src/store 的运行时 import 图无环", () => {
   };
   for (const node of graph.keys()) walk(node, []);
 
-  assert.deepEqual(cycles, [], `发现运行时循环依赖:\n${cycles.join("\n")}`);
+  assert.deepEqual(cycles, [], `Found runtime circular dependencies:\n${cycles.join("\n")}`);
 });

@@ -9,18 +9,18 @@ function copy(initial, extra = {}) {
   return { ds, sent, backups };
 }
 const state = (ds, project, rev) => ds.receive({ type: 'project.state', projectId: 'room', project, rev });
-test('正常重入遇到空服务不初始化，不发送快照根替换', () => {
+test('Normal reopen on an empty service does not initialize and does not send a snapshot root replacement', () => {
   const c = copy(createEmptyProject('file-snapshot')); c.ds.connect(); state(c.ds, null, 0);
   assert.equal(c.sent.some(m => m.type === 'project.op'), false); assert.equal(c.ds.confirmedProject, null);
   assert.equal(c.ds.project.name, 'file-snapshot');
 });
-test('旧快照重入以服务端最新状态为准，版本继续，零根替换', () => {
+test('Reopening from an old snapshot defers to the latest server state, the version continues, zero root replacements', () => {
   const file = createEmptyProject('old-file'), latest = { ...file, name: 'service-latest' };
   const c = copy(file); c.ds.connect(); state(c.ds, latest, 9);
   assert.equal(c.ds.project.name, 'service-latest'); assert.equal(c.ds.rev, 9);
   assert.equal(c.sent.some(m => m.type === 'project.op'), false);
 });
-test('离线队列跨实例恢复保留期望版本；远端已编辑时暂停，丢弃前备份', () => {
+test('Offline queue recovery across instances keeps the expected version; pauses when the remote has been edited, backs up before discarding', () => {
   const initial = createEmptyProject('base'); const c = copy(initial); c.ds.connect(); state(c.ds, initial, 4); c.ds.disconnect();
   c.ds.commit({ ...c.ds.project, name: 'offline-edit' }); const journal = JSON.parse(JSON.stringify(c.ds.recoveryJournal()));
   const reopened = copy(initial); reopened.ds.restoreJournal(journal); reopened.ds.connect(); state(reopened.ds, { ...initial, name: 'remote-edit' }, 5);
@@ -30,7 +30,7 @@ test('离线队列跨实例恢复保留期望版本；远端已编辑时暂停�
   reopened.ds.discardOffline(); assert.equal(reopened.backups.length, 1); assert.equal(reopened.backups[0].project.name, 'offline-edit');
   assert.equal(reopened.ds.project.name, 'remote-edit');
 });
-test('等待身份读取期间的新离线操作与旧日志接续，不丢编辑', () => {
+test('New offline operations made while waiting for the identity read are chained with the old log, no edits lost', () => {
   const p = createEmptyProject('base'), before = copy(p); before.ds.connect(); state(before.ds, p, 3); before.ds.disconnect();
   before.ds.commit({ ...before.ds.project, name: 'earlier-offline' });
   const now = copy(p); now.ds.commit({ ...now.ds.project, width: 1600 }); now.ds.restoreJournal(before.ds.recoveryJournal());

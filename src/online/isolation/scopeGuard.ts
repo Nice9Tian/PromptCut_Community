@@ -95,8 +95,8 @@ export function guardStageScope(scope: object, config: ScopeGuardConfig): ScopeG
   if (shadowed.length) {
     let names = "";
     for (let i = 0; i < shadowed.length; i++) names += (i ? "," : "") + shadowed[i];
-    const what = "integrity:内置对象或平台接口在守卫之前被改过(" + names + ")";
-    if (config.strict) throw new TypeErr("PromptCut 舞台:" + what);
+    const what = "integrity: built-in objects or platform APIs were modified before the guard (" + names + ")";
+    if (config.strict) throw new TypeErr("PromptCut stage: " + what);
     errors[errors.length] = what;
     return { denied, errors };
   }
@@ -114,7 +114,7 @@ export function guardStageScope(scope: object, config: ScopeGuardConfig): ScopeG
   // 与 `SCOPE_GUARD_CRITICAL` 同一份(守卫自足,不能引用外面的名字;单测核两边一致)
   const CRITICAL = ["integrity", "indexedDB", "caches", "BroadcastChannel", "SharedWorker", "Worker", "locks"];
   const fail = (what: string, e: unknown) => { errors.push(what + ":" + (e && (e as Error).message)); };
-  const message = (what: string) => "PromptCut 舞台:" + what;
+  const message = (what: string) => "PromptCut stage: " + what;
   const thrower = (what: string) => function () { throw new TypeErr(message(what)); };
   const rejecter = (what: string) => function () { return apply(promiseReject, P, [new TypeErr(message(what))]); };
 
@@ -158,7 +158,7 @@ export function guardStageScope(scope: object, config: ScopeGuardConfig): ScopeG
   };
 
   /* ---------- 1. 持久存储:先废原型上的读写方法(外链模块事先拿到的对象也用不了),再收全局入口 ---------- */
-  const STORE = "不能用持久存储";
+  const STORE = "cannot use persistent storage";
   neuter("IDBFactory", ["open", "deleteDatabase"], thrower, STORE);
   neuter("IDBFactory", ["databases"], rejecter, STORE);
   neuter("IDBDatabase", ["transaction", "createObjectStore", "deleteObjectStore"], thrower, STORE);
@@ -177,18 +177,18 @@ export function guardStageScope(scope: object, config: ScopeGuardConfig): ScopeG
       replace(proto, "persist", function persist() { return apply(promiseResolve, P, [false]); }, "StorageManager.persist");
     }
   }
-  neuter("ServiceWorkerContainer", ["register"], rejecter, "不能注册 Service Worker");
+  neuter("ServiceWorkerContainer", ["register"], rejecter, "cannot register a Service Worker");
   const GLOBALS = ["indexedDB", "caches", "webkitRequestFileSystem", "webkitRequestFileSystemSync", "webkitResolveLocalFileSystemURL",
     "webkitResolveLocalFileSystemSyncURL", "openDatabase", "openDatabaseSync", "sharedStorage"];
   for (let i = 0; i < GLOBALS.length; i++) removeGlobal(GLOBALS[i]);
 
   /* ---------- 2. 同源实时通道 ---------- */
-  neuter("BroadcastChannel", ["postMessage"], thrower, "不能用 BroadcastChannel");
+  neuter("BroadcastChannel", ["postMessage"], thrower, "cannot use BroadcastChannel");
   removeGlobal("BroadcastChannel");
   removeGlobal("SharedWorker");
 
   /* ---------- 3. cookie 写入(Service Worker 与窗口里才有 cookieStore) ---------- */
-  neuter("CookieStore", ["set", "delete"], rejecter, "不能写 cookie");
+  neuter("CookieStore", ["set", "delete"], rejecter, "cannot write cookies");
 
   /* ---------- 4. Web Locks:锁名按本文档加前缀 ---------- */
   try {
@@ -244,7 +244,7 @@ export function guardStageScope(scope: object, config: ScopeGuardConfig): ScopeG
     if (typeof OrigWorker === "function" && (OrigWorker as unknown as Record<symbol, unknown>)[MARK] === true) {
       denied.push("Worker"); // 这个全局对象已经装过(再装一遍不重复装)
     } else if (typeof OrigWorker === "function") {
-      const GuardedWorker = thrower("不能起后台线程") as unknown as { prototype?: object };
+      const GuardedWorker = thrower("cannot start a background thread") as unknown as { prototype?: object };
       if (OrigWorker.prototype) {
         defineProperty(GuardedWorker, "prototype", { value: OrigWorker.prototype, writable: false });
         // 原型上的 constructor 指回守卫构造函数(不然 `Worker.prototype.constructor` 就拿回了原构造函数)
@@ -269,7 +269,7 @@ export function guardStageScope(scope: object, config: ScopeGuardConfig): ScopeG
   if (config.strict) {
     for (let i = 0; i < errors.length; i++) {
       for (let k = 0; k < CRITICAL.length; k++) {
-        if (apply(strIndexOf, errors[i], [CRITICAL[k] + ":"]) === 0) throw new TypeErr(message("关键项没装上(" + errors[i] + ")"));
+        if (apply(strIndexOf, errors[i], [CRITICAL[k] + ":"]) === 0) throw new TypeErr(message("critical items failed to install (" + errors[i] + ")"));
       }
     }
   }

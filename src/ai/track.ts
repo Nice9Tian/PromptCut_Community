@@ -10,6 +10,7 @@
 
 import { readSseStream } from "../editor/io/stt";
 import type { PerceptionMediaRef } from "./perceptionMedia";
+import { tr } from "../i18n/index.ts";
 
 export interface TrackPoint {
   /** 用户指定的查询点 [帧号, x, y]，原始像素 */
@@ -60,7 +61,7 @@ export async function trackStatus(): Promise<{
   detail?: unknown;
 }> {
   const r = await fetch("/api/track/status");
-  if (!r.ok) throw new Error("查不到运动追踪拓展的状态");
+  if (!r.ok) throw new Error(tr("Cannot find the status of the motion tracking extension"));
   return r.json();
 }
 
@@ -75,14 +76,14 @@ export async function startTracking(
     body: JSON.stringify({ mediaId: media.id, media, points }),
   });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok || !data.ok) throw new Error(data.error || "运动追踪没能启动");
+  if (!r.ok || !data.ok) throw new Error(data.error || tr("Motion tracking failed to start"));
   return data.jobId as string;
 }
 
 export async function pollTrackJob(jobId: string): Promise<TrackJobState> {
   const r = await fetch(`/api/track/job/${jobId}`);
   const data = await r.json().catch(() => ({}));
-  if (!r.ok || !data.ok) throw new Error(data.error || "查不到这个追踪作业");
+  if (!r.ok || !data.ok) throw new Error(data.error || tr("Cannot find this tracking job"));
   return data.job as TrackJobState;
 }
 
@@ -97,7 +98,7 @@ export async function waitForTrack(
   for (;;) {
     const job = await pollTrackJob(jobId);
     onProgress?.(job.percent, job.engine);
-    if (job.status === "error") throw new Error(job.message || "运动追踪失败");
+    if (job.status === "error") throw new Error(job.message || tr("Motion tracking failed"));
     if (job.status === "done") {
       return {
         // 作业跑完却没报 engine，只可能是 Python 侧的 result 事件缺字段。
@@ -127,7 +128,7 @@ export async function installTrack(
   const res = await fetch("/api/track/install", { method: "POST" });
   if (!res.ok || !res.body) {
     const d = await res.json().catch(() => ({}));
-    throw new Error(d.error || `/api/track/install 返回 ${res.status}`);
+    throw new Error(d.error || tr("/api/track/install returned {0}", res.status));
   }
   const log: string[] = [];
   let ok = true;
@@ -149,7 +150,7 @@ export async function installTrack(
       ok = false;
       // stderr 里才是有用的那句(pip 的真实报错、缺什么文件),message 往往只是
       // 「进程退出码 N」。只取 message 的话,用户看到的永远是一句没法照着做的话。
-      const msg = ev.message ?? "安装失败";
+      const msg = ev.message ?? tr("Install failed");
       const detail = typeof ev.stderr === "string" ? ev.stderr.trim() : "";
       const full = detail ? `${msg}
 ${detail}` : msg;

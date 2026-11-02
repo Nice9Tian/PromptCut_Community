@@ -15,6 +15,7 @@ import { gainCurve, needsGainCurve } from "../kernel/audioPlan.mjs";
 import type { CutEnvelope } from "../kernel/cutAudio.mjs";
 import { buildFxChain } from "./fxChain";
 import { decodeCardAudioClip, type CardAudioClip } from "./cardAudio";
+import { tr } from "../i18n/index.ts";
 
 export interface MixPlanClip {
   clipId: string;
@@ -66,7 +67,7 @@ export async function renderMix(plan: MixPlan, fetchImpl: typeof fetch = fetch):
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return await ctx.decodeAudioData(await res.arrayBuffer());
       } catch (e) {
-        const message = `${c.clipId} 的声音解不出来:${e instanceof Error ? e.message : String(e)}`;
+        const message = tr("Audio of {0} could not be decoded: {1}", c.clipId, e instanceof Error ? e.message : String(e));
         notes.push(message);
         throw new Error(message, { cause: e });
       }

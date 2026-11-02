@@ -16,6 +16,7 @@
  */
 import type { CardBundle, LoadResult } from "./protocol.ts";
 import type { SoundThreadIn, SoundThreadOut } from "./soundThread.ts";
+import { tr } from "../../i18n/index.ts";
 
 export interface WorkerLike {
   postMessage(message: unknown, transfer?: Transferable[]): void;
@@ -68,7 +69,7 @@ export function soundTimeoutMs(count: number, sampleRate: number): number {
 export const SOUND_LOAD_TIMEOUT_MS = 20_000;
 /** 同一个节点连着超时这么多次就不再试 */
 export const SOUND_MAX_TIMEOUTS_PER_NODE = 2;
-export const SOUND_TIMEOUT_MESSAGE = "这段声音在线合成超时";
+export const SOUND_TIMEOUT_MESSAGE = tr("Online synthesis of this sound timed out");
 
 interface Pending { resolve: (samples: Float32Array) => void; reject: (err: Error) => void; timer: unknown; nodeId: string; off?: () => void }
 
@@ -124,7 +125,7 @@ export function createSoundHost(opts: SoundHostOptions): SoundHost {
       clearTimer(p.timer);
       p.off?.();
       if (m.t === "block" && m.samples instanceof Float32Array) { timeoutsOf.delete(p.nodeId); p.resolve(m.samples); }
-      else p.reject(new Error(m.t === "error" ? String(m.message).slice(0, 240) : "声音线程回的不是采样块"));
+      else p.reject(new Error(m.t === "error" ? String(m.message).slice(0, 240) : "The sound thread replied with something that is not a sample chunk"));
     }
   }
 
@@ -133,7 +134,7 @@ export function createSoundHost(opts: SoundHostOptions): SoundHost {
     const w = opts.spawn();
     counters.spawned++;
     w.onmessage = (event) => onMessage(event.data);
-    w.onerror = (event) => kill(`声音线程出错:${String(event?.message ?? "").slice(0, 120)}`);
+    w.onerror = (event) => kill(tr("Sound thread error: {0}", String(event?.message ?? "").slice(0, 120)));
     worker = w;
     return w;
   }
@@ -145,7 +146,7 @@ export function createSoundHost(opts: SoundHostOptions): SoundHost {
     const mySeq = ++seq;
     loadedSig = sig;
     const p = new Promise<SoundLoadOutcome>((resolve, reject) => {
-      const timer = setTimer(() => { counters.timeouts++; kill("声音线程载入卡片超时"); }, SOUND_LOAD_TIMEOUT_MS);
+      const timer = setTimer(() => { counters.timeouts++; kill(tr("The sound thread timed out loading the card")); }, SOUND_LOAD_TIMEOUT_MS);
       loads.set(mySeq, { resolve, reject, timer });
       const message: SoundThreadIn = { t: "load", seq: mySeq, bundles: [...bundles] };
       w.postMessage(message);
@@ -160,12 +161,12 @@ export function createSoundHost(opts: SoundHostOptions): SoundHost {
 
   return {
     setBundles(next) {
-      if (disposed) return Promise.reject(new Error("声音宿主已经关了"));
+      if (disposed) return Promise.reject(new Error("The sound host has already been closed"));
       bundles = [...(next ?? [])];
       return load();
     },
     async render(request, signal) {
-      if (disposed) throw new Error("声音宿主已经关了");
+      if (disposed) throw new Error("The sound host has already been closed");
       if (signal?.aborted) throw new DOMException("aborted", "AbortError");
       if ((timeoutsOf.get(request.nodeId) ?? 0) >= SOUND_MAX_TIMEOUTS_PER_NODE) throw new Error(SOUND_TIMEOUT_MESSAGE);
       await load();
@@ -198,7 +199,7 @@ export function createSoundHost(opts: SoundHostOptions): SoundHost {
     stats: () => ({ spawned: counters.spawned, timeouts: counters.timeouts, pending: pending.size }),
     dispose() {
       disposed = true;
-      kill("声音宿主已经关了");
+      kill("The sound host has already been closed");
     },
   };
 }

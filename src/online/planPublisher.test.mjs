@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { createPlanPublisher, clipsPlanTask, clipsSig, CLIPS_KEY_MARK, PLAN_DEBOUNCE_MS, BROWSER_NODE_WAIT_MS, LIST_STREAMS_SIG } from "./planPublisher.ts";
 import { clipsPlanTaskOf, backfillSig, CLIPS_KEY_MARK as SERVER_MARK, parseInbound, LIST_STREAMS_SIG as SERVER_STREAMS_SIG } from "../../server/render-queue/messages.mjs";
 
-test("C10-PP-01 形状与队列侧 clipsPlanTaskOf 逐字段相同;入站校验收它", () => {
+test("C10-PP-01 the shape is identical field by field to the queue-side clipsPlanTaskOf; inbound validation accepts it", () => {
   const clips = ["c3", "c1", "c2", "c1"];
   for (const codeVersion of [undefined, "cv-123"]) {
     const page = clipsPlanTask({ projectId: "proj-1", projectRev: 7, clips, codeVersion });
@@ -46,17 +46,17 @@ function timers() {
   };
 }
 
-test("C10-PP-02 测量落定之前不发;落定后防抖发一次;同一版不重发;改了(版本或清单)重发", async () => {
+test("C10-PP-02 nothing is sent before measurement settles; after it settles, send once with debounce; the same version is not resent; resend when changed (version or manifest)", async () => {
   const qd = fakeQueue();
   const t = timers();
   let clips = ["c2", "c1"];
   const pub = createPlanPublisher({ request: qd.request, publisherId: "page-x", clips: () => clips, codeVersion: "cv", setTimer: t.setTimer, clearTimer: t.clearTimer });
   pub.changed({ projectId: "p1", projectRev: 3 });
-  assert.equal(t.pending(), 0, "测量没落定:不排");
+  assert.equal(t.pending(), 0, "Measurement not settled: not scheduled");
   pub.measured({ projectId: "p1", projectRev: 3 });
   pub.changed({ projectId: "p1", projectRev: 3 });
   pub.changed({ projectId: "p1", projectRev: 4 });
-  assert.equal(t.pending(), 1, "防抖:只排最后一次");
+  assert.equal(t.pending(), 1, "Debounce: only the last one is scheduled");
   await t.flush();
   const pubs = qd.sent.filter((m) => m.type === "task.publish");
   assert.equal(pubs.length, 1);
@@ -70,17 +70,17 @@ test("C10-PP-02 测量落定之前不发;落定后防抖发一次;同一版不�
   assert.equal("envFingerprint" in task.requires || "preferNode" in task.requires, false);
   pub.changed({ projectId: "p1", projectRev: 4 });
   await t.flush();
-  assert.equal(qd.sent.filter((m) => m.type === "task.publish").length, 1, "同一版不重发");
+  assert.equal(qd.sent.filter((m) => m.type === "task.publish").length, 1, "The same version is not resent");
   clips = ["c1"];
   pub.changed({ projectId: "p1", projectRev: 4 });
   await t.flush();
-  assert.equal(qd.sent.filter((m) => m.type === "task.publish").length, 2, "清单变了重发");
-  assert.equal(qd.sent.filter((m) => m.type === "publisher.hello").length, 1, "只报到一次");
+  assert.equal(qd.sent.filter((m) => m.type === "task.publish").length, 2, "Resent when the manifest changes");
+  assert.equal(qd.sent.filter((m) => m.type === "publisher.hello").length, 1, "Checks in only once");
   pub.dispose();
 });
 
-test("C10-PP-03 发不出去、没人认领都不抛;清单空不发;reset 之后重新报到", async () => {
-  const bad = fakeQueue({ fail: "连接断了" });
+test("C10-PP-03 neither a failed send nor nobody claiming throws; an empty manifest is not sent; check in again after reset", async () => {
+  const bad = fakeQueue({ fail: "Connection lost" });
   const t = timers();
   const pub = createPlanPublisher({ request: bad.request, clips: () => ["a"], setTimer: t.setTimer, clearTimer: t.clearTimer });
   pub.measured({ projectId: "p", projectRev: 1 });
@@ -93,7 +93,7 @@ test("C10-PP-03 发不出去、没人认领都不抛;清单空不发;reset 之�
   const pub2 = createPlanPublisher({ request: empty.request, clips: () => [], setTimer: t2.setTimer, clearTimer: t2.clearTimer });
   pub2.measured({ projectId: "p", projectRev: 1 });
   await t2.flush();
-  assert.equal(empty.sent.length, 0, "清单空不发");
+  assert.equal(empty.sent.length, 0, "An empty manifest is not sent");
   const q3 = fakeQueue();
   const t3 = timers();
   const pub3 = createPlanPublisher({ request: q3.request, clips: () => ["a"], setTimer: t3.setTimer, clearTimer: t3.clearTimer });
@@ -101,11 +101,11 @@ test("C10-PP-03 发不出去、没人认领都不抛;清单空不发;reset 之�
   await t3.flush();
   pub3.reset();
   await t3.flush();
-  assert.equal(q3.sent.filter((m) => m.type === "publisher.hello").length, 2, "连接换了重新报到");
-  assert.equal(q3.sent.filter((m) => m.type === "task.publish").length, 2, "并重发(队列只在内存里)");
+  assert.equal(q3.sent.filter((m) => m.type === "publisher.hello").length, 2, "Checks in again after the connection changes");
+  assert.equal(q3.sent.filter((m) => m.type === "task.publish").length, 2, "and resends (the queue is in memory only)");
 });
 
-test("C10-PP-04 endpoint 形状:按 reqId 等回包,队列推来的 task.done 转给宿主", async () => {
+test("C10-PP-04 endpoint shape: waits for the reply by reqId, forwards the task.done pushed by the queue to the host", async () => {
   const handlers = [];
   const out = [];
   const endpoint = {
@@ -156,7 +156,7 @@ function clockTimers() {
   };
 }
 
-test("M7-PP-05 本页当纯浏览器节点:清单计划等节点报到完(拿到指纹)再发;报到完马上发;发之前交出这一版(D6 留存)", async () => {
+test("M7-PP-05 this page acts as a pure browser node: the manifest plan waits until the node finishes checking in (fingerprint obtained) before sending; sends right after check-in; hands over this version before sending (D6 retention)", async () => {
   const qd = fakeQueue();
   const c = clockTimers();
   let node = "pending";
@@ -165,31 +165,31 @@ test("M7-PP-05 本页当纯浏览器节点:清单计划等节点报到完(拿到
     nodeReady: () => node, onPublish: (v) => kept.push(v) });
   pub.measured({ projectId: "p", projectRev: 5 });
   await c.runFor(PLAN_DEBOUNCE_MS + 1000);
-  assert.equal(qd.sent.filter((m) => m.type === "task.publish").length, 0, "节点还在报到:不发");
+  assert.equal(qd.sent.filter((m) => m.type === "task.publish").length, 0, "Node still checking in: not sent");
   assert.ok(pub.debug().nodeWaitMs >= 1000, JSON.stringify(pub.debug()));
   node = "ready";
   pub.nodeChanged();
   for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
   const pubs = qd.sent.filter((m) => m.type === "task.publish");
-  assert.equal(pubs.length, 1, "报到完马上发,不再等下一轮");
+  assert.equal(pubs.length, 1, "Sends right after check-in, without waiting for the next round");
   assert.deepEqual(kept, [{ projectId: "p", projectRev: 5 }]);
   const log = pub.debug().log.at(-1);
   assert.equal(log.ok, true);
   assert.equal(log.node, "ready");
   assert.ok(log.waitedMs >= 1000 && log.waitedMs < BROWSER_NODE_WAIT_MS, JSON.stringify(log));
-  assert.deepEqual(pubs[0].tasks[0].input, { clips: ["a"] }, "计划不写浏览器意向(页面自报的不作数)");
+  assert.deepEqual(pubs[0].tasks[0].input, { clips: ["a"] }, "The plan does not record browser intent (what the page self-reports does not count)");
   pub.dispose();
 });
 
-test("M7-PP-06 节点一直没报到完:最多等 3 s,超时照发;本页不当节点时不等", async () => {
+test("M7-PP-06 node never finishes checking in: waits at most 3 s, sends anyway on timeout; no wait when this page is not a node", async () => {
   const qd = fakeQueue();
   const c = clockTimers();
   const pub = createPlanPublisher({ request: qd.request, clips: () => ["a"], setTimer: c.setTimer, clearTimer: c.clearTimer, now: c.now, nodeReady: () => "pending" });
   pub.measured({ projectId: "p", projectRev: 1 });
   await c.runFor(PLAN_DEBOUNCE_MS + BROWSER_NODE_WAIT_MS - 100);
-  assert.equal(qd.sent.filter((m) => m.type === "task.publish").length, 0, "3 s 之内不发");
+  assert.equal(qd.sent.filter((m) => m.type === "task.publish").length, 0, "Not sent within 3 s");
   await c.runFor(200);
-  assert.equal(qd.sent.filter((m) => m.type === "task.publish").length, 1, "到 3 s 照发");
+  assert.equal(qd.sent.filter((m) => m.type === "task.publish").length, 1, "Sent anyway at 3 s");
   assert.equal(pub.debug().log.at(-1).waitedMs, BROWSER_NODE_WAIT_MS);
   assert.equal(pub.debug().nodeWaitMs, null);
   // 下一版:节点还是没报到完,重新等(每一版各等一次)
@@ -205,7 +205,7 @@ test("M7-PP-06 节点一直没报到完:最多等 3 s,超时照发;本页不当�
   const none = createPlanPublisher({ request: q2.request, clips: () => ["a"], setTimer: c2.setTimer, clearTimer: c2.clearTimer, now: c2.now, nodeReady: () => "none" });
   none.measured({ projectId: "p", projectRev: 1 });
   await c2.runFor(PLAN_DEBOUNCE_MS);
-  assert.equal(q2.sent.filter((m) => m.type === "task.publish").length, 1, "不当节点:防抖到了就发");
+  assert.equal(q2.sent.filter((m) => m.type === "task.publish").length, 1, "Not a node: sends as soon as the debounce elapses");
   assert.equal(none.debug().log.at(-1).waitedMs, undefined);
   none.dispose();
 });
@@ -214,7 +214,7 @@ test("M7-PP-06 节点一直没报到完:最多等 3 s,超时照发;本页不当�
 
 const PAGE_CARDS = { cardEnvFingerprint: "0123456789abcdef", userCards: true, graphCards: false, cardSources: { "user:a": "v1" } };
 
-test("C10-PP-ST-01 这一项关着(或没给):结果键、input 与没有这个参数时逐字相同 —— 一直关着的项目的清单计划不会因为这次改动重切", () => {
+test("C10-PP-ST-01 this option is off (or not given): result key and input are identical to when there is no such parameter, so the manifest plan of a project that has always had it off is not re-split by this change", () => {
   const clips = ["c3", "c1", "c2"];
   for (const browser of [undefined, PAGE_CARDS]) {
     const plain = clipsPlanTask({ projectId: "sp_x", projectRev: 7, clips, codeVersion: "cv", browser });
@@ -229,7 +229,7 @@ test("C10-PP-ST-01 这一项关着(或没给):结果键、input 与没有这个�
   assert.equal(clipsPlanTask({ projectId: "sp_x", projectRev: 7, clips }).id, "plan:sp_x@7#clips:" + backfillSig(["c1", "c2", "c3"]));
 });
 
-test("C10-PP-ST-02 这一项开着:是另一个计划(结果键不同、input.streams 为 true);页面与队列侧逐字段相同;入站校验收它,只认布尔 true", () => {
+test("C10-PP-ST-02 this option is on: it is a different plan (different result key, input.streams is true); the page and the queue side are identical field by field; inbound validation accepts it, only the boolean true is recognized", () => {
   const clips = ["c2", "c1"];
   assert.equal(LIST_STREAMS_SIG, SERVER_STREAMS_SIG);
   for (const browser of [undefined, PAGE_CARDS]) {
@@ -239,7 +239,7 @@ test("C10-PP-ST-02 这一项开着:是另一个计划(结果键不同、input.st
     assert.notEqual(on.resultKey, off.resultKey);
     assert.notEqual(on.id, off.id);
     assert.equal(on.input.streams, true);
-    assert.deepEqual({ ...on.input, streams: undefined }, { ...off.input, streams: undefined }, "别的输入不变");
+    assert.deepEqual({ ...on.input, streams: undefined }, { ...off.input, streams: undefined }, "other inputs unchanged");
     assert.deepEqual([on.requires, on.priority, on.source], [off.requires, off.priority, off.source]);
     // 新旧文档服务都只看签名的字符集(1～32 位小写字母与数字)与任务 id 的形状:带这一项的键照样合格
     assert.match(on.resultKey.slice(`sp_x@7${CLIPS_KEY_MARK}`.length), /^[0-9a-z]{1,32}$/);
@@ -260,18 +260,18 @@ test("C10-PP-ST-02 这一项开着:是另一个计划(结果键不同、input.st
   assert.deepEqual(legacy.body.tasks[0].input, { clips: ["c1", "c2"] });
 });
 
-test("C10-PP-ST-03 发布:本页看到这一项开着时计划带它;从关变开马上重发(不防抖、同一版项目、不同的任务);再调不重发;关着时与原来逐字相同", async () => {
+test("C10-PP-ST-03 publish: when this item is seen on while on this page, the plan includes it; switching from off to on republishes immediately (no debounce, same project version, different task); calling again does not republish; when off, identical to before, verbatim", async () => {
   const qd = fakeQueue();
   const t = timers();
   let on = false;
   const pub = createPlanPublisher({ request: qd.request, publisherId: "page-x", clips: () => ["c1"], codeVersion: "cv", streams: () => on, setTimer: t.setTimer, clearTimer: t.clearTimer });
   const published = () => qd.sent.filter((m) => m.type === "task.publish").map((m) => m.tasks[0]);
   pub.streamsOn();
-  assert.equal(published().length, 0, "测量没落定:不发");
+  assert.equal(published().length, 0, "measurement not settled: do not publish");
   pub.measured({ projectId: "sp_x", projectRev: 3 });
   await t.flush();
   assert.equal(published().length, 1);
-  assert.deepEqual(published()[0], clipsPlanTaskOf({ projectId: "sp_x", projectRev: 3, clips: ["c1"], codeVersion: "cv" }), "关着:与没有这个功能时逐字相同");
+  assert.deepEqual(published()[0], clipsPlanTaskOf({ projectId: "sp_x", projectRev: 3, clips: ["c1"], codeVersion: "cv" }), "off: verbatim identical to when this feature did not exist");
   // 关着时宿主误调:任务 id 没变,不重发
   pub.streamsOn();
   await new Promise((r) => setTimeout(r, 0));
@@ -279,16 +279,16 @@ test("C10-PP-ST-03 发布:本页看到这一项开着时计划带它;从关变�
   // 创建者打开:宿主调 streamsOn,不等防抖就发
   on = true;
   pub.streamsOn();
-  assert.equal(t.pending(), 0, "不排防抖");
+  assert.equal(t.pending(), 0, "no debounce queued");
   await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));
-  assert.equal(published().length, 2, "马上重发");
+  assert.equal(published().length, 2, "republished immediately");
   assert.deepEqual(published()[1], clipsPlanTaskOf({ projectId: "sp_x", projectRev: 3, clips: ["c1"], codeVersion: "cv", streams: true }));
-  assert.equal(published()[1].source.projectRev, 3, "同一版项目");
+  assert.equal(published()[1].source.projectRev, 3, "same project version");
   assert.notEqual(published()[1].id, published()[0].id);
   pub.streamsOn();
   await new Promise((r) => setTimeout(r, 0));
-  assert.equal(published().length, 2, "已经发过这一份:不重发");
+  assert.equal(published().length, 2, "this one was already published: do not republish");
   // 开着时项目改了:新一版照样带这一项
   pub.changed({ projectId: "sp_x", projectRev: 4 });
   await t.flush();
@@ -297,10 +297,10 @@ test("C10-PP-ST-03 发布:本页看到这一项开着时计划带它;从关变�
   assert.equal(qd.sent.filter((m) => m.type === "publisher.hello").length, 1);
   pub.dispose();
   pub.streamsOn();
-  assert.equal(published().length, 3, "销毁后不发");
+  assert.equal(published().length, 3, "no publish after destroy");
 });
 
-test("C10-PP-ST-04 几个成员同时在线:各自重发的是同一个任务 id(同一版、同一份清单),队列只留一个、只多切一次;读这一项出错按关着", async () => {
+test("C10-PP-ST-04 several members online at once: each republishes the same task id (same version, same manifest), the queue keeps only one, with only one extra split; an error reading this item is treated as off", async () => {
   const mk = (streams) => {
     const qd = fakeQueue();
     const t = timers();
@@ -312,16 +312,16 @@ test("C10-PP-ST-04 几个成员同时在线:各自重发的是同一个任务 id
   for (const x of [a, b]) { x.pub.measured({ projectId: "sp_x", projectRev: 9 }); await x.t.flush(); }
   on = true;
   for (const x of [a, b]) { x.pub.streamsOn(); await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0)); }
-  assert.deepEqual(a.ids(), b.ids(), "两个成员发的任务 id 逐个相同");
-  assert.equal(new Set([...a.ids(), ...b.ids()]).size, 2, "一共只有两个不同的任务:关着时的那一个、打开后的那一个");
+  assert.deepEqual(a.ids(), b.ids(), "task ids published by the two members are identical one by one");
+  assert.equal(new Set([...a.ids(), ...b.ids()]).size, 2, "only two distinct tasks in total: the one when off and the one after turning on");
   const broken = mk(() => { throw new Error("x"); });
   broken.pub.measured({ projectId: "sp_x", projectRev: 9 });
   await broken.t.flush();
-  assert.deepEqual(broken.ids(), [a.ids()[0]], "读不出这一项:按关着发");
+  assert.deepEqual(broken.ids(), [a.ids()[0]], "cannot read this item: publish as off");
   for (const x of [a, b, broken]) x.pub.dispose();
 });
 
-test("C10-PP-PS-01 本页产流要的两样:current() 给最近发成的那一版;probe() 把同一个任务再发布一次、读回包里的状态", async () => {
+test("C10-PP-PS-01 the two things this page needs to produce a stream: current() gives the most recently published version; probe() republishes the same task and reads the status from the returned packet", async () => {
   const sent = [];
   let state = "open";
   const request = async (msg) => {
@@ -333,8 +333,8 @@ test("C10-PP-PS-01 本页产流要的两样:current() 给最近发成的那一�
   const t = timers();
   let now = 5000;
   const pub = createPlanPublisher({ request, publisherId: "page-ps", clips: () => ["c2", "c1"], codeVersion: "cv", setTimer: t.setTimer, clearTimer: t.clearTimer, now: () => now });
-  assert.equal(pub.current(), null, "还没发成");
-  assert.equal(await pub.probe(), null, "没发成过:问不到");
+  assert.equal(pub.current(), null, "not published yet");
+  assert.equal(await pub.probe(), null, "never published: cannot query");
   pub.measured({ projectId: "p1", projectRev: 3 });
   await t.flush();
   const cur = pub.current();
@@ -348,8 +348,8 @@ test("C10-PP-PS-01 本页产流要的两样:current() 给最近发成的那一�
   assert.equal(await pub.probe(), "done");
   const pubs = sent.filter((m) => m.type === "task.publish");
   assert.equal(pubs.length, 4);
-  assert.deepEqual(pubs.map((m) => m.tasks[0].id), Array(4).fill(cur.id), "问状态发的是同一个任务(队列只合并,不另起)");
-  assert.equal(pub.current().at, 5000, "发成的时刻不随问状态变");
+  assert.deepEqual(pubs.map((m) => m.tasks[0].id), Array(4).fill(cur.id), "status queries publish the same task (the queue only merges, never starts a new one)");
+  assert.equal(pub.current().at, 5000, "publish time does not change with status queries");
   // 连接换了:队列可能重启过,上一版不算数,等重新发成
   pub.reset();
   assert.equal(pub.current(), null);
@@ -357,5 +357,5 @@ test("C10-PP-PS-01 本页产流要的两样:current() 给最近发成的那一�
   await t.flush();
   assert.equal(pub.current()?.id, cur.id);
   pub.dispose();
-  assert.equal(await pub.probe(), null, "销毁后不问");
+  assert.equal(await pub.probe(), null, "no query after destroy");
 });

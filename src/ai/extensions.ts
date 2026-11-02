@@ -20,6 +20,7 @@ import {
   type CloudQueueSnapshot,
   type CloudSender,
 } from "./chatTypes.ts";
+import { tr } from "../i18n/index.ts";
 
 export {
   CLOUD_OFF,
@@ -70,7 +71,7 @@ export class CloudError extends Error {
 
 export class CloudConsentRequiredError extends Error {
   constructor() {
-    super("使用云端 Agent 前，请先阅读并确认告知。");
+    super(tr("Read and confirm the notice before using Cloud Agent."));
   }
 }
 
@@ -103,12 +104,12 @@ export async function withCloudControlConsent<T>(
   submit: () => Promise<T>,
 ): Promise<T> {
   await consent();
-  if (!isCurrent()) throw new CloudError("forbidden", "账号、项目或对话已切换，请重新读取当前对话后再操作。", 403);
+  if (!isCurrent()) throw new CloudError("forbidden", tr("The account, project or chat has changed. Reload the current chat before continuing."), 403);
   return submit();
 }
 
 export function requireAccountAbortControl(runId?: string, requestId?: string): { runId: string; requestId: string } {
-  if (!runId || !requestId) throw new CloudError("forbidden", "停止云端对话需要当前运行编号和请求编号。", 403);
+  if (!runId || !requestId) throw new CloudError("forbidden", tr("Stopping a cloud chat requires the current run id and request id."), 403);
   return { runId, requestId };
 }
 
@@ -116,29 +117,29 @@ export function requireAccountAbortControl(runId?: string, requestId?: string): 
 export function cloudErrorText(code: string, serverMessage?: string): string {
   switch (code) {
     case "unauthorized":
-      return "云端 Agent 暂时连不上:身份验证没有通过。请刷新页面或重新进入项目。";
+      return tr("Cloud Agent can't connect right now: authentication failed. Refresh the page or re-enter the project.");
     case "no-identity":
-      return "云端 Agent 暂时用不了:还没有取得身份证明。";
+      return tr("Cloud Agent is unavailable right now: no identity credentials have been obtained yet.");
     case "forbidden":
-      return "你没有权限使用这个项目的云端 Agent。";
+      return tr("You don't have permission to use Cloud Agent for this project.");
     case "disabled":
-      return "项目创建者已关闭云端 Agent。";
+      return tr("The project creator has turned off the Cloud Agent.");
     case "busy":
-      return "云端 Agent 正忙,请稍后再试。";
+      return tr("The Cloud Agent is busy. Please try again later.");
     case "busy-conversation":
-      return "这个对话还有一轮在进行,等它结束或先停止。";
+      return tr("This chat still has a round in progress. Wait for it to finish or stop it first.");
     case "quota-exceeded":
-      return serverMessage || "这个项目的云端 Agent 额度已用完。";
+      return serverMessage || tr("This project's Cloud Agent quota has been used up.");
     case "no-model-key":
-      return "云端 Agent 还没有配置模型,请联系托管方。";
+      return tr("Cloud Agent has no model configured yet. Contact the host.");
     case "too-large":
-      return "消息太长了,云端 Agent 收不下。请缩短后再发。";
+      return tr("The message is too long for Cloud Agent to accept. Shorten it and send again.");
     case "bad-grant":
-      return "这次对话的授权已失效,请重新发送。";
+      return tr("Authorization for this chat has expired. Please send again.");
     case "unavailable":
-      return serverMessage || "云端 Agent 暂时连不上文档服务,请稍后再试。";
+      return serverMessage || tr("Cloud Agent can't reach the document service right now. Try again later.");
     case "network":
-      return "连不上云端 Agent 服务,请检查网络。";
+      return tr("Can't reach the Cloud Agent service. Check your network.");
     // 50 个上限与删除（文字集中在 chatTexts.ts，用户 2026-10-13 确认）；purge-failed 与 creator-required 两句是 2026-10-13 新起草的，列在报告的文字表里
     case "conversation-limit":
       return CLOUD_CHAT_TEXT.limitReached;
@@ -159,9 +160,9 @@ export function cloudErrorText(code: string, serverMessage?: string): string {
       return CLOUD_CHAT_TEXT.creatorRequired;
     // 服务端收消息时核告知没通过（页面那次读取之后、发出之前告知状态变了）：页面同时弹出告知框
     case "consent-required":
-      return "使用云端 Agent 前，请先阅读并确认告知。";
+      return tr("Read and confirm the notice before using Cloud Agent.");
     default:
-      return serverMessage || `云端 Agent 出错了(${code})。`;
+      return serverMessage || tr("Cloud Agent error ({0}).", code);
   }
 }
 

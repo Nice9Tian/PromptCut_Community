@@ -1,5 +1,6 @@
 import { addSpawnedTab, findTabByConversation, getTabs, setScopeByConversation, setTabUnread, subscribeTabs } from "./agentTabs.ts";
 import { normalizeCreativity } from "../kernel/creativity.mjs";
+import { tr } from "../i18n/index.ts";
 export { diffScopes } from "../kernel/agentScopes.mjs";
 
 /**
@@ -120,7 +121,7 @@ export async function takeInbox(conversationId: string, onlyAuto = true): Promis
 /** 把「来自别的 Agent 的消息」排成一条用户消息的正文 */
 export function formatInbound(msgs: AgentMessage[]): string {
   return msgs
-    .map((m) => `【来自 ${m.fromLabel ?? `Agent ${m.from ?? "未知"}`} 的消息】\n${m.text}`)
+    .map((m) => tr("[Message from {0}]\n{1}", m.fromLabel ?? `Agent ${m.from ?? tr("unknown")}`, m.text))
     .join("\n\n");
 }
 
@@ -162,11 +163,11 @@ export async function handleSpawn(ev: any): Promise<void> {
   let ok = false;
   let error: string | undefined;
   try {
-    if (typeof ev?.conversationId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(ev.conversationId)) throw new Error("对话 ID 不合法");
+    if (typeof ev?.conversationId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(ev.conversationId)) throw new Error(tr("Invalid chat ID"));
     addSpawnedTab({
       conversationId: ev.conversationId,
       role: String(ev.role ?? ""),
-      roleName: String(ev.roleName ?? ev.role ?? "子 Agent"),
+      roleName: String(ev.roleName ?? ev.role ?? tr("Sub-Agent")),
       parent: String(ev.parent ?? ""),
       provider: typeof ev.provider === "string" && ev.provider ? ev.provider : null,
       creativity: normalizeCreativity(ev.creativity),

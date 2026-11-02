@@ -12,8 +12,9 @@
  * 只管云端对话的账号模式;桌面版本机 Agent 不走这里。
  */
 import type { ChatAttachment } from "./types.ts";
+import { tr } from "../i18n/index.ts";
 
-export const DOC_LINK_DOWN_TEXT = "和文档服务的连接断着,云端 Agent 暂时用不了。连上后再试。";
+export const DOC_LINK_DOWN_TEXT = tr("The connection to the document service is down, so Cloud Agent is unavailable for now. Try again once connected.");
 
 interface CloudErrorShape {
   name: string;
@@ -77,12 +78,12 @@ export const OUTBOX_RESEND_EVENT = "pc-cloud-resend";
 
 export const OUTBOX_TEXT = {
   /** 排着的气泡下面那一行 */
-  queued: "等网络恢复后发出",
+  queued: tr("Will be sent when the network is back"),
   /** 不发了的气泡:离线期间这个对话里有了新消息 */
-  conflict: "发送失败：断网期间这个对话里有了新消息，这条没有发出。",
+  conflict: tr("Send failed: new messages arrived in this chat while offline, so this one was not sent."),
   /** 其它原因没发出去(没权限、对话被删等):后面接原因 */
-  failed: (reason: string) => `发送失败：${reason}`,
-  resend: "重新发送",
+  failed: (reason: string) => tr("Send failed: {0}", reason),
+  resend: tr("Resend"),
 } as const;
 
 /** 一个账号、一个项目的待发清单最多留这么多条(〔裁〕三级,AGENT 报告数字表) */

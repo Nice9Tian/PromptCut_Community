@@ -192,7 +192,7 @@
   "ja": ""
  },
  "(default)": {
-  "zh": "（缺省）",
+  "zh": "(默认)",
   "ja": ""
  },
  "(double-click to edit, right-click for more)": {
@@ -2944,7 +2944,7 @@
   "ja": ""
  },
  "Deleting…": {
-  "zh": "删除中…",
+  "zh": "正在删除…",
   "ja": ""
  },
  "Dependencies are installed, but the 208 MB weights file is still missing. It ships with the extension pack, so run PromptCut-ext-track-&lt;version&gt;.exe": {
@@ -4356,7 +4356,7 @@
   "ja": ""
  },
  "Installing…": {
-  "zh": "安装中…",
+  "zh": "正在安装…",
   "ja": ""
  },
  "Installing…{0}": {
@@ -9304,7 +9304,7 @@
   "ja": ""
  },
  "Track": {
-  "zh": "所在序列",
+  "zh": "轨道",
   "ja": ""
  },
  "Track is locked": {
@@ -9320,7 +9320,7 @@
   "ja": ""
  },
  "Track {0}": {
-  "zh": "序列{0}",
+  "zh": "序列 {0}",
   "ja": ""
  },
  "Tracks": {
@@ -12290,5 +12290,1853 @@
  "Cut {0}": {
   "zh": "剪辑{0}",
   "ja": "カット{0}"
+ },
+ "\"{0}\" will be deleted. This cannot be undone.": {
+  "zh": "「{0}」会被删除，删除后不能恢复。",
+  "ja": ""
+ },
+ ", please use it in PromptCut on your computer.": {
+  "zh": "，请在电脑上的 PromptCut 里使用。",
+  "ja": ""
+ },
+ "/api/collect/install returned {0}": {
+  "zh": "/api/collect/install 返回 {0}",
+  "ja": ""
+ },
+ "/api/collect/login returned {0}": {
+  "zh": "/api/collect/login 返回 {0}",
+  "ja": ""
+ },
+ "/api/collect/login/check returned {0}": {
+  "zh": "/api/collect/login/check 返回 {0}",
+  "ja": ""
+ },
+ "/api/collect/probe returned {0}": {
+  "zh": "/api/collect/probe 返回 {0}",
+  "ja": ""
+ },
+ "/api/collect/qr/poll returned {0}": {
+  "zh": "/api/collect/qr/poll 返回 {0}",
+  "ja": ""
+ },
+ "/api/collect/qr/start returned {0}": {
+  "zh": "/api/collect/qr/start 返回 {0}",
+  "ja": ""
+ },
+ "/api/collect/search returned {0}": {
+  "zh": "/api/collect/search 返回 {0}",
+  "ja": ""
+ },
+ "/api/shots/install returned {0}": {
+  "zh": "/api/shots/install 返回 {0}",
+  "ja": ""
+ },
+ "/api/subject/install returned {0}": {
+  "zh": "/api/subject/install 返回 {0}",
+  "ja": ""
+ },
+ "/api/track/install returned {0}": {
+  "zh": "/api/track/install 返回 {0}",
+  "ja": ""
+ },
+ "A base with a blue-violet lean and a cyan accent. A consumer-oriented creative feel, with more saturated, livelier track colors.": {
+  "zh": "底色带蓝紫倾向,强调色是青。偏消费端的创作气质,轨道色更饱和、更活跃。",
+  "ja": ""
+ },
+ "A crossfade needs two clips: clipId and otherClipId": {
+  "zh": "交叉溶解要两段:clipId 和 otherClipId",
+  "ja": ""
+ },
+ "A newer generation request exists; the old result was not applied": {
+  "zh": "已有新的生成请求,旧结果未应用",
+  "ja": ""
+ },
+ "A record of the previous failed render is still there; clicking export again will render it again": {
+  "zh": "上一次没渲成的记录还在，再点一次导出会重新渲染",
+  "ja": ""
+ },
+ "A render node has taken over and is preparing to render {0} clips.": {
+  "zh": "渲染节点已接手，正在准备渲染 {0} 个片段。",
+  "ja": ""
+ },
+ "A render node is rendering frame by frame for this export: {0} / {1} frames done. Export starts once all of them arrive.": {
+  "zh": "渲染节点正在为这次导出逐帧渲染：已完成 {0} / {1} 帧，全部到齐后开始导出。",
+  "ja": ""
+ },
+ "A task is running in this chat. It will be stopped before deletion, and changes already applied will be kept.": {
+  "zh": "这个对话里有任务正在运行。删除时会先停止它，已经落地的修改会保留。",
+  "ja": ""
+ },
+ "API key not set yet": {
+  "zh": "还没填 API Key",
+  "ja": ""
+ },
+ "Add attachment: upload files to this cloud chat's working directory so the Cloud Agent can use them (max 512 MB each)": {
+  "zh": "添加附件:文件传到云端这个对话的工作目录,让云端 Agent 用得上(单个不超过 512 MB)",
+  "ja": ""
+ },
+ "After changing to {0} this clip is only {1} seconds, which can't even fit the shortest transition ({2} seconds); delete the transition first": {
+  "zh": "改成 {0} 后这一段只有 {1} 秒，连最短的转场（{2} 秒）都装不下；先删掉转场",
+  "ja": ""
+ },
+ "After the move, clips on track \"{0}\" would overlap; speed unchanged": {
+  "zh": "挪动后序列「{0}」上的段会重叠，没有改速度",
+  "ja": ""
+ },
+ "Also clear their private chats (their shared chats are kept)": {
+  "zh": "同时清除他的私有对话（他的共有对话会保留）",
+  "ja": ""
+ },
+ "Amber": {
+  "zh": "琥珀 (Amber)",
+  "ja": ""
+ },
+ "An alias is enough (opus / sonnet / haiku), or enter a full model name": {
+  "zh": "填别名就行（opus / sonnet / haiku），也可以填完整模型名",
+  "ja": ""
+ },
+ "An error occurred: ": {
+  "zh": "发生错误: ",
+  "ja": ""
+ },
+ "Another editor page took over the AI connection": {
+  "zh": "另一个编辑台页面接管了 AI 连接",
+  "ja": ""
+ },
+ "Audio chained across synced cards and built-in cards cannot be synthesized online. It uses the already generated audio (or the render node provides it if there is none)": {
+  "zh": "同步来的卡与内置卡串在一起的声音在线合成不了,用已经生成的声音(没有就由渲染节点提供)",
+  "ja": ""
+ },
+ "Audio code of synced cards does not run in the editor": {
+  "zh": "同步来的卡的声音代码不在编辑页面里执行",
+  "ja": ""
+ },
+ "Audio of {0} could not be decoded: {1}": {
+  "zh": "{0} 的声音解不出来:{1}",
+  "ja": ""
+ },
+ "Audio track": {
+  "zh": "音频轨",
+  "ja": ""
+ },
+ "Aurora": {
+  "zh": "极光 (Aurora)",
+  "ja": ""
+ },
+ "Authorization for this chat has expired. Please send again.": {
+  "zh": "这次对话的授权已失效,请重新发送。",
+  "ja": ""
+ },
+ "Automatic copy failed, please select the text and copy it manually": {
+  "zh": "自动复制失败,请手动选中文本复制",
+  "ja": ""
+ },
+ "Bundle has no entry file": {
+  "zh": "包里没有入口文件",
+  "ja": ""
+ },
+ "Bundle is missing {0}": {
+  "zh": "包里缺 {0}",
+  "ja": ""
+ },
+ "Buttons, selected state, playhead; hover/pressed/faint background are derived from it": {
+  "zh": "按钮、选中态、播放头;悬停/按下/淡底会跟着一起算",
+  "ja": ""
+ },
+ "Can't decrypt: the passphrase (machine ID) doesn't match, or the string was modified": {
+  "zh": "解不开:口令(本机识别码)对不上,或者密文被改过",
+  "ja": ""
+ },
+ "Can't find this download job": {
+  "zh": "查不到这个下载作业",
+  "ja": ""
+ },
+ "Can't get the login state": {
+  "zh": "查不到登录态",
+  "ja": ""
+ },
+ "Can't get the status of the media collection extension": {
+  "zh": "查不到素材收集拓展的状态",
+  "ja": ""
+ },
+ "Can't reach the Cloud Agent service. Check your network.": {
+  "zh": "连不上云端 Agent 服务,请检查网络。",
+  "ja": ""
+ },
+ "Cancel failed": {
+  "zh": "取消失败",
+  "ja": ""
+ },
+ "Cancel failed, please retry": {
+  "zh": "取消失败，请重试",
+  "ja": ""
+ },
+ "Cancelled; the original sound effect is unchanged": {
+  "zh": "已取消,原音效保持不变",
+  "ja": ""
+ },
+ "Cannot fetch the bytes of the track stream {0}: {1}": {
+  "zh": "取不到轨道流的字节 {0}:{1}",
+  "ja": ""
+ },
+ "Cannot fetch the frame rendered by the render node {0}: {1}": {
+  "zh": "取不到渲染节点渲好的画面 {0}:{1}",
+  "ja": ""
+ },
+ "Cannot fetch the prerender original size {0}: {1}": {
+  "zh": "取不到预渲染原尺寸 {0}:{1}",
+  "ja": ""
+ },
+ "Cannot find the status of the motion tracking extension": {
+  "zh": "查不到运动追踪拓展的状态",
+  "ja": ""
+ },
+ "Cannot find the status of the shot detection extension": {
+  "zh": "查不到镜头识别拓展的状态",
+  "ja": ""
+ },
+ "Cannot find the status of the subject detection extension": {
+  "zh": "查不到主体检测拓展的状态",
+  "ja": ""
+ },
+ "Cannot find this detection job": {
+  "zh": "查不到这个检测作业",
+  "ja": ""
+ },
+ "Cannot find this subject detection job": {
+  "zh": "查不到这个主体检测作业",
+  "ja": ""
+ },
+ "Cannot find this tracking job": {
+  "zh": "查不到这个追踪作业",
+  "ja": ""
+ },
+ "Cannot get project revision {0}": {
+  "zh": "取不到第 {0} 版项目",
+  "ja": ""
+ },
+ "Cannot get the audio of {0}: HTTP {1}": {
+  "zh": "{0} 的声音取不到:HTTP {1}",
+  "ja": ""
+ },
+ "Cannot read the built-in missing-media voice: HTTP {0}": {
+  "zh": "内置缺失素材人声无法读取:HTTP {0}",
+  "ja": ""
+ },
+ "Canvas background": {
+  "zh": "画布底色",
+  "ja": ""
+ },
+ "Card audio generation range must be between 1 sample and 60 seconds": {
+  "zh": "卡片声音生成范围必须在 1 个采样至 60 秒内",
+  "ja": ""
+ },
+ "Choose export method": {
+  "zh": "选择导出方式",
+  "ja": ""
+ },
+ "Cleared {0} of their private chats.": {
+  "zh": "已清除他的 {0} 个私有对话。",
+  "ja": ""
+ },
+ "Clearing their private chats…": {
+  "zh": "正在清除他的私有对话…",
+  "ja": ""
+ },
+ "Clip not found": {
+  "zh": "找不到片段",
+  "ja": ""
+ },
+ "Clip {0} not found": {
+  "zh": "找不到片段 {0}",
+  "ja": ""
+ },
+ "Cloud Agent can't connect right now: authentication failed. Refresh the page or re-enter the project.": {
+  "zh": "云端 Agent 暂时连不上:身份验证没有通过。请刷新页面或重新进入项目。",
+  "ja": ""
+ },
+ "Cloud Agent can't reach the document service right now. Try again later.": {
+  "zh": "云端 Agent 暂时连不上文档服务,请稍后再试。",
+  "ja": ""
+ },
+ "Cloud Agent error ({0}).": {
+  "zh": "云端 Agent 出错了({0})。",
+  "ja": ""
+ },
+ "Cloud Agent has no model configured yet. Contact the host.": {
+  "zh": "云端 Agent 还没有配置模型,请联系托管方。",
+  "ja": ""
+ },
+ "Cloud Agent is unavailable right now: no identity credentials have been obtained yet.": {
+  "zh": "云端 Agent 暂时用不了:还没有取得身份证明。",
+  "ja": ""
+ },
+ "Cloud chats have reached the limit of {0}; sending the first message will be rejected. Delete unused chats in \"Chat history\" first.": {
+  "zh": "云端对话已满 {0} 个，发出第一条消息会被拒绝。请先在「对话历史」里删除不用的对话。",
+  "ja": ""
+ },
+ "Completely neutral gray with no color cast, and amber as the accent. Suited to color grading; the interface carries no hue at all.": {
+  "zh": "完全无色偏的中性灰,强调色换成琥珀。适合调色场景,界面不带任何色相。",
+  "ja": ""
+ },
+ "Connection interrupted, re-fetching progress…": {
+  "zh": "连接中断，正在重新获取进度…",
+  "ja": ""
+ },
+ "Continue deleting": {
+  "zh": "继续删除",
+  "ja": ""
+ },
+ "Cream base, orange primary color, large rounded corners": {
+  "zh": "奶油底、橙主色、大圆角",
+  "ja": ""
+ },
+ "Danger": {
+  "zh": "危险",
+  "ja": ""
+ },
+ "Dark glass base, cool blue primary color": {
+  "zh": "深色玻璃底、冷蓝主色",
+  "ja": ""
+ },
+ "Dark green": {
+  "zh": "墨绿",
+  "ja": ""
+ },
+ "Deep green glass, gold primary color, serif headings": {
+  "zh": "深绿玻璃、金色主色、衬线标题字",
+  "ja": ""
+ },
+ "Deep modern productivity-tool base colors with a cyan-blue brand accent and clear layering.": {
+  "zh": "深邃的现代生产力工具底色,青蓝品牌色强调,分层清晰。",
+  "ja": ""
+ },
+ "Deep navy base, teal-green primary": {
+  "zh": "深海军蓝底,青绿主色",
+  "ja": ""
+ },
+ "Delete this chat?": {
+  "zh": "删除这个对话？",
+  "ja": ""
+ },
+ "Deleted. The slot has been freed.": {
+  "zh": "已删除，名额已经让出。",
+  "ja": ""
+ },
+ "Direct API": {
+  "zh": "API 直连",
+  "ja": ""
+ },
+ "Done: {0}": {
+  "zh": "已完成:{0}",
+  "ja": ""
+ },
+ "Download failed": {
+  "zh": "下载失败",
+  "ja": ""
+ },
+ "Downloaded: {0}": {
+  "zh": "已下载:{0}",
+  "ja": ""
+ },
+ "Downloading {0}{1}": {
+  "zh": "正在下载 {0}{1}",
+  "ja": ""
+ },
+ "Downloading…": {
+  "zh": "正在下载…",
+  "ja": ""
+ },
+ "Effects track": {
+  "zh": "特效轨",
+  "ja": ""
+ },
+ "Emphasis can only be shadow or outline": {
+  "zh": "强调只有 shadow(阴影)和 outline(描边)两种",
+  "ja": ""
+ },
+ "Enter model names supported by codex, separate multiple with |": {
+  "zh": "填 codex 支持的模型名，多个用 | 分开",
+  "ja": ""
+ },
+ "Enter the API key": {
+  "zh": "请填 API Key",
+  "ja": ""
+ },
+ "Enter the encryption passphrase (the other side's machine ID, or a passphrase you agreed on)": {
+  "zh": "请填加密口令(对方的本机识别码,或你们约定的口令)",
+  "ja": ""
+ },
+ "Error while loading": {
+  "zh": "载入时出错",
+  "ja": ""
+ },
+ "Error while loading ({0})": {
+  "zh": "载入时出错({0})",
+  "ja": ""
+ },
+ "Every frame is rendered again. Same quality as the desktop app, slow.": {
+  "zh": "每一帧都重新渲染，画质和桌面版一样，速度慢。",
+  "ja": ""
+ },
+ "Export cancelled": {
+  "zh": "导出已取消",
+  "ja": ""
+ },
+ "Exported {0}/{1} frames": {
+  "zh": "已导出 {0}/{1} 帧",
+  "ja": ""
+ },
+ "Failed to clear keys": {
+  "zh": "清理密钥失败",
+  "ja": ""
+ },
+ "Failed to get AI providers": {
+  "zh": "获取 AI 供应商失败",
+  "ja": ""
+ },
+ "Failed to get AI providers: ": {
+  "zh": "获取 AI 供应商失败：",
+  "ja": ""
+ },
+ "Failed to save settings": {
+  "zh": "保存配置失败",
+  "ja": ""
+ },
+ "Failed to upload source file (HTTP {0})": {
+  "zh": "上传源文件失败(HTTP {0})",
+  "ja": ""
+ },
+ "Fast export": {
+  "zh": "快速导出",
+  "ja": ""
+ },
+ "File too large (over {0} KB)": {
+  "zh": "文件太大(超过 {0} KB)",
+  "ja": ""
+ },
+ "File too large, the cloud can't accept it (each file must be 512 MB or less, and this chat's working directory also has a total size limit).": {
+  "zh": "文件太大了,云端收不下(单个文件不超过 512 MB,这个对话的工作目录也有总量上限)。",
+  "ja": ""
+ },
+ "Floating layer background": {
+  "zh": "浮层底色",
+  "ja": ""
+ },
+ "Flow": {
+  "zh": "流光",
+  "ja": ""
+ },
+ "For audio media effect cards, use apply_card": {
+  "zh": "音频素材效果卡请用 apply_card",
+  "ja": ""
+ },
+ "Full export": {
+  "zh": "完整导出",
+  "ja": ""
+ },
+ "Graphics context was lost while running": {
+  "zh": "运行中丢过图形上下文",
+  "ja": ""
+ },
+ "Graphite": {
+  "zh": "石墨",
+  "ja": ""
+ },
+ "Guests can open only 1 Agent chat per project, and you have already opened it: click it in \"Chat history\" to continue. To open more, please register an account.": {
+  "zh": "游客在每个项目里只能开 1 个 Agent 对话，你已经开过了：在「对话历史」里点它就能接着聊。要多开，请注册一个账号。",
+  "ja": ""
+ },
+ "Heavy cards use the prerendered track stream frames directly. Fast, slightly lower quality.": {
+  "zh": "重卡直接用预渲染好的轨道流画面，速度快，画质略低。",
+  "ja": ""
+ },
+ "Image track": {
+  "zh": "图片轨",
+  "ja": ""
+ },
+ "Import failed: HTTP {0}": {
+  "zh": "导入失败: HTTP {0}",
+  "ja": ""
+ },
+ "Import task timed out": {
+  "zh": "导入任务超时",
+  "ja": ""
+ },
+ "Import task timed out (over 10 minutes)": {
+  "zh": "导入任务超时（超过 10 分钟）",
+  "ja": ""
+ },
+ "Indigo night": {
+  "zh": "靛夜",
+  "ja": ""
+ },
+ "Installation complete": {
+  "zh": "安装完成",
+  "ja": ""
+ },
+ "Installing {0} packages…": {
+  "zh": "正在安装 {0} 个包…",
+  "ja": ""
+ },
+ "Invalid chat ID": {
+  "zh": "对话 ID 不合法",
+  "ja": ""
+ },
+ "Invalid sound effect time range": {
+  "zh": "音效时间范围无效",
+  "ja": ""
+ },
+ "Issues: {0}": {
+  "zh": "问题:{0}",
+  "ja": ""
+ },
+ "Ivory": {
+  "zh": "象牙",
+  "ja": ""
+ },
+ "Keep the page in the foreground and do not lock the screen during export.": {
+  "zh": "导出期间请保持页面在前台、不要锁屏。",
+  "ja": ""
+ },
+ "Light paper feel, warm gray text, amber primary color": {
+  "zh": "浅色纸感、暖灰字、琥珀主色",
+  "ja": ""
+ },
+ "Lite mode": {
+  "zh": "精简模式",
+  "ja": ""
+ },
+ "Logout failed": {
+  "zh": "退出登录失败",
+  "ja": ""
+ },
+ "Low": {
+  "zh": "低",
+  "ja": ""
+ },
+ "Low mode": {
+  "zh": "低配模式",
+  "ja": ""
+ },
+ "Max": {
+  "zh": "最高",
+  "ja": ""
+ },
+ "Max texture size is smaller than the aspect ratio": {
+  "zh": "最大纹理尺寸小于画幅",
+  "ja": ""
+ },
+ "Menus, dialogs": {
+  "zh": "菜单、对话框",
+  "ja": ""
+ },
+ "Midnight": {
+  "zh": "午夜",
+  "ja": ""
+ },
+ "Mine {0}/{1}": {
+  "zh": "我的 {0}/{1}",
+  "ja": ""
+ },
+ "Minimal": {
+  "zh": "极简",
+  "ja": ""
+ },
+ "Motion tracking failed": {
+  "zh": "运动追踪失败",
+  "ja": ""
+ },
+ "Motion tracking failed to start": {
+  "zh": "运动追踪没能启动",
+  "ja": ""
+ },
+ "Near-black base, high contrast, strong glow": {
+  "zh": "近黑底,高对比强辉光",
+  "ja": ""
+ },
+ "Neon": {
+  "zh": "霓虹 (Neon)",
+  "ja": ""
+ },
+ "Neutral, cool-leaning grays with a steel-blue accent. Restrained and easy on the eyes over long sessions, leaving all the color to your media.": {
+  "zh": "中性偏冷的灰阶 + 钢蓝强调。克制、可长时间注视,颜色全部留给素材。",
+  "ja": ""
+ },
+ "No address is configured for receiving reports (VITE_DIAG_SUBMIT_URL). Please use \"Save as file\" and send the report to us": {
+  "zh": "还没配收报告的地址(VITE_DIAG_SUBMIT_URL)。请用「保存为文件」把报告发给我们",
+  "ja": ""
+ },
+ "No regenerable sound effect clip found": {
+  "zh": "找不到可重生成的音效片段",
+  "ja": ""
+ },
+ "No retained card audio": {
+  "zh": "没有留着的卡片声音",
+  "ja": ""
+ },
+ "Node {0} not found": {
+  "zh": "找不到节点 {0}",
+  "ja": ""
+ },
+ "Off by default": {
+  "zh": "默认关",
+  "ja": ""
+ },
+ "Offline changes made during recovery cannot be continued; please keep a separate backup first": {
+  "zh": "恢复期间的离线修改无法接续；请先保留独立备份",
+  "ja": ""
+ },
+ "Offset {0} s exceeds the total duration of the referenced cut, {1} s": {
+  "zh": "偏移 {0} 秒超出了被引用剪辑的总时长 {1} 秒",
+  "ja": ""
+ },
+ "On by default per the vendor field": {
+  "zh": "按厂商字段默认开",
+  "ja": ""
+ },
+ "Online browser mode cannot yet run this card's sound code (sound from user cards and media effect cards must be generated on the local PC and then synced)": {
+  "zh": "在线浏览器模式暂不能执行这张卡的声音代码(用户卡、素材效果卡的声音要在本地 PC 生成后同步)",
+  "ja": ""
+ },
+ "Online synthesis of this sound timed out": {
+  "zh": "这段声音在线合成超时",
+  "ja": ""
+ },
+ "Only existing WAV sound effect clips can be regenerated": {
+  "zh": "只能重生成已有的 WAV 音效片段",
+  "ja": ""
+ },
+ "Only software rendering is available": {
+  "zh": "只有软件渲染",
+  "ja": ""
+ },
+ "Only the audio of regular video media can be separated. No clips were modified.": {
+  "zh": "只能分离普通视频素材的音频。未修改任何片段。",
+  "ja": ""
+ },
+ "Only the person who opened this chat or the project creator can delete it.": {
+  "zh": "只有开这个对话的人或项目创建者能删除它。",
+  "ja": ""
+ },
+ "Only the project creator can clear a member's private chats.": {
+  "zh": "只有项目创建者能清除成员的私有对话。",
+  "ja": ""
+ },
+ "Only video clips and audio clips can change speed": {
+  "zh": "只有视频段和声音段能改速度",
+  "ja": ""
+ },
+ "Outline": {
+  "zh": "描边",
+  "ja": ""
+ },
+ "PUT part {0}": {
+  "zh": "PUT 第 {0} 片",
+  "ja": ""
+ },
+ "Panel background": {
+  "zh": "面板底色",
+  "ja": ""
+ },
+ "Primary text": {
+  "zh": "主文字",
+  "ja": ""
+ },
+ "Project creator \"{0}\"": {
+  "zh": "项目创建者「{0}」",
+  "ja": ""
+ },
+ "Proof of identity for the Cloud Agent has not been obtained yet": {
+  "zh": "还没有取得云端 Agent 的身份证明",
+  "ja": ""
+ },
+ "Pure black base, fluorescent cyan/magenta primary colors, glowing shadows": {
+  "zh": "纯黑底、荧光青/品红主色、发光投影",
+  "ja": ""
+ },
+ "Report is {0}KB, over the {1}MB upload limit. Please use \"Save as file\" and send it to us": {
+  "zh": "报告 {0}KB,超过 {1}MB 上传上限。请用「保存为文件」发给我们",
+  "ja": ""
+ },
+ "Request failed": {
+  "zh": "请求失败",
+  "ja": ""
+ },
+ "Resend": {
+  "zh": "重新发送",
+  "ja": ""
+ },
+ "Resolving dependencies: {0}": {
+  "zh": "正在解析依赖:{0}",
+  "ja": ""
+ },
+ "Resolving dependencies…": {
+  "zh": "正在解析依赖…",
+  "ja": ""
+ },
+ "Retry clear": {
+  "zh": "重试清除",
+  "ja": ""
+ },
+ "Retry delete": {
+  "zh": "重试删除",
+  "ja": ""
+ },
+ "Runtime version mismatch (page {0}, this environment {1})": {
+  "zh": "运行时版本不一致(页面 {0},本环境 {1})",
+  "ja": ""
+ },
+ "Save failed, HTTP {0}": {
+  "zh": "保存失败 HTTP {0}",
+  "ja": ""
+ },
+ "Secondary panel": {
+  "zh": "次级面板",
+  "ja": ""
+ },
+ "Secondary text": {
+  "zh": "次要文字",
+  "ja": ""
+ },
+ "Select 1 to 100 clips": {
+  "zh": "请选择 1 到 100 个片段",
+  "ja": ""
+ },
+ "Semantic colors": {
+  "zh": "语义色",
+  "ja": ""
+ },
+ "Send failed: new messages arrived in this chat while offline, so this one was not sent.": {
+  "zh": "发送失败：断网期间这个对话里有了新消息，这条没有发出。",
+  "ja": ""
+ },
+ "Send failed: {0}": {
+  "zh": "发送失败：{0}",
+  "ja": ""
+ },
+ "Separate multiple models with |, then you can switch between them in the panel": {
+  "zh": "多个模型用 | 分开，面板上就能切",
+  "ja": ""
+ },
+ "Shot detection failed": {
+  "zh": "镜头识别失败",
+  "ja": ""
+ },
+ "Shot detection failed to start": {
+  "zh": "镜头识别没能启动",
+  "ja": ""
+ },
+ "Sound code cannot use ": {
+  "zh": "声音代码里不能用 ",
+  "ja": ""
+ },
+ "Sound effect job not found": {
+  "zh": "找不到音效任务",
+  "ja": ""
+ },
+ "Sound effect recipe exceeds the 96 KiB shared project safety limit, please split the typed content into multiple generations": {
+  "zh": "音效配方超过 96 KiB 的共享项目安全上限,请把打字内容拆成多段生成",
+  "ja": ""
+ },
+ "Sound effect samples exceed the safe range, please lower the volume": {
+  "zh": "音效采样超出安全范围,请降低音量",
+  "ja": ""
+ },
+ "Sound effect synthesis process failed to start": {
+  "zh": "音效合成进程启动失败",
+  "ja": ""
+ },
+ "Sound thread error: {0}": {
+  "zh": "声音线程出错:{0}",
+  "ja": ""
+ },
+ "Source unavailable": {
+  "zh": "源码取不到",
+  "ja": ""
+ },
+ "Speed must be a positive number": {
+  "zh": "速度要是正数",
+  "ja": ""
+ },
+ "Speed must be between {0} and {1}x": {
+  "zh": "速度要在 {0}～{1} 倍之间",
+  "ja": ""
+ },
+ "Standard mode": {
+  "zh": "标准模式",
+  "ja": ""
+ },
+ "Starting installation…": {
+  "zh": "正在启动安装…",
+  "ja": ""
+ },
+ "Steel blue": {
+  "zh": "钢蓝",
+  "ja": ""
+ },
+ "Stopping a cloud chat requires the current run id and request id.": {
+  "zh": "停止云端对话需要当前运行编号和请求编号。",
+  "ja": ""
+ },
+ "Strong stroke": {
+  "zh": "强描边",
+  "ja": ""
+ },
+ "Sub-Agent": {
+  "zh": "子 Agent",
+  "ja": ""
+ },
+ "Subject detection did not finish within {0} minutes and was canceled.": {
+  "zh": "主体检测超过 {0} 分钟还没跑完，已取消。",
+  "ja": ""
+ },
+ "Subject detection failed": {
+  "zh": "主体检测失败",
+  "ja": ""
+ },
+ "Subject detection failed to start": {
+  "zh": "主体检测没能启动",
+  "ja": ""
+ },
+ "Submit failed: HTTP {0}": {
+  "zh": "提交失败 HTTP {0}",
+  "ja": ""
+ },
+ "Submitted": {
+  "zh": "已提交",
+  "ja": ""
+ },
+ "Submitted, receipt number {0}": {
+  "zh": "已提交，回执编号 {0}",
+  "ja": ""
+ },
+ "Success": {
+  "zh": "成功",
+  "ja": ""
+ },
+ "Surfaces": {
+  "zh": "表面",
+  "ja": ""
+ },
+ "Tasks in {0} chats have not fully stopped, so they have not been cleared yet. Click \"Retry clear\" to continue.": {
+  "zh": "还有 {0} 个对话里的任务没停稳，暂时没有清除。点「重试清除」会接着办。",
+  "ja": ""
+ },
+ "Terracotta": {
+  "zh": "陶土",
+  "ja": ""
+ },
+ "Text and strokes": {
+  "zh": "文字与描边",
+  "ja": ""
+ },
+ "Text track": {
+  "zh": "文字轨",
+  "ja": ""
+ },
+ "The Cloud Agent is busy. Please try again later.": {
+  "zh": "云端 Agent 正忙,请稍后再试。",
+  "ja": ""
+ },
+ "The account, project or chat has changed. Reload the current chat before continuing.": {
+  "zh": "账号、项目或对话已切换，请重新读取当前对话后再操作。",
+  "ja": ""
+ },
+ "The card's sound record exceeds the safe commit limit of a shared project; shorten the card or simplify its parameters": {
+  "zh": "卡片声音记录超过共享项目安全提交上限，请缩短卡片或精简参数",
+  "ja": ""
+ },
+ "The chat you are viewing has been deleted.": {
+  "zh": "你正在看的对话已被删除。",
+  "ja": ""
+ },
+ "The clip to move is on the locked track \"{0}\"; unlock that track first": {
+  "zh": "要挪的段在锁着的序列「{0}」上；先解锁那条序列",
+  "ja": ""
+ },
+ "The community edition does not enable the cloud room relay service": {
+  "zh": "社区版未启用云端房间中继服务",
+  "ja": ""
+ },
+ "The companion audio clip of the clip to move can't be moved; speed was not changed": {
+  "zh": "要挪的段的声音伴随段挪不开，没有改速度",
+  "ja": ""
+ },
+ "The companion audio clip of this clip doesn't fit; speed was not changed": {
+  "zh": "这一段的声音伴随段放不下，没有改速度",
+  "ja": ""
+ },
+ "The connection to the document service is down, so Cloud Agent is unavailable for now. Try again once connected.": {
+  "zh": "和文档服务的连接断着,云端 Agent 暂时用不了。连上后再试。",
+  "ja": ""
+ },
+ "The document service did not issue a delegation for the Cloud Agent ({0})": {
+  "zh": "文档服务没有签发云端 Agent 的委托({0})",
+  "ja": ""
+ },
+ "The download could not start": {
+  "zh": "下载没能启动",
+  "ja": ""
+ },
+ "The embedded sound of a motion graphics card cannot be separated or converted to a sound; you can mute the card on its own": {
+  "zh": "动效卡片的内嵌声音不能分离或转换为声音；可以单独静音该卡片",
+  "ja": ""
+ },
+ "The encoder produced no frames": {
+  "zh": "编码器一帧都没给出",
+  "ja": ""
+ },
+ "The following clips share the same transition group as this clip and can't be pushed apart; delete the transition first": {
+  "zh": "后面的段和这一段绑在同一组转场里，推不开；先删掉转场",
+  "ja": ""
+ },
+ "The highest-contrast set: near-black base, mint-green accent, and strokes one step heavier than other themes. Made for keyboard-driven and node-based workflows.": {
+  "zh": "对比度最高的一套:近黑的底、荷绿强调,描边比其他主题重一档。给键盘流与节点式工作流。",
+  "ja": ""
+ },
+ "The message is too long for Cloud Agent to accept. Shorten it and send again.": {
+  "zh": "消息太长了,云端 Agent 收不下。请缩短后再发。",
+  "ja": ""
+ },
+ "The model_reasoning_effort value on line 5 of the codex config file ~/.codex/config.toml is not recognized by this version of codex. Change it to high or xhigh and try again": {
+  "zh": "codex 配置文件 ~/.codex/config.toml 第 5 行的 model_reasoning_effort 值本版 codex 不认,改成 high 或 xhigh 后再试",
+  "ja": ""
+ },
+ "The new recipe is silent after this media offset, please adjust the clip range first": {
+  "zh": "新配方在此素材偏移后没有声音,请先调整片段范围",
+  "ja": ""
+ },
+ "The online page has no such module: {0}": {
+  "zh": "在线页面里没有这个模块:{0}",
+  "ja": ""
+ },
+ "The online page has no such stylesheet: {0}": {
+  "zh": "在线页面里没有这份样式:{0}",
+  "ja": ""
+ },
+ "The only warm-base theme: grays with a touch of brown and an ochre accent. More relaxed for long editing sessions, and the light tier is close to paper.": {
+  "zh": "唯一的暖底主题:灰阶带一点褐,强调色是赭。长时间剪辑更松弛,浅色一档接近纸张。",
+  "ja": ""
+ },
+ "The original position of the later clip is occupied, so it stays at its current position (the two clips still overlap; you can move them apart yourself)": {
+  "zh": "后一段原来的位置被占了,留在当前位置(两段现在还重叠着,可以自己挪开)",
+  "ja": ""
+ },
+ "The original typing clip has changed, please regenerate": {
+  "zh": "原打字片段已改变,请重新生成",
+  "ja": ""
+ },
+ "The project creator has turned off the Cloud Agent.": {
+  "zh": "项目创建者已关闭云端 Agent。",
+  "ja": ""
+ },
+ "The project or clip has changed, the old generation result was not applied": {
+  "zh": "项目或片段已改变,旧生成结果未应用",
+  "ja": ""
+ },
+ "The project or cut has changed; sound effect not applied": {
+  "zh": "项目或剪辑已切换,未应用音效",
+  "ja": ""
+ },
+ "The project was changed during export. Please export again.": {
+  "zh": "导出期间项目被改动了，请重新导出。",
+  "ja": ""
+ },
+ "The render node cannot render {0} clips ({1}), so this export is not possible.": {
+  "zh": "有 {0} 个片段渲染节点渲染不了（{1}），这次导不出来。",
+  "ja": ""
+ },
+ "The render node could not finish rendering the frames this export needs ({0}). Please export again.": {
+  "zh": "渲染节点没能渲完这次导出要的画面（{0}），请重新导出。",
+  "ja": ""
+ },
+ "The render node does not have the code for this card": {
+  "zh": "渲染节点上没有这张卡片的代码",
+  "ja": ""
+ },
+ "The render node has made no progress for {0} (it may be offline), so this export did not complete. Make sure the render node is online, then export again.": {
+  "zh": "渲染节点已经 {0}没有进展（可能已经离线），这次没导出来。请确认渲染节点在线后重新导出。",
+  "ja": ""
+ },
+ "The render node is temporarily unavailable": {
+  "zh": "渲染节点暂时不可用",
+  "ja": ""
+ },
+ "The sound effect change exceeds the safe commit limit for shared projects, please split it into several generations": {
+  "zh": "音效变更超过共享项目安全提交上限,请拆成多段生成",
+  "ja": ""
+ },
+ "The sound effect clip has changed, please regenerate": {
+  "zh": "音效片段已改变,请重新生成",
+  "ja": ""
+ },
+ "The sound effect queue is full (max {0}); wait or cancel": {
+  "zh": "音效任务队列已满(最多 {0} 个),请等待或取消",
+  "ja": ""
+ },
+ "The sound effect start is beyond the project out point, please adjust the start": {
+  "zh": "音效起点在项目出点之外,请调整起点",
+  "ja": ""
+ },
+ "The sound of a motion graphics card is written in the card code, so the audio track cannot be separated. You can mute the card on its own. No clips were modified.": {
+  "zh": "动效卡片的声音写在卡片代码里，不能分离音轨。可以单独静音该卡片。未修改任何片段。",
+  "ja": ""
+ },
+ "The sound of the clip to move is on the locked track \"{0}\"; unlock that track first": {
+  "zh": "要挪的段的声音在锁着的序列「{0}」上；先解锁那条序列",
+  "ja": ""
+ },
+ "The sound thread has no module {0}": {
+  "zh": "声音线程里没有模块 {0}",
+  "ja": ""
+ },
+ "The sound thread has no sound code for {0}": {
+  "zh": "声音线程里没有 {0} 的声音代码",
+  "ja": ""
+ },
+ "The sound thread timed out loading the card": {
+  "zh": "声音线程载入卡片超时",
+  "ja": ""
+ },
+ "The specified track does not exist, is locked, or the sound effect range overlaps existing clips": {
+  "zh": "指定序列不存在、已锁定或音效范围与已有片段重叠",
+  "ja": ""
+ },
+ "The string format is wrong, it may not have been copied in full": {
+  "zh": "密文格式不对,可能没复制全",
+  "ja": ""
+ },
+ "The string header is abnormal, refusing to parse": {
+  "zh": "密文头部异常,拒绝解析",
+  "ja": ""
+ },
+ "The string was decrypted, but it contains no API key": {
+  "zh": "密文解开了,但里面没有 API Key",
+  "ja": ""
+ },
+ "The string was decrypted, but the content is not a valid config": {
+  "zh": "密文解开了,但内容不是有效的配置",
+  "ja": ""
+ },
+ "The string was truncated, ask the other side to resend the full content": {
+  "zh": "密文被截断了,请让对方重发完整内容",
+  "ja": ""
+ },
+ "The tail of the regenerated sound overlaps clips on the same track, please make room first": {
+  "zh": "重生成后的尾音与同序列片段重叠,请先腾出空间",
+  "ja": ""
+ },
+ "The task in this chat has not fully stopped, so it has not been deleted yet. Wait a moment, then click \"Retry delete\" to continue.": {
+  "zh": "对话里的任务还没完全停下，暂时没有删除。稍等一下，点「重试删除」会接着办。",
+  "ja": ""
+ },
+ "Theme library": {
+  "zh": "主题库",
+  "ja": ""
+ },
+ "There is no remote asset service yet": {
+  "zh": "还没有远程素材服务",
+  "ja": ""
+ },
+ "They have no private chats.": {
+  "zh": "他没有私有对话。",
+  "ja": ""
+ },
+ "This browser cannot export video at this size. Please export in the desktop app on a computer, or in a browser.": {
+  "zh": "这个浏览器不能导出这个尺寸的视频，请在电脑上的桌面版或浏览器里导出。",
+  "ja": ""
+ },
+ "This card audio is too large for the cloud to generate in one pass. Shorten the clip": {
+  "zh": "这段卡片声音太大了，云端一次生成不了，请缩短片段",
+  "ja": ""
+ },
+ "This card cannot be rendered on its own for now": {
+  "zh": "这张卡片暂时不能单独渲染",
+  "ja": ""
+ },
+ "This card has no embedded audio": {
+  "zh": "这张卡没有内嵌声音",
+  "ja": ""
+ },
+ "This card imports too many files (over {0})": {
+  "zh": "这张卡引的文件太多(超过 {0} 个)",
+  "ja": ""
+ },
+ "This card needs to read the media's audio samples, which the online page cannot get": {
+  "zh": "这张卡要读素材的声音采样,在线页面取不到",
+  "ja": ""
+ },
+ "This card reads audio samples from media, which the online page cannot access. It uses the already generated audio (or the render node provides it if there is none)": {
+  "zh": "这张卡要读素材的声音采样,在线页面取不到,用已经生成的声音(没有就由渲染节点提供)",
+  "ja": ""
+ },
+ "This chat has been deleted, but the cloud has not finished clearing its contents. Please try again.": {
+  "zh": "这个对话已经删除，但云端还没有清理完它的内容。请再试一次。",
+  "ja": ""
+ },
+ "This chat is being deleted.": {
+  "zh": "这个对话正在被删除。",
+  "ja": ""
+ },
+ "This chat still has a round in progress. Wait for it to finish or stop it first.": {
+  "zh": "这个对话还有一轮在进行,等它结束或先停止。",
+  "ja": ""
+ },
+ "This chat was not found. It may have been deleted.": {
+  "zh": "没有找到这个对话，它可能已经被删除。",
+  "ja": ""
+ },
+ "This chat was opened by another member. They will be notified when it is deleted.": {
+  "zh": "这是其他成员开的对话，删除后他会收到通知。",
+  "ja": ""
+ },
+ "This clip has no audio": {
+  "zh": "这个片段没有音频",
+  "ja": ""
+ },
+ "This clip is a card, not media, so there is no sound to convert": {
+  "zh": "这段是卡片,不是素材,没有声音可转",
+  "ja": ""
+ },
+ "This clip is too short; at this speed it would be under 0.1 seconds": {
+  "zh": "这一段太短，改成这个速度后不到 0.1 秒",
+  "ja": ""
+ },
+ "This config expired on {0}, ask the distributor for a new one": {
+  "zh": "这份配置已于 {0} 过期,请向分发方索要新的",
+  "ja": ""
+ },
+ "This device cannot encode audio, so the exported video will have no sound. Continue exporting?": {
+  "zh": "这台设备不能编码声音，导出的视频将没有声音。继续导出？",
+  "ja": ""
+ },
+ "This device cannot run the cards of {0} clips, so they must be rendered frame by frame by a render node before export. No render node is online now: open the desktop app on a computer and enter this project, or wait for the host's render service to take over.": {
+  "zh": "有 {0} 个片段的卡片这台设备运行不了，要由渲染节点逐帧渲染好才能导出。现在没有渲染节点在线：请在电脑上打开桌面版并进入这个项目，或等托管方的渲染服务接手。",
+  "ja": ""
+ },
+ "This device is running in lite mode: complex effects are handed off to cloud rendering": {
+  "zh": "这台设备运行在精简模式：复杂的效果交给云端渲染",
+  "ja": ""
+ },
+ "This device is running in low-spec mode: playback only shows frames that are already rendered": {
+  "zh": "这台设备运行在低配模式：播放时只显示已渲染好的画面",
+  "ja": ""
+ },
+ "This device is running in standard mode": {
+  "zh": "这台设备运行在标准模式",
+  "ja": ""
+ },
+ "This device is running in top-spec mode": {
+  "zh": "这台设备运行在顶配模式",
+  "ja": ""
+ },
+ "This file does not export a card definition": {
+  "zh": "这个文件没有导出卡片定义",
+  "ja": ""
+ },
+ "This is a shared chat. Other members who have posted in it will be notified.": {
+  "zh": "这是共有对话，在里面发过消息的其他成员会收到通知。",
+  "ja": ""
+ },
+ "This page has no isolated audio thread. Audio for user cards and media effect cards uses the already generated audio (or the render node provides it if there is none)": {
+  "zh": "这个页面没有隔离的声音线程,用户卡与素材效果卡的声音用已经生成的(没有就由渲染节点提供)",
+  "ja": ""
+ },
+ "This page is not linked to a project, so it cannot reach a render node and cannot export.": {
+  "zh": "这个页面没有连着项目，请不到渲染节点，导不出来。",
+  "ja": ""
+ },
+ "This project already has an export plan waiting or running, do not start it again": {
+  "zh": "同一项目正在等待或执行导出计划，请勿重复发起",
+  "ja": ""
+ },
+ "This project's Cloud Agent quota has been used up.": {
+  "zh": "这个项目的云端 Agent 额度已用完。",
+  "ja": ""
+ },
+ "This site does not have online running of user cards and media effect cards enabled": {
+  "zh": "这个站点没有开启在线运行用户卡与素材效果卡",
+  "ja": ""
+ },
+ "This text is not a PromptCut config string (it should start with PCAI1.)": {
+  "zh": "这段文本不是 PromptCut 的配置密文(应以 PCAI1. 开头)",
+  "ja": ""
+ },
+ "This typing range has no audio left, please check the media offset": {
+  "zh": "这段打字范围没有剩余声音,请检查素材偏移",
+  "ja": ""
+ },
+ "This video is already muted or its audio is already separated. No clips were modified.": {
+  "zh": "此视频已静音或已分离音频。未修改任何片段。",
+  "ja": ""
+ },
+ "To do: {0}": {
+  "zh": "待办:{0}",
+  "ja": ""
+ },
+ "Top mode": {
+  "zh": "顶配模式",
+  "ja": ""
+ },
+ "Track \"{0}\" is locked": {
+  "zh": "序列「{0}」锁着",
+  "ja": ""
+ },
+ "Track stream decode error: {0}": {
+  "zh": "轨道流解码出错:{0}",
+  "ja": ""
+ },
+ "Track stream frame {0} cannot be decoded": {
+  "zh": "轨道流第 {0} 帧解不出来",
+  "ja": ""
+ },
+ "Track stream frame {0} was not decoded within {1} s": {
+  "zh": "轨道流第 {0} 帧 {1} 秒没解出来",
+  "ja": ""
+ },
+ "Transition {0} not found": {
+  "zh": "找不到转场 {0}",
+  "ja": ""
+ },
+ "Transpile error: {0}": {
+  "zh": "转译出错:{0}",
+  "ja": ""
+ },
+ "Unable to get AI service status": {
+  "zh": "无法获取 AI 服务状态",
+  "ja": ""
+ },
+ "Unable to get install and login progress": {
+  "zh": "无法获取安装和登录进度",
+  "ja": ""
+ },
+ "Unknown OS": {
+  "zh": "未知系统",
+  "ja": ""
+ },
+ "Unlock the sound effect track first": {
+  "zh": "请先解锁音效序列",
+  "ja": ""
+ },
+ "Unlock the track first": {
+  "zh": "请先解锁序列",
+  "ja": ""
+ },
+ "Upload failed: HTTP {0}": {
+  "zh": "上传失败: HTTP {0}",
+  "ja": ""
+ },
+ "Very high": {
+  "zh": "很高",
+  "ja": ""
+ },
+ "Video track": {
+  "zh": "视频轨",
+  "ja": ""
+ },
+ "Volume can only be adjusted for media or cards that have sound": {
+  "zh": "只能调整带声音的素材或卡片音量",
+  "ja": ""
+ },
+ "Volume must be a number between 0 and 1": {
+  "zh": "音量必须是 0 到 1 之间的数字",
+  "ja": ""
+ },
+ "Waiting for your reply": {
+  "zh": "等你回话",
+  "ja": ""
+ },
+ "Warm black base, orange-gold primary": {
+  "zh": "暖黑底,橙金主色",
+  "ja": ""
+ },
+ "Warm sun": {
+  "zh": "暖阳",
+  "ja": ""
+ },
+ "Warning": {
+  "zh": "警告",
+  "ja": ""
+ },
+ "WeChat": {
+  "zh": "微信",
+  "ja": ""
+ },
+ "WebGL2 is unavailable": {
+  "zh": "拿不到 WebGL2",
+  "ja": ""
+ },
+ "Will be sent when the network is back": {
+  "zh": "等网络恢复后发出",
+  "ja": ""
+ },
+ "Write one sentence explaining how you want the Cloud Agent to use these files.": {
+  "zh": "请写一句话,说明想让云端 Agent 怎么用这些文件。",
+  "ja": ""
+ },
+ "You already have {0} cloud chats in this project, which is the limit. Delete unused ones before creating a new one.": {
+  "zh": "你在这个项目里已有 {0} 个云端对话，已满。新建前请先删除不用的。",
+  "ja": ""
+ },
+ "You can click \"Read from CLI\" to pull the agy models list directly": {
+  "zh": "可以点「从 CLI 读取」直接拉 agy models 的清单",
+  "ja": ""
+ },
+ "You can reduce the sampling points (pass times yourself), or first confirm the tier with subject_status: the full tier is an order of magnitude slower than light.": {
+  "zh": "可以减少采样点（自己传 times），或先用 subject_status 确认档位——full 档比 light 慢一个数量级。",
+  "ja": ""
+ },
+ "You don't have permission to use Cloud Agent for this project.": {
+  "zh": "你没有权限使用这个项目的云端 Agent。",
+  "ja": ""
+ },
+ "Your cloud chats in this project have reached the limit of {0}. Delete unused chats before creating a new one.": {
+  "zh": "你在这个项目里的云端对话已满 {0} 个。请先删除不用的对话，再新建。",
+  "ja": ""
+ },
+ "cannot push an empty chunk": {
+  "zh": "不能推空块",
+  "ja": ""
+ },
+ "complete returned {0}{1}": {
+  "zh": "complete 回 {0}{1}",
+  "ja": ""
+ },
+ "diagnostic reports": {
+  "zh": "诊断报告",
+  "ja": ""
+ },
+ "finalize {0} returned {1}{2}": {
+  "zh": "收尾 {0} 回 {1}{2}",
+  "ja": ""
+ },
+ "invalid hash: {0}": {
+  "zh": "哈希不对:{0}",
+  "ja": ""
+ },
+ "is not supported in online browser mode yet": {
+  "zh": "在线浏览器模式暂不支持",
+  "ja": ""
+ },
+ "metadata probe timed out": {
+  "zh": "探测元数据超时",
+  "ja": ""
+ },
+ "muted must be a boolean": {
+  "zh": "muted 必须是布尔值",
+  "ja": ""
+ },
+ "no canvas available": {
+  "zh": "没有可用画布",
+  "ja": ""
+ },
+ "no video element available": {
+  "zh": "没有可用视频元素",
+  "ja": ""
+ },
+ "push {0} part {1} returned {2}": {
+  "zh": "推 {0} 第 {1} 片回 {2}",
+  "ja": ""
+ },
+ "reconcile {0} returned {1}": {
+  "zh": "对账 {0} 回 {1}",
+  "ja": ""
+ },
+ "requestId was already used for a different sound effect": {
+  "zh": "requestId 已用于不同音效",
+  "ja": ""
+ },
+ "seek error": {
+  "zh": "seek 出错",
+  "ja": ""
+ },
+ "video failed to load": {
+  "zh": "视频加载失败",
+  "ja": ""
+ },
+ "{0} (line {1})": {
+  "zh": "{0}(第 {1} 行)",
+  "ja": ""
+ },
+ "{0} (stopped, waiting for the user to reply)": {
+  "zh": "{0}(停下等用户回话)",
+  "ja": ""
+ },
+ "{0} ({1} frames, {2} MB)": {
+  "zh": "{0}({1} 帧,{2} MB)",
+  "ja": ""
+ },
+ "{0} deleted the shared cloud chat \"{1}\", in which you posted messages.": {
+  "zh": "{0}删除了共有云端对话「{1}」，你在里面发过消息。",
+  "ja": ""
+ },
+ "{0} deleted your cloud chat \"{1}\".": {
+  "zh": "{0}删除了你的云端对话「{1}」。",
+  "ja": ""
+ },
+ "{0} did not respond": {
+  "zh": "{0} 没有回应",
+  "ja": ""
+ },
+ "{0} heavy card clips have no prerender original size yet. Wait for the render node to finish, then export.": {
+  "zh": "还有 {0} 个重卡片段没有预渲染原尺寸，等渲染节点做完再导出。",
+  "ja": ""
+ },
+ "{0} is not a cut segment": {
+  "zh": "{0} 不是剪辑段",
+  "ja": ""
+ },
+ "{0} min": {
+  "zh": "{0} 分钟",
+  "ja": ""
+ },
+ "{0} returned {1}": {
+  "zh": "{0} 返回 {1}",
+  "ja": ""
+ },
+ "{0} returned {1}{2}": {
+  "zh": "{0} 回 {1}{2}",
+  "ja": ""
+ },
+ "{0} {1} is not complete yet on the asset service": {
+  "zh": "素材服务上 {0} {1} 尚未 complete",
+  "ja": ""
+ },
+ "{0} · Dark ({1})": {
+  "zh": "{0} · 深 ({1})",
+  "ja": ""
+ },
+ "{0} · Light ({1})": {
+  "zh": "{0} · 浅 ({1})",
+  "ja": ""
+ },
+ "\"{0}\" is an image and has no sound": {
+  "zh": "「{0}」是图片,没有声音",
+  "ja": ""
+ },
+ "(has a value, {0} characters in total; not in the allowlist, original text omitted)": {
+  "zh": "(有值,共 {0} 字;不在白名单,不带原文)",
+  "ja": ""
+ },
+ "(no directory)": {
+  "zh": "(没有目录)",
+  "ja": ""
+ },
+ "(no disk path, possibly a blob that hasn't been uploaded yet)": {
+  "zh": "(没有磁盘路径,可能是还没上传的 blob)",
+  "ja": ""
+ },
+ "({0} earlier items omitted)": {
+  "zh": "(更早的 {0} 条略)",
+  "ja": ""
+ },
+ ",": {
+  "zh": "，",
+  "ja": ""
+ },
+ "Acknowledgement out of order or inconsistent with local: {0} rev {1}": {
+  "zh": "确认乱序或与本地不一致:{0} rev {1}",
+  "ja": ""
+ },
+ "Already finalized": {
+  "zh": "已经 finalize 过了",
+  "ja": ""
+ },
+ "Asset {0} not found": {
+  "zh": "找不到素材 {0}",
+  "ja": ""
+ },
+ "Assistant": {
+  "zh": "助手",
+  "ja": ""
+ },
+ "Assistant ({0}{1}): {2}": {
+  "zh": "助手({0}{1}):{2}",
+  "ja": ""
+ },
+ "Can't get server info: the local service may not be running, which may itself be the problem": {
+  "zh": "取不到服务端信息 —— 本地服务可能没在跑,这本身可能就是问题所在",
+  "ja": ""
+ },
+ "Can't read localStorage": {
+  "zh": "读不到 localStorage",
+  "ja": ""
+ },
+ "Cannot edit another cut while editing one cut": {
+  "zh": "不能在改一条剪辑的过程中嵌套改另一条",
+  "ja": ""
+ },
+ "Collage 4×2: cell k corresponds to the k-th time in times (row by row, left to right). The user can open this step in the chat panel to see the animated image.": {
+  "zh": "拼图 4×2,第 k 格对应 times 的第 k 个时刻(按行从左到右)。用户在聊天栏点开这一步能看到动图。",
+  "ja": ""
+ },
+ "Contains the visible chat, execution events and a snapshot of the environment at the time; does not contain keys or the model's private thinking. Large outputs and overlong events are marked as truncated.": {
+  "zh": "包含可见对话、执行事件和当时的环境快照；不包含密钥或模型私有思考。大输出和过长事件会标明截断。",
+  "ja": ""
+ },
+ "Duration of each card \\(d = t_1 - t_0\\), total exported frames:": {
+  "zh": "每张卡的时长 \\(d = t_1 - t_0\\),整段导出帧数:",
+  "ja": ""
+ },
+ "Error while reading localStorage, the items below may be incomplete": {
+  "zh": "读 localStorage 时出错,下面这些可能不全",
+  "ja": ""
+ },
+ "Export compositor is closed": {
+  "zh": "导出合成器已关闭",
+  "ja": ""
+ },
+ "Export page did not finish loading the project after 60 s": {
+  "zh": "导出页 60 秒没装好项目",
+  "ja": ""
+ },
+ "Export page was not ready after 60 s": {
+  "zh": "导出页 60 秒没就绪",
+  "ja": ""
+ },
+ "Export stage did not respond for {0} s ({1})": {
+  "zh": "导出舞台 {0} 秒没有回应({1})",
+  "ja": ""
+ },
+ "Export stage iframe has been detached": {
+  "zh": "导出舞台 iframe 已脱落",
+  "ja": ""
+ },
+ "Export stage was not ready after 60 s": {
+  "zh": "导出舞台 60 秒没就绪",
+  "ja": ""
+ },
+ "Failed to make the animated image (HTTP {0})": {
+  "zh": "做动图失败(HTTP {0})",
+  "ja": ""
+ },
+ "Fetched successfully": {
+  "zh": "获取成功",
+  "ja": ""
+ },
+ "Frame-by-frame export": {
+  "zh": "逐帧导出",
+  "ja": ""
+ },
+ "Incomplete chunks": {
+  "zh": "分片不全",
+  "ja": ""
+ },
+ "Invalid range for audio measurement": {
+  "zh": "声音测量的范围无效",
+  "ja": ""
+ },
+ "Keyboard sound requires sourceClipId, or typing.text with a rhythm": {
+  "zh": "键盘声需要 sourceClipId 或 typing.text 与节奏",
+  "ja": ""
+ },
+ "Missing required parameters: {0}. Add them and try again.": {
+  "zh": "缺少必填参数：{0}。请补齐后重试。",
+  "ja": ""
+ },
+ "Multi-Agent ({0} tabs)": {
+  "zh": "多 Agent({0} 个页签)",
+  "ja": ""
+ },
+ "No clip with id {0} on the timeline.": {
+  "zh": "时间轴上没有 id 为 {0} 的片段。",
+  "ja": ""
+ },
+ "No leftover backend session ids: this round starts from scratch": {
+  "zh": "没有残留的后端会话 id:这一轮是从零开始的",
+  "ja": ""
+ },
+ "No message in this chat recorded its runtime config (old history from before 0.2.9)": {
+  "zh": "这段对话里没有一条记了运行配置（0.2.9 之前的旧历史）",
+  "ja": ""
+ },
+ "Offline changes cannot be applied: {0}": {
+  "zh": "离线修改落不下去:{0}",
+  "ja": ""
+ },
+ "Offline operation recovery data is corrupted": {
+  "zh": "离线操作恢复数据损坏",
+  "ja": ""
+ },
+ "One config throughout: {0}": {
+  "zh": "全程一套配置：{0}",
+  "ja": ""
+ },
+ "Only AAC can be muxed: {0}": {
+  "zh": "只封装 AAC:{0}",
+  "ja": ""
+ },
+ "Only H.264 can be muxed: {0}": {
+  "zh": "只封装 H.264:{0}",
+  "ja": ""
+ },
+ "Operations produced by diffProject cannot be applied: {0}": {
+  "zh": "diffProject 产出的操作落不下去:{0}",
+  "ja": ""
+ },
+ "Primary color": {
+  "zh": "主色",
+  "ja": ""
+ },
+ "Project shards cannot be assembled: {0}": {
+  "zh": "项目分片拼不起来:{0}",
+  "ja": ""
+ },
+ "Remote operation cannot be applied to the confirmed copy: {0}": {
+  "zh": "远端操作在已确认副本上落不下去:{0}",
+  "ja": ""
+ },
+ "SKILL mode (the desktop app's Agent edits this project via MCP, the AI panel still works as usual)": {
+  "zh": "SKILL 模式(桌面 APP 的 Agent 经 MCP 改这个项目,AI 栏照常可用)",
+  "ja": ""
+ },
+ "Sample chunk returned by the audio thread contains invalid values": {
+  "zh": "声音线程回的采样块里有无效的值",
+  "ja": ""
+ },
+ "Sample chunk returned by the audio thread has the wrong shape": {
+  "zh": "声音线程回的采样块形状不对",
+  "ja": ""
+ },
+ "Shot {0}": {
+  "zh": "镜头 {0}",
+  "ja": ""
+ },
+ "Sound effect synthesis returned the wrong sample length": {
+  "zh": "音效合成返回了错误的采样长度",
+  "ja": ""
+ },
+ "The AAC encoder did not provide an AudioSpecificConfig": {
+  "zh": "AAC 编码器没给出 AudioSpecificConfig",
+  "ja": ""
+ },
+ "The asset service did not return a valid content hash": {
+  "zh": "素材服务未返回有效内容哈希",
+  "ja": ""
+ },
+ "The channel count of card audio cannot change during generation": {
+  "zh": "卡片声音的声道数不能在生成途中改变",
+  "ja": ""
+ },
+ "The confirmed commit cannot be applied to the confirmed copy: {0}": {
+  "zh": "已确认的提交在已确认副本上落不下去:{0}",
+  "ja": ""
+ },
+ "The document connection is not ready yet; offline changes cannot be merged": {
+  "zh": "文档连接还没就绪，不能合并离线修改",
+  "ja": ""
+ },
+ "The history sequence number of the offline changes is wrong": {
+  "zh": "离线修改的历史序号不对",
+  "ja": ""
+ },
+ "The media library has {0} files": {
+  "zh": "素材库有 {0} 个文件",
+  "ja": ""
+ },
+ "The media library is empty: if the model can name any media, that was not read from this project": {
+  "zh": "素材库是空的:模型如果说得出任何素材名字,那不是从这个项目里读到的",
+  "ja": ""
+ },
+ "The remote large-root replacement carried no operations, reopening": {
+  "zh": "远端的大根替换没带操作,重新打开",
+  "ja": ""
+ },
+ "The root replacement that creates the project cannot be applied": {
+  "zh": "建项目的根替换落不下去",
+  "ja": ""
+ },
+ "The snapshot on the UI side could not be collected": {
+  "zh": "界面这边的现场没采集成功",
+  "ja": ""
+ },
+ "The state of this machine at the moment the problem occurred. Used to tell \"a product bug\" apart from \"an environment problem on this machine\": with the chat alone, neither can be ruled out.": {
+  "zh": "出问题那一刻这台机器的现场。用来分清「产品的 bug」和「这台机器的环境问题」——只有对话本身的话,两者一条都排除不掉。",
+  "ja": ""
+ },
+ "The stream frame is {0} high, which cannot fit two halves of {1} rows each": {
+  "zh": "流的这一帧高 {0},放不下两半各 {1} 行",
+  "ja": ""
+ },
+ "The tool returned, and the timeline is empty now. Suggested arrangement:": {
+  "zh": "工具返回了,时间轴现在是空的。建议这样排:",
+  "ja": ""
+ },
+ "The track stream has no segment {0}": {
+  "zh": "轨道流没有第 {0} 段",
+  "ja": ""
+ },
+ "The video track has an invalid width, height or frame rate": {
+  "zh": "视频轨的宽高帧率不对",
+  "ja": ""
+ },
+ "This is the built-in fake stream reply. I will call a tool to see how it works.": {
+  "zh": "这是内置假流回复内容。我将调用一个工具看看效果。",
+  "ja": ""
+ },
+ "This muxer has no audio track": {
+  "zh": "这个封装器没有音频轨",
+  "ja": ""
+ },
+ "This project has not been saved yet, its media and working directory are under the temp directory": {
+  "zh": "这个项目还没保存过,素材和工作目录都在临时目录下",
+  "ja": ""
+ },
+ "This report is generated in the page. It contains the course of this cloud chat, the cause of errors and client information; it does not contain tickets, delegations, model keys or any credentials. Fields that are too long are truncated and marked.": {
+  "zh": "这份报告在页面里生成,含这段云端对话的过程、出错原因和客户端信息;不含票据、委托、模型 Key 或任何凭证。过长的字段已截断并写明。",
+  "ja": ""
+ },
+ "Timed out waiting for document service confirmation ({0} still unconfirmed, status {1})": {
+  "zh": "等文档服务确认超时(还有 {0} 条没确认,状态 {1})",
+  "ja": ""
+ },
+ "Track stream frame {0} decoded to width {1}, which does not match the segment's rect width {2} in the manifest": {
+  "zh": "轨道流第 {0} 帧解出来宽 {1},和清单里这一段的矩形宽 {2} 对不上",
+  "ja": ""
+ },
+ "Track stream segment {0} has no sample {1}": {
+  "zh": "轨道流第 {0} 段没有第 {1} 个样本",
+  "ja": ""
+ },
+ "Unknown audio effect kind {0}": {
+  "zh": "不认识的音频效果种类 {0}",
+  "ja": ""
+ },
+ "Unknown tool: {0}": {
+  "zh": "未知工具: {0}",
+  "ja": ""
+ },
+ "Unknown voice {0}": {
+  "zh": "不认识的声音 {0}",
+  "ja": ""
+ },
+ "Unknown web tool: {0}": {
+  "zh": "未知的网页工具: {0}",
+  "ja": ""
+ },
+ "User: {0}": {
+  "zh": "用户:{0}",
+  "ja": ""
+ },
+ "Version gap: local {0}, received {1}": {
+  "zh": "版本跳号:本地 {0},收到 {1}",
+  "ja": ""
+ },
+ "When source is \"media\", mediaId is required (the media id from list_media)": {
+  "zh": "source 为 \"media\" 时要给 mediaId(list_media 里的素材 id)",
+  "ja": ""
+ },
+ "[/Background]": {
+  "zh": "[/前情]",
+  "ja": ""
+ },
+ "[Background: attached automatically by the system, not something the user said this round. Before this conversation you were not the one handling it (or your session record is gone),": {
+  "zh": "[前情 —— 系统自动附上,不是用户这一轮说的话。这段对话之前不是你在接待(或者你的会话记录已经没了),",
+  "ja": ""
+ },
+ "[Message from {0}]\n{1}": {
+  "zh": "【来自 {0} 的消息】\n{1}",
+  "ja": ""
+ },
+ "[nesting too deep, omitted]": {
+  "zh": "[层级过深,已省略]",
+  "ja": ""
+ },
+ "default": {
+  "zh": "默认",
+  "ja": ""
+ },
+ "fast": {
+  "zh": "加速",
+  "ja": ""
+ },
+ "from must be a number of seconds": {
+  "zh": "from 要是秒数",
+  "ja": ""
+ },
+ "from must not be greater than to": {
+  "zh": "from 不能大于 to",
+  "ja": ""
+ },
+ "model {0}": {
+  "zh": "模型 {0}",
+  "ja": ""
+ },
+ "requestId must be 1 to 200 characters": {
+  "zh": "requestId 必须是 1 到 200 个字符",
+  "ja": ""
+ },
+ "requestId was already used for a different recipe; use a new requestId after changing it": {
+  "zh": "requestId 已用于不同配方,修改后请使用新的 requestId",
+  "ja": ""
+ },
+ "runInCutScope can only wrap synchronous functions (the async second half is no longer in this cut's view)": {
+  "zh": "runInCutScope 只能包同步函数(异步的后半段已经不在这条剪辑的视图里了)",
+  "ja": ""
+ },
+ "scene must be between 1 and {0}, got {1}": {
+  "zh": "scene 要在 1~{0} 之间,收到 {1}",
+  "ja": ""
+ },
+ "so you can't see that history. Below is an excerpt in chronological order. Requests the user made in it still count; for the current state of the timeline and media library, trust what the tools read.]": {
+  "zh": "你看不到那段历史,下面是按时间顺序的摘录。用户在里面提过的要求照样算数;时间轴和素材库的现状以工具读到的为准。]",
+  "ja": ""
+ },
+ "source can only be \"timeline\" (final video frames) or \"media\" (shot mosaic of the media), received {0}": {
+  "zh": "source 只能是 \"timeline\"(成片画面)或 \"media\"(素材镜头拼图),收到的是 {0}",
+  "ja": ""
+ },
+ "sourceClipId must point to a typing card in the current cut": {
+  "zh": "sourceClipId 必须指向当前剪辑中的打字机卡片",
+  "ja": ""
+ },
+ "start must be within the project time range": {
+  "zh": "start 必须在项目时间范围内",
+  "ja": ""
+ },
+ "terminal": {
+  "zh": "终端",
+  "ja": ""
+ },
+ "text protocol mode": {
+  "zh": "文本协议模式",
+  "ja": ""
+ },
+ "to must be a number of seconds": {
+  "zh": "to 要是秒数",
+  "ja": ""
+ },
+ "{0} backend session ids are still left: check them against the server sessions section to see how much history each one carries": {
+  "zh": "还留着 {0} 把后端会话 id —— 对上服务端 sessions 那一段,看它们各自背着多少条历史",
+  "ja": ""
+ },
+ "{0}… (truncated, original {1} characters)": {
+  "zh": "{0}…(已截断,原 {1} 字)",
+  "ja": ""
+ },
+ "{0}… ({1} characters in total)": {
+  "zh": "{0}…(共 {1} 字)",
+  "ja": ""
+ },
+ "{0}…(rest omitted)": {
+  "zh": "{0}…(后面略)",
+  "ja": ""
+ },
+ "| Card | Start | End |": {
+  "zh": "| 卡片 | 起 | 止 |",
+  "ja": ""
+ },
+ "| Number counter | 8.0 | 10.5 |": {
+  "zh": "| 数字滚动 | 8.0 | 10.5 |",
+  "ja": ""
+ },
+ "| Quote card | 3.0 | 8.0 |": {
+  "zh": "| 金句卡 | 3.0 | 8.0 |",
+  "ja": ""
+ },
+ "⚠ Config changed midway, {0} in total, see messages[].runtime for each message": {
+  "zh": "⚠ 中途换过配置，共 {0} 套，逐条见 messages[].runtime",
+  "ja": ""
  }
 }

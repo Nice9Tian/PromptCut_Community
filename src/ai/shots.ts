@@ -6,6 +6,7 @@
 import { readSseStream } from "../editor/io/stt";
 import type { PerceptionMediaRef } from "./perceptionMedia";
 import type { Shots } from "../kernel/project";
+import { tr } from "../i18n/index.ts";
 
 export interface ShotsJobState {
   status: "running" | "done" | "error";
@@ -19,7 +20,7 @@ export interface ShotsJobState {
 /** 拓展装没装。没装也能用，只是退回 scdet、认不出溶解。 */
 export async function shotsStatus(): Promise<{ ready: boolean; engine: string; detail?: unknown }> {
   const r = await fetch("/api/shots/status");
-  if (!r.ok) throw new Error("查不到镜头识别拓展的状态");
+  if (!r.ok) throw new Error(tr("Cannot find the status of the shot detection extension"));
   return r.json();
 }
 
@@ -31,14 +32,14 @@ export async function startShotDetection(media: PerceptionMediaRef): Promise<str
     body: JSON.stringify({ mediaId: media.id, media }),
   });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok || !data.ok) throw new Error(data.error || "镜头识别没能启动");
+  if (!r.ok || !data.ok) throw new Error(data.error || tr("Shot detection failed to start"));
   return data.jobId as string;
 }
 
 export async function pollShotJob(jobId: string): Promise<ShotsJobState> {
   const r = await fetch(`/api/shots/job/${jobId}`);
   const data = await r.json().catch(() => ({}));
-  if (!r.ok || !data.ok) throw new Error(data.error || "查不到这个检测作业");
+  if (!r.ok || !data.ok) throw new Error(data.error || tr("Cannot find this detection job"));
   return data.job as ShotsJobState;
 }
 
@@ -47,7 +48,7 @@ export async function waitForShots(jobId: string, onProgress?: (pct: number, eng
   for (;;) {
     const job = await pollShotJob(jobId);
     onProgress?.(job.percent, job.engine);
-    if (job.status === "error") throw new Error(job.message || "镜头识别失败");
+    if (job.status === "error") throw new Error(job.message || tr("Shot detection failed"));
     if (job.status === "done") {
       return {
         engine: job.engine,
@@ -73,7 +74,7 @@ export async function installShots(
   const res = await fetch("/api/shots/install", { method: "POST" });
   if (!res.ok || !res.body) {
     const d = await res.json().catch(() => ({}));
-    throw new Error(d.error || `/api/shots/install 返回 ${res.status}`);
+    throw new Error(d.error || tr("/api/shots/install returned {0}", res.status));
   }
   const log: string[] = [];
   let ok = true;
@@ -95,7 +96,7 @@ export async function installShots(
       ok = false;
       // stderr 里才是有用的那句(pip 的真实报错、缺什么文件),message 往往只是
       // 「进程退出码 N」。只取 message 的话,用户看到的永远是一句没法照着做的话。
-      const msg = ev.message ?? "安装失败";
+      const msg = ev.message ?? tr("Install failed");
       const detail = typeof ev.stderr === "string" ? ev.stderr.trim() : "";
       const full = detail ? `${msg}
 ${detail}` : msg;

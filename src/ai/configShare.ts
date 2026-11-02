@@ -1,4 +1,5 @@
 import type { ApiVendor } from "./types";
+import { tr } from "../i18n/index.ts";
 
 /**
  * LLM API 配置的加密分发。
@@ -96,8 +97,8 @@ export async function encryptConfig(
   { iterations = DEFAULT_ITERATIONS }: { iterations?: number } = {},
 ): Promise<string> {
   const pass = normalizePassword(password);
-  if (!pass) throw new Error("请填加密口令(对方的本机识别码,或你们约定的口令)");
-  if (!config.apiKey?.trim()) throw new Error("请填 API Key");
+  if (!pass) throw new Error(tr("Enter the encryption passphrase (the other side's machine ID, or a passphrase you agreed on)"));
+  if (!config.apiKey?.trim()) throw new Error(tr("Enter the API key"));
 
   const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
@@ -131,20 +132,20 @@ export function looksLikeShareBlob(text: string): boolean {
 export async function decryptConfig(blob: string, password: string): Promise<SharedApiConfig> {
   // 聊天软件会给长文本插换行和空格,先全去掉
   const text = String(blob ?? "").replace(/\s+/g, "");
-  if (!text.startsWith(PREFIX)) throw new Error("这段文本不是 PromptCut 的配置密文(应以 PCAI1. 开头)");
+  if (!text.startsWith(PREFIX)) throw new Error(tr("This text is not a PromptCut config string (it should start with PCAI1.)"));
 
   let raw: Uint8Array;
   try {
     raw = base64urlDecode(text.slice(PREFIX.length));
   } catch {
-    throw new Error("密文格式不对,可能没复制全");
+    throw new Error(tr("The string format is wrong, it may not have been copied in full"));
   }
   const minimum = 4 + SALT_BYTES + IV_BYTES + 16; // 16 = GCM 校验标签
-  if (raw.length < minimum) throw new Error("密文被截断了,请让对方重发完整内容");
+  if (raw.length < minimum) throw new Error(tr("The string was truncated, ask the other side to resend the full content"));
 
   const iterations = new DataView(raw.buffer, raw.byteOffset, 4).getUint32(0, false);
   // 别拿密文里的轮数去跑一个能把浏览器卡死的数
-  if (iterations < 10_000 || iterations > 5_000_000) throw new Error("密文头部异常,拒绝解析");
+  if (iterations < 10_000 || iterations > 5_000_000) throw new Error(tr("The string header is abnormal, refusing to parse"));
 
   const salt = raw.slice(4, 4 + SALT_BYTES);
   const iv = raw.slice(4 + SALT_BYTES, 4 + SALT_BYTES + IV_BYTES);
@@ -159,20 +160,20 @@ export async function decryptConfig(blob: string, password: string): Promise<Sha
       cipher as BufferSource,
     );
   } catch {
-    throw new Error("解不开:口令(本机识别码)对不上,或者密文被改过");
+    throw new Error(tr("Can't decrypt: the passphrase (machine ID) doesn't match, or the string was modified"));
   }
 
   let parsed: SharedApiConfig;
   try {
     parsed = JSON.parse(new TextDecoder().decode(plaintext));
   } catch {
-    throw new Error("密文解开了,但内容不是有效的配置");
+    throw new Error(tr("The string was decrypted, but the content is not a valid config"));
   }
   if (!parsed || typeof parsed !== "object" || !parsed.apiKey) {
-    throw new Error("密文解开了,但里面没有 API Key");
+    throw new Error(tr("The string was decrypted, but it contains no API key"));
   }
   if (parsed.expiresAt && Date.now() > parsed.expiresAt) {
-    throw new Error(`这份配置已于 ${new Date(parsed.expiresAt).toLocaleDateString()} 过期,请向分发方索要新的`);
+    throw new Error(tr("This config expired on {0}, ask the distributor for a new one", new Date(parsed.expiresAt).toLocaleDateString()));
   }
   return parsed;
 }

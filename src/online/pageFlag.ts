@@ -1,3 +1,4 @@
+import { tr } from "../i18n/index.ts";
 /**
  * 在线浏览器模式的**运行期**标记(C10a 集成返工)。
  *
@@ -33,8 +34,8 @@ export function markOnlinePage(): void {
  * 「在线浏览器模式暂不支持{入口名}，请在电脑上的 PromptCut 里使用。」
  * 入口名用用户在界面上看到的叫法(「导入媒体」「语音识别」「配音」……)。
  */
-export const ONLINE_UNSUPPORTED_PREFIX = "在线浏览器模式暂不支持";
-export const ONLINE_UNSUPPORTED_SUFFIX = "，请在电脑上的 PromptCut 里使用。";
+export const ONLINE_UNSUPPORTED_PREFIX = tr("is not supported in online browser mode yet");
+export const ONLINE_UNSUPPORTED_SUFFIX = tr(", please use it in PromptCut on your computer.");
 export function onlineUnsupported(entry: string): string {
   return `${ONLINE_UNSUPPORTED_PREFIX}${entry}${ONLINE_UNSUPPORTED_SUFFIX}`;
 }

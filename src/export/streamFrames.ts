@@ -20,6 +20,7 @@ import { chunkTimestamp, parseInit, parseSegment, type SegmentSample } from "../
 import { streamInputSig, streamSigStale } from "../render/streamInputSig.mjs";
 import { streamSegmentFirstFrame, streamSegmentOf } from "../render/streamSegments.mjs";
 import type { LayerRect, StreamCoverage } from "./cardLayers";
+import { tr } from "../i18n/index.ts";
 
 export interface StreamFrameDeps {
   request(msg: Record<string, unknown>, timeoutMs?: number): Promise<Record<string, unknown>>;
@@ -135,7 +136,7 @@ export interface StreamPicture { canvas: HTMLCanvasElement | OffscreenCanvas; re
  */
 export function composeHalves(rgba: Uint8ClampedArray | Uint8Array, width: number, total: number, h: number, out: Uint8ClampedArray = new Uint8ClampedArray(width * h * 4)): Uint8ClampedArray {
   const alphaTop = h + HALF_GAP_ROWS;
-  if (alphaTop + h > total) throw new Error(`流的这一帧高 ${total},放不下两半各 ${h} 行`);
+  if (alphaTop + h > total) throw new Error(tr("The stream frame is {0} high, which cannot fit two halves of {1} rows each", total, h));
   for (let y = 0; y < h; y++) {
     let c = y * width * 4, a = (alphaTop + y) * width * 4, o = y * width * 4;
     for (let x = 0; x < width; x++, c += 4, a += 4, o += 4) {
@@ -153,7 +154,7 @@ export function composeHalves(rgba: Uint8ClampedArray | Uint8Array, width: numbe
 
 /** 解出来的一帧的宽度就是这一段矩形的宽;对不上就抛(调用方不裁、不拉伸) */
 export function frameWidthOf(decodedWidth: number, rect: LayerRect, frame: number): number {
-  if (decodedWidth !== rect.w) throw new Error(`轨道流第 ${frame} 帧解出来宽 ${decodedWidth},和清单里这一段的矩形宽 ${rect.w} 对不上`);
+  if (decodedWidth !== rect.w) throw new Error(tr("Track stream frame {0} decoded to width {1}, which does not match the segment's rect width {2} in the manifest", frame, decodedWidth, rect.w));
   return rect.w;
 }
 
@@ -186,10 +187,10 @@ export class StreamFrameReader {
     const hit = this.blocks.get(hash);
     if (hit) return hit;
     const base = this.deps.assetBase();
-    if (!base) throw new Error("还没有远程素材服务");
+    if (!base) throw new Error(tr("There is no remote asset service yet"));
     const f = this.deps.fetch ?? fetch;
     const res = await f(`${base.replace(/\/+$/, "")}/px/${hash}`, { headers: await this.deps.authHeaders(), signal: this.signal });
-    if (!res.ok) throw new Error(`取不到轨道流的字节 ${hash.slice(0, 12)}:${res.status}`);
+    if (!res.ok) throw new Error(tr("Cannot fetch the bytes of the track stream {0}: {1}", hash.slice(0, 12), res.status));
     const bytes = new Uint8Array(await res.arrayBuffer());
     this.stats.fetched++;
     this.stats.bytes += bytes.length;
@@ -209,7 +210,7 @@ export class StreamFrameReader {
     this.closeDecoder();
     const seg = this.stream.segments.get(n);
     const init = seg ? this.stream.inits.get(seg.init) : undefined;
-    if (!seg || !init) throw new Error(`轨道流没有第 ${n} 段`);
+    if (!seg || !init) throw new Error(tr("The track stream has no segment {0}", n));
     const [initBytes, segBytes] = await Promise.all([this.block(init.hash, true), this.block(seg.hash, false)]);
     const toBuffer = (b: Uint8Array) => (b.byteOffset === 0 && b.byteLength === b.buffer.byteLength ? b.buffer : b.slice().buffer) as ArrayBuffer;
     const config = parseInit(toBuffer(initBytes));
@@ -248,20 +249,20 @@ export class StreamFrameReader {
 
   /** 取第 `frame` 帧(项目帧号)的画面。调用方保证这一帧在满密度的分段里(`streamCovers`) */
   async picture(frame: number): Promise<StreamPicture> {
-    if (this.signal?.aborted) throw Object.assign(new Error("已取消"), { cancelled: true });
+    if (this.signal?.aborted) throw Object.assign(new Error(tr("Cancelled")), { cancelled: true });
     const t0 = performance.now();
     const n = streamSegmentOf(frame, this.stream.originFrame);
     const first = streamSegmentFirstFrame(n, this.stream.originFrame);
     const idx = frame - first;
     // 换了分段,或者这一帧已经喂过去、画面又不在手里(往回跳):从这一段的关键帧重新解
     if (n !== this.seg || !this.decoder || (idx < this.fed && !this.outputs.has(idx))) await this.openSegment(n);
-    if (idx < 0 || idx >= this.samples.length) throw new Error(`轨道流第 ${n} 段没有第 ${idx} 个样本`);
+    if (idx < 0 || idx >= this.samples.length) throw new Error(tr("Track stream segment {0} has no sample {1}", n, idx));
     const fps = this.stream.fps;
     const started = performance.now();
     while (!this.outputs.has(idx)) {
-      if (this.signal?.aborted) throw Object.assign(new Error("已取消"), { cancelled: true });
-      if (this.failure) throw new Error(`轨道流解码出错:${String((this.failure as Error)?.message ?? this.failure)}`);
-      if (performance.now() - started > DECODE_TIMEOUT_MS) throw new Error(`轨道流第 ${frame} 帧 ${DECODE_TIMEOUT_MS / 1000} 秒没解出来`);
+      if (this.signal?.aborted) throw Object.assign(new Error(tr("Cancelled")), { cancelled: true });
+      if (this.failure) throw new Error(tr("Track stream decode error: {0}", String((this.failure as Error)?.message ?? this.failure)));
+      if (performance.now() - started > DECODE_TIMEOUT_MS) throw new Error(tr("Track stream frame {0} was not decoded within {1} s", frame, DECODE_TIMEOUT_MS / 1000));
       const decoder = this.decoder!;
       // 手里攒的帧不多、还有样本没喂:再喂一个(解码器有延迟时要多喂几个才吐前面的)
       if (this.fed < this.samples.length && this.outputs.size < 6 && decoder.decodeQueueSize < 2) {
@@ -277,7 +278,7 @@ export class StreamFrameReader {
         await decoder.flush();
         continue;
       }
-      if (this.fed >= this.samples.length && this.flushed) throw new Error(`轨道流第 ${frame} 帧解不出来`);
+      if (this.fed >= this.samples.length && this.flushed) throw new Error(tr("Track stream frame {0} cannot be decoded", frame));
       await this.pause();
     }
     // 这一帧之前的画面用不着了

@@ -1,4 +1,5 @@
 import type { MediaAsset, Project } from "../kernel/project";
+import { tr } from "../i18n/index.ts";
 
 /**
  * 「确认缺失」记录的判定与显示名(纯函数,不引随软件分发的那段人声文件,Node 单测与 `src/editor/io` 的后台检查直接用)。
@@ -26,7 +27,7 @@ export function confirmedMissingAudio(media: MediaAsset | undefined, project?: P
 }
 
 /** 素材库里给缺失素材名字加的标记(`src/editor/io/mediaUpload.ts`);占位上只显示原来的名字 */
-const MISSING_NAME_MARK = "(缺失) ";
+const MISSING_NAME_MARK = tr("(missing) ");
 
 export function missingMaterialLabel(media: MediaAsset): string {
   const original = media.missingMaterial?.original;

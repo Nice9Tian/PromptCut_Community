@@ -48,7 +48,7 @@ function rig({ welcome = { activeIntervalMs: EVERY }, busy } = {}) {
   };
 }
 
-test("QM-D-P1 旧队列（node.welcome 不带 activeIntervalMs）：手里有认领、宿主也说忙，一条 node.active 都不发", async () => {
+test("QM-D-P1 old queue (node.welcome without activeIntervalMs): holds a claim and the host also says busy, yet not a single node.active is sent", async () => {
   const r = rig({ welcome: {}, busy: () => "stage" });
   await r.claim();
   assert.equal(r.bakes.length, 1, "第 0 帧在做");
@@ -57,45 +57,45 @@ test("QM-D-P1 旧队列（node.welcome 不带 activeIntervalMs）：手里有认
   assert.equal(r.node.debug().counters.active, 0);
 });
 
-test("QM-D-P2 新队列、手里有认领（在生成快照）：按 activeIntervalMs 报 busy 'bake'，不比间隔更勤", async () => {
+test("QM-D-P2 new queue, holding a claim (generating snapshots): reports busy 'bake' per activeIntervalMs, no more often than the interval", async () => {
   const r = rig();
   await r.claim();
-  assert.equal(r.of("node.active").length, 0, "认领之前闲着，不报");
+  assert.equal(r.of("node.active").length, 0, "Idle before the claim, no report");
   r.node.tick();
   const first = r.of("node.active");
-  assert.deepEqual(first.map((m) => m.busy), ["bake"], "认领之后下一拍就报");
+  assert.deepEqual(first.map((m) => m.busy), ["bake"], "Reports on the next tick after the claim");
   r.advance(EVERY - 1);
   r.node.tick();
-  assert.equal(r.of("node.active").length, 1, "间隔之内不再报");
+  assert.equal(r.of("node.active").length, 1, "no more reports within the interval");
   r.advance(1);
   r.node.tick();
   r.node.tick();
-  assert.equal(r.of("node.active").length, 2, "到了间隔报一次，同一刻不重复");
+  assert.equal(r.of("node.active").length, 2, "reports once when the interval is reached, no duplicate at the same instant");
   assert.equal(r.node.debug().counters.active, 2);
-  assert.deepEqual(Object.keys(r.of("node.active")[0]).sort(), ["busy", "type"], "只带 busy，不带认领、指纹之类");
+  assert.deepEqual(Object.keys(r.of("node.active")[0]).sort(), ["busy", "type"], "carries only busy, not claim, fingerprint and the like");
 });
 
-test("QM-D-P3 手里没有认领：宿主说后台舞台在忙（'stage'）才报；闲着（null）不报；宿主抛错当不忙", () => {
+test("QM-D-P3 no claim held: reports only when the host says the background stage is busy ('stage'); idle (null) does not report; a host that throws counts as not busy", () => {
   let state = null;
   const r = rig({ busy: () => { if (state === "throw") throw new Error("坏了"); return state; } });
   r.node.tick();
-  assert.equal(r.of("node.active").length, 0, "闲着不报");
+  assert.equal(r.of("node.active").length, 0, "idle does not report");
   state = "stage";
   r.node.tick();
   assert.deepEqual(r.of("node.active").map((m) => m.busy), ["stage"]);
   state = null;
   r.advance(EVERY * 3);
   r.node.tick();
-  assert.equal(r.of("node.active").length, 1, "不忙了就停报（锁照旧按产出算闲置）");
+  assert.equal(r.of("node.active").length, 1, "stops reporting once not busy (the lock still counts idle by output)");
   state = "throw";
   r.node.tick();
   assert.equal(r.of("node.active").length, 1);
   state = "x".repeat(80);
   r.node.tick();
-  assert.equal(r.of("node.active").at(-1).busy.length, 32, "超长的截到 32 字（队列的上限）");
+  assert.equal(r.of("node.active").at(-1).busy.length, 32, "overlong values are truncated to 32 characters (the queue limit)");
 });
 
-test("QM-D-P4 下线（stop）、报到被拒之后不再报；重新报到后忙着就在下一拍报", async () => {
+test("QM-D-P4 no more reports after going offline (stop) or after check-in is refused; after re-checking in, a busy node reports on the next beat", async () => {
   const r = rig({ busy: () => "stage" });
   r.node.tick();
   assert.equal(r.of("node.active").length, 1);
@@ -103,15 +103,15 @@ test("QM-D-P4 下线（stop）、报到被拒之后不再报；重新报到后�
   r.node.start();
   r.node.receive({ type: "node.welcome", nodeId: "n", resumed: [], lost: [], envFingerprint: FP, activeIntervalMs: EVERY });
   r.node.tick();
-  assert.equal(r.of("node.active").length, 2, "重新报到后下一拍就报");
+  assert.equal(r.of("node.active").length, 2, "reports on the next beat after re-checking in");
   r.node.stop();
   r.advance(EVERY * 2);
   r.node.tick();
-  assert.equal(r.of("node.active").length, 2, "下线之后不报");
+  assert.equal(r.of("node.active").length, 2, "no reports after going offline");
 
   const refused = rig({ welcome: null, busy: () => "stage" });
   refused.node.receive({ type: "error", reason: "forbidden" });
   refused.advance(EVERY);
   refused.node.tick();
-  assert.equal(refused.of("node.active").length, 0, "报到被拒不报");
+  assert.equal(refused.of("node.active").length, 0, "no report when check-in is refused");
 });

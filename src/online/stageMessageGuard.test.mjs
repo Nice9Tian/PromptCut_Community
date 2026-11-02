@@ -19,10 +19,10 @@ const SAMPLES = {
   "probe-frame": { type: "probe-frame", clipId: "c1", localFrame: 3, html: "<div>x</div>", htmlGz: new ArrayBuffer(8) },
   "bake-frame": { type: "bake-frame", session: "s1", clipId: "c1", localFrame: 3, hash: HASH, bytes: 100, htmlGz: new ArrayBuffer(8), small: { hash: HASH, bytes: 10, webp: new ArrayBuffer(4) } },
   "card-states": { type: "card-states", states: [["card-a", { state: "ready" }], ["card-b", { state: "load-error", detail: "boom", file: "src/cards/user/b.tsx" }]], graph: "ok", visual: true },
-  "sound-state": { type: "sound-state", state: { ready: { "card-a": "k3" }, blocked: { "card-b": "载入时出错" } } },
+  "sound-state": { type: "sound-state", state: { ready: { "card-a": "k3" }, blocked: { "card-b": "Error while loading" } } },
 };
 
-test("OCS-M-09 在线执行的两种事件:运行状态只认名单上的十种、文字截短;声音状态只留短文字;形状不对整条丢弃", () => {
+test("OCS-M-09 The two online execution events: run status accepts only the ten on the list and truncates text; sound status keeps only short text; a malformed event is dropped entirely", () => {
   const long = "x".repeat(5000);
   const clean = sanitizeStageEvent({ type: "card-states", states: [["a", { state: "load-error", detail: long, file: long, version: long, ticket: "v1.a.b" }]], graph: "software", visual: false, extra: 1 });
   assert.deepEqual(Object.keys(clean), ["type", "states", "graph", "visual"]);
@@ -50,10 +50,10 @@ test("OCS-M-09 在线执行的两种事件:运行状态只认名单上的十种�
   assert.equal(sound.state.blocked.b.length, 240);
 });
 
-test("OCS-M-01 白名单:舞台协议里的每一种事件都有校验,合法的原样通过;不在名单上的、不是对象的一律丢弃", async () => {
+test("OCS-M-01 Allowlist: every event in the stage protocol has validation and valid ones pass through unchanged; events not on the list or not objects are all dropped", async () => {
   const { STAGE_EVENT_TYPES } = await import("../render/stageRpc.ts");
   for (const type of STAGE_EVENT_TYPES) {
-    assert.ok(SAMPLES[type], `事件 ${type} 没有样本:给 stageMessageGuard.ts 的 sanitizeStageEvent 补上它的校验,再在这里补样本(不补的话跨源舞台发来的这种事件会被丢掉)`);
+    assert.ok(SAMPLES[type], `Event ${type} has no sample: add its validation to sanitizeStageEvent in stageMessageGuard.ts, then add a sample here (otherwise this event from a cross-origin stage will be dropped)`);
     assert.deepEqual(sanitizeStageEvent(SAMPLES[type]), SAMPLES[type], type);
   }
   assert.deepEqual(Object.keys(SAMPLES).sort(), [...STAGE_EVENT_TYPES].sort());
@@ -62,7 +62,7 @@ test("OCS-M-01 白名单:舞台协议里的每一种事件都有校验,合法的
   }
 });
 
-test("OCS-M-02 形状:回的是只含认得的字段的新对象;多出来的字段(伪造的票据、原型)带不过去", () => {
+test("OCS-M-02 Shape: returns a new object containing only the recognized fields; extra fields (forged ticket, prototype) are not carried over", () => {
   const dirty = JSON.parse('{"type":"frame","sec":1,"ticket":"v1.a.b","__proto__":{"polluted":1},"constructor":{"prototype":{"polluted":1}}}');
   const clean = sanitizeStageEvent(dirty);
   assert.deepEqual(Object.keys(clean), ["type", "sec"]);
@@ -76,7 +76,7 @@ test("OCS-M-02 形状:回的是只含认得的字段的新对象;多出来的字
   assert.equal(sanitizeStageEvent({ ...SAMPLES["bake-frame"], small: null }).small, null);
 });
 
-test("OCS-M-03 数字钳到合理范围:时间不为负、不过一天;耗时不为负、十分钟封顶;不是有限数整条丢弃", () => {
+test("OCS-M-03 Numbers are clamped to a sane range: time is not negative and not over one day; duration is not negative and capped at ten minutes; a non-finite number drops the whole event", () => {
   assert.equal(sanitizeStageEvent({ type: "frame", sec: 1e99 }).sec, L.maxSec);
   assert.equal(sanitizeStageEvent({ type: "frame", sec: -5 }).sec, 0);
   // 给了项目时长:舞台报的时刻带不出时间轴(播放头最多到末尾)
@@ -100,7 +100,7 @@ test("OCS-M-03 数字钳到合理范围:时间不为负、不过一天;耗时不
   assert.equal(sanitizeStageEvent({ ...SAMPLES["bake-frame"], bytes: -1 }).bytes, 0);
 });
 
-test("OCS-M-04 长度上限:片段 id、成本身份、片段数、快照 HTML、字节块超了就丢弃;哈希必须是 64 位十六进制", () => {
+test("OCS-M-04 Length limits: clip id, cost identity, clip count, snapshot HTML and byte chunks are dropped when over the limit; a hash must be 64 hex digits", () => {
   assert.equal(sanitizeStageEvent({ type: "demote", clipId: "x".repeat(L.maxIdLength + 1) }), null);
   assert.equal(sanitizeStageEvent({ type: "demote", clipId: { toString: () => "c" } }), null);
   assert.equal(sanitizeStageEvent({ type: "settled", sec: 1, clipIds: new Array(L.maxClipIds + 1).fill("a") }), null);
@@ -114,7 +114,7 @@ test("OCS-M-04 长度上限:片段 id、成本身份、片段数、快照 HTML�
   assert.equal(sanitizeStageEvent({ ...SAMPLES["probe-frame"], html: xss }).html, xss);
 });
 
-test("OCS-M-05 RPC 回包:只许普通对象、数组、字符串、布尔、null、有限数与字节块;耗时类的数钳到 [0, 十分钟]", () => {
+test("OCS-M-05 RPC reply: only plain objects, arrays, strings, booleans, null, finite numbers and byte chunks are allowed; duration-type numbers are clamped to [0, ten minutes]", () => {
   const r = sanitizeRpcResult("render", { elapsedMs: -1e99, steps: [1e99, NaN, Infinity, 5], snapshot: { inlineMs: 7.77e98, rasterMs: -1, serializeMs: 3 }, glGpuMs: { cardA: 1e99, cardB: -3 }, html: "<div/>", ok: true, n: 1e99, nested: { ms: -1 } });
   assert.deepEqual(r, { elapsedMs: 0, steps: [L.maxMs, 0, 0, 5], snapshot: { inlineMs: L.maxMs, rasterMs: 0, serializeMs: 3 }, glGpuMs: { cardA: L.maxMs, cardB: 0 }, html: "<div/>", ok: true, n: L.maxAbs, nested: { ms: 0 } });
   // 不是计时的方法:数字只钳绝对值,不动符号
@@ -129,7 +129,7 @@ test("OCS-M-05 RPC 回包:只许普通对象、数组、字符串、布尔、nul
   assert.throws(() => sanitizeRpcResult("render", { b: new ArrayBuffer(L.maxBufferBytes + 1) }), /太大/);
   let deep = {};
   for (let i = 0; i < L.maxDepth + 2; i++) deep = { deep };
-  assert.throws(() => sanitizeRpcResult("render", deep), /太深/);
+  assert.throws(() => sanitizeRpcResult("render", deep), /too deep/);
   assert.throws(() => sanitizeRpcResult("render", new Array(L.maxNodes + 1).fill(0)), /太大/);
   // 出错信息只留一段不长的字符串
   assert.equal(sanitizeRpcError("boom"), "boom");
@@ -137,7 +137,7 @@ test("OCS-M-05 RPC 回包:只许普通对象、数组、字符串、布尔、nul
   for (const bad of [null, undefined, 42, { message: "x" }]) assert.equal(sanitizeRpcError(bad), undefined);
 });
 
-test("OCS-M-06 握手里的宿主能力表:只认六项、各按类型收;多出来的字段不带", () => {
+test("OCS-M-06 Host capability table in the handshake: only six entries are recognized, each accepted by type; extra fields are not carried", () => {
   assert.deepEqual(sanitizeHostCapabilities({ prerender: true, offscreenGl: true, compact: true, glRoute: "shared", lowest: true, measure: true, catchUp: true, stageId: "B", ticket: "v1.a.b" }),
     { prerender: true, offscreenGl: true, compact: true, glRoute: "shared", lowest: true, measure: true, catchUp: true, stageId: "B" });
   assert.deepEqual(sanitizeHostCapabilities({ prerender: "yes", offscreenGl: 1, compact: { a: 1 }, glRoute: "evil", lowest: "1", measure: [], catchUp: null, stageId: "Z" }),
@@ -166,7 +166,7 @@ async function withFakeWindow(fn) {
 }
 const STAGE = "https://s1.x.io";
 
-test("OCS-M-07 跨源舞台的 RPC 客户端:只认 event.source 是那个舞台、event.origin 是配置里那个舞台源的消息", async () => {
+test("OCS-M-07 RPC client for the cross-origin stage: only accepts messages whose event.source is that stage and whose event.origin is the stage origin in the config", async () => {
   const { createStageRpc } = await import("../render/stageRpc.ts");
   await withFakeWindow(async (win) => {
     const target = { closed: false, sent: [], postMessage(msg, origin) { this.sent.push({ msg, origin }); } };
@@ -175,7 +175,7 @@ test("OCS-M-07 跨源舞台的 RPC 客户端:只认 event.source 是那个舞台
     c.onEvent((e) => events.push(e));
     const call = c.play(0);
     const { msg, origin } = target.sent.at(-1);
-    assert.equal(origin, STAGE, "请求只发给那个舞台源");
+    assert.equal(origin, STAGE, "Requests are sent only to that stage origin");
     let settled = null;
     void call.then((v) => { settled = { ok: v }; }, (e) => { settled = { err: e.message }; });
     // 来源不对:别的窗口、对的窗口但别的源(舞台被带到别处去了)—— 都不认
@@ -184,13 +184,13 @@ test("OCS-M-07 跨源舞台的 RPC 客户端:只认 event.source 是那个舞台
     win.deliver(target, { type: "pc-rpc-reply", id: msg.id, ok: true, result: { hijack: 3 } }, "null");
     win.deliver(target, { type: "frame", sec: 9 }, "https://evil.io");
     await new Promise((r) => setImmediate(r));
-    assert.equal(settled, null, "来源不对的回包不结算这次调用");
+    assert.equal(settled, null, "A reply from the wrong source does not settle this call");
     assert.deepEqual(events, []);
     // 来源对:事件按形状收(超范围的钳住、认不出的丢掉),回包照常
     win.deliver(target, { type: "frame", sec: 1e99, ticket: "v1.a.b" }, STAGE);
     win.deliver(target, { type: "pc-give-me-the-ticket" }, STAGE);
     win.deliver(target, { type: "probe", identityKey: "k", fps: 30, stepMs: Infinity, inlineMs: 1, rasterMs: 1, serializeMs: 1, catchUpMs: 0, kind: "stepped" }, STAGE);
-    assert.deepEqual(events, [{ type: "frame", sec: 6 }], "时刻钳到项目时长以内");
+    assert.deepEqual(events, [{ type: "frame", sec: 6 }], "The time is clamped within the project duration");
     win.deliver(target, { type: "pc-rpc-reply", id: msg.id, ok: true, result: { ok: true } }, STAGE);
     await new Promise((r) => setImmediate(r));
     assert.deepEqual(settled, { ok: { ok: true } });
@@ -198,7 +198,7 @@ test("OCS-M-07 跨源舞台的 RPC 客户端:只认 event.source 是那个舞台
   });
 });
 
-test("OCS-M-08 跨源舞台的 RPC 回包:形状不对按失败回绝,计时类的数钳住;同源的客户端(桌面、单舞台)照旧原样收", async () => {
+test("OCS-M-08 RPC reply from the cross-origin stage: a malformed shape is rejected as a failure, timing numbers are clamped; same-origin clients (desktop app, single stage) still receive replies unchanged", async () => {
   const { createStageRpc } = await import("../render/stageRpc.ts");
   await withFakeWindow(async (win) => {
     const target = { closed: false, sent: [], postMessage(msg) { this.sent.push(msg); } };

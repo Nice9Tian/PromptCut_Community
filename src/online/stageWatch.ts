@@ -97,7 +97,7 @@ export function createStageWatch(deps: StageWatchDeps): StageWatch {
     if (disposed) return;
     fellBack = true;
     stopAll();
-    log(`退回单舞台:${reason}`);
+    log(`Falling back to a single stage: ${reason}`);
     try { deps.fallback(reason); } catch { /* 调用方坏了也不再重试 */ }
   };
 
@@ -108,7 +108,7 @@ export function createStageWatch(deps: StageWatchDeps): StageWatch {
       if (disposed || s.status !== "reloading" || s.gen !== gen) return;
       // 页面隐藏期间不判:iframe 的载入与舞台的启动都可能被节流,等回到前台再给一整段时限
       if (hidden()) { armDeadline(id, s); return; }
-      fallback(`舞台 ${id} 断开后重载,${Math.round(STAGE_RECONNECT_TIMEOUT_MS / 1000)} 秒内没握回来`);
+      fallback(`Stage ${id} reloaded after disconnecting and did not reconnect within ${Math.round(STAGE_RECONNECT_TIMEOUT_MS / 1000)} s`);
     }, STAGE_RECONNECT_TIMEOUT_MS);
   };
 
@@ -119,7 +119,7 @@ export function createStageWatch(deps: StageWatchDeps): StageWatch {
     const t = now();
     while (reloadTimes.length && t - reloadTimes[0] > STAGE_RELOAD_WINDOW_MS) reloadTimes.shift();
     if (reloadTimes.length >= STAGE_MAX_RELOADS) {
-      fallback(`舞台 ${id} 反复断开(${Math.round(STAGE_RELOAD_WINDOW_MS / 60_000)} 分钟内已重载 ${reloadTimes.length} 次):${reason}`);
+      fallback(`Stage ${id} keeps disconnecting (reloaded ${reloadTimes.length} times within ${Math.round(STAGE_RELOAD_WINDOW_MS / 60_000)} min): ${reason}`);
       return;
     }
     reloadTimes.push(t);
@@ -127,7 +127,7 @@ export function createStageWatch(deps: StageWatchDeps): StageWatch {
     s.status = "reloading";
     s.gen++;
     s.inflight = false;
-    log(`舞台 ${id} 断开,重载它:${reason}`);
+    log(`Stage ${id} disconnected, reloading it: ${reason}`);
     try { deps.reload(id, reason); } catch { /* 重载失败照样等时限,到点退回 */ }
     armDeadline(id, s);
   };
@@ -144,7 +144,7 @@ export function createStageWatch(deps: StageWatchDeps): StageWatch {
     } else {
       for (const [id, s] of slots) {
         if (s.status !== "alive") continue;
-        if (t - s.lastAlive > STAGE_LOST_AFTER_MS) { lost(id, `${Math.round((t - s.lastAlive) / 1000)} 秒没有心跳回包`); continue; }
+        if (t - s.lastAlive > STAGE_LOST_AFTER_MS) { lost(id, `No heartbeat reply for ${Math.round((t - s.lastAlive) / 1000)} s`); continue; }
         if (s.inflight) continue;
         let p: Promise<unknown> | null = null;
         try { p = deps.ping(id); } catch { p = null; }
@@ -171,7 +171,7 @@ export function createStageWatch(deps: StageWatchDeps): StageWatch {
       const s = slots.get(id);
       if (!s) return;
       if (s.deadline !== null) { clearTimer(s.deadline); s.deadline = null; }
-      if (s.status === "reloading") log(`舞台 ${id} 重载后握回来了`);
+      if (s.status === "reloading") log(`Stage ${id} reconnected after reload`);
       s.status = "alive";
       s.gen++;
       s.inflight = false;

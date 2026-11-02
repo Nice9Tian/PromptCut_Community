@@ -1,3 +1,4 @@
+import { tr } from "../i18n/index.ts";
 /**
  * 诊断报告的「提交」通道。
  *
@@ -31,9 +32,9 @@ export const SUBMIT_LIMIT = 4 * 1024 * 1024;
 
 /** 没法提交时的原因(给按钮的 title 和禁用态用);能提交就返回空串 */
 export function submitBlockedReason(text: string): string {
-  if (!SUBMIT_URL) return "还没配收报告的地址(VITE_DIAG_SUBMIT_URL)。请用「保存为文件」把报告发给我们";
+  if (!SUBMIT_URL) return tr("No address is configured for receiving reports (VITE_DIAG_SUBMIT_URL). Please use \"Save as file\" and send the report to us");
   if (text.length > SUBMIT_LIMIT) {
-    return `报告 ${Math.round(text.length / 1024)}KB,超过 ${SUBMIT_LIMIT / 1024 / 1024}MB 上传上限。请用「保存为文件」发给我们`;
+    return tr("Report is {0}KB, over the {1}MB upload limit. Please use \"Save as file\" and send it to us", Math.round(text.length / 1024), SUBMIT_LIMIT / 1024 / 1024);
   }
   return "";
 }
@@ -53,10 +54,10 @@ export async function submitReport(text: string, label: string, extra?: Record<s
     headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify({ token: SUBMIT_TOKEN, label, at: new Date().toISOString(), ...extra, text }),
   });
-  if (!res.ok) throw new Error(`提交失败 HTTP ${res.status}`);
+  if (!res.ok) throw new Error(tr("Submit failed: HTTP {0}", res.status));
   // 回执编号是给我们对单用的,有就报给用户,没有也不算失败
   const body = await res.text().catch(() => "");
   let id = "";
   try { id = JSON.parse(body)?.id || ""; } catch { id = ""; }
-  return id ? `已提交，回执编号 ${id}` : "已提交";
+  return id ? tr("Submitted, receipt number {0}", id) : tr("Submitted");
 }

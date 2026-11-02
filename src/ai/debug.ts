@@ -1,4 +1,5 @@
 import type { ChatMessage, MessageRuntime, PublicAiConfig, RunEvent } from './types';
+import { tr } from "../i18n/index.ts";
 
 // Redact structured secrets and common pasted credentials; never include API
 // headers, raw settings files, or provider reasoning channels in an export.
@@ -63,19 +64,19 @@ export function recordTrace(message: ChatMessage, event: RunEvent): ChatMessage 
 
 /** 同一套设置压成一行,用来数「这段对话里前后到底用过几种配置」 */
 function runtimeKey(r: MessageRuntime): string {
-  return [r.provider, r.model || '(默认)', r.effort || '(默认)', r.fast ? 'fast' : '-', r.deepAuto ? 'deep' : '-', r.toolProtocol ? 'textproto' : '-'].join(' / ');
+  return [r.provider, r.model || tr("(default)"), r.effort || tr("(default)"), r.fast ? 'fast' : '-', r.deepAuto ? 'deep' : '-', r.toolProtocol ? 'textproto' : '-'].join(' / ');
 }
 
 /**
  * 一句人话描述这条回复用的是什么，放进报告顶上，省得从几百行 JSON 里翻。
  */
 function describeRuntime(r: MessageRuntime): string {
-  const bits = [r.provider, `模型 ${r.model || '默认'}`, `思考 ${r.effort || '默认'}`];
-  if (r.fast) bits.push('加速');
+  const bits = [r.provider, tr("model {0}", r.model || tr("default")), tr("thinking {0}", r.effort || tr("default"))];
+  if (r.fast) bits.push(tr("fast"));
   // 具体多少轮在设置里(deepAutoRounds),这条 runtime 没记,所以只说开着,不报一个可能是错的数
-  if (r.deepAuto) bits.push('深度自主');
-  if (r.toolProtocol) bits.push('文本协议模式');
-  return bits.join('，');
+  if (r.deepAuto) bits.push(tr("deep autonomy"));
+  if (r.toolProtocol) bits.push(tr("text protocol mode"));
+  return bits.join(tr(","));
 }
 
 export function conversationReport(messages: ChatMessage[], provider: string | null, config?: PublicAiConfig | null, environment?: unknown): string {
@@ -98,11 +99,11 @@ export function conversationReport(messages: ChatMessage[], provider: string | n
     runtime: {
       switchedMidConversation: distinct.length > 1,
       summary: distinct.length === 0
-        ? '这段对话里没有一条记了运行配置（0.2.9 之前的旧历史）'
+        ? tr("No message in this chat recorded its runtime config (old history from before 0.2.9)")
         : distinct.length === 1
-          ? `全程一套配置：${describeRuntime(distinct[0])}`
-          : `⚠ 中途换过配置，共 ${distinct.length} 套，逐条见 messages[].runtime`,
-      used: distinct.map((r) => ({ ...r, 说明: describeRuntime(r) })),
+          ? tr("One config throughout: {0}", describeRuntime(distinct[0]))
+          : tr("⚠ Config changed midway, {0} in total, see messages[].runtime for each message", distinct.length),
+      used: distinct.map((r) => ({ ...r, note: describeRuntime(r) })),
       // 旧历史里的回复没有这个字段，说清楚是「没记」而不是「没换过」
       unrecordedAssistantMessages: unrecorded,
       textProtocolEverUsed: distinct.some((r) => r.toolProtocol),
@@ -119,7 +120,7 @@ export function conversationReport(messages: ChatMessage[], provider: string | n
      * 「拿到了什么」而不是「一定拿得到」,失败时上游填一个 error 进来。
      */
     environment,
-    note: '包含可见对话、执行事件和当时的环境快照；不包含密钥或模型私有思考。大输出和过长事件会标明截断。', messages,
+    note: tr("Contains the visible chat, execution events and a snapshot of the environment at the time; does not contain keys or the model's private thinking. Large outputs and overlong events are marked as truncated."), messages,
   }), null, 2);
 }
 
@@ -139,7 +140,7 @@ export async function saveReportToFile(text: string, label: string): Promise<{ d
     body: JSON.stringify({ text, label }),
   });
   const data = await res.json().catch(() => null);
-  if (!res.ok || !data?.ok) throw new Error(data?.error || `保存失败 HTTP ${res.status}`);
+  if (!res.ok || !data?.ok) throw new Error(data?.error || tr("Save failed, HTTP {0}", res.status));
   return { dir: data.dir, file: data.file };
 }
 
@@ -148,7 +149,7 @@ export async function copyDebugReport(text: string): Promise<void> {
   const field = document.createElement('textarea');
   field.value = text; field.style.position = 'fixed'; field.style.opacity = '0';
   document.body.appendChild(field); field.select();
-  try { if (!document.execCommand('copy')) throw new Error('自动复制失败,请手动选中文本复制'); }
+  try { if (!document.execCommand('copy')) throw new Error(tr("Automatic copy failed, please select the text and copy it manually")); }
   finally { field.remove(); }
 }
 
@@ -158,11 +159,11 @@ export async function copyDebugReport(text: string): Promise<void> {
  */
 export function downloadReportFile(text: string, label: string): string {
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-');
-  const name = `${label.replace(/[\/:*?"<>|\s]+/g, '_') || '诊断报告'}-${stamp}.json`;
+  const name = `${label.replace(/[\/:*?"<>|\s]+/g, '_') || tr("diagnostic reports")}-${stamp}.json`;
   const url = URL.createObjectURL(new Blob([text], { type: 'application/json;charset=utf-8' }));
   const a = document.createElement('a');
   a.href = url; a.download = name; a.style.display = 'none';
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
-  return `已下载:${name}`;
+  return tr("Downloaded: {0}", name);
 }

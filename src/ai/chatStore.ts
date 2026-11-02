@@ -35,7 +35,7 @@ export async function listChats(q?: string): Promise<ChatSummary[]> {
     const url = q ? `/api/chats/list?q=${encodeURIComponent(q)}` : "/api/chats/list";
     const res = await fetch(url);
     if (!res.ok) {
-      console.warn(`获取对话历史失败: HTTP ${res.status}`);
+      console.warn(`Failed to fetch chat history: HTTP ${res.status}`);
       return [];
     }
     const data = await res.json();
@@ -44,7 +44,7 @@ export async function listChats(q?: string): Promise<ChatSummary[]> {
     }
     return [];
   } catch (err: unknown) {
-    console.warn("获取对话历史网络异常:", err);
+    console.warn("Network error fetching chat history:", err);
     return [];
   }
 }
@@ -54,7 +54,7 @@ export async function getChat(id: string): Promise<StoredChat | null> {
   try {
     const res = await fetch(`/api/chats/get?id=${encodeURIComponent(id)}`);
     if (!res.ok) {
-      console.warn(`读取对话失败: HTTP ${res.status}`);
+      console.warn(`Failed to read chat: HTTP ${res.status}`);
       return null;
     }
     const data = await res.json();
@@ -63,7 +63,7 @@ export async function getChat(id: string): Promise<StoredChat | null> {
     }
     return null;
   } catch (err: unknown) {
-    console.warn("读取对话网络异常:", err);
+    console.warn("Network error reading chat:", err);
     return null;
   }
 }
@@ -77,10 +77,10 @@ export async function saveChat(chat: StoredChat): Promise<void> {
       body: JSON.stringify(chat),
     });
     if (!res.ok) {
-      console.warn(`保存对话失败: HTTP ${res.status}`);
+      console.warn(`Failed to save chat: HTTP ${res.status}`);
     }
   } catch (err: unknown) {
-    console.warn("保存对话网络异常:", err);
+    console.warn("Network error saving chat:", err);
   }
 }
 
@@ -93,9 +93,9 @@ export async function deleteChat(id: string): Promise<void> {
       body: JSON.stringify({ id }),
     });
     if (!res.ok) {
-      console.warn(`删除对话失败: HTTP ${res.status}`);
+      console.warn(`Failed to delete chat: HTTP ${res.status}`);
     }
   } catch (err: unknown) {
-    console.warn("删除对话网络异常:", err);
+    console.warn("Network error deleting chat:", err);
   }
 }

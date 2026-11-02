@@ -39,7 +39,7 @@ for (const [file, load] of Object.entries(globbed)) {
 /** 白名单与这张表要一一对上(单测 `cardRuntime.test.mjs` 核文本) */
 export const HOST_PACKAGE_NAMES: readonly string[] = Object.freeze(Object.keys(packages));
 if (import.meta.env.DEV && (HOST_PACKAGE_NAMES.length !== CARD_PACKAGES.length || CARD_PACKAGES.some((n) => !Object.hasOwn(packages, n)))) {
-  console.error("[cardRuntime] 包的表与白名单对不上", HOST_PACKAGE_NAMES, CARD_PACKAGES);
+  console.error("[cardRuntime] Package table does not match the allowlist", HOST_PACKAGE_NAMES, CARD_PACKAGES);
 }
 
 export const stageHostModules: HostModules = {

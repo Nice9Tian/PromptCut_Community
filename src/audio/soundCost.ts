@@ -14,6 +14,7 @@
  * 纯模块:不读编辑器、不碰 DOM。存取和时钟都由调用方注入,Node 单测直接跑。
  */
 import { resolveTuning, robustStep, type PipelineTuning } from "../render/pipelineTuning.mjs";
+import { tr } from "../i18n/index.ts";
 
 /** 测量时一块多少采样帧(48 kHz 下约 85.3 ms;与独立音效的合成块 `SOUND_RENDER_BLOCK_FRAMES` 相同) */
 export const SOUND_COST_BLOCK_FRAMES = 4096;
@@ -105,7 +106,7 @@ export interface MeasureSoundOptions {
  * 不足一块的声音按它的实际帧数合成,耗时按比例折算到一整块。
  */
 export async function measureSoundBlocks(o: MeasureSoundOptions): Promise<Pick<SoundCostRecord, "blockMs" | "blockMaxMs" | "blockFrames" | "sampleRate" | "samples">> {
-  if (!Number.isSafeInteger(o.frames) || o.frames < 1) throw new Error("声音测量的范围无效");
+  if (!Number.isSafeInteger(o.frames) || o.frames < 1) throw new Error(tr("Invalid range for audio measurement"));
   const tuning = resolveTuning(o.tuning ?? null);
   const now = o.now ?? (() => performance.now());
   const pause = o.yield ?? (() => new Promise<void>((resolve) => setTimeout(resolve, 0)));

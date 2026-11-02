@@ -105,7 +105,7 @@ export function decideStageGate(log: CrashLog, judged: LoadJudgement, env: GateE
   };
   if (env.forced) {
     const f = FORCED[env.forced];
-    return out({ target: f.level, reached: f.level, fixed: true, lowest: f.lowest ? "stage" : null, reason: "forced", note: `强制档位 ${env.forced}(开发与验收用)` }, device);
+    return out({ target: f.level, reached: f.level, fixed: true, lowest: f.lowest ? "stage" : null, reason: "forced", note: `Forced tier ${env.forced} (for development and acceptance checks)` }, device);
   }
   const stageCrash = judged.crashed && !upgraded ? levelAfterCrash(judged.step) : null;
   if (judged.crashed && !upgraded && judged.step?.kind === "measure" && judged.step.key !== BENCHMARK_KEY) {
@@ -122,7 +122,7 @@ export function decideStageGate(log: CrashLog, judged: LoadJudgement, env: GateE
     device = { ...device, stage: { reached: stageCrash.level, lowest: !!lowest, crashes, guardUntil, tried: false } };
     return out({
       target: stageCrash.level, reached: stageCrash.level, fixed: true, lowest, reason: "crash",
-      note: `上次崩在 ${stepText(judged.step)},这次停在${lowest ? "最低一档" : `第 ${stageCrash.level} 级`};第 ${crashes} 次崩,护栏 ${Math.round(guardMsOf(crashes) / 60_000)} 分钟`,
+      note: `Last crash at ${stepText(judged.step)}, this time stopped at ${lowest ? "Lowest tier" : `level ${stageCrash.level}`}; crash #${crashes}, guard ${Math.round(guardMsOf(crashes) / 60_000)} min`,
     }, device);
   }
   // 往上试成功一次(上次试了、这次载入没判崩):崩的次数清零,护栏撤掉
@@ -132,27 +132,27 @@ export function decideStageGate(log: CrashLog, judged: LoadJudgement, env: GateE
   if (g !== null && env.now < g) {
     const reached = device.stage.reached ?? 1;
     const lowest = device.stage.lowest ? "stage" : null;
-    return out({ target: reached, reached, fixed: true, lowest, reason: "guard", note: `护栏内(还剩 ${Math.ceil((g - env.now) / 60_000)} 分钟):停在${lowest ? "最低一档" : `第 ${reached} 级`},不往上试` }, device);
+    return out({ target: reached, reached, fixed: true, lowest, reason: "guard", note: `Within guard (${Math.ceil((g - env.now) / 60_000)} min left): stopped at ${lowest ? "Lowest tier" : `level ${reached}`}, not trying higher` }, device);
   }
   if (g !== null) device = { ...device, stage: { ...device.stage, guardUntil: null } };
   if (/android/i.test(env.platform ?? "") && !(Number(env.deviceMemory) >= ANDROID_TRY_MEMORY_GIB)) {
     device = { ...device, stage: { ...device.stage, reached: 1, lowest: false } };
-    return out({ target: 1, reached: 1, fixed: true, lowest: null, reason: "android-memory", note: `安卓 Chromium 系报的内存 ${env.deviceMemory ?? "未知"} GB,不到 ${ANDROID_TRY_MEMORY_GIB} GB:停在一个舞台,不试` }, device);
+    return out({ target: 1, reached: 1, fixed: true, lowest: null, reason: "android-memory", note: `Android Chromium reports ${env.deviceMemory ?? "unknown"} GB of memory, below ${ANDROID_TRY_MEMORY_GIB} GB: stopped at one stage, no trial` }, device);
   }
   device = { ...device, stage: { ...device.stage, tried: true, lowest: false } };
-  return out({ target: 3, reached: 1, fixed: false, lowest: null, reason: "trial", note: upgraded ? "软件升级了:清零,从低往高试" : "从低往高试" }, device);
+  return out({ target: 3, reached: 1, fixed: false, lowest: null, reason: "trial", note: upgraded ? "Software upgraded: reset, trying from low to high" : "Try from low to high" }, device);
 }
 
 export function stepText(step: CrashStep | null): string {
-  if (!step) return "(没有记录)";
+  if (!step) return "(no record)";
   switch (step.kind) {
     case "stage": return {
-      "open-visible": "开可见舞台", "visible-ready": "可见舞台就绪", "try-back": "开始试后台舞台", "dual-loaded": "双舞台已载入",
-      "try-separate": "开始试每个舞台各一套渲染器", "separate-ready": "各一套渲染器就绪",
+      "open-visible": "Opening visible stage", "visible-ready": "Visible stage ready", "try-back": "Starting background stage trial", "dual-loaded": "Both stages loaded",
+      "try-separate": "Starting trial with a separate renderer per stage", "separate-ready": "Separate renderers ready",
     }[step.what];
-    case "running": return step.lowest ? "最低一档运行中" : `第 ${step.level} 级运行中`;
-    case "media": return `载入素材原尺寸(解码上限第 ${step.capLevel} 级)`;
-    case "measure": return step.key === BENCHMARK_KEY ? "测基准卡" : `测卡 ${step.cardId ?? step.key}`;
+    case "running": return step.lowest ? "Lowest tier running" : `Level ${step.level} running`;
+    case "media": return `Loading media at original size (decode cap level ${step.capLevel})`;
+    case "measure": return step.key === BENCHMARK_KEY ? "Measuring benchmark card" : `Measuring card ${step.cardId ?? step.key}`;
   }
 }
 

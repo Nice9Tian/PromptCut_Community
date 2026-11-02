@@ -1,3 +1,4 @@
+import { tr } from "../i18n/index.ts";
 /**
  * 主题。每套主题是一组 CSS 变量,挂在舞台根元素(.pc-stage)和编辑器根元素上。
  * 卡片只读变量、不写死颜色:
@@ -32,8 +33,8 @@ export interface Theme {
 export const themes: Theme[] = [
   {
     id: "midnight",
-    name: "午夜",
-    description: "深色玻璃底、冷蓝主色",
+    name: tr("Midnight"),
+    description: tr("Dark glass base, cool blue primary color"),
     vars: {
       accent: "#4f8cff",
       fg: "#f5f7fa",
@@ -53,8 +54,8 @@ export const themes: Theme[] = [
   },
   {
     id: "ivory",
-    name: "象牙",
-    description: "浅色纸感、暖灰字、琥珀主色",
+    name: tr("Ivory"),
+    description: tr("Light paper feel, warm gray text, amber primary color"),
     vars: {
       accent: "#d97706",
       fg: "#45403c",
@@ -74,8 +75,8 @@ export const themes: Theme[] = [
   },
   {
     id: "neon",
-    name: "霓虹",
-    description: "纯黑底、荧光青/品红主色、发光投影",
+    name: tr("Neon"),
+    description: tr("Pure black base, fluorescent cyan/magenta primary colors, glowing shadows"),
     vars: {
       accent: "#00ffcc",
       fg: "#ffffff",
@@ -95,8 +96,8 @@ export const themes: Theme[] = [
   },
   {
     id: "sunrise",
-    name: "暖阳",
-    description: "奶油底、橙主色、大圆角",
+    name: tr("Warm sun"),
+    description: tr("Cream base, orange primary color, large rounded corners"),
     vars: {
       accent: "#f97316",
       fg: "#431407",
@@ -116,8 +117,8 @@ export const themes: Theme[] = [
   },
   {
     id: "forest",
-    name: "墨绿",
-    description: "深绿玻璃、金色主色、衬线标题字",
+    name: tr("Dark green"),
+    description: tr("Deep green glass, gold primary color, serif headings"),
     vars: {
       accent: "#eab308",
       fg: "#fefce8",

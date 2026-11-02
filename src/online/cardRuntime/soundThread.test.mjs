@@ -69,7 +69,7 @@ import { createNotificationRecipe, renderSoundEffectBlock } from "../../kernel/s
 ${top}
 const Box = (lottie as any).something;
 export const card: CardDef<{ frequency: number }> = {
-  id: "${id}", name: "有声 ${id}", defaults: { frequency: 660 }, controls: [], kind: "animation", inputs: {},
+  id: "${id}", name: "With sound ${id}", defaults: { frequency: 660 }, controls: [], kind: "animation", inputs: {},
   Component: () => <div className={String(hud)} />,
   audio: (_sources, range, params) => {
     ${inAudio}
@@ -89,42 +89,42 @@ function threadOf() {
   return { thread, out, last };
 }
 
-test("OCE-A-01 占位模块:引进来、取名字不报错,调用与 new 才抛;真的载入不了给占位", async () => {
+test("OCE-A-01 placeholder module: importing it and reading names does not throw, only calling and new throw; if it truly cannot be loaded, a placeholder is given", async () => {
   const stub = ST.createSoundStub("lottie-web");
   assert.equal(stub.__esModule, true);
   const { default: lottie, loadAnimation } = stub;
   assert.equal(typeof lottie, "function");
   assert.equal(typeof loadAnimation, "function");
   const deep = stub.a.b.c;
-  assert.equal(typeof deep, "function", "一路点下去都还是占位");
-  assert.equal(`${stub}`.includes("lottie-web"), true, "拼进字符串不抛");
-  assert.equal(await Promise.resolve(stub).then(() => "ok"), "ok", "被 await 不当成 thenable");
-  assert.throws(() => loadAnimation({}), /声音代码里不能用 lottie-web/);
-  assert.throws(() => new lottie.Thing(), /声音代码里不能用 lottie-web/);
-  assert.throws(() => stub(), /声音代码里不能用 lottie-web/);
+  assert.equal(typeof deep, "function", "Following the chain all the way down is still a placeholder");
+  assert.equal(`${stub}`.includes("lottie-web"), true, "does not throw when concatenated into a string");
+  assert.equal(await Promise.resolve(stub).then(() => "ok"), "ok", "not treated as a thenable when awaited");
+  assert.throws(() => loadAnimation({}), /Sound code cannot use lottie-web/);
+  assert.throws(() => new lottie.Thing(), /Sound code cannot use lottie-web/);
+  assert.throws(() => stub(), /Sound code cannot use lottie-web/);
   assert.equal(ST.isSoundStubError(new Error(ST.soundStubMessage("three"))), true);
-  assert.equal(ST.isSoundStubError(new Error("别的错")), false);
+  assert.equal(ST.isSoundStubError(new Error("other error")), false);
   // 真的载入得了用真的;载入抛了(模块顶层碰了 document)给占位
   assert.equal(await ST.realOrStub("x", async () => ({ real: 1 }))().then((m) => m.real), 1);
   const fallback = await ST.realOrStub("motion", async () => { throw new ReferenceError("document is not defined"); })();
-  assert.throws(() => fallback.animate(), /声音代码里不能用 motion/);
+  assert.throws(() => fallback.animate(), /Sound code cannot use motion/);
 });
 
-test("OCE-A-02 声音线程:载入、报回能合成的卡、求块与页面逐样本相同;各种合成不了各回各的错;换代", async () => {
+test("OCE-A-02 sound thread: load, report the cards that can be synthesized, requested chunks match the page sample by sample; each kind of non-synthesizable card returns its own error; generation change", async () => {
   const files = lib({
     [`${U}good.tsx`]: AV("good"),
     [`${U}top.tsx`]: AV("top", { top: "lottie.loadAnimation({});" }),
     [`${U}inaudio.tsx`]: AV("inaudio", { inAudio: "lottie.loadAnimation({});" }),
-    [`${U}mute.tsx`]: `export const card = { id: "mute", name: "无声", defaults: {}, controls: [], Component: () => null };`,
+    [`${U}mute.tsx`]: `export const card = { id: "mute", name: "Silent", defaults: {}, controls: [], Component: () => null };`,
   });
   const { thread, last } = threadOf();
   const bundles = [await bundleOf(files, `${U}good.tsx`), await bundleOf(files, `${U}top.tsx`), await bundleOf(files, `${U}inaudio.tsx`), await bundleOf(files, `${U}mute.tsx`)];
   await thread.handle({ t: "load", seq: 1, bundles });
   const loaded = last("loaded");
   assert.equal(loaded.seq, 1);
-  assert.deepEqual(loaded.audioCards, ["good", "inaudio"], "只有载入成功、写了 audio() 的卡;没有 audio() 的不算");
-  assert.deepEqual(Object.keys(loaded.blocked), [`${U}top.tsx`], "文件顶层调用了占位的卡载入不成");
-  assert.match(loaded.blocked[`${U}top.tsx`], /声音代码里不能用 lottie-web/);
+  assert.deepEqual(loaded.audioCards, ["good", "inaudio"], "only cards that loaded successfully and define audio(); cards without audio() do not count");
+  assert.deepEqual(Object.keys(loaded.blocked), [`${U}top.tsx`], "a card that calls a placeholder at file top level fails to load");
+  assert.match(loaded.blocked[`${U}top.tsx`], /Sound code cannot use lottie-web/);
 
   const project = projectOf([clip("c1", "good", { params: { frequency: 880 } }), clip("c2", "inaudio"), clip("c3", "mute"),
     clip("c4", "good", { nodeId: "n4" }), clip("m", "", { mediaId: "media-1", cardId: undefined })], {
@@ -140,39 +140,39 @@ test("OCE-A-02 声音线程:载入、报回能合成的卡、求块与页面逐�
   const ask = async (nodeId, start = 0, count = 4096, key = "k1") => {
     const before = messages.length;
     await t2.handle({ t: "render", id: messages.length + 1, key, nodeId, start, count, sampleRate: 48000 });
-    assert.equal(messages.length, before + 1, "每个请求回一条");
+    assert.equal(messages.length, before + 1, "one reply per request");
     return messages.at(-1);
   };
   const a = await ask("@clip/c1/card", 0, 4096);
   assert.equal(a.m.t, "block");
   assert.ok(a.m.samples instanceof Float32Array);
-  assert.deepEqual([...a.m.samples], [...expected(880, 0, 4096)], "与页面按同一配方算的逐样本相同");
-  assert.equal(a.transfer?.[0], a.m.samples.buffer, "缓冲区转移出去,不复制");
-  assert.ok(a.m.samples.some((v) => v !== 0), "不是静音");
+  assert.deepEqual([...a.m.samples], [...expected(880, 0, 4096)], "matches, sample by sample, what the page computes with the same recipe");
+  assert.equal(a.transfer?.[0], a.m.samples.buffer, "buffer is transferred, not copied");
+  assert.ok(a.m.samples.some((v) => v !== 0), "not silence");
   const b = await ask("@clip/c1/card", 4096, 1000);
-  assert.deepEqual([...b.m.samples], [...expected(880, 4096, 1000)], "后面的块接得上");
+  assert.deepEqual([...b.m.samples], [...expected(880, 4096, 1000)], "later chunks line up");
 
   // audio() 里用了占位:这一块合成不了,说明原因
   const c = await ask("@clip/c2/card");
   assert.equal(c.m.t, "error");
-  assert.match(c.m.message, /声音代码里不能用 lottie-web/);
+  assert.match(c.m.message, /Sound code cannot use lottie-web/);
   // 要读素材采样的(上游是素材节点):本期不在线合成
   const d = await ask("n4");
   assert.equal(d.m.t, "error");
   assert.equal(d.m.message, SE.SOUND_NEEDS_MEDIA);
   // 没有 audio() 的卡、图里没有的节点、没发过的项目、范围不对
   assert.equal((await ask("@clip/c3/card")).m.t, "error");
-  assert.match((await ask("nope")).m.message, /找不到节点/);
-  assert.match((await ask("@clip/c1/card", 0, 4096, "k-unknown")).m.message, /没有这一版项目/);
-  assert.match((await ask("@clip/c1/card", 0, 0)).m.message, /范围不对/);
+  assert.match((await ask("nope")).m.message, /node not found/);
+  assert.match((await ask("@clip/c1/card", 0, 4096, "k-unknown")).m.message, /No such project version/);
+  assert.match((await ask("@clip/c1/card", 0, 0)).m.message, /range is invalid/);
 
   // 换代:源码改了(固定 440 Hz),同一份项目按新代码求值
   files.set(`${U}good.tsx`, AV("good", { hz: "440" }));
   await t2.handle({ t: "load", seq: 2, bundles: [await bundleOf(files, `${U}good.tsx`)] });
-  assert.deepEqual(messages.at(-1).m.audioCards, ["good"], "不在这一组里的撤下");
+  assert.deepEqual(messages.at(-1).m.audioCards, ["good"], "cards not in this set are withdrawn");
   const e = await ask("@clip/c1/card", 0, 2048);
   assert.deepEqual([...e.m.samples], [...expected(440, 0, 2048)]);
-  assert.equal((await ask("@clip/c2/card")).m.t, "error", "撤下的卡求不了");
+  assert.equal((await ask("@clip/c2/card")).m.t, "error", "a withdrawn card cannot be requested");
 });
 
 /** 进程内的假线程:把宿主发来的消息交给真的 `createSoundThread`;`stall` 为真时不回 `render`(模拟死循环) */
@@ -197,9 +197,9 @@ function fakeTimers() {
     pending: () => [...timers.values()].map((t) => t.ms), fire() { const [id, t] = [...timers][timers.size - 1]; timers.delete(id); t.fn(); } };
 }
 
-test("OCE-A-03 舞台一侧的宿主:起线程、载入、求块;时限;超时掐掉、重起;连着两次超时不再试;取消;关掉", async () => {
-  assert.equal(SH.soundTimeoutMs(4096, 48000), 10_000, "不到 5 秒的声音:最少 10 秒");
-  assert.equal(SH.soundTimeoutMs(48000 * 30, 48000), 60_000, "30 秒声音:60 秒墙钟");
+test("OCE-A-03 stage-side host: spawn thread, load, request chunks; time limit; kill on timeout and restart; no retry after two consecutive timeouts; cancel; close", async () => {
+  assert.equal(SH.soundTimeoutMs(4096, 48000), 10_000, "sound under 5 seconds: 10 seconds minimum");
+  assert.equal(SH.soundTimeoutMs(48000 * 30, 48000), 60_000, "30-second sound: 60-second wall clock");
   assert.equal(SH.soundTimeoutMs(100, 0), 10_000);
 
   const files = lib({ [`${U}good.tsx`]: AV("good"), [`${U}top.tsx`]: AV("top", { top: "lottie.loadAnimation({});" }) });
@@ -209,30 +209,30 @@ test("OCE-A-03 舞台一侧的宿主:起线程、载入、求块;时限;超时�
   const host = SH.createSoundHost({ spawn: workers.spawn, ...timers });
   const outcome = await host.setBundles(bundles);
   assert.deepEqual(outcome.audioCards, ["good"]);
-  assert.match(outcome.blocked[`${U}top.tsx`], /声音代码里不能用/);
-  assert.equal(workers.made.length, 1, "起了一个线程");
-  assert.equal((await host.setBundles(bundles)).audioCards.length, 1, "同一组包不重新载入");
+  assert.match(outcome.blocked[`${U}top.tsx`], /Sound code cannot use/);
+  assert.equal(workers.made.length, 1, "one thread was spawned");
+  assert.equal((await host.setBundles(bundles)).audioCards.length, 1, "Same set of bundles is not reloaded");
   assert.equal(workers.made[0].received.filter((m) => m.t === "load").length, 1);
 
   const req = (extra = {}) => ({ projectKey: "k1", project, nodeId: "@clip/c1/card", start: 0, count: 4096, sampleRate: 48000, ...extra });
   const s1 = await host.render(req());
   assert.deepEqual([...s1], [...expected(660, 0, 4096)]);
   await host.render(req({ start: 4096 }));
-  assert.equal(workers.made[0].received.filter((m) => m.t === "project").length, 1, "同一版项目只发一次");
+  assert.equal(workers.made[0].received.filter((m) => m.t === "project").length, 1, "the same project version is sent only once");
   await host.render(req({ projectKey: "k2" }));
   assert.equal(workers.made[0].received.filter((m) => m.t === "project").length, 2);
-  assert.deepEqual(timers.pending(), [], "回来了就撤掉计时");
+  assert.deepEqual(timers.pending(), [], "timers are cleared once replies return");
 
   // 超时:线程不回(死循环)→ 到时掐掉,在途的请求都失败
   workers.made[0].stall = true;
   const p1 = host.render(req({ count: 48000 * 8 }));
   const p2 = host.render(req({ nodeId: "@clip/c1/card", start: 9999, count: 100 }));
   await new Promise((r) => setTimeout(r, 0));
-  assert.deepEqual(timers.pending().sort((a, b) => a - b), [10_000, 16_000], "8 秒声音给 16 秒,短块给 10 秒");
+  assert.deepEqual(timers.pending().sort((a, b) => a - b), [10_000, 16_000], "8-second sound gets 16 seconds, short chunk gets 10 seconds");
   timers.fire();
   await assert.rejects(p1, new RegExp(SH.SOUND_TIMEOUT_MESSAGE));
   await assert.rejects(p2, new RegExp(SH.SOUND_TIMEOUT_MESSAGE));
-  assert.equal(workers.made[0].terminated, true, "线程被 terminate 掐掉");
+  assert.equal(workers.made[0].terminated, true, "thread is killed via terminate");
   assert.equal(host.stats().timeouts, 1);
   assert.equal(host.stats().pending, 0);
 
@@ -254,7 +254,7 @@ test("OCE-A-03 舞台一侧的宿主:起线程、载入、求块;时限;超时�
   workers.state.stallAll = false;
   const spawnedBefore = workers.made.length;
   await assert.rejects(host.render(req()), new RegExp(SH.SOUND_TIMEOUT_MESSAGE));
-  assert.equal(workers.made.length, spawnedBefore, "不再为它起线程");
+  assert.equal(workers.made.length, spawnedBefore, "no more threads are spawned for it");
 
   // 取消:只撤这一个请求
   const host2 = SH.createSoundHost({ spawn: workers.spawn, ...fakeTimers() });
@@ -265,12 +265,12 @@ test("OCE-A-03 舞台一侧的宿主:起线程、载入、求块;时限;超时�
   await new Promise((r) => setTimeout(r, 0));
   controller.abort();
   await assert.rejects(p3, { name: "AbortError" });
-  assert.equal(workers.made.at(-1).terminated, false, "取消不掐线程");
+  assert.equal(workers.made.at(-1).terminated, false, "cancel does not kill the thread");
   assert.equal(host2.stats().pending, 0);
   // 关掉
   host2.dispose();
   assert.equal(workers.made.at(-1).terminated, true);
-  await assert.rejects(host2.render(req()), /已经关了/);
+  await assert.rejects(host2.render(req()), /already closed/);
   host.dispose();
 });
 
@@ -283,16 +283,16 @@ const builtinAudio = { id: "b-audio", name: "内置音频卡", source: "native",
   audio: (_s, range, p) => { pageEvaluations++; return new Float32Array(range.count).fill(p.value); } };
 const defs = new Map([builtinAv, builtinAudio].map((d) => [d.id, d]));
 const SYNCED = [
-  { id: "s-av", name: "同步有声卡", source: `${U}s-av.tsx`, embeddedAudio: true, audioSourceVersion: "asv-1", defaults: { frequency: 660 } },
-  { id: "s-bad", name: "载入不成的", source: `${U}s-bad.tsx`, embeddedAudio: true, audioSourceVersion: "asv-2", defaults: {} },
-  { id: "s-mute", name: "同步无声卡", source: `${U}s-mute.tsx`, defaults: {} },
+  { id: "s-av", name: "Synced card with sound", source: `${U}s-av.tsx`, embeddedAudio: true, audioSourceVersion: "asv-1", defaults: { frequency: 660 } },
+  { id: "s-bad", name: "Fails to load", source: `${U}s-bad.tsx`, embeddedAudio: true, audioSourceVersion: "asv-2", defaults: {} },
+  { id: "s-mute", name: "Synced silent card", source: `${U}s-mute.tsx`, defaults: {} },
 ];
 /** 假的隔离宿主:记下每次请求,回固定值的块 */
 function fakeIsolated({ value = 0.125, channels = 1, bad = null } = {}) {
   const calls = [];
   return { calls,
     runnable: (id) => id === "s-av" || id === "s-node",
-    blocker: (id) => (id === "s-bad" ? "声音代码里不能用 lottie-web" : null),
+    blocker: (id) => (id === "s-bad" ? "Sound code cannot use lottie-web" : null),
     versionOf: (id) => `gen-${id}`,
     render: async (request) => {
       calls.push({ nodeId: request.nodeId, start: request.start, count: request.count, sampleRate: request.sampleRate });
@@ -326,13 +326,13 @@ const editorProject = () => projectOf([clip("b", "b-av"), clip("s", "s-av"), cli
     { id: "n-media", adapter: "card", cardId: "s-node", kind: "audio", inputs: { source: { nodeId: "@clip/med/source" } }, params: {} },
   ] });
 
-test("OCE-A-04 编辑页面的分派:内置卡在页面里求值,同步来的卡只交给隔离的声音宿主;合成不了的说明原因", async () => {
+test("OCE-A-04 editor page dispatch: built-in cards are evaluated in the page, synced cards go only to the isolated sound host; cards that cannot be synthesized state the reason", async () => {
   editorSetup();
   try {
     const p = editorProject();
     const node = (id) => CA.cardAudioNodeOf(p, p.tracks[0].clips.find((c) => c.id === id));
-    assert.equal(node("s"), "@clip/s/card", "同步来的有声用户卡:片段有音频节点");
-    assert.equal(node("q"), null, "同步来的无声卡没有");
+    assert.equal(node("s"), "@clip/s/card", "synced user card with sound: the clip has an audio node");
+    assert.equal(node("q"), null, "synced silent card has none");
     // 没接宿主:内置卡照旧在页面里;同步来的合成不了
     assert.deepEqual(CA.cardAudioRoute(p, node("b")), { route: "page" });
     assert.deepEqual(CA.cardAudioRoute(p, node("s")), { route: null, reason: CA.ONLINE_AUDIO_NO_THREAD });
@@ -343,10 +343,10 @@ test("OCE-A-04 编辑页面的分派:内置卡在页面里求值,同步来的卡
     const iso = fakeIsolated();
     CA.setIsolatedCardAudioHost(iso);
     assert.deepEqual(CA.cardAudioRoute(p, node("s")), { route: "isolated" });
-    assert.deepEqual(CA.cardAudioRoute(p, "n-audio"), { route: "isolated" }, "同步来的音频素材效果卡(不读素材)");
-    assert.deepEqual(CA.cardAudioRoute(p, node("x")), { route: null, reason: "声音代码里不能用 lottie-web" }, "线程里载入不成:原因照搬");
+    assert.deepEqual(CA.cardAudioRoute(p, "n-audio"), { route: "isolated" }, "synced audio media effect card (does not read media)");
+    assert.deepEqual(CA.cardAudioRoute(p, node("x")), { route: null, reason: "Sound code cannot use lottie-web" }, "fails to load in the thread: reason is copied verbatim");
     assert.deepEqual(CA.cardAudioRoute(p, "n-mix"), { route: null, reason: CA.ONLINE_AUDIO_MIXED });
-    assert.deepEqual(CA.cardAudioRoute(p, "n-media"), { route: null, reason: CA.ONLINE_AUDIO_NEEDS_MEDIA }, "要读素材采样的音频素材效果卡不在线合成");
+    assert.deepEqual(CA.cardAudioRoute(p, "n-media"), { route: null, reason: CA.ONLINE_AUDIO_NEEDS_MEDIA }, "audio media effect cards that need to read media samples are not synthesized online");
     assert.equal(CA.onlineCardAudioBlocker(p, "n-media"), CA.ONLINE_AUDIO_NEEDS_MEDIA);
     assert.equal(CA.onlineCardAudioBlocker(p, node("s")), null);
 
@@ -354,8 +354,8 @@ test("OCE-A-04 编辑页面的分派:内置卡在页面里求值,同步来的卡
     assert.equal(reply.frames, 64);
     assert.equal(reply.channels, 1);
     assert.equal(reply.samples[0], 0.125);
-    assert.deepEqual(iso.calls, [{ nodeId: "@clip/s/card", start: 0, count: 64, sampleRate: 48000 }], "采样块来自隔离宿主");
-    assert.equal(pageEvaluations, 0, "编辑页面里没有求值");
+    assert.deepEqual(iso.calls, [{ nodeId: "@clip/s/card", start: 0, count: 64, sampleRate: 48000 }], "sample chunk comes from the isolated host");
+    assert.equal(pageEvaluations, 0, "no evaluation in the editor page");
     // 内置卡:照旧在页面里,不去宿主
     const builtinReply = await CA.requestCardAudio({ project: p, nodeId: node("b"), start: 0, count: 64, sampleRate: 48000 });
     assert.equal(builtinReply.samples[0], 0.25);
@@ -364,19 +364,19 @@ test("OCE-A-04 编辑页面的分派:内置卡在页面里求值,同步来的卡
 
     // 编辑页面里同步卡的替身:一调就抛,真的声音代码不在这里
     const standIn = CA.cardAudioGraphCard("s-av");
-    assert.equal(R.getCard("s-av"), undefined, "注册表里没有它的定义");
+    assert.equal(R.getCard("s-av"), undefined, "the registry has no definition for it");
     assert.deepEqual(standIn.defaults, { frequency: 660 });
     assert.throws(() => standIn.audio({}, { start: 0, count: 1, sampleRate: 48000 }, {}), new RegExp(CA.SYNCED_AUDIO_NOT_HERE));
-    assert.equal(CA.cardAudioGraphCard("s-mute"), undefined, "无声的同步卡没有替身");
-    assert.equal(CA.cardAudioGraphCard("b-av"), builtinAv, "页面里有定义的用定义");
+    assert.equal(CA.cardAudioGraphCard("s-mute"), undefined, "a silent sync card has no stand-in");
+    assert.equal(CA.cardAudioGraphCard("b-av"), builtinAv, "use the definition when the page has one");
     const G = await import(srcUrl("kernel/cardGraph.mjs"));
     await assert.rejects(AS.evaluateCardAudio({ graph: G.projectCardGraph(p, CA.cardAudioGraphCard), project: p, getCard: CA.cardAudioGraphCard, sampleRate: 48000 }, "@clip/s/card", { start: 0, count: 8, sampleRate: 48000 }),
-      /声音代码|不在编辑页面里执行/, "就算有人拿替身直接求值,也执行不到同步卡的代码");
+      /sound code|not executed in the editor page/, "even if someone evaluates the stand-in directly, the sync card's code cannot run");
 
     // 宿主回的坏块不要(声音线程回来的东西当不可信输入)
     for (const bad of ["nan", "shape", "type"]) {
       CA.setIsolatedCardAudioHost(fakeIsolated({ bad }));
-      await assert.rejects(CA.requestCardAudio({ project: { ...p }, nodeId: "@clip/s/card", start: 0, count: 64, sampleRate: 48000 }), /声音线程回的采样块/, bad);
+      await assert.rejects(CA.requestCardAudio({ project: { ...p }, nodeId: "@clip/s/card", start: 0, count: 64, sampleRate: 48000 }), /sample block returned by the sound thread/, bad);
     }
 
     // 桌面运行环境:不看宿主,同步表为空时与原来相同
@@ -389,7 +389,7 @@ test("OCE-A-04 编辑页面的分派:内置卡在页面里求值,同步来的卡
   } finally { editorCleanup(); }
 });
 
-test("OCE-A-05 轻重与生成:测量只经宿主拿采样块(不出声),判轻合成、判重不合成;持久产物的采样来自宿主", async () => {
+test("OCE-A-05 light/heavy and generation: measurement gets sample blocks only through the host (silent), light is synthesized, heavy is not; samples for persistent output come from the host", async () => {
   editorSetup();
   const audioLog = [];
   const realAC = globalThis.AudioContext, realURL = globalThis.URL.createObjectURL;
@@ -407,17 +407,17 @@ test("OCE-A-05 轻重与生成:测量只经宿主拿采样块(不出声),判轻�
     CA.setIsolatedCardAudioHost(iso);
     assert.equal(J.clipSoundRunnable(p, s), true);
     assert.equal(J.clipSoundRunnable(p, x), false);
-    assert.equal((await J.decideClipSound(p, x)).message, "声音代码里不能用 lottie-web", "载入不成的:原因照搬到说明里");
+    assert.equal((await J.decideClipSound(p, x)).message, "Sound code cannot use lottie-web", "if loading fails: copy the reason into the message as is");
     // 第一次要用:测量(经宿主),判轻
     d = await J.decideClipSound(p, s);
     assert.equal(d.synth, true);
-    assert.ok(iso.calls.length >= 1, "测量的采样块来自隔离宿主");
-    assert.equal(pageEvaluations, 0, "编辑页面里没有执行任何 audio()");
-    assert.deepEqual(audioLog, [], "测量不出声:没有新建音频上下文、没有可播放地址");
+    assert.ok(iso.calls.length >= 1, "the measured sample blocks come from the isolated host");
+    assert.equal(pageEvaluations, 0, "no audio() was executed in the editor page");
+    assert.deepEqual(audioLog, [], "measurement makes no sound: no new audio context, no playable URL");
     const measured = iso.calls.length;
     // 记录在:再问不重测
     assert.equal((await J.decideClipSound(p, s)).synth, true);
-    assert.equal(iso.calls.length, measured, "复用记录,不重测");
+    assert.equal(iso.calls.length, measured, "reuse the record, no re-measurement");
     // 判重(按真实的记录形状写一条每块 200 ms):不合成
     const key = J.soundTargetOf(p, s).soundKey;
     await store.putCost(SC.soundCostStoreKey(key, "test-device"), { soundKey: key, kind: "card", device: "test-device", blockMs: 200, blockMaxMs: 220, blockFrames: 4096, sampleRate: 48000, samples: 16, measuredAt: 1 });
@@ -435,11 +435,11 @@ test("OCE-A-05 轻重与生成:测量只经宿主拿采样块(不出声),判轻�
     const wav = await CA.renderEmbeddedCardWav(p3, s3, new AbortController().signal);
     assert.equal(wav.frames, 24000);
     assert.equal(wav.channels, 2);
-    assert.equal(iso2.calls.reduce((n, c) => n + c.count, 0), 24000, "一段不落、不重");
+    assert.equal(iso2.calls.reduce((n, c) => n + c.count, 0), 24000, "no segment skipped, none repeated");
     assert.equal(new DataView(wav.wav.buffer).getFloat32(44, true), 0.5);
     assert.equal(pageEvaluations, 0);
     // 合成不了的:生成直接报原因
-    await assert.rejects(CA.renderEmbeddedCardWav(p3, p3.tracks[0].clips.find((c) => c.id === "x"), new AbortController().signal), /声音代码里不能用 lottie-web/);
+    await assert.rejects(CA.renderEmbeddedCardWav(p3, p3.tracks[0].clips.find((c) => c.id === "x"), new AbortController().signal), /Sound code cannot use lottie-web/);
   } finally {
     restore();
     globalThis.AudioContext = realAC;
@@ -448,7 +448,7 @@ test("OCE-A-05 轻重与生成:测量只经宿主拿采样块(不出声),判轻�
   }
 });
 
-test("OCE-A-06 守门:编辑页面、导出页、声音适配层不引加载器与声音线程;包名与白名单一致;线程入口放开用户卡的声音", () => {
+test("OCE-A-06 gatekeeper: the editor page, export page and sound adapter layer do not import the loader or the sound thread; package names match the allowlist; the thread entry allows user card sound", () => {
   const forbidden = /cardRuntime\/(loader|soundThread|soundEngine|soundModules|soundWorker|soundHost|soundSpawn|stageRuntime|hostModules)/;
   const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]));
   const offenders = [];
@@ -458,7 +458,7 @@ test("OCE-A-06 守门:编辑页面、导出页、声音适配层不引加载器�
       if (forbidden.test(fs.readFileSync(file, "utf8"))) offenders.push(path.relative(ROOT, file));
     }
   }
-  assert.deepEqual(offenders, [], "这些文件在编辑页面的源里,不能引执行卡片代码的模块");
+  assert.deepEqual(offenders, [], "these files are in the editor page's sources and must not import modules that execute card code");
   const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
   // 声音线程的包表:名字与白名单一一对应;要 DOM 的三样是占位
   const modules = read("src/online/cardRuntime/soundModules.ts");
@@ -469,7 +469,7 @@ test("OCE-A-06 守门:编辑页面、导出页、声音适配层不引加载器�
   const worker = read("src/online/cardRuntime/soundWorker.ts");
   assert.match(worker, /setOnlineUserCardAudioGate\(\(\) => true\)/);
   assert.match(worker, /createSoundThread\(/);
-  assert.match(read("src/online/cardRuntime/soundThread.ts"), /createCardLoader\(/, "与舞台同一个加载器");
+  assert.match(read("src/online/cardRuntime/soundThread.ts"), /createCardLoader\(/, "same loader as the stage");
   // 编辑页面这一侧不放开:`soundPolicy.ts` 的接口只在线程入口里调
   // A3 之后闭源的那几摊在 cloud/ 下（公开仓库里没有这个目录）；这道检查原来就管着它们，搬走以后也要接着管
   const pageDirs = [path.join(ROOT, "src"), ...[path.join(ROOT, "cloud", "src"), path.join(ROOT, "cloud", "online")].filter((d) => fs.existsSync(d))];
@@ -478,7 +478,7 @@ test("OCE-A-06 守门:编辑页面、导出页、声音适配层不引加载器�
   assert.deepEqual(callers, ["src/online/cardRuntime/soundWorker.ts", "src/online/soundPolicy.ts"]);
 });
 
-test("OCE-A-07 整条链路(不含舞台 RPC):编辑页面要一块 → 隔离宿主 → 舞台的声音这一半 → 线程里执行同步卡的 audio() → 采样块回来", async () => {
+test("OCE-A-07 full chain (without stage RPC): editor page requests a block → isolated host → the sound half of the stage → sync card's audio() runs in the thread → sample block comes back", async () => {
   const SS = await import(srcUrl("online/cardRuntime/stageSound.ts"));
   const IS = await import(srcUrl("editor/io/isolatedSound.ts"));
   const files = lib({ [`${U}s-av.tsx`]: AV("s-av"), [`${U}s-bad.tsx`]: AV("s-bad", { top: "lottie.loadAnimation({});" }) });
@@ -489,28 +489,28 @@ test("OCE-A-07 整条链路(不含舞台 RPC):编辑页面要一块 → 隔离�
     entryCards: (entry) => SYNCED.filter((c) => c.source === entry).map((c) => c.id) });
   const rpc = [];
   // 舞台 RPC 的替身:结构化克隆一遍(跨文档传的就是克隆)
-  const link = IS.createIsolatedSoundLink({ render: (request, signal) => { rpc.push({ ...request, project: request.project === undefined ? undefined : "有" }); return sound.render(structuredClone(request), signal); } });
+  const link = IS.createIsolatedSoundLink({ render: (request, signal) => { rpc.push({ ...request, project: request.project === undefined ? undefined : "present" }); return sound.render(structuredClone(request), signal); } });
   editorSetup();
   try {
     const state = await sound.setBundles(bundles);
     assert.deepEqual(Object.keys(state.ready), ["s-av"]);
-    assert.match(state.blocked["s-bad"], /声音代码里不能用 lottie-web/);
+    assert.match(state.blocked["s-bad"], /Sound code cannot use lottie-web/);
     assert.deepEqual(reported.at(-1), state);
     link.setState(state);
     assert.equal(CA.isolatedCardAudioHost(), link.host());
     const p = projectOf([clip("s", "s-av", { params: { frequency: 990 } }), clip("x", "s-bad")]);
     assert.deepEqual(CA.cardAudioRoute(p, "@clip/s/card"), { route: "isolated" });
-    assert.match(CA.cardAudioRoute(p, "@clip/x/card").reason, /声音代码里不能用 lottie-web/);
+    assert.match(CA.cardAudioRoute(p, "@clip/x/card").reason, /Sound code cannot use lottie-web/);
     const reply = await CA.requestCardAudio({ project: p, nodeId: "@clip/s/card", start: 0, count: 2048, sampleRate: 48000 });
-    assert.deepEqual([...reply.samples], [...expected(990, 0, 2048)], "编辑页面拿到的就是线程里那张卡按片段参数算出来的采样");
+    assert.deepEqual([...reply.samples], [...expected(990, 0, 2048)], "the editor page gets exactly the samples that card in the thread computed from the clip parameters");
     await CA.requestCardAudio({ project: p, nodeId: "@clip/s/card", start: 2048, count: 512, sampleRate: 48000 });
-    assert.deepEqual(rpc.map((r) => r.project), ["有", undefined], "项目每个版本只发一次");
+    assert.deepEqual(rpc.map((r) => r.project), ["present", undefined], "the project is sent only once per version");
     assert.equal(pageEvaluations, 0);
 
     // 舞台那头重起过(状态重报):之前发过的项目重新带上
     link.setState(await sound.setBundles(bundles));
     await CA.requestCardAudio({ project: p, nodeId: "@clip/s/card", start: 4096, count: 64, sampleRate: 48000 });
-    assert.equal(rpc.at(-1).project, "有");
+    assert.equal(rpc.at(-1).project, "present");
 
     // 换代:签名变了,块缓存不串(同一个项目、同一段,按新代码)
     const v1 = link.host().versionOf("s-av");
@@ -522,7 +522,7 @@ test("OCE-A-07 整条链路(不含舞台 RPC):编辑页面要一块 → 隔离�
 
     // 舞台报来的状态当不可信输入
     assert.equal(IS.sanitizeSoundState("x"), null);
-    assert.deepEqual(IS.sanitizeSoundState({ ready: { a: "1", b: 2, "": "x" }, blocked: { c: "原因".repeat(200) } }), { ready: { a: "1" }, blocked: { c: "原因".repeat(200).slice(0, 240) } });
+    assert.deepEqual(IS.sanitizeSoundState({ ready: { a: "1", b: 2, "": "x" }, blocked: { c: "reason".repeat(200) } }), { ready: { a: "1" }, blocked: { c: "reason".repeat(200).slice(0, 240) } });
     // 线程没了:撤下宿主,同步来的卡回到「合成不了」
     link.setState(null);
     assert.equal(CA.isolatedCardAudioHost(), null);
