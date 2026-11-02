@@ -61,7 +61,7 @@ test("UC-01 撤销按修改项细分:没被别人改过的直接撤,被改过的
   assert.equal(clip(B.ds.project, "c1").end, 2);
   assert.equal(A.ds.canUndo(), false, "直接撤的那一部分是这次撤销的一部分,不另进撤销栈");
   const rows = mergeRows(A.ds.project, plan.things);
-  assert.equal(rows[0].props[0].text, "透明度 0.8 → 0.4（云端现在是 0.6）");
+  assert.equal(rows[0].props[0].text, "Opacity 0.8 → 0.4 (The cloud is now 0.6)");
   assert.equal(rows[0].conflict, true);
   // 用户在窗口里勾上、点「合并」:照撤回后的值写
   const merged = applyMerge(A.ds.project, plan.things, new Map([["undo:clip:c1", new Set(["opacity"])]]));
@@ -109,6 +109,6 @@ test("UC-04 改密退出触发的撤回到达页面:只是一次远端修改,不
   assert.equal(clip(A.ds.project, "c1").opacity, 0.1);
   const kinds = A.notices.slice(before).map((n) => n.kind);
   assert.deepEqual(kinds, ["remote"]);
-  assert.equal(rolledBackText("小王"), "小王撤回了内容");
+  assert.equal(rolledBackText("小王"), "小王 undid content");
   assert.equal(rolledBackText(null), "A member undid content");
 });

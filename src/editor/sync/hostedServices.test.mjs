@@ -57,13 +57,13 @@ test("CAU-SW-01 云端 Agent 一行的文案与同组一致;成员行下的云�
   assert.ok(t.changed(false).length > 8);
   assert.equal(t.changed(true), "", "只在关闭时给别的成员气泡,打开时不提示〔用户 2026-10-07 定〕");
   assert.equal(H.HOSTED_SERVICE_TEXT.render.changed(true), "", "渲染节点同一个规矩:只在关闭时给别的成员气泡,打开时不提示〔用户 2026-10-07 定〕");
-  assert.match(H.HOSTED_SERVICE_TEXT.render.changed(false), /创建者关闭了托管方的渲染节点/);
-  assert.match(t.hint(false), /已关闭/);
-  assert.match(t.changed(false), /创建者关闭了云端 Agent/);
+  assert.match(H.HOSTED_SERVICE_TEXT.render.changed(false), /The creator turned off the host's render node/);
+  assert.match(t.hint(false), /Turned off/);
+  assert.match(t.changed(false), /The creator turned off the Cloud Agent/);
   assert.notEqual(H.HOSTED_SERVICE_TEXT.render.confirm(false), t.confirm(false), "确认弹窗的话按服务各写各的");
   const conns = [{ role: "page" }, { role: "agent", conversation: 2 }, { role: "agent", conversation: "cc-1", service: "agent" }];
   assert.deepEqual(H.cloudAgentConns(conns), [{ role: "agent", conversation: "cc-1", service: "agent" }]);
-  assert.equal(H.cloudAgentLabel("alice"), "alice的云端 Agent");
+  assert.equal(H.cloudAgentLabel("alice"), "alice's Cloud Agent");
 });
 
 test("HR24a 通知落到状态上:认得的服务才改;不认识或这个项目没有这项服务就原样", () => {
@@ -108,22 +108,22 @@ test("HR24b 没有这一项的情况:放本机、没有 hosted 字段、availabl
 
 test("HR24b 放云端且 available:出现,缺省勾上;创建者能改,成员只读", () => withRows(({ render }) => {
   const asCreator = render({ where: "hosted", hosted: ON, creator: true });
-  assert.match(asCreator, /托管方的渲染节点/);
+  assert.match(asCreator, /Host&#x27;s render node/);
   const box = checkboxOf(asCreator);
   assert.ok(box, "有勾选框");
   assert.match(box, /checked=""/, "缺省勾上");
   assert.doesNotMatch(box, /disabled/, "创建者可以改");
-  assert.doesNotMatch(asCreator, /只有创建者能改/);
+  assert.doesNotMatch(asCreator, /only the creator can change this/);
 
   const asMember = render({ where: "hosted", hosted: ON, creator: false });
   const memberBox = checkboxOf(asMember);
   assert.match(memberBox, /checked=""/);
   assert.match(memberBox, /disabled=""/, "成员只读");
-  assert.match(asMember, /只有创建者能改/);
+  assert.match(asMember, /only the creator can change this/);
 
   const closed = render({ where: "hosted", hosted: OFF, creator: true });
   assert.doesNotMatch(checkboxOf(closed), /checked/, "关掉后不勾");
-  assert.match(closed, /已关闭/);
+  assert.match(closed, /Turned off/);
 
   const busy = render({ where: "hosted", hosted: ON, creator: true, busy: true });
   assert.match(checkboxOf(busy), /disabled=""/, "忙的时候创建者也不能再点");
@@ -156,16 +156,16 @@ test("CAU-SW-02 项目设置里「云端 Agent」一行:放云端且 hosted.agen
   assert.equal(agentBoxOf(render({ where: "hosted", hosted: ON, creator: true })), null, "这台托管端没有云端 Agent(available 为假):没有这一行");
   assert.equal(render({ where: "lan", hosted: BOTH, creator: true }), "", "放本机的项目没有");
   const asCreator = render({ where: "hosted", hosted: BOTH, creator: true });
-  assert.match(asCreator, /云端 Agent/);
-  assert.match(asCreator, /AI 栏里选「云端」/, "有一行说明");
+  assert.match(asCreator, /Cloud Agent/);
+  assert.match(asCreator, /choose &quot;Cloud&quot; in the AI panel/, "有一行说明");
   assert.match(agentBoxOf(asCreator), /checked=""/, "缺省勾上");
   assert.doesNotMatch(agentBoxOf(asCreator), /disabled/, "创建者可以改");
-  assert.ok(asCreator.indexOf("Host's render node") < asCreator.indexOf("Cloud Agent"), "与渲染节点的开关放在一起,在它后面");
+  assert.ok(asCreator.indexOf("Host&#x27;s render node") < asCreator.indexOf("Cloud Agent"), "与渲染节点的开关放在一起,在它后面");
   const asMember = render({ where: "hosted", hosted: BOTH, creator: false });
   assert.match(agentBoxOf(asMember), /disabled=""/, "成员只读");
   const closed = render({ where: "hosted", hosted: { ...BOTH, agent: { available: true, enabled: false } }, creator: false });
   assert.doesNotMatch(agentBoxOf(closed), /checked/);
-  assert.match(closed, /已关闭:成员不能再用云端 Agent|已关闭：成员不能再用云端 Agent/);
+  assert.match(closed, /Turned off: members can no longer use the Cloud Agent/);
 }));
 
 test("CAU-SIGN-01 署名:云端 Agent 的改动别人看到「〈成员名〉的云端 Agent」,发起的设备上是「你的云端 Agent」;本机 Agent 的说法不变", async () => {
@@ -176,21 +176,21 @@ test("CAU-SIGN-01 署名:云端 Agent 的改动别人看到「〈成员名〉的
     const bob = { session: "s-bob", userId: "bob@dev-b" };
     const cloud = { userId: "alice@dev-a", deviceId: "dev-a", role: "agent", conversation: 3, session: "s-agent", service: "agent" };
     // 两种形状都认:DocSync 记的 { actor, session },与文档服务直接给的 actor 本身
-    assert.equal(L.writerLabel({ actor: cloud, session: "s-agent" }, bob), "alice的云端 Agent");
-    assert.equal(L.writerLabel(cloud, bob), "alice的云端 Agent");
+    assert.equal(L.writerLabel({ actor: cloud, session: "s-agent" }, bob), "alice's Cloud Agent");
+    assert.equal(L.writerLabel(cloud, bob), "alice's Cloud Agent");
     // 发起成员不在线(成员列表里查不到显示名)时照样有名字;在线、重名带设备名时也只用用户名
-    assert.equal(L.writerLabel({ actor: cloud }, bob, new Map([["alice@dev-a", "alice (电脑)"]])), "alice的云端 Agent");
+    assert.equal(L.writerLabel({ actor: cloud }, bob, new Map([["alice@dev-a", "alice (电脑)"]])), "alice's Cloud Agent");
     // 用户名里带 @ 的:取最后一个 @ 之前
-    assert.equal(L.writerLabel({ actor: { ...cloud, userId: "a@b@dev-a" } }, bob), "a@b的云端 Agent");
+    assert.equal(L.writerLabel({ actor: { ...cloud, userId: "a@b@dev-a" } }, bob), "a@b's Cloud Agent");
     // 发起的那台设备上
     assert.equal(L.writerLabel({ actor: cloud }, { session: "s-alice", userId: "alice@dev-a" }), "Your Cloud Agent");
     // 同一位成员在另一台设备上看:按名字说
-    assert.equal(L.writerLabel({ actor: cloud }, { session: "s-alice-2", userId: "alice@dev-a2" }), "alice的云端 Agent");
+    assert.equal(L.writerLabel({ actor: cloud }, { session: "s-alice-2", userId: "alice@dev-a2" }), "alice's Cloud Agent");
     // 本机 Agent 的说法不变
     const local = { userId: "alice@dev-a", deviceId: "dev-a", role: "agent", conversation: 2, session: "s-x" };
-    assert.equal(L.writerLabel({ actor: { ...local, username: "alice" } }, bob, new Map([["alice@dev-a", "alice"]])), "alice · Agent · 第 2 个对话");
-    assert.equal(L.writerLabel({ actor: local }, bob), "Agent「第 2 个对话」");
-    assert.equal(L.writerLabel({ actor: local }, { session: "s-alice", userId: "alice@dev-a" }), "Agent「第 2 个对话」");
+    assert.equal(L.writerLabel({ actor: { ...local, username: "alice" } }, bob, new Map([["alice@dev-a", "alice"]])), "alice · Agent · Chat #2");
+    assert.equal(L.writerLabel({ actor: local }, bob), "Agent\"Chat #2\"");
+    assert.equal(L.writerLabel({ actor: local }, { session: "s-alice", userId: "alice@dev-a" }), "Agent\"Chat #2\"");
     assert.equal(L.writerLabel({ actor: { userId: "alice@dev-a", role: "page", session: "s-p" } }, bob, new Map([["alice@dev-a", "alice"]])), "alice");
   } finally {
     await server.close();
@@ -213,14 +213,14 @@ test("CAU-MEM-01 成员计数口径〔用户 2026-10-07 定,同日改按「一�
   // 谁都没有一轮在跑:bob 的云端 Agent 闲置(不计),carol 本人不在线、只剩闲置连接(整行不显示、不计)
   assert.deepEqual(H.memberCounts(people, NONE), { people: 2, agents: 2 }, "只剩 alice 的本机 Agent 2 个;bob、carol 的云端连接都闲置,不计");
   assert.deepEqual(H.visibleMembers(people, NONE).map((r) => r.username), ["alice", "bob"], "carol 本人不在线、只剩闲置的云端 Agent 连接:这一行不显示");
-  assert.equal(H.memberCountLabel(people, NONE), "成员：2 人 · Agent：2 个");
+  assert.equal(H.memberCountLabel(people, NONE), "Members: 2 · Agents: 2");
   assert.equal(H.isCloudAgentOnly(carol, NONE), false, "闲置的不标「离线,Agent 在跑」");
   assert.equal(H.isIdleCloudAgentOnly(carol, NONE), true);
   assert.equal(H.isCloudAgentRunning(bob, NONE), false, "本人在线、云端 Agent 闲置:不显示「[云端 Agent]」标记");
   // bob、carol 各有一轮在跑:bob 云端算 1 个(多条连接只算一个),carol 的行回来、标「离线,Agent 在跑」、计入 Agent 数、不计入人数
   const both = running("bob", "carol");
   assert.deepEqual(H.memberCounts(people, both), { people: 2, agents: 4 }, "真人在线 alice、bob;Agent:alice 本机 2 个 + bob 云端 1 个 + carol 云端 1 个");
-  assert.equal(H.memberCountLabel(people, both), "成员：2 人 · Agent：4 个");
+  assert.equal(H.memberCountLabel(people, both), "Members: 2 · Agents: 4");
   assert.deepEqual(H.visibleMembers(people, both).map((r) => r.username), ["alice", "bob", "carol"]);
   assert.equal(H.isPersonOnline(alice), true);
   assert.equal(H.isPersonOnline(carol), false);
@@ -235,18 +235,18 @@ test("CAU-MEM-01 成员计数口径〔用户 2026-10-07 定,同日改按「一�
 });
 
 test("CAU-MEM-02 成员计数:只有自己在线时是「成员:1 人 · Agent:0 个」;自己带本机 Agent、一轮在跑的云端 Agent 都计入 Agent;自己那一行也按这张表", () => {
-  assert.equal(H.memberCountLabel([], NONE), "成员：1 人 · Agent：0 个", "自己总是在线,人数至少 1");
+  assert.equal(H.memberCountLabel([], NONE), "Members: 1 · Agents: 0", "自己总是在线,人数至少 1");
   const me = mrow("me", [{ role: "page" }]);
-  assert.equal(H.memberCountLabel([me], NONE), "成员：1 人 · Agent：0 个");
+  assert.equal(H.memberCountLabel([me], NONE), "Members: 1 · Agents: 0");
   const me2 = mrow("me", [{ role: "page" }, { role: "agent", conversation: 1 }, { role: "agent", conversation: "cc-9", service: "agent" }]);
-  assert.equal(H.memberCountLabel([me2], NONE), "成员：1 人 · Agent：1 个", "自己的云端 Agent 闲置:只算本机的 1 个");
-  assert.equal(H.memberCountLabel([me2], running("me")), "成员：1 人 · Agent：2 个", "自己的云端 Agent 有一轮在跑:本机 1 + 云端 1");
+  assert.equal(H.memberCountLabel([me2], NONE), "Members: 1 · Agents: 1", "自己的云端 Agent 闲置:只算本机的 1 个");
+  assert.equal(H.memberCountLabel([me2], running("me")), "Members: 1 · Agents: 2", "自己的云端 Agent 有一轮在跑:本机 1 + 云端 1");
   assert.equal(H.isCloudAgentRunning(me2, running("me")), true, "自己那一行也按这张表显示「[云端 Agent]」");
   assert.equal(H.isCloudAgentRunning(me2, NONE), false);
   // 只有自己的云端 Agent 连着(自己的页面都关了):闲置时整行不显示、不计;一轮在跑时标「离线,Agent 在跑」、计 Agent、不计人数
   const gone = mrow("gone", [{ role: "agent", conversation: "cc-3", service: "agent" }]);
-  assert.equal(H.memberCountLabel([me, gone], NONE), "成员：1 人 · Agent：0 个");
-  assert.equal(H.memberCountLabel([me, gone], running("gone")), "成员：1 人 · Agent：1 个");
+  assert.equal(H.memberCountLabel([me, gone], NONE), "Members: 1 · Agents: 0");
+  assert.equal(H.memberCountLabel([me, gone], running("gone")), "Members: 1 · Agents: 1");
   assert.equal(H.isCloudAgentOnly(gone, running("gone")), true);
 });
 
@@ -317,27 +317,27 @@ const streamsBoxOf = (html) => html.match(/<input[^>]*data-pc="collab-hosted-ren
 
 test("HS11 组件:渲染节点那一行下面缩进多一行,按报来的值勾选;创建者能改,成员只读并带「只有创建者能改」", () => withRows(({ render }) => {
   const asCreator = render({ where: "hosted", hosted: WITH_STREAMS, creator: true, onToggleOption: () => {} });
-  assert.match(asCreator, /生成轨道流/);
-  assert.match(asCreator, /重卡在在线浏览器里播放更流畅/, "有一行说明");
+  assert.match(asCreator, /Generate track streams/);
+  assert.match(asCreator, /heavy cards play more smoothly in the online browser/, "有一行说明");
   const box = streamsBoxOf(asCreator);
   assert.ok(box, "有勾选框");
   assert.match(box, /checked=""/, "报来是开就勾上");
   assert.doesNotMatch(box, /disabled/, "创建者可以改");
-  assert.doesNotMatch(asCreator, /只有创建者能改/);
-  assert.ok(asCreator.indexOf("托管方的渲染节点</label>") < asCreator.indexOf("Generate track streams"), "在渲染节点那一行后面");
+  assert.doesNotMatch(asCreator, /only the creator can change this/);
+  assert.ok(asCreator.indexOf("Host&#x27;s render node</label>") < asCreator.indexOf("Generate track streams"), "在渲染节点那一行后面");
   // 缩进:挂在渲染节点那一行的容器里,带缩进用的类
   assert.match(asCreator, /<div class="pc-collab-hosted-sub" data-pc="collab-hosted-render-streams" data-state="on">/);
 
   const asMember = render({ where: "hosted", hosted: WITH_STREAMS, creator: false, onToggleOption: () => {} });
   assert.match(streamsBoxOf(asMember), /checked=""/);
   assert.match(streamsBoxOf(asMember), /disabled=""/, "成员只读");
-  assert.equal((asMember.match(/只有创建者能改/g) ?? []).length, 2, "渲染节点那一行、轨道流这一行各一条");
+  assert.equal((asMember.match(/only the creator can change this/g) ?? []).length, 2, "渲染节点那一行、轨道流这一行各一条");
 
   const off = render({ where: "hosted", hosted: STREAMS_OFF, creator: true, onToggleOption: () => {} });
   assert.doesNotMatch(streamsBoxOf(off), /checked/, "关掉后不勾");
-  assert.match(off, /没有打开：托管方的渲染节点不为这个项目生成轨道流，播放时用成员们各自设备生成的轨道流/);
-  assert.match(off, /会多用云端的渲染时间/, "关着的说明讲清代价");
-  assert.doesNotMatch(off, /渲染节点关着，暂不生效/, "渲染节点开着时不加这一句");
+  assert.match(off, /Not turned on: the host&#x27;s render node does not generate track streams for this project, and playback uses the track streams generated on each member&#x27;s own device/);
+  assert.match(off, /at the cost of more cloud render time/, "关着的说明讲清代价");
+  assert.doesNotMatch(off, /render node is off, not in effect for now/, "渲染节点开着时不加这一句");
   assert.match(off, /data-state="off"/);
 
   const busy = render({ where: "hosted", hosted: WITH_STREAMS, creator: true, busy: true, onToggleOption: () => {} });
@@ -350,7 +350,7 @@ test("HS11 权限组:streamsAllowed 为 false 时,创建者也不能勾选,说�
   const notAllowedHosted = { render: { available: true, enabled: true, streams: false, streamsAllowed: false } };
   const html = render({ where: "hosted", hosted: notAllowedHosted, creator: true, onToggleOption: () => {} });
   assert.match(streamsBoxOf(html), /disabled=""/, "无权限时创建者也无法勾选");
-  assert.match(html, /你的账号没有开启这一项的权限，请联系托管方。/);
+  assert.match(html, /Your account does not have permission to enable this option. Please contact the host./);
   assert.match(html, /<div class="pc-collab-hosted-sub pc-collab-hosted-sub--off" data-pc="collab-hosted-render-streams" data-state="disabled">/);
 }));
 
@@ -358,9 +358,9 @@ test("HS11 渲染节点那一行关着时:轨道流这一行置灰(不可点,带
   const html = render({ where: "hosted", hosted: RENDER_OFF, creator: true, onToggleOption: () => {} });
   assert.match(streamsBoxOf(html), /disabled=""/, "创建者也点不了");
   assert.match(streamsBoxOf(html), /checked=""/, "它自己的状态不变");
-  assert.match(html, /重卡在在线浏览器里播放更流畅。（渲染节点关着，暂不生效）/, "开着的说明后面加一句");
+  assert.match(html, /heavy cards play more smoothly in the online browser\.\(render node is off, not in effect for now\)/, "开着的说明后面加一句");
   const offAndGrey = render({ where: "hosted", hosted: { render: { available: true, enabled: false, streams: false } }, creator: false, onToggleOption: () => {} });
-  assert.match(offAndGrey, /会多用云端的渲染时间。（渲染节点关着，暂不生效）（只有创建者能改）/, "关着的说明后面加一句,成员再加「只有创建者能改」");
+  assert.match(offAndGrey, /at the cost of more cloud render time\.\(render node is off, not in effect for now\)\(only the creator can change this\)/, "关着的说明后面加一句,成员再加「只有创建者能改」");
   assert.match(html, /<div class="pc-collab-hosted-sub pc-collab-hosted-sub--off" data-pc="collab-hosted-render-streams" data-state="disabled">/);
   const back = render({ where: "hosted", hosted: { render: { available: true, enabled: true, streams: true } }, creator: true, onToggleOption: () => {} });
   assert.doesNotMatch(streamsBoxOf(back), /disabled/);
@@ -373,9 +373,9 @@ test("HS11 没有这一行的情况:放本机、没有 hosted、渲染节点不�
   assert.equal(render({ where: "hosted", hosted: { render: { available: false, enabled: true, streams: true } }, creator: true }), "");
   const old = render({ where: "hosted", hosted: ON, creator: true, onToggleOption: () => {} });
   assert.equal(streamsBoxOf(old), null, "旧托管端:不显示轨道流");
-  assert.doesNotMatch(old, /生成轨道流/);
+  assert.doesNotMatch(old, /Generate track streams/);
   assert.match(checkboxOf(old), /checked=""/, "渲染节点那一行不受影响");
-  assert.match(old, /托管方的渲染节点/);
+  assert.match(old, /Host&#x27;s render node/);
 }));
 
 test("HS11 点勾选:把「哪个服务的哪个选项、要改成什么」交给上层(创建者身份验证与确认弹窗由上层做);渲染节点自己的勾选不受影响", () => withRows(({ M }) => {
@@ -408,9 +408,9 @@ test("HS12 向后兼容(页面一侧):旧托管端的成员列表(没有 streams
   assert.deepEqual(H.hostedRowsOf("hosted", oldHosted).map((r) => r.service), ["render", "agent"]);
   assert.deepEqual(H.hostedOptionRowsOf("hosted", oldHosted), []);
   const html = render({ where: "hosted", hosted: oldHosted, creator: true });
-  assert.match(html, /托管方的渲染节点/);
-  assert.match(html, /云端 Agent/);
-  assert.doesNotMatch(html, /轨道流/);
+  assert.match(html, /Host&#x27;s render node/);
+  assert.match(html, /Cloud Agent/);
+  assert.doesNotMatch(html, /track streams/);
   // 新托管端多出的 streams 字段:服务那几行的 enabled 与 available 不受影响(旧页面只读这两项,多出的字段它不看)
   const rows = H.hostedRowsOf("hosted", { render: { available: true, enabled: false, streams: false }, agent: { available: true, enabled: true } });
   assert.deepEqual(rows.map((r) => [r.service, r.enabled]), [["render", false], ["agent", true]]);
@@ -430,7 +430,7 @@ test("HS13 账号项目:会话里的 hosted(渲染节点带 streams、云端 Age
   const asMember = render({ where: "hosted", hosted: session, creator: false, onToggleOption: () => {} });
   assert.match(box(asMember, "collab-hosted-render-toggle"), /disabled=""/, "成员只读");
   assert.match(box(asMember, "collab-hosted-render-streams-toggle"), /disabled=""/, "成员只读");
-  assert.match(asMember, /只有创建者能改/);
+  assert.match(asMember, /only the creator can change this/);
   // 账号项目新建时渲染节点是关的:轨道流那一行置灰
   const fresh = { agent: session.agent, render: { available: true, enabled: false, streams: false } };
   assert.equal(H.hostedOptionRowsOf("hosted", fresh)[0].parentOff, true);
@@ -481,12 +481,12 @@ test("STF2 账号项目:会话里 streamsAllowed 为 false(创建者不在权限
   assert.equal(H.hostedOptionRowsOf("hosted", denied)[0].notAllowed, true);
   const html = render({ where: "hosted", hosted: denied, creator: true, onToggleOption: () => {} });
   assert.match(streamsBoxOf(html), /disabled=""/, "创建者不在分组:点不了");
-  assert.match(html, /你的账号没有开启这一项的权限，请联系托管方。/);
+  assert.match(html, /Your account does not have permission to enable this option. Please contact the host./);
   assert.match(html, /data-pc="collab-hosted-render-streams" data-state="disabled"/);
   const allowed = { ...denied, render: { ...denied.render, streamsAllowed: true } };
   const ok = render({ where: "hosted", hosted: allowed, creator: true, onToggleOption: () => {} });
   assert.doesNotMatch(streamsBoxOf(ok), /disabled/, "在分组内:能打开");
-  assert.doesNotMatch(ok, /没有开启这一项的权限/);
+  assert.doesNotMatch(ok, /does not have permission to enable this option/);
   const on = render({ where: "hosted", hosted: { ...allowed, render: { ...allowed.render, streams: true } }, creator: true, onToggleOption: () => {} });
   assert.match(streamsBoxOf(on), /checked=""/); assert.doesNotMatch(streamsBoxOf(on), /disabled/, "打开后也能再关掉");
 }));

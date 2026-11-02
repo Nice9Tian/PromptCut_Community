@@ -17,6 +17,7 @@ import ts from "typescript";
 
 const vo = await import("./io/viewOnly.ts");
 const core = await import("./readOnlyCore.ts");
+const i18n = await import("../i18n/index.ts");
 const WHY_MEMBER = "You can only view this project, you cannot change its content.";
 
 /** 在这个权限下跑 fn：'r' = 只读项目（游客），'rw' / null = 照旧，'observe' = ?observe=1 */
@@ -45,7 +46,7 @@ async function load(rel, mocks) {
     ...mocks,
   };
   const mod = { exports: {} };
-  new Function("require", "module", "exports", compiled)((id) => (Object.hasOwn(all, id) ? all[id] : actualRequire(id)), mod, mod.exports);
+  new Function("require", "module", "exports", compiled)((id) => (Object.hasOwn(all, id) ? all[id] : /(^|\/)i18n\/index\.ts$/.test(id) ? i18n : actualRequire(id)), mod, mod.exports);
   return mod.exports;
 }
 const html = (Comp, props) => renderToStaticMarkup(React.createElement(Comp, props));
@@ -114,7 +115,7 @@ test("RR4 左栏预览卡：只有标了 edits 的卡（点它 / 拖它会改项
   assert.doesNotMatch(ro, /is-click|is-grab/);
   assert.match(ro, /is-readonly/);
   assert.match(ro, /aria-disabled="true"/);
-  assert.ok(ro.includes(`数字滚动\n${WHY_MEMBER}`), "悬停：名字 + 那一句");
+  assert.ok(ro.includes(`Number ticker\n${WHY_MEMBER}`), "悬停：名字 + 那一句");
   const view = card(await under("r", () => html(PreviewCard, { ...base })));
   assert.match(view, /draggable="true"/, "不改项目的卡(没标 edits)照旧");
   assert.match(view, /is-click/);

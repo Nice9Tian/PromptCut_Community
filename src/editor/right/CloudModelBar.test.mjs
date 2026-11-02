@@ -39,7 +39,7 @@ test('CMB1 节点报了档位:出思考强度下拉,「默认」在最前,标签
   const html = await render({ info: info({ efforts: ['low', 'medium', 'high'] }), effort: 'high', onEffort() {} });
   const effort = select(html, 'ai-cloud-effort');
   assert.ok(effort, '有思考强度下拉');
-  assert.deepEqual(options(effort), [['', '思考 默认'], ['low', '思考 低'], ['medium', '思考 中'], ['high', '思考 高']]);
+  assert.deepEqual(options(effort), [['', 'Thinking 默认'], ['low', 'Thinking 低'], ['medium', 'Thinking 中'], ['high', 'Thinking 高']]);
   assert.match(effort, /<option value="high" selected="">/, '选中存着的档位');
 });
 
@@ -54,6 +54,6 @@ test('CMB3 模型下拉:配了两个及以上才出现,缺省一项写明是哪�
   assert.equal(select(await render({ info: info({ models: [{ id: 'a' }], defaultModel: 'a' }) }), 'ai-cloud-model'), null);
   const model = select(await render({ info: info({ models: [{ id: 'claude-sonnet-5-5' }, { id: 'claude-opus-5-5' }], defaultModel: 'claude-sonnet-5-5' }),
     model: 'claude-opus-5-5' }), 'ai-cloud-model');
-  assert.deepEqual(options(model), [['', '默认(claude-sonnet-5-5)'], ['claude-sonnet-5-5', 'claude-sonnet-5-5'], ['claude-opus-5-5', 'claude-opus-5-5']]);
+  assert.deepEqual(options(model), [['', 'Default(claude-sonnet-5-5)'], ['claude-sonnet-5-5', 'claude-sonnet-5-5'], ['claude-opus-5-5', 'claude-opus-5-5']]);
   assert.match(model, /<option value="claude-opus-5-5" selected="">/);
 });

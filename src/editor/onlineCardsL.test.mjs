@@ -198,7 +198,7 @@ test("OCE-L-05 参数面板的说明跟着运行状态走", () => {
     if (silent.includes(state)) assert.equal(text, null, `${state} 不出说明`);
     else assert.ok(typeof text === "string" && text.length > 8, `${state} 有说明`);
   }
-  assert.match(ERS.runStateMessage({ state: "missing-module", detail: "lodash" }), /引用了在线页面里没有的模块 lodash/);
+  assert.match(ERS.runStateMessage({ state: "missing-module", detail: "lodash" }), /references a module that is not available on the online page lodash/);
   assert.equal(R.CARD_RUN_STATES.length, 9, "九种运行状态(原来的第十种随旧档位删掉)");
   // 面板组件读注册表的运行状态并订阅它
   const form = fs.readFileSync(fileURLToPath(srcUrl("editor/left/ParamsForm.tsx")), "utf8");
