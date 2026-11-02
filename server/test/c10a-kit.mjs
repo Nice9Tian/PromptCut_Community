@@ -423,11 +423,17 @@ export const walkFiles = (dir) => fs.readdirSync(dir, { withFileTypes: true }).f
  */
 export const ONLINE_API_RATCHET_FILE = 'server/test/c10a-online-api-paths.json';
 
+/**
+ * 翻译表那个块（`assets/i18n-*.js`）装着全部界面文案，连这个构建里剪掉了的功能的文案也在里面
+ * （例如「/api/stt/install returned {0}」）。那是文字，不是请求，扫 `/api/` 时跳过它。
+ */
+export const isTranslationTable = (file) => /^i18n-[\w-]+\.js$/.test(path.basename(file));
+
 /** 产物里 `/api/` 字面量归一成路径（取到第一个不是路径字符的地方：模板的 `${`、引号、查询串都截断）；回去重排序后的数组 */
 export function apiPaths(dir) {
   const out = new Set();
   for (const file of walkFiles(dir)) {
-    if (!/\.(m?js|html)$/.test(file)) continue;
+    if (!/\.(m?js|html)$/.test(file) || isTranslationTable(file)) continue;
     const text = fs.readFileSync(file, 'utf8');
     // 与 `apiLiterals` 同一个口径（引号或反引号后紧跟 `/api/` 再紧跟地址字符），只多取出路径
     for (const m of text.matchAll(/["'`](\/api\/[A-Za-z0-9_$][A-Za-z0-9_\-./]*)/g)) out.add(m[1].replace(/\$.*$/, ''));
@@ -442,7 +448,7 @@ export function apiPaths(dir) {
 export function apiLiterals(dir) {
   const hits = [];
   for (const file of walkFiles(dir)) {
-    if (!/\.(m?js|html)$/.test(file)) continue;
+    if (!/\.(m?js|html)$/.test(file) || isTranslationTable(file)) continue;
     const text = fs.readFileSync(file, 'utf8');
     const re = /["'`]\/api\/[A-Za-z0-9_$]/g;
     let m;

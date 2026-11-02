@@ -108,13 +108,14 @@ test('MP-E5 dropSkippedMediaClips:去掉引用缺失素材的片段,别的原样
 
 test('MP-E6 导出完成时的提示:列出名字、去掉「(缺失) 」、去重、太多截断;没有就空串', () => {
   assert.equal(exportSkippedMessage([]), '');
-  const msg = exportSkippedMessage([{ id: 'a', name: '(缺失) old.mp4' }, { id: 'b', name: '(缺失) old.mp4' }, { id: 'c', name: '' }]);
-  assert.match(msg, /下面 2 条素材本机找不到文件/);
+  const msg = exportSkippedMessage([{ id: 'a', name: '(missing) old.mp4' }, { id: 'b', name: '(missing) old.mp4' }, { id: 'c', name: '' }]);
+  assert.match(msg, /The following 2 media files were not found on this machine/);
   assert.match(msg, /· old.mp4/);
+  assert.match(exportSkippedMessage([{ id: 'z', name: '(缺失) legacy.mp4' }]), /· legacy.mp4/, '老项目里的中文标记也去掉');
   assert.match(msg, /· c$/m, '没有名字的用 id');
-  assert.doesNotMatch(msg, /· (缺失)/);
+  assert.doesNotMatch(msg, /· \(missing\)/);
   const many = exportSkippedMessage(Array.from({ length: 15 }, (_, i) => ({ id: String(i), name: `m${i}.mp4` })), 12);
-  assert.match(many, /另有 3 条/);
+  assert.match(many, /and 3 more/);
   assert.deepEqual(parseExportSkipped([{ id: 'a', name: 'x', clips: 2 }, null, 5, { id: '', name: '' }, { name: 'y' }]),
     [{ id: 'a', name: 'x', clips: 2 }, { id: '', name: 'y' }]);
   assert.deepEqual(parseExportSkipped(undefined), []);
