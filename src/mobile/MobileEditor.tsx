@@ -395,7 +395,7 @@ export function MobileEditor() {
           <button type="button" className="play" data-pcm="play" aria-label={playing ? trText("Pause") : trText("Play")} onClick={() => actions.togglePlay()}><Icon name={playing ? "pause" : "play"} /></button>
           <div className="tc"><b data-pcm="tc-now">{fmtTc(t)}</b> / <span data-pcm="tc-total">{fmtTc(project.duration)}</span></div>
           <span className="spacer" />
-          <button type="button" className="icon-btn" data-pcm="undo" aria-label={trText("Revoke")} disabled={!actions.canUndo() || ro.locked} title={ro.title(trText("Revoke"))} onClick={() => { actions.undo(); if (editCount.current > 0) editCount.current--; }}><Icon name="undo" /></button>
+          <button type="button" className="icon-btn" data-pcm="undo" aria-label={trText("Undo")} disabled={!actions.canUndo() || ro.locked} title={ro.title(trText("Revoke"))} onClick={() => { actions.undo(); if (editCount.current > 0) editCount.current--; }}><Icon name="undo" /></button>
           <button type="button" className="icon-btn" data-pcm="redo" aria-label={trText("Redo")} disabled={!actions.canRedo() || ro.locked} title={ro.title(trText("Redo"))} onClick={() => actions.redo()}><Icon name="redo" /></button>
         </div>
       )}

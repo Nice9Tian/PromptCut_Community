@@ -85,10 +85,10 @@ try {
   await screenshot(a,'logging-in');check('login running button disabled',await a.evaluate(()=>[...document.querySelectorAll('button')].find(e=>e.textContent.includes('Waiting for login'))?.disabled===true));
   const jobs=await (await fetch(origin+'/api/ai/setup')).json();const id=jobs.jobs[0].id;
   const duplicate=await (await fetch(origin+'/api/ai/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:'codex'})})).json();check('duplicate login reuses job',duplicate.job.id===id);
-  await click(a,'Cancel');await until(async()=> (await text(a)).includes('Canceled, you can try again'));
+  await click(a,'Cancel');await until(async()=> (await text(a)).includes('Canceled. You can try again.'));
   await screenshot(a,'cancelled');check('cancel preserves invalidity',(await text(a)).includes('Login expired'));
-  write({loggedIn:true,loginOutcome:'fail'});await click(a,'Retry login');await until(async()=> (await text(a)).includes('Login not completed'));
-  await screenshot(a,'failed');check('failed login recovery/device entry',(await text(a)).includes('Log in with a device code instead')&&(await text(a)).includes('Login expired'));
+  write({loggedIn:true,loginOutcome:'fail'});await click(a,'Retry login');await until(async()=> (await text(a)).includes('Login did not complete'));
+  await screenshot(a,'failed');check('failed login recovery/device entry',(await text(a)).includes('Log in with device code instead')&&(await text(a)).includes('Login expired'));
   write({loggedIn:true,loginDelay:250,scenario:'normal'});await click(a,'Retry login');await until(async()=> (await text(a)).includes('Login successful.')&&await a.evaluate(()=>[...document.querySelectorAll('.ais-status-ok')].some(e=>e.textContent==='Logged in')&&![...document.querySelectorAll('.ai-banner')].some(e=>e.textContent.includes('Login expired'))));
   await screenshot(a,'recovered');check('verified login updates settings',true);
   await until(async()=>!await b.evaluate(()=>[...document.querySelectorAll('.ai-banner')].some(e=>e.textContent.includes('Login expired'))));check('other editor recovers without reload',true);

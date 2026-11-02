@@ -152,10 +152,10 @@ try {
       controls: [...document.querySelectorAll('.pc-window-control')].map((b) => b.getAttribute('aria-label')),
       barTop: document.querySelector('.pc-bar--main')?.getBoundingClientRect().top,
     }));
-    report('D1 desktop: the title bar, the menu row (File/Edit/View/Help) and the three window buttons are all present', probe.titlebar === 1 && JSON.stringify(probe.menuButtons) === JSON.stringify(['file', 'Edit', 'View', 'Help']) && JSON.stringify(probe.controls) === JSON.stringify(['Minimize', 'Maximize', 'Close']), probe);
+    report('D1 desktop: the title bar, the menu row (File/Edit/View/Help) and the three window buttons are all present', probe.titlebar === 1 && JSON.stringify(probe.menuButtons) === JSON.stringify(['File', 'Edit', 'View', 'Help']) && JSON.stringify(probe.controls) === JSON.stringify(['Minimize', 'Maximize', 'Close']), probe);
     await page.screenshot({ path: path.join(OUT, 'desktop-editor.png') });
 
-    await clickByText(page, '.pc-titlebar-menu-button', 'file');
+    await clickByText(page, '.pc-titlebar-menu-button', 'File');
     await page.waitForSelector('.pc-titlebar-menu', { timeout: 5000 });
     const fileItems = await textOf(page, '.pc-titlebar-menu .pc-titlebar-menu-item');
     await page.screenshot({ path: path.join(OUT, 'desktop-file-menu.png') });

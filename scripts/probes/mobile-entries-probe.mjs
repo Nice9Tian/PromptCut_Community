@@ -103,7 +103,7 @@ try {
   execFileSync('ffmpeg', ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=0x2040d0:s=320x180:d=1:r=30', '-f', 'lavfi', '-i', 'color=c=0xe0d020:s=320x180:d=1:r=30',
     '-filter_complex', '[0:v][1:v]concat=n=2:v=1[v]', '-map', '[v]', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', mp4], { windowsHide: true });
 
-  await openAssets(A, 'Image');
+  await openAssets(A, 'Images');
   await (await A.waitForSelector('[data-pcm="import-input"]')).uploadFile(red, green);
   await until('two images in the media library', async () => (await A.$$('[data-pcm="asset"]')).length >= 2 ? true : null, 60_000);
   const imgMedia = await store(A, 'return S.getState().project.media.filter((m) => m.kind === "image").map((m) => ({ id: m.id, name: m.name, hash: m.hash }));');
@@ -131,7 +131,7 @@ try {
   step('beforeVideoTap', await store(A, 'return S.getState().project.tracks.flatMap((t) => t.clips).map((c) => c.mediaId);'));
   await tap(A, `[data-pcm="asset"][data-media="${vid.id}"]`);
   step('afterVideoTap', await store(A, 'return S.getState().project.tracks.flatMap((t) => t.clips).map((c) => c.mediaId);'));
-  for (const m of [redM, greenM]) { await openAssets(A, 'Image'); await tap(A, `[data-pcm="asset"][data-media="${m.id}"]`); }
+  for (const m of [redM, greenM]) { await openAssets(A, 'Images'); await tap(A, `[data-pcm="asset"][data-media="${m.id}"]`); }
   if (await A.$('[data-pcm="sheet-assets"]')) await closeSheet(A);
   if (await A.$('[data-pcm="tl-done"]')) await tap(A, '[data-pcm="tl-done"]');
   const main = await until('three clips in main content', async () => { const ids = await A.$$eval('[data-pcm="mblock"]', (bs) => bs.map((b) => b.dataset.id)); return ids.length >= 3 ? ids : null; });
@@ -155,7 +155,7 @@ try {
   const imgClip = await store(A, 'return S.getState().project.tracks.flatMap((t) => t.clips).find((c) => c.mediaId === args[0]).id;', redM.id);
   await tap(A, `[data-pcm="mblock"][data-id="${imgClip}"]`);
   await tap(A, '[data-pcm="sub-card"]');
-  await tapText(A, '[data-pcm="sheet-cards"] .seg', 'Filter');
+  await tapText(A, '[data-pcm="sheet-cards"] .seg', 'Filters');
   const emptyLong = await A.$eval('[data-pcm="filters-empty"]', (e) => e.textContent).catch(() => null);
   await shot(A, 'F1-cards-filter-empty');
   await closeSheet(A);
@@ -168,7 +168,7 @@ try {
   await shot(A, 'F1-params-filter-empty');
   step('F1', { emptyLong, emptyShort });
   check(emptyLong === 'No filters yet. Ask the Agent to create one (for example "give those night-scene clips a cool tone"). It will appear here and can then be attached to any video / image clip for reuse.', 'F1 empty-library hint for the filter category in the card library', emptyLong);
-  check(emptyShort === 'The filter library is empty: ask the Agent to create one and it will appear in the "Filter" category of the card library', 'F1 empty-library hint for the filter row in the adjust panel', emptyShort);
+  check(emptyShort === 'The filter library is empty: ask the Agent to create one, and it will appear in the "Filters" category of the card library', 'F1 empty-library hint for the filter row in the adjust panel', emptyShort);
 
   /* ---------------- Filter: Agent creates one (via store, stored as create_filter), attach in adjustments panel, adjust parameters, undo ---------------- */
   await store(A, 'S.actions.addFilter({ id: "flt-probe", name: "Probe cool tone", description: "probe", params: { s: { default: 0.4, min: 0, max: 2, label: "Saturation" } }, ops: [{ kind: "saturate", value: "s" }, { kind: "hue", value: 180 }], createdBy: "agent", createdAt: Date.now() }); return true;');
@@ -193,7 +193,7 @@ try {
   /* ---------------- Filter: detach / attach / delete in card library "Filter" category ---------------- */
   if (!(await store(A, 'return S.getState().selection[0] === args[0];', imgClip))) await tap(A, `[data-pcm="mblock"][data-id="${imgClip}"]`);
   await tap(A, '[data-pcm="sub-card"]');
-  await tapText(A, '[data-pcm="sheet-cards"] .seg', 'Filter');
+  await tapText(A, '[data-pcm="sheet-cards"] .seg', 'Filters');
   await A.waitForSelector('[data-pcm="filter"][data-filter="flt-probe"]', { visible: true });
   const onBefore = await A.$eval('[data-pcm="filter"][data-filter="flt-probe"]', (e) => e.dataset.on ?? null);
   await shot(A, 'F3-cards-filter');
@@ -216,7 +216,7 @@ try {
   /* ---------------- T5 on demand: import 28 more small images, open panel after refresh ---------------- */
   const many = [];
   for (let i = 0; i < 28; i++) many.push(await solidPng(path.join(OUT, `many-${String(i).padStart(2, '0')}.png`), [(i * 37) % 255, (i * 71) % 255, (i * 13 + 90) % 255], 96, 54));
-  await openAssets(A, 'Image');
+  await openAssets(A, 'Images');
   await (await A.waitForSelector('[data-pcm="import-input"]')).uploadFile(...many);
   await until('30 images in the media library', async () => (await A.$$('[data-pcm="asset"]')).length >= 30 ? true : null, 120_000, 500);
   await until('uploads finished', () => store(A, 'return S.getState().project.media.every((m) => !m.pending);'), 120_000, 500);
@@ -235,7 +235,7 @@ try {
   const asked = new Set();
   const onReq = (r) => { const h = hashes.find((x) => x && r.url().includes(x)); if (h && r.frame() === A.mainFrame()) asked.add(h); };
   A.on('request', onReq);
-  await openAssets(A, 'Image');
+  await openAssets(A, 'Images');
   await sleep(4000);
   const firstPass = await A.evaluate(() => ({ tiles: document.querySelectorAll('[data-pcm="sheet-assets"] [data-pcm="asset"]').length, ready: document.querySelectorAll('[data-pcm="sheet-assets"] .pic[data-thumb="ready"]').length }));
   const askedFirst = asked.size;
@@ -258,7 +258,7 @@ try {
   await A.reload({ waitUntil: 'domcontentloaded' });
   await A.waitForSelector('[data-pcm="editor"]', { visible: true, timeout: 90_000 });
   await sleep(1500);
-  await openAssets(A, 'Image');
+  await openAssets(A, 'Images');
   await A.evaluate((id) => document.querySelector(`[data-pcm="asset"][data-media="${id}"]`)?.scrollIntoView({ block: 'center' }), redM.id);
   await until('green image still shows its picture as usual', async () => (await A.$(`[data-pcm="asset"][data-media="${greenM.id}"] .pic[data-thumb="ready"]`)) ? true : null, 30_000);
   await sleep(3000);

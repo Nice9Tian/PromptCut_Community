@@ -356,7 +356,7 @@ async function phaseLocal() {
   const notice = await P(A, () => document.querySelector('[data-pc=undo-notice]')?.innerText ?? null);
   const a1 = await clipOf(A, c1);
   const a2 = await clipOf(A, c2);
-  check('undo-partial-notice', !!notice && notice.includes('Undone, but these places were overwritten by later changes and were not reverted:') && a2.params.text === 'B edited' && a1.params.text !== 'A edited', { notice, c1: a1.params.text, c2: a2.params.text, c1WasBefore: beforeC1?.params?.text });
+  check('undo-partial-notice', !!notice && notice.includes('Undone, but these were overwritten by later changes and not reverted:') && a2.params.text === 'B edited' && a1.params.text !== 'A edited', { notice, c1: a1.params.text, c2: a2.params.text, c1WasBefore: beforeC1?.params?.text });
   await shot(A, 'undo-partial-notice');
   // Click entity name to jump there and select it
   await P(A, () => document.querySelector('[data-pc=undo-notice] .pc-undo-entity')?.click());
@@ -374,7 +374,7 @@ async function phaseLocal() {
   await pressUndo(A);
   await sleep(500);
   const none = await P(A, () => document.querySelector('[data-pc=undo-notice]')?.innerText ?? null);
-  check('undo-none-notice', !!none && none.includes('Could not undo. These places were all changed afterwards, so their current state was kept:') && none.includes('View the current state of the changed places'), { notice: none, c3: (await clipOf(A, c3)).params.text });
+  check('undo-none-notice', !!none && none.includes("Couldn't undo. These were all changed afterwards, so they keep their current state:") && none.includes('see the current state of the changed spots'), { notice: none, c3: (await clipOf(A, c3)).params.text });
   await shot(A, 'undo-none-notice');
   await P(A, () => document.querySelector('[data-pc=undo-notice] .pc-undo-bar-close')?.click());
 
@@ -385,7 +385,7 @@ async function phaseLocal() {
     undoDisabled: document.querySelector('[data-pc=undo-btn] button')?.disabled,
     redoDisabled: document.querySelector('[data-pc=redo-btn] button')?.disabled,
   }));
-  check('undo-buttons', btn.undoTitle === 'Undo (Ctrl+Z): only undoes what you did yourself on this page' && btn.redoTitle === 'Redo (Ctrl+Shift+Z / Ctrl+Y): restores the operation you just undid (invalidated once a new operation is made)', btn);
+  check('undo-buttons', btn.undoTitle === 'Undo (Ctrl+Z): only undoes your own actions on this page' && btn.redoTitle === 'Redo (Ctrl+Shift+Z / Ctrl+Y): restores the action you just undid (no longer available after a new action)', btn);
   const fresh = await openEditor(`&join=${encodeURIComponent(docId)}`);
   const freshBtn = await P(fresh, () => ({ undo: document.querySelector('[data-pc=undo-btn] button')?.disabled, redo: document.querySelector('[data-pc=redo-btn] button')?.disabled }));
   check('undo-buttons-disabled-when-empty', freshBtn.undo === true && freshBtn.redo === true, freshBtn);
@@ -427,9 +427,9 @@ async function phaseLocal() {
   // ---------- Offline: A modifies 3 times while disconnected, B also modifies in the meantime; A
   // comes back → first edit rejected → conflict merge dialog
   // Starting 2026-10-22, the whole-batch "Add in / Discard" offline dialog was replaced with
-  // item-by-item "Conflict merge" (conflict-merge report section 10):
+  // item-by-item "Merge conflicts" (conflict-merge report section 10):
   // "Discard" = check all → delete selected; "Add in" = check all → merge; after closing the dialog
-  // (decide later), the top bar shows the "Conflict merge" button (formerly "Sync paused")
+  // (decide later), the top bar shows the "Merge conflicts" button (formerly "Sync paused")
   const offline = async (value) => {
     await P(A, () => window.__pcSyncTest.drop(4000));
     await waitFor(() => P(A, () => window.__pcSyncTest.view().status === 'offline'), 5000, 'A offline');
@@ -447,16 +447,16 @@ async function phaseLocal() {
   const mergeAll = async (button) => {
     await P(A, () => { for (const i of document.querySelectorAll('[data-pc=merge-thing-check]')) if (!i.checked) i.click(); });
     await P(A, (b) => document.querySelector(`[data-pc="${b}"]`)?.click(), button);
-    await waitFor(() => P(A, () => document.querySelector('[data-pc=merge-close]')?.textContent?.trim() === 'done'), 5000, 'list cleared');
+    await waitFor(() => P(A, () => document.querySelector('[data-pc=merge-close]')?.textContent?.trim() === 'Done'), 5000, 'list cleared');
     await P(A, () => document.querySelector('[data-pc=merge-close]')?.click());
   };
   const off1 = await offline('offline');
-  check('conflict-merge-window', !!off1.dlg && off1.dlg.includes('Conflict merge') && !!off1.row && off1.row.includes('"offline2"') && off1.row.includes('The cloud is now "B5-offline"') && off1.chip === 'offline', off1);
+  check('conflict-merge-window', !!off1.dlg && off1.dlg.includes('Merge conflicts') && !!off1.row && off1.row.includes('"offline2"') && off1.row.includes('The cloud is now "B5-offline"') && off1.chip === 'offline', off1);
   await shot(A, 'conflict-merge-window');
   await P(A, () => document.querySelector('[data-pc=merge-close]')?.click());
   await sleep(300);
   const navChip = await P(A, () => document.querySelector('[data-pc=conflict-merge-open]')?.innerText ?? null);
-  check('merge-button-after-close', !!navChip && navChip.includes('Conflict merge'), { navChip });
+  check('merge-button-after-close', !!navChip && navChip.includes('Merge conflicts'), { navChip });
   await shot(A, 'conflict-merge-button');
   await P(A, () => document.querySelector('[data-pc=conflict-merge-open]')?.click());
   await sleep(300);
@@ -476,7 +476,7 @@ async function phaseLocal() {
   // ---------- Local backup list (the batch before discard + the overwritten version); restore = a
   // new write
   await openProjectMenu(A);
-  await clickText(A, 'Local backups…', '.pc-proj-menu');
+  await clickText(A, 'Local backup…', '.pc-proj-menu');
   await waitFor(() => P(A, () => document.querySelectorAll('[data-pc=backup-row]').length > 0), 5000, 'backup list');
   const rows = await P(A, () => [...document.querySelectorAll('[data-pc=backup-row]')].map((r) => r.innerText.replace(/\s+/g, ' ')));
   check('backups-list', rows.some((r) => r.includes('Discarded while offline')) && rows.some((r) => r.includes('overwritten')), { rows: rows.slice(0, 6) });
@@ -580,7 +580,7 @@ async function phaseShared() {
   await openProjectMenu(B);
   await clickText(B, 'Open shared project', '.pc-proj-menu');
   await B.type('#pc-os-name', name);
-  await clickText(B, 'Host address', '[data-pc=open-shared-dialog]');
+  await clickText(B, 'Hosted address', '[data-pc=open-shared-dialog]');
   await shot(B, 'open-shared-find');
   await clickText(B, 'Find', '[data-pc=open-shared-dialog] .pc-dialog-foot');
   await waitFor(() => P(B, () => !!document.querySelector('#pc-os-user')), 15_000, 'reached verification step');
@@ -589,7 +589,7 @@ async function phaseShared() {
   await typeInto(B, '#pc-os-user', 'bob');
   await clickText(B, 'Enter', '[data-pc=open-shared-dialog] .pc-dialog-foot');
   const wrong = await waitFor(() => P(B, () => document.querySelector('[data-pc=open-shared-dialog] .pc-sync-status-line')?.innerText ?? null), 15_000, 'wrong-password notice').catch(() => null);
-  check('open-shared-wrong-password', wrong === 'Incorrect username or password. If you forgot it, ask the creator.', { wrong });
+  check('open-shared-wrong-password', wrong === "Wrong username or password. If you've forgotten them, ask the creator.", { wrong });
   await typeInto(B, '#pc-os-pw', 'team-pw');
   await clickText(B, 'Enter', '[data-pc=open-shared-dialog] .pc-dialog-foot');
   await waitFor(() => P(B, () => window.__pcSyncTest.view().kind === 'shared'), 15_000, 'B enters the shared project').catch(async (e) => {
@@ -620,7 +620,7 @@ async function phaseShared() {
   });
   await sleep(200);
   const pop = await P(A, () => document.querySelector('[data-pc=members-pop]')?.innerText ?? '');
-  check('members-list', pop.includes('alice (you)') && pop.includes('[Creator]') && pop.includes('[Editing]') && pop.includes('[Agent ×1]') && pop.includes('bob (MacBook)') && pop.includes('bob · Agent · chat 2') && pop.includes('Project management (visible to the creator only)'), { pop });
+  check('members-list', pop.includes('alice (you)') && pop.includes('[creator]') && pop.includes('[editing]') && pop.includes('[Agent ×1]') && pop.includes('bob (MacBook)') && pop.includes('bob · Agent · chat 2') && pop.includes('Project management (visible to the creator only)'), { pop });
   await shot(A, 'members-list');
   const btnText = await P(A, () => document.querySelector('[data-pc=members-button]')?.innerText ?? '');
   check('members-button-badge', /Members: ?\d+/.test(btnText), { btnText });
@@ -631,7 +631,7 @@ async function phaseShared() {
   await typeInto(A, '#pc-cv-pw', 'wrong');
   await clickText(A, 'Verify', '[data-pc=creator-verify] .pc-dialog-foot');
   const verr = await waitFor(() => P(A, () => document.querySelector('[data-pc=creator-verify] .pc-sync-err')?.innerText ?? null), 8000, 'wrong password').catch(() => null);
-  check('creator-verify-wrong', verr === 'Incorrect password.', { verr });
+  check('creator-verify-wrong', verr === 'Wrong password.', { verr });
   await typeInto(A, '#pc-cv-pw', 'alice-pw');
   await shot(A, 'creator-verify');
   await clickText(A, 'Verify', '[data-pc=creator-verify] .pc-dialog-foot');
@@ -641,7 +641,7 @@ async function phaseShared() {
   await shot(A, 'creator-change-password');
   await clickText(A, 'Confirm change', '[data-pc=project-password]');
   const pwToast = await waitFor(() => P(B, () => [...document.querySelectorAll('.pc-toast')].map((t) => t.innerText).find((t) => t.includes('The project password has been changed')) ?? null), 8000, 'password-changed bubble').catch(() => null);
-  check('member-password-changed-toast', pwToast?.startsWith('The project password has been changed. Your current connection is not affected, but the new password is required the next time you enter.'), { pwToast });
+  check('member-password-changed-toast', pwToast?.startsWith('The project password has been changed. Your current connection is not affected, but you will need the new password next time you enter.'), { pwToast });
   await shot(B, 'member-password-changed-toast');
 
   // ---------- Kick member (kick bob on MacBook): verify → confirm
@@ -660,7 +660,7 @@ async function phaseShared() {
   await shot(A, 'creator-kick-confirm');
   await clickText(A, 'Kick', '[data-pc=kick-dialog] .pc-dialog-foot');
   const kickToast = await waitFor(() => P(A, () => [...document.querySelectorAll('.pc-toast')].map((t) => t.innerText).find((t) => t.includes('Kicked')) ?? null), 8000, 'kick bubble').catch(() => null);
-  check('kick-free-mode-hint', kickToast?.startsWith('Kicked. In open entry mode, to block them completely, you need to change the project password.'), { kickToast });
+  check('kick-free-mode-hint', kickToast?.startsWith('Kicked out. In open entry mode, to block them completely, you need to change the project password.'), { kickToast });
 
   // ---------- Banned devices
   await A.click('[data-pc=members-button]');
@@ -701,7 +701,7 @@ async function phaseShared() {
   await waitFor(() => P(A, () => !!document.querySelector('[data-pc=kick-dialog]')), 8000, 'kick confirmation');
   await clickText(A, 'Kick', '[data-pc=kick-dialog] .pc-dialog-foot');
   const blocked = await waitFor(() => P(B, () => document.querySelector('[data-pc=blocked-dialog]')?.innerText ?? null), 8000, 'B\'s blocking dialog').catch(() => null);
-  check('kicked-blocking-dialog', blocked?.includes('You have been kicked out of this project by the creator and can no longer edit. To come back, ask the creator to revoke it.') && blocked.includes('start page'), { blocked });
+  check('kicked-blocking-dialog', blocked?.includes('You were kicked out of this project by the creator and can no longer edit. To come back, ask the creator to revoke it.') && blocked.includes('start page'), { blocked });
   await shot(B, 'blocked-kicked');
 
   // Cleanup: actually delete (verify deletion flow and returning to the start page oneself)

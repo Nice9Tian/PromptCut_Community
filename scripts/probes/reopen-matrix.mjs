@@ -28,7 +28,7 @@ export async function runRecoveryMatrix(o) {
   const mergeAll = async (button) => {
     await member.evaluate(() => { for (const i of document.querySelectorAll('[data-pc="merge-thing-check"]')) if (!i.checked) i.click(); });
     await member.evaluate((b) => document.querySelector(`[data-pc="${b}"]`)?.click(), button);
-    await member.waitForFunction(() => document.querySelector('[data-pc="merge-close"]')?.textContent?.trim() === 'done', { timeout: 10000 });
+    await member.waitForFunction(() => document.querySelector('[data-pc="merge-close"]')?.textContent?.trim() === 'Done', { timeout: 10000 });
     await member.evaluate(() => document.querySelector('[data-pc="merge-close"]')?.click());
   };
   const screenshot = async (p, file) => {

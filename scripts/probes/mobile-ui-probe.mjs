@@ -487,7 +487,7 @@ try {
       await A.evaluate(() => { for (const i of document.querySelectorAll('[data-pcm="cf-thing"] .cf-head input')) if (!i.checked) i.click(); });
       await sleep(300);
       await tap(A, '[data-pcm="cf-drop"]');
-      out.C.closeText = await until('After deleting the selection the close button becomes "Done"', () => A.evaluate(() => document.querySelector('[data-pcm="cf-close"]')?.textContent?.trim() === 'done' ? 'done' : null), 10_000);
+      out.C.closeText = await until('After deleting the selection the close button becomes "Done"', () => A.evaluate(() => document.querySelector('[data-pcm="cf-close"]')?.textContent?.trim() === 'Done' ? 'done' : null), 10_000);
       await A.evaluate(() => document.querySelector('[data-pcm="cf-close"]')?.click());
       const gone = await until('the bar collapses once handled', async () => !(await A.$('[data-pcm="cfbar"]')), 30_000);
       const pane = await rect(A, '[data-pcm="pane-preview"]'), pager = await rect(A, '[data-pcm="pager"]');

@@ -9447,6 +9447,10 @@
   "zh": "不可用 ({0})",
   "ja": "利用できません（{0}）"
  },
+ "Undo": {
+  "zh": "撤销",
+  "ja": "元に戻す"
+ },
  "Undo (Ctrl+Z): only undoes your own actions on this page": {
   "zh": "撤销 (Ctrl+Z) —— 只撤你自己在这个页面做的",
   "ja": "元に戻す（Ctrl+Z）：このページでの自分の操作のみ元に戻します"

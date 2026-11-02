@@ -127,7 +127,7 @@ try {
     let calm = 0;
     const t0 = Date.now();
     while (calm < 7000 && Date.now() - t0 < 120_000) {
-      const measuring = await page.evaluate(() => document.body.innerText.includes('Measuring cards')).catch(() => true);
+      const measuring = await page.evaluate(() => document.body.innerText.includes('Measuring card')).catch(() => true);
       calm = measuring ? 0 : calm + 500;
       await sleep(500);
     }
@@ -371,7 +371,7 @@ try {
   // Desktop app title bar menu (also rendered in this build): Edit → Undo / Redo,
   // File → Save project are grayed out, explanation is that message
   const titlebar = {};
-  for (const [menu, cmds] of [['Edit', ['undo', 'redo']], ['file', ['save-project', 'export-video']]]) {
+  for (const [menu, cmds] of [['Edit', ['undo', 'redo']], ['File', ['save-project', 'export-video']]]) {
     await page.evaluate((menu) => [...document.querySelectorAll('.pc-titlebar-menu-button')].find((b) => b.textContent.trim() === menu).click(), menu);
     await sleep(250);
     for (const c of cmds) titlebar[c] = await page.evaluate((c) => { const b = document.querySelector(`[data-pc="titlebar-${c}"]`); return b ? { d: b.getAttribute('aria-disabled') === 'true', t: b.title } : null; }, c);

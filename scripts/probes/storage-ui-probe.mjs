@@ -222,7 +222,7 @@ try {
   out.U1 = { rows: r1.map((r) => r.id) };
   check(JSON.stringify(r1.map((r) => r.id)) === JSON.stringify([HALF, DUP, FULL]), 'U1 the list has 3 entries, newest first, vision not listed', r1.map((r) => r.id));
   check(!r1.some((r) => r.text.includes('Should not appear')), 'U1 vision not listed');
-  check(r1[0].text.includes('Incomplete') && r1[0].text.includes('Probe project B'), 'U1 the incomplete export is labeled "Incomplete"', r1[0].text);
+  check(r1[0].text.includes('Unfinished') && r1[0].text.includes('Probe project B'), 'U1 the incomplete export is labeled "Unfinished"', r1[0].text);
   check(r1[1].text.includes('Unknown project'), 'U1 an export without project.json is listed as "Unknown project"', r1[1].text);
   check(r1[2].text.includes('Final video') && r1[2].text.includes('Transparent layer') && r1[2].text.includes('Intermediate files'), 'U1 the complete export lists the final video, transparent layer and intermediate files', r1[2].text);
   const unavailable = await page.$('[data-pc="storage-cache-unavailable"]');
@@ -281,7 +281,7 @@ try {
     page.on('request', onReq);
     await page.$eval('[data-pc="start-storage"]', (el) => el.scrollIntoView());
     await page.click('[data-pc="storage-clear-cache"]');
-    await until('notice for the real cache clearing', () => page.$eval('[data-pc="storage-notice"]', (el) => el.textContent.includes('Freed')), 60_000);
+    await until('notice for the real cache clearing', () => page.$eval('[data-pc="storage-notice"]', (el) => el.textContent.includes('freed')), 60_000);
     out.U7.clearNotice = await page.$eval('[data-pc="storage-notice"]', (el) => el.textContent);
     out.U7.lastEvictText = await until('the last cleanup row', () => page.$eval('[data-pc="start-storage"]', (el) => (el.textContent.match(/Last[^,]*/) || [null])[0]), 10_000).catch(() => null);
     check(out.U7.lastEvictText?.startsWith('Last cache cleanup'), 'U7 a cache clear clicked by the user is not labeled "Auto cleanup"', out.U7.lastEvictText);
@@ -289,7 +289,7 @@ try {
     await page.$eval('[data-pc="storage-cap-input"]', (el) => { el.select(); });
     await page.type('[data-pc="storage-cap-input"]', '20');
     await page.click('[data-pc="storage-cap-save"]');
-    await until('notice for the real cap change', () => page.$eval('[data-pc="storage-notice"]', (el) => el.textContent.includes('Cap changed')), 30_000);
+    await until('notice for the real cap change', () => page.$eval('[data-pc="storage-notice"]', (el) => el.textContent.includes('Cache limit changed')), 30_000);
     page.off('request', onReq);
     const capReq = sent.find((x) => x.path === '/api/storage/cap');
     const sentBytes = capReq ? JSON.parse(capReq.body || '{}').bytes : null;
@@ -366,7 +366,7 @@ try {
   await mp.$eval('[data-pc="start-storage"]', (el) => el.scrollIntoView());
   await mp.screenshot({ path: path.join(OUT, 'u5-storage-mocked.png') });
   await mp.click('[data-pc="storage-clear-cache"]');
-  await until('notice for clearing the cache', () => mp.$eval('[data-pc="storage-notice"]', (el) => el.textContent.includes('Freed')));
+  await until('notice for clearing the cache', () => mp.$eval('[data-pc="storage-notice"]', (el) => el.textContent.includes('freed')));
   const notice = await mp.$eval('[data-pc="storage-notice"]', (el) => el.textContent);
   const fig1 = await until('the number gets smaller', async () => {
     const t = await mp.$eval('[data-pc="storage-cache-bytes"]', (el) => el.textContent);
@@ -376,7 +376,7 @@ try {
   await mp.$eval('[data-pc="storage-cap-input"]', (el) => { el.select(); });
   await mp.type('[data-pc="storage-cap-input"]', '20');
   await mp.click('[data-pc="storage-cap-save"]');
-  await until('notice for changing the cap', () => mp.$eval('[data-pc="storage-notice"]', (el) => el.textContent.includes('Cap changed')));
+  await until('notice for changing the cap', () => mp.$eval('[data-pc="storage-notice"]', (el) => el.textContent.includes('Cache limit changed')));
   const fig2 = await mp.$eval('[data-pc="storage-cache-bytes"]', (el) => el.textContent);
   // Does not send if below 5 GB
   await mp.$eval('[data-pc="storage-cap-input"]', (el) => { el.select(); });

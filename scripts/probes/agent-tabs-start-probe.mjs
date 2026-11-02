@@ -135,7 +135,7 @@ try {
   // After loading project, the card measurement overlay ("Measuring cards") covers the entire UI
   // for a few seconds: wait for it to dismiss before taking screenshots
   const shot = async (name, selector = null) => {
-    await waitFor(() => page.evaluate(() => !document.body.innerText.includes('Measuring cards')), 60_000, 'measurement overlay removed').catch(() => {});
+    await waitFor(() => page.evaluate(() => !document.body.innerText.includes('Measuring card')), 60_000, 'measurement overlay removed').catch(() => {});
     await sleep(300);
     return selector ? page.$(selector).then((h) => h?.screenshot({ path: path.join(OUT, name) })) : page.screenshot({ path: path.join(OUT, name) });
   };

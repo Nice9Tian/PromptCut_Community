@@ -183,7 +183,7 @@ const shot = (page, name) => page.screenshot({ path: path.join(OUT, `${name}.png
 const want = (id) => !ONLY.length || ONLY.includes(id);
 const TEXT = {
   top: 'This device is running in top-spec mode', standard: 'This device is running in standard mode',
-  lite: 'This device is running in lite mode: complex effects are handed to cloud rendering', low: 'This device is running in low-spec mode: playback only shows frames that are already rendered',
+  lite: 'This device is running in lite mode: complex effects are handed off to cloud rendering', low: 'This device is running in low-spec mode: playback only shows frames that are already rendered',
 };
 async function holdAndCrash(scene, page, what) {
   await reload(page, `gateHold=${what}`);

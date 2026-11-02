@@ -214,7 +214,7 @@ try {
   const shownName = await waitFor(
     () => phone.evaluate(() => {
       const t = document.querySelector('[data-pcm="join-project"]')?.textContent?.trim() ?? '';
-      return t && !t.includes('Looking up') ? t : null;
+      return t && !t.includes('Checking') ? t : null;
     }),
     60_000,
     'Looks up which project the code belongs to',

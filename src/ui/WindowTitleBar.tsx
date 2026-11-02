@@ -60,7 +60,7 @@ const menus: Array<{ id: MenuId; label: string; items: Array<{ label: string; co
     id: "edit",
     label: tr("Edit"),
     items: [
-      { label: tr("Revoke"), command: "undo", shortcut: "Ctrl Z" },
+      { label: tr("Undo"), command: "undo", shortcut: "Ctrl Z" },
       { label: tr("Redo"), command: "redo", shortcut: "Ctrl ⇧ Z" },
     ],
   },

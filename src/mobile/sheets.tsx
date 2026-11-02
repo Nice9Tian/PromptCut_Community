@@ -323,7 +323,7 @@ export function ParamsSheet(props: { target: ParamsTarget; onClose: () => void; 
   const toast = useToast();
   const undoRow = (clipId?: string) => (
     <div className="undo-row">
-      <button type="button" className="btn" data-pcm="params-undo" onClick={() => actions.undo()}><Icon name="undo" />{trText("Revoke")}</button>
+      <button type="button" className="btn" data-pcm="params-undo" onClick={() => actions.undo()}><Icon name="undo" />{trText("Undo")}</button>
       {clipId && <button type="button" className="btn" onClick={() => props.onAskAgent(clipId)}>{trText("Have the Agent keep editing")}</button>}
     </div>
   );
@@ -423,7 +423,7 @@ export function SpeedSheet(props: { clipId: string; onClose: () => void }) {
       <div className="wrapnote" data-pcm="speed-note"><b>{trText("Sound:")}</b>{SPEED_MUTE_NOTE}</div>
       <div className="hint">{trText("The start point stays; the duration is recalculated at the new speed: {0} (media {1}). If it gets longer, it pushes the following segments back; if shorter, the tail is left empty. When a transition is attached, it follows the clip's two ends, and if it does not fit it is shortened and you are notified.", fmtDur(c.end - c.start), fmtDur((c.end - c.start) * cur))}</div>
       <div className="undo-row">
-        <button type="button" className="btn" data-pcm="speed-undo" onClick={() => actions.undo()}><Icon name="undo" />{trText("Revoke")}</button>
+        <button type="button" className="btn" data-pcm="speed-undo" onClick={() => actions.undo()}><Icon name="undo" />{trText("Undo")}</button>
       </div>
     </Sheet>
   );

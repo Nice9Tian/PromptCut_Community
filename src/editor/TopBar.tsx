@@ -720,7 +720,7 @@ export function TopBar() {
         {/* A disabled button gets no hover, so the tooltip hangs on the wrapper outside it
    (draft: hover tooltip includes the not-clickable case) */}
         <span title={ro.title(tr("Undo (Ctrl+Z): only undoes your own actions on this page"))} data-pc="undo-btn">
-          <Btn onClick={() => actions.undo()} label={tr("Revoke")} title={ro.title(tr("Undo (Ctrl+Z): only undoes your own actions on this page"))} icon={<IconUndo />} collapsed disabled={!canUndo || ro.locked} />
+          <Btn onClick={() => actions.undo()} label={tr("Undo")} title={ro.title(tr("Undo (Ctrl+Z): only undoes your own actions on this page"))} icon={<IconUndo />} collapsed disabled={!canUndo || ro.locked} />
         </span>
         <span title={ro.title(tr("Redo (Ctrl+Shift+Z / Ctrl+Y): restores the action you just undid (no longer available after a new action)"))} data-pc="redo-btn">
           <Btn onClick={() => actions.redo()} label={tr("Redo")} title={ro.title(tr("Redo (Ctrl+Shift+Z / Ctrl+Y): restores the action you just undid (no longer available after a new action)"))} icon={<IconRedo />} collapsed disabled={!canRedo || ro.locked} />

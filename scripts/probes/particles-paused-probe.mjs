@@ -123,7 +123,7 @@ try {
     if (!f) return;
     const url = await f.evaluate(() => document.querySelector('.inset-0 > canvas')?.toDataURL('image/png') ?? null).catch(() => null);
     if (url) await fs.writeFile(path.join(OUT, `${name}-canvas.png`), Buffer.from(url.split(',')[1], 'base64'));
-    await until(() => page.evaluate(() => !document.body.innerText.includes('Measuring cards')), 90000, 500);
+    await until(() => page.evaluate(() => !document.body.innerText.includes('Measuring card')), 90000, 500);
     const el = await f.frameElement();
     if (el) await el.screenshot({ path: path.join(OUT, `${name}-stage.png`) });
   };

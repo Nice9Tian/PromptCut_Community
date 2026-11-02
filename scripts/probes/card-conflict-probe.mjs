@@ -164,7 +164,7 @@ try {
   await page.evaluate(() => document.querySelector('[data-pc="merge-thing"][data-key="offline:card:src/cards/user/price-tag.tsx"] [data-pc="merge-thing-check"]')?.click());
   await sleep(200);
   await page.evaluate(() => document.querySelector('[data-pc="merge-delete"]')?.click());
-  const done = await until('list cleared', () => page.evaluate(() => document.querySelector('[data-pc="merge-close"]')?.textContent?.trim() === 'done'));
+  const done = await until('list cleared', () => page.evaluate(() => document.querySelector('[data-pc="merge-close"]')?.textContent?.trim() === 'Done'));
   check(!!done, 'After deleting the selection the close button becomes "Done"');
   await closeAi(); await sleep(200);
   await page.screenshot({ path: path.join(OUT, 'desktop-8-card-conflict-cleared.png') });

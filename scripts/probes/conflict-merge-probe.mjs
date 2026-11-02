@@ -16,11 +16,11 @@
  *      one for c1 opacity)
  *   D3 "Select non-conflicting items" checks only c1 duration; click "Merge": B's side sees
  *      duration changed, opacity remains B's
- *   D4 Close window via "Maybe later": "Conflict merge" button remains at the top of the
+ *   D4 Close window via "Maybe later": "Merge conflicts" button remains at the top of the
  *      navigation bar
  *   D5 A's phone (same user) enters project: conflict banner displays same table (pending merge
  *      table stored in document service, by project × user); check, merge, or delete selected in
- *      panel item by item; banner collapses when done, desktop "Conflict merge" button disappears
+ *      panel item by item; banner collapses when done, desktop "Merge conflicts" button disappears
  *      too
  *   D6 When online browser is disconnected, "Import media" is grayed out with "Currently offline"
  *      (desktop and mobile)
@@ -70,7 +70,7 @@ const tap = async (page, sel) => {
 };
 
 const project = {
-  version: 1, id: `merge-probe-${Date.now().toString(36)}`, name: 'Conflict merge demo', width: 1920, height: 1080, fps: 30, duration: 12, themeId: 'midnight', media: [],
+  version: 1, id: `merge-probe-${Date.now().toString(36)}`, name: 'Merge conflicts demo', width: 1920, height: 1080, fps: 30, duration: 12, themeId: 'midnight', media: [],
   tracks: [{ id: 't-1', name: 'Track 1', clips: [
     { id: 'c1', cardId: 'mu-blur-fade', start: 0, end: 2, params: {}, opacity: 0.4, label: 'Opening' },
     { id: 'c2', cardId: 'mu-typing', start: 2.5, end: 4.5, params: {}, label: 'Typing' },
@@ -121,7 +121,7 @@ try {
 
   /* ---------------- D2 A reconnects: window opens automatically ---------------- */
   env.proxy.blockWs = false;
-  const win = await until('Conflict merge window opened', () => A.$('[data-pc="conflict-merge"]'), 150_000, 500);
+  const win = await until('Merge conflicts window opened', () => A.$('[data-pc="conflict-merge"]'), 150_000, 500);
   await sleep(800);
   const rows = await A.evaluate(() => [...document.querySelectorAll('[data-pc="merge-thing"]')].map((li) => ({
     key: li.getAttribute('data-key'), head: li.querySelector('.pc-merge-thing-head')?.innerText.replace(/\s+/g, ' '),
@@ -151,7 +151,7 @@ try {
   const bC1 = await until('B sees that the length of c1 changed', async () => { const c = await clipOf(B, 'c1'); return c && c.end === 2.4 ? c : null; }, 20_000);
   const statusChip = await textOf(A, '[data-pc="sync-online-status"]');
   step('D3-merged', { note, bC1: bC1 && { end: bC1.end, opacity: bC1.opacity }, statusChip });
-  check(!statusChip || !statusChip.includes('all submitted'), 'D2 after offline changes move into the pending merge table, the top bar does not say "Changes made offline are all submitted"', statusChip);
+  check(!statusChip || !statusChip.includes('have been submitted'), 'D2 after offline changes move into the pending merge table, the top bar does not say "Changes made offline are all submitted"', statusChip);
   check(bC1 && bC1.opacity === 0.7, 'D3 after merging: length follows A, opacity stays B\'s', bC1);
   await shot(A, 'desktop-3-merged');
 
@@ -160,7 +160,7 @@ try {
   await sleep(500);
   const navBtn = await textOf(A, '[data-pc="conflict-merge-open"]');
   step('D4-nav-button', { navBtn });
-  check(!!navBtn && navBtn.includes('Conflict merge'), 'D4 after the window is closed, the "Conflict merge" button is still at the top of the navigation bar', navBtn);
+  check(!!navBtn && navBtn.includes('Merge conflicts'), 'D4 after the window is closed, the "Merge conflicts" button is still at the top of the navigation bar', navBtn);
   await shot(A, 'desktop-4-nav-button');
 
   /* ---------------- D5 Same user's phone ---------------- */
@@ -195,13 +195,13 @@ try {
   await sleep(1200);
   const doneText = await textOf(M, '[data-pcm="cf-close"]');
   step('D5-done', { close: doneText });
-  check(doneText === 'done', 'D5 after clearing, the close button becomes "Done"', doneText);
+  check(doneText === 'Done', 'D5 after clearing, the close button becomes "Done"', doneText);
   await shot(M, 'mobile-4-done');
   const bC2 = await clipOf(B, 'c2');
   check(bC2 && bC2.label === 'Typing (edited by B)', 'D5 delete selected: c2 keeps the current cloud state (the version B edited)', bC2);
   await tap(M, '[data-pcm="cf-close"]');
   const barGone = await until('the mobile bar collapses', async () => !(await M.$('[data-pcm="cfbar"]')), 20_000);
-  const navGone = await until('the desktop "Conflict merge" button disappears too', async () => !(await A.$('[data-pc="conflict-merge-open"]')), 20_000);
+  const navGone = await until('the desktop "Merge conflicts" button disappears too', async () => !(await A.$('[data-pc="conflict-merge-open"]')), 20_000);
   step('D5-cleared', { barGone: !!barGone, navGone: !!navGone });
   await shot(M, 'mobile-5-cleared');
   await shot(A, 'desktop-5-cleared');
