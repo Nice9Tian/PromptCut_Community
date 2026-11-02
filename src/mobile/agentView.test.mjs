@@ -55,7 +55,7 @@ test('AV3 一轮回复:动手之前的话 → 操作卡片 → 动手之后的�
   const v = roundView(m, 1);
   assert.deepEqual(v.before.map((s) => s.text), ['我先看一下素材']);
   assert.deepEqual(v.after.map((s) => s.text), ['标题放好了']);
-  assert.deepEqual(v.items.map((i) => [i.state, i.kind, i.name]), [['done', 'read', 'list_media'], ['done', 'Add', 'add_clip'], ['err', 'change', 'set_clip_param']]);
+  assert.deepEqual(v.items.map((i) => [i.state, i.kind, i.name]), [['done', 'Read', 'list_media'], ['done', 'Add', 'add_clip'], ['err', 'Change', 'set_clip_param']]);
   assert.equal(v.title, 'Turn 1 · 3 actions');
   assert.equal(v.hasCard, true);
 });
