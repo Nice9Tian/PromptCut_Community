@@ -1,7 +1,13 @@
 /**
  * First screen of the online browser (desktop identity): **Vibe mode** (`user-workflow.md`,
  * "Working mode": the default UI after login in the online browser).
- * Not logged in shows the login page; logged in (or entering as a guest) shows the start page;
+ * Not logged in still shows the start page (issue #2, user 2026-11-03: no standalone login page first):
+ * "Sign in" sits in the top bar's account slot, and anything that needs an identity (say a sentence,
+ * new project, open a project, expand the sidebar) opens the login dialog (`LoginDialog.tsx`) over the
+ * page, then carries on with that action once signed in. A project's direct address opened while
+ * logged out opens the dialog straight away, and the project is entered after login
+ * (`product/platforms.md`, "Project direct address"). The old full-page login is archived and still
+ * reached with `?login=page`. Logged in (or entering as a guest) the start page lists the projects;
  * clicking into a project opens that project's chat page.
  *
  * Shape of the whole page (user decision, 2026-10-23, UI is final):
@@ -71,6 +77,7 @@ import { createBrowseChats } from "./browseChats";
 import { PromptBox } from "./PromptBox";
 import { TopBar } from "./TopBar";
 import { VibeLogin, type LoginIntent } from "./VibeLogin";
+import { LoginDialog } from "./LoginDialog";
 import { EXT_WIDTH, SIDE_WIDTH, clampWidth, readSideCollapsed, readWidth, writeSideCollapsed, writeWidth } from "./sideWidth";
 import { removeById, rename, reorder, setArchived, togglePin, visible } from "./treeState";
 import { CLOUD_ORG_IN_CLOUD, addGroup, cloudOrgScope, groupNoteText, groupsOf, mergeChats, mergeProjects, moveProject, orgWhereText, pruneOrg, withChats, withGroups, withProjects, type OrgEntry } from "./vibeOrg";
@@ -103,6 +110,28 @@ const projectSib = (p: VibeProject) => `project:${p.realm}:${p.groupId ?? "loose
 /** Guests have no groups, pinning or archiving: only one project, the identity doesn't cross devices, and there is nowhere to store the cloud copy */
 const GUEST_ORG_TEXT = tr("A guest can have only one project, with no groups, pinning or archiving. After you sign up for an account, you can organize projects with cloud groups.");
 const chatSib = (c: VibeChat) => `chat:p:${c.projectId}`;
+
+/**
+ * The archived full-page login (`VibeLogin.tsx` + `OnlineLogin.tsx`), kept reachable with `?login=page`
+ * (issue #2, 2026-11-03: archived, not deleted). Read once: the address is fixed for the page's life here
+ */
+function legacyLoginPage(): boolean {
+  try { return new URLSearchParams(location.search).get("login") === "page"; } catch { return false; }
+}
+
+/** The page was opened at a project's direct address or a share link (`product/platforms.md`, "Project direct address") */
+function atProjectAddress(): boolean {
+  try {
+    const url = new URL(location.href);
+    return /\/(p|s)\//.test(url.pathname) || url.searchParams.has("project") || url.searchParams.has("token");
+  } catch { return false; }
+}
+
+/** What a logged-out visitor tried to do: done once signed in (issue #2) */
+type AfterLogin =
+  | { kind: "open"; id: string; intoClassic: boolean }
+  | { kind: "create" }
+  | { kind: "prompt"; text: string; ratio: Ratio };
 
 /** The sentence said on the start page: sent after the project is created, connected, and the Cloud Agent is ready */
 interface PendingPrompt {
@@ -144,7 +173,12 @@ function OnlineStartWithAccount(props: {
   const [openId, setOpenId] = useState<string | null>(null);
   /** Whether the open project shows the chat page (true) or the start page (the house icon was clicked) */
   const [chatPage, setChatPage] = useState(false);
+  /** Only the archived full-page login (`?login=page`) uses this: its "skip" shows the logged-out start page */
   const [skipped, setSkipped] = useState(false);
+  const [legacyLogin] = useState(legacyLoginPage);
+  /** The login dialog (issue #2) */
+  const [loginOpen, setLoginOpen] = useState(false);
+  const afterLogin = useRef<AfterLogin | null>(null);
   const [scope, setScope] = useState<Scope>({ kind: "all" });
   const [notice, setNotice] = useState("");
   const [sideWidth, setSideWidth] = useState(() => readWidth(SIDE_WIDTH));
@@ -187,6 +221,13 @@ function OnlineStartWithAccount(props: {
   };
 
   const signedIn = !!(ap.account || ap.guest);
+  const signedInRef = useRef(signedIn); signedInRef.current = signedIn;
+  /** Open the login dialog; `then` is done once signed in (closing the dialog without signing in drops it) */
+  const askLogin = (then: AfterLogin | null = null) => {
+    afterLogin.current = then;
+    ap.setError("");
+    setLoginOpen(true);
+  };
   /** Cloud groups follow the account; guests have none (null: can't be read or saved, organization data is always empty) */
   const orgScope = ap.account ? cloudOrgScope(ap.account.id) : null;
 
@@ -338,7 +379,7 @@ function OnlineStartWithAccount(props: {
   };
 
   const openProject = (id: string, intoClassic = false) => {
-    if (!signedIn) { setNotice(tr("Sign in to an account or enter as a guest first.")); return; }
+    if (!signedIn) { askLogin({ kind: "open", id, intoClassic }); return; }
     toClassic.current = intoClassic ? id : null;
     if (openId === id && connectedId === id) { if (intoClassic) props.onEnterEditor(); else setChatPage(true); return; }
     const p = projects.find((x) => x.id === id);
@@ -349,18 +390,20 @@ function OnlineStartWithAccount(props: {
     });
   };
 
-  const createBlocked = !signedIn ? tr("Sign in to an account or enter as a guest to create a cloud project.")
-    : ap.guest && ap.guestProject ? tr("Guests can create only {0} project(s). To create more, sign up for an account.", GUEST_LIMITS.projects)
+  // Logged out is not "blocked": the buttons stay live and open the login dialog (issue #2)
+  const createBlocked = ap.guest && ap.guestProject ? tr("Guests can create only {0} project(s). To create more, sign up for an account.", GUEST_LIMITS.projects)
     : null;
 
   /** Create a blank cloud project and enter it (sidebar "New project", first slot of the thumbnails) */
   const createBlank = () => {
+    if (!signedIn) { askLogin({ kind: "create" }); return; }
     if (createBlocked) { setNotice(createBlocked); return; }
     void ap.perform(() => createWithFreeName(n => ap.create(n), tr("Untitled")).then(() => undefined));
   };
 
   /** Say one sentence on the start page: create project → set aspect ratio → upload media → enter chat page → send this sentence to the Cloud Agent */
   const submitPrompt = async (text: string, ratio: Ratio) => {
+    if (!signedIn) { askLogin({ kind: "prompt", text, ratio }); return; }
     if (createBlocked) { setNotice(createBlocked); return; }
     setCreating(true);
     setNotice(tr("Creating project…"));
@@ -410,6 +453,39 @@ function OnlineStartWithAccount(props: {
       if (it.link) setJoin({ askPassword: false });
     });
   };
+
+  /*
+   * Once signed in, carry on with what the logged-out visitor tried (issue #2). Wait for the business
+   * layer to finish signing in (`busy`), so this action doesn't overlap that one. Goes through a ref so
+   * the action uses this render's functions, not the logged-out render's
+   */
+  const runAfter = useRef<(a: AfterLogin) => void>(() => {});
+  runAfter.current = (a) => {
+    if (a.kind === "open") openProject(a.id, a.intoClassic);
+    else if (a.kind === "create") createBlank();
+    else void submitPrompt(a.text, a.ratio);
+  };
+  useEffect(() => {
+    if (!signedIn || ap.busy || !afterLogin.current) return;
+    const a = afterLogin.current;
+    afterLogin.current = null;
+    runAfter.current(a);
+  }, [signedIn, ap.busy]);
+
+  /*
+   * Has the first "is the website already signed in?" check finished. Until then the page shows
+   * "Connecting" rather than flashing the logged-out page; after it, the business layer being busy (the
+   * dialog's own sign-in) must not swap the page out from under the dialog
+   */
+  const [settled, setSettled] = useState(false);
+  useEffect(() => { if (!ap.busy || signedIn) setSettled(true); }, [ap.busy, signedIn]);
+  // A project's direct address or a share link opened while logged out: the dialog opens by itself; after login `useAccountProjects` goes on into the project
+  const addressAsked = useRef(false);
+  useEffect(() => {
+    if (addressAsked.current || !settled || signedIn || legacyLogin || ap.shellOld) return;
+    addressAsked.current = true;
+    if (atProjectAddress()) setLoginOpen(true);
+  }, [settled, signedIn, legacyLogin, ap.shellOld]);
 
   // The page was opened from a share link (the link carries a token): after login, open "Join with link" with the link already filled in
   const linkedOnce = useRef(false);
@@ -521,7 +597,7 @@ function OnlineStartWithAccount(props: {
   const railTitle = scope.kind === "group" ? (groups.find((g) => g.id === scope.id)?.name ?? tr("Group")) : scope.kind === "loose" ? tr("Not in a group") : tr("Recent projects");
 
   const listNotice = !signedIn
-    ? <>{tr("Not signed in: after you sign in to an account or enter as a guest, your cloud projects are listed here.")}<button type="button" className="ps-link" data-pc="start-go-login" onClick={() => setSkipped(false)}>{tr("Sign in")}</button></>
+    ? <>{tr("Not signed in: after you sign in to an account or enter as a guest, your cloud projects are listed here.")}<button type="button" className="ps-link" data-pc="start-go-login" onClick={() => (legacyLogin ? setSkipped(false) : askLogin())}>{tr("Sign in")}</button></>
     : ap.guest ? (ap.guestProject ? null : tr("A guest can create 1 project, which will be listed here once created."))
     : ap.listError ? <>{ap.listError}<button type="button" className="ps-link" data-pc="start-list-retry" disabled={ap.busy} onClick={() => void ap.refreshLists()}>{tr("Retry")}</button></>
     : !ap.lists ? tr("Loading project list…")
@@ -532,10 +608,10 @@ function OnlineStartWithAccount(props: {
     : !ap.lists && !ap.guest ? tr("Loading project list…")
     : undefined;
 
-  /* ---------------- Login page ---------------- */
-  const restoring = ap.busy && !signedIn && !ap.error && !skipped;
+  /* ---------------- Before the start page: still checking the website login; the archived login page ---------------- */
+  const restoring = !settled && ap.busy && !signedIn && !ap.error && !skipped;
   if (!signedIn && !skipped) {
-    if (restoring && !ap.account) {
+    if (restoring) {
       // Just opened the page: first check whether the website is already logged in (login is shared with the website), and don't flash the login page before that is answered
       return (
         <div className="ps-vibe-loading" data-pc="start-restoring" role="status">
@@ -544,7 +620,7 @@ function OnlineStartWithAccount(props: {
       );
     }
     if (ap.shellOld) return <div className="ps-vibe-loading" role="alert"><span>{ap.error || tr("Account sign-in is temporarily unavailable.")}</span></div>;
-    return <VibeLogin busy={ap.busy} error={ap.error} onIntent={onIntent} />;
+    if (legacyLogin) return <VibeLogin busy={ap.busy} error={ap.error} onIntent={onIntent} />;
   }
 
   const accountName = ap.account?.name ?? ap.guest?.name ?? null;
@@ -563,6 +639,8 @@ function OnlineStartWithAccount(props: {
         }}
         collapsed={collapsed}
         onToggleSide={() => {
+          // Logged out there is nothing to list: expanding asks to sign in instead (issue #2)
+          if (!signedIn && collapsed) { askLogin(); return; }
           // The user moved it themselves: do not auto-expand it for them again during this page open (the issue #11 rule pops only once)
           sideAuto.current = true;
           setCollapsed((v) => {
@@ -571,7 +649,8 @@ function OnlineStartWithAccount(props: {
           });
         }}
         accountName={accountName}
-        onSignOut={signOut}
+        onSignOut={signedIn ? signOut : undefined}
+        onSignIn={signedIn ? undefined : () => askLogin()}
         center={
           openChat ? (
             <div className="ps-top-title">
@@ -633,6 +712,29 @@ function OnlineStartWithAccount(props: {
           )
         }
       />
+
+      {loginOpen && (
+        <LoginDialog
+          signedIn={signedIn}
+          busy={ap.busy}
+          error={ap.error}
+          clearError={() => ap.setError("")}
+          onClose={() => {
+            setLoginOpen(false);
+            // Closed without signing in: forget what they tried; signed in: the effect above carries it on
+            if (!signedInRef.current) afterLogin.current = null;
+          }}
+          onLogin={(name, password, remember, link) => onIntent({ kind: "login", name, password, remember, link })}
+          onGuest={(link) => onIntent({ kind: "guest", link })}
+          onAdopt={(link) => {
+            if (link) ap.setLink(link);
+            return ap.perform(async () => {
+              await ap.adoptSession();
+              if (link) setJoin({ askPassword: false });
+            });
+          }}
+        />
+      )}
 
       {/* While connected to a project: the sync overlays (bubble on entering a project, blocking dialogs such as being removed, offline unsent notices), the same set the editor mounts */}
       {openId && <SyncOverlays />}
