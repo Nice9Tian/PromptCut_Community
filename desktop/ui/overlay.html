@@ -81,20 +81,24 @@
 <script src="overlay-summary.js"></script>
 </head>
 <body>
-  <div class="card" id="card" title="单击打开编辑界面，右键可关闭 PromptCut">
+  <div class="card" id="card" title="Click to open the editor, right-click to quit PromptCut" data-t-title>
     <div class="dot"></div>
     <div class="text">
-      <div class="title" id="title">PromptCut 在后台运行</div>
-      <div class="sub" id="sub">编辑界面已收起，Agent 照常工作</div>
-      <div class="hint">单击打开 · 右键关闭</div>
+      <div class="title" id="title" data-t>PromptCut is running in background mode</div>
+      <div class="sub" id="sub" data-t>Editor is collapsed, Agent keeps working</div>
+      <div class="hint" data-t>Click to open · right-click to quit</div>
     </div>
   </div>
-  <div class="preview" id="preview" title="AI 上一步做成的时间轴动作，那一刻的画面">
-    <img id="preview-img" alt="上一步动作的画面">
+  <div class="preview" id="preview" title="The AI's last timeline action, and the picture at that moment" data-t-title>
+    <img id="preview-img" alt="Picture of the last action" data-t-alt>
     <div class="cap" id="preview-cap"></div>
   </div>
 
 <script>
+  // Static text follows the system display language, through the same table as the lines pushed by the shell
+  document.querySelectorAll('[data-t]').forEach(function (el) { el.textContent = window.pcOverlay.t(el.textContent); });
+  document.querySelectorAll('[data-t-title]').forEach(function (el) { el.title = window.pcOverlay.t(el.title); });
+  document.querySelectorAll('[data-t-alt]').forEach(function (el) { el.alt = window.pcOverlay.t(el.alt); });
   var T = window.__TAURI__;
   function emit(name) {
     if (T && T.event && T.event.emit) T.event.emit(name);
@@ -160,7 +164,7 @@
       var cap = document.getElementById('preview-cap');
       cap.textContent = '';
       var b = document.createElement('b');
-      b.textContent = '上一步';
+      b.textContent = window.pcOverlay.t('Last step');
       cap.appendChild(b);
       cap.appendChild(document.createTextNode(' ' + c.what + c.rest));
       document.getElementById('preview').classList.add('is-on');

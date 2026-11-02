@@ -22,6 +22,7 @@ mod chrome_path;
 mod kill_on_close;
 mod proc_lock;
 mod skill_shell;
+mod ui_text;
 
 const EDITOR_URL: &str = "http://127.0.0.1:5210/";
 
@@ -144,8 +145,8 @@ fn desktop_titlebar_command(handle: tauri::AppHandle, command: String) {
         "reset-pylibs" => {
             let path = app_data_dir.join("pylibs");
             let confirm = rfd::MessageDialog::new()
-                .set_title("PromptCut — 重置 Python 库")
-                .set_description(&format!("会删除 {}，下次转写时需要重新下载引擎，继续吗？", path.display()))
+                .set_title(ui_text::text("PromptCut — Reset Python libraries", &[]))
+                .set_description(ui_text::text("This deletes {0}. The engine has to be downloaded again the next time you transcribe. Continue?", &[&path.display()]))
                 .set_level(rfd::MessageLevel::Warning)
                 .set_buttons(rfd::MessageButtons::OkCancel)
                 .show();
@@ -153,12 +154,12 @@ fn desktop_titlebar_command(handle: tauri::AppHandle, command: String) {
                 match fs::remove_dir_all(&path) {
                     Ok(_) => rfd::MessageDialog::new()
                         .set_title("PromptCut")
-                        .set_description("已删除，下次使用语音识别时会重新下载")
+                        .set_description(ui_text::text("Deleted. It is downloaded again the next time you use speech recognition.", &[]))
                         .set_level(rfd::MessageLevel::Info)
                         .show(),
                     Err(e) => rfd::MessageDialog::new()
-                        .set_title("PromptCut — 删除失败")
-                        .set_description(&format!("删除失败: {e}"))
+                        .set_title(ui_text::text("PromptCut — Deletion failed", &[]))
+                        .set_description(ui_text::text("Deletion failed: {0}", &[&e]))
                         .set_level(rfd::MessageLevel::Error)
                         .show(),
                 };
@@ -385,9 +386,7 @@ pub fn run() {
                     // Port is occupied by something else.
                     rfd::MessageDialog::new()
                         .set_title("PromptCut")
-                        .set_description(&format!(
-                            "端口被占用\n\n端口 {editor_port} 被别的程序占用，请关掉它再启动。"
-                        ))
+                        .set_description(ui_text::text("Port in use\n\nPort {0} is used by another program. Close it and start again.", &[&editor_port]))
                         .set_level(rfd::MessageLevel::Error)
                         .show();
                     std::process::exit(1);
@@ -410,13 +409,12 @@ pub fn run() {
                         .iter()
                         .map(|p| p.to_string())
                         .collect::<Vec<_>>()
-                        .join("、");
+                        .join(", ");
                     rfd::MessageDialog::new()
                         .set_title("PromptCut")
-                        .set_description(&format!(
-                            "舞台端口被占用\n\n端口 {list} 被别的程序占用。\n\n\
-                             PromptCut 照常启动，但预览舞台会退回同源单舞台模式（后台预渲染舞台用不上，\
-                             拖动和播放会比平时吃力）。关掉占用这些端口的程序再重启就能恢复。"
+                        .set_description(ui_text::text(
+                            "Stage ports in use\n\nPorts {0} are used by another program.\n\nPromptCut starts as usual, but the preview falls back to a single stage on one origin (the background prerender stage cannot be used, so scrubbing and playback are heavier than usual). Close the programs using these ports and restart to restore it.",
+                            &[&list],
                         ))
                         .set_level(rfd::MessageLevel::Warning)
                         .show();
@@ -562,7 +560,7 @@ pub fn run() {
             // ── Spawn sidecar ───────────────────────────────────────
             let app_dir = runtime_dir.join("app");
             let sidecar_cmd = handle.shell().sidecar("node").map_err(|e| {
-                let msg = format!("无法创建 sidecar 命令: {e}");
+                let msg = ui_text::text("Could not create the sidecar command: {0}", &[&e]);
                 rfd::MessageDialog::new()
                     .set_title("PromptCut")
                     .set_description(&msg)
@@ -583,7 +581,7 @@ pub fn run() {
                 .envs(envs);
 
             let (mut rx, child) = sidecar_cmd.spawn().map_err(|e| {
-                let msg = format!("无法启动 Node 进程: {e}");
+                let msg = ui_text::text("Could not start the Node process: {0}", &[&e]);
                 rfd::MessageDialog::new()
                     .set_title("PromptCut")
                     .set_description(&msg)
@@ -640,10 +638,7 @@ pub fn run() {
                                 .code
                                 .map(|c| c.to_string())
                                 .unwrap_or_else(|| "unknown".into());
-                            let msg = format!(
-                                "Node 已退出（code={}），请查看日志:\n{}",
-                                code_str, log_path_str
-                            );
+                            let msg = ui_text::text("Node exited (code={0}). See the log:\n{1}", &[&code_str, &log_path_str]);
                             if let Some(f) = log_file.as_mut() {
                                 let _ = writeln!(f, "[terminated] code={code_str}");
                             }
@@ -669,10 +664,7 @@ pub fn run() {
                         break;
                     }
                     if start.elapsed() > Duration::from_secs(90) {
-                        let msg = format!(
-                            "启动超时，请查看日志:\n{}",
-                            log_path_poll.to_string_lossy()
-                        );
+                        let msg = ui_text::text("Startup timed out. See the log:\n{0}", &[&log_path_poll.to_string_lossy()]);
                         let _ = win_poll.eval(&status_eval_script(&msg));
                         break;
                     }
@@ -752,8 +744,8 @@ fn show_about(handle: &tauri::AppHandle, runtime_dir: &PathBuf) {
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
 
-    let unknown = "未知".to_string();
-    let not_installed = "未安装".to_string();
+    let unknown = ui_text::text("unknown", &[]);
+    let not_installed = ui_text::text("not installed", &[]);
 
     let app_ver = v.app.as_deref().unwrap_or(&unknown);
     let node_ver = v.node.as_deref().unwrap_or(&unknown);
@@ -761,18 +753,13 @@ fn show_about(handle: &tauri::AppHandle, runtime_dir: &PathBuf) {
     let ffmpeg_ver = v.ffmpeg.as_deref().unwrap_or(&unknown);
     let python_ver = v.python.as_deref().unwrap_or(&not_installed);
 
-    let text = format!(
-        "PromptCut\n\n\
-         壳版本: {shell_version}\n\
-         应用: {app_ver}\n\
-         Node: {node_ver}\n\
-         Chrome: {chrome_ver}\n\
-         FFmpeg: {ffmpeg_ver}\n\
-         Python: {python_ver}"
+    let text = ui_text::text(
+        "PromptCut\n\nShell version: {0}\nApp: {1}\nNode: {2}\nChrome: {3}\nFFmpeg: {4}\nPython: {5}",
+        &[&shell_version, &app_ver, &node_ver, &chrome_ver, &ffmpeg_ver, &python_ver],
     );
 
     rfd::MessageDialog::new()
-        .set_title("关于 PromptCut")
+        .set_title(ui_text::text("About PromptCut", &[]))
         .set_description(&text)
         .set_level(rfd::MessageLevel::Info)
         .show();

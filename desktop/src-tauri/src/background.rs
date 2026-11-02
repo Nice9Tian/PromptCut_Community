@@ -348,9 +348,9 @@ fn exit<R: Runtime>(app: &AppHandle<R>) {
 
 /// 两项菜单:打开编辑界面 / 关闭。托盘与悬浮窗右键共用这一份的样子(各建各的实例)。
 pub fn build_menu<R: Runtime, M: Manager<R>>(manager: &M) -> tauri::Result<Menu<R>> {
-    let open = MenuItem::with_id(manager, MENU_OPEN, "打开编辑界面", true, None::<&str>)?;
+    let open = MenuItem::with_id(manager, MENU_OPEN, crate::ui_text::text("Open editor", &[]), true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(manager)?;
-    let quit = MenuItem::with_id(manager, MENU_QUIT, "关闭", true, None::<&str>)?;
+    let quit = MenuItem::with_id(manager, MENU_QUIT, crate::ui_text::text("Quit", &[]), true, None::<&str>)?;
     Menu::with_items(manager, &[&open, &sep, &quit])
 }
 

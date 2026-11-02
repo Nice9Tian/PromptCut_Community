@@ -94,7 +94,7 @@ pub fn acquire(locks: &ProcLocks, proc_path: &str) -> Result<(), String> {
             Ok(())
         }
         // 拿不到就是有人正持有。内核说的,不用再去判活
-        Err(e) => Err(format!("这个项目文件正被另一个 PromptCut 打开({e})")),
+        Err(e) => Err(crate::ui_text::text("This project file is open in another PromptCut ({0})", &[&e])),
     }
 }
 

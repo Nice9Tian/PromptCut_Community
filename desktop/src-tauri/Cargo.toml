@@ -41,4 +41,4 @@ webview2-com = "0.38"
 # Win32_Graphics_Gdi:采样屏幕像素读菜单栏颜色(chrome_color.rs)
 # Win32_System_JobObjects + Win32_System_Threading:把 sidecar 拴进 kill-on-close 的
 # job object,外壳被强杀时内核照样把它整棵树收走(见 src/kill_on_close.rs)
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security"] }
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Graphics_Gdi", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security"] }
